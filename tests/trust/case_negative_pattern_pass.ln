@@ -1,0 +1,22 @@
+// A negative literal pattern after a statement arm: `-1:`, `-1, -2:`, `-5..-1:`. The arm lookahead
+// did not know `-`, so each was parsed as a statement of the arm before it and refused (E100
+// "Expected end-of-line after statement in match case"); the expression form parsed them.
+func f(x i32) i32 {
+    var y = 0
+    case x {
+        1: y = 1
+        -1: y = 2
+        -2, -3: y = 3
+        -9..-4: y = 4
+        else: y = 5
+    }
+    return y
+}
+func main() i32 {
+    if f(1) != 1 { return 1 }
+    if f(-1) != 2 { return 2 }
+    if f(-3) != 3 { return 3 }
+    if f(-5) != 4 { return 4 }
+    if f(7) != 5 { return 5 }
+    return 0
+}

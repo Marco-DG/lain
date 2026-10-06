@@ -697,6 +697,28 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
             bool stop_for_header = false;
             TokenKind cur = parser->token.kind;
 
+            // A NEGATIVE literal pattern, `-1:`, `-1, 2:` or `-5..-1:`: a `-`, a number, then what
+            // follows a pattern. `-` was not among the header starts below, so `-1:` after a
+            // statement arm was parsed as a statement of that arm and refused ("Expected
+            // end-of-line after statement in match case"); the expression form had no such gap.
+            // No statement begins with `-N:` or `-N,`, so this cannot take a statement for a header.
+            if (cur == TOKEN_MINUS) {
+                Lexer fork = *parser->lexer;
+                Token n = lexer_next(&fork);
+                if (n.kind == TOKEN_NUMBER) {
+                    Token t1 = lexer_next(&fork);
+                    if (t1.kind == TOKEN_COLON || t1.kind == TOKEN_COMMA) stop_for_header = true;
+                    else if (t1.kind == TOKEN_DOT_DOT || t1.kind == TOKEN_DOT_DOT_EQUAL) {
+                        Token t2 = lexer_next(&fork);
+                        if (t2.kind == TOKEN_MINUS) t2 = lexer_next(&fork);
+                        if (t2.kind == TOKEN_NUMBER || t2.kind == TOKEN_IDENTIFIER) {
+                            Token t3 = lexer_next(&fork);
+                            if (t3.kind == TOKEN_COLON || t3.kind == TOKEN_COMMA) stop_for_header = true;
+                        }
+                    }
+                }
+            }
+
             // allow numeric literals, char/string, bool literals, identifiers or `else`
             if (cur == TOKEN_NUMBER
             || cur == TOKEN_CHAR_LITERAL

@@ -1516,6 +1516,10 @@ rc=0
 out=
 at=const 2
 ty=Opt_i32 struct
+### tests/trust/case_negative_pattern_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/case_qualified_variants_pass.ln
 rc=0
 out=
