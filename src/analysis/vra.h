@@ -4620,10 +4620,16 @@ static bool vra_written_measure_ok(Vra *V, IrBlock *H, VraMeasure found) {
     return true;
 }
 // ── C.3a: THE CHECK, in place of the fixpoint ───────────────────────────────────────────────────
+// It names the function as the program wrote it, and, when that differs, as the certificate file
+// lists it: the IR name, qualified by the module (`cert_sum_to` for `sum_to` in cert.ln). Only the
+// IR name was printed, which a reader grepping the source for it did not find (Documentation).
 static void vra_check_fail(Vra *V, const char *fmt, ...) {
-    fprintf(stderr, "internal error: the certificate for '%.*s' does not check: ",
-            V && V->f && V->f->name ? (int)V->f->name->length : 1,
-            V && V->f && V->f->name ? V->f->name->name : "?");
+    const IrName *ir = V && V->f ? V->f->name : NULL;
+    const IrName *src = V && V->f && V->f->src_name ? V->f->src_name : ir;
+    fprintf(stderr, "internal error: the certificate for '%.*s'", src ? (int)src->length : 1, src ? src->name : "?");
+    if (ir && src && (src->length != ir->length || memcmp(src->name, ir->name, (size_t)ir->length) != 0))
+        fprintf(stderr, " (`%.*s` in the certificate)", (int)ir->length, ir->name);
+    fputs(" does not check: ", stderr);
     va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
     fputc('\n', stderr);
     exit(70);

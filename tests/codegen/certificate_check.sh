@@ -75,6 +75,8 @@ mut() {   # what, sed program, the message (or code) the checked compile must pr
 mut "a header state, tightened"   '/^certificate t_total$/,/^end$/ s/^\(    %[0-9]*:k in \)\[0, 1000\]/\1[0, 999]/' "does not entail the header" 70
 mut "an element range, narrowed"  's/^\(  elem %[0-9]*:a in \)\[10, 40\]/\1[10, 30]/'                        "a store puts [10, 40]" 70
 mut "a return range, narrowed"    '/^certificate t_nib$/,/^end$/ s/^  ret in \[0, 15\]$/  ret in [0, 14]/'        "a return is in [0, 15]" 70
+# The refusal names the function as written and, in parentheses, as the certificate file lists it.
+mut "the name, as written and as listed" '/^certificate t_nib$/,/^end$/ s/^  ret in \[0, 15\]$/  ret in [0, 14]/' "the certificate for 'nib' (\`t_nib\` in the certificate) does not check:" 70
 mut "a call-site range"           's/\(callee t_count bind 0=\[5, 5\] ret in \)\[5, 5\]/\1[6, 6]/'                 "does not establish it" 70
 mut "a call-site binding"         's/callee t_nib bind 0=\[200, 200\]/callee t_nib bind 0=[201, 201]/'             "which the call site does not state" 70
 mut "a loop measure"              '/^certificate t_total$/,/^end$/ s/^\(  measure loop bb[0-9]* \)rises /\1falls /' "for the loop at" 70
