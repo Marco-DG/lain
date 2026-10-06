@@ -56,8 +56,10 @@ static File file_read_source(char* filename)
     }
     f.contents = buf;
 
-    // read exactly f.size bytes
+    // read exactly f.size bytes, then close: nothing reads the handle again, and it stayed open,
+    // one descriptor per source file for the whole compile (the Debugger agent's finding).
     file_read(f.handle, f.contents, f.size);
+    file_close(f.handle);
 
     isize w = 0;
     for (isize r = 0; r < f.size; r++) {
