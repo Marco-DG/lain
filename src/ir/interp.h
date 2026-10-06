@@ -105,6 +105,12 @@ static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, 
 // the last failure's message: its kind, then what happened ("PROOF FAILED: division by zero ...").
 static bool ii_quiet = false;
 static char ii_why[256];
+// Called when the run fails (`status` 96..99, ii_why already written), BEFORE anything leaves the
+// frames: ii_frame and its `up` chain, and every frame's values, are still live, which a debugger
+// needs to stop there with the stack and the locals. `at` may be NULL (control reaching a point the
+// compiler marked unreachable has no instruction). Not called for a compile-time evaluation's own
+// step budget, which its caller reports. NULL by default.
+static void (*ii_on_fail)(int status, IrInstr *at) = NULL;
 static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, ...) {
     if (status == 97 && ist->budget_is_callers) ii_stop(status);
     int n = snprintf(ii_why, sizeof ii_why, "%s", kind);
@@ -113,6 +119,7 @@ static void ii_fail(int status, const char *kind, IrInstr *at, const char *fmt, 
         snprintf(ii_why + n, sizeof ii_why - (size_t)n, ": ");
         vsnprintf(ii_why + n + 2, sizeof ii_why - (size_t)n - 2, fmt, ap); va_end(ap);
     }
+    if (ii_on_fail) ii_on_fail(status, at);
     if (ii_quiet) ii_stop(status);
     fprintf(stderr, "%s: %s", ist->who ? ist->who : "lain --interpret", kind);
     if (at && at->line) fprintf(stderr, " at %s:%lld:%lld", ist->file ? ist->file : "?",
@@ -1019,7 +1026,8 @@ static void (*ii_on_block)(IrFunc *f, IrBlock *b, IVal *v, int nv) = NULL;
 // terminator runs (`b->term`; a `return` has no instruction of its own, and its line is the
 // terminator's). This is what a stepping debugger stops on: the call stack is `ii_frame` and its
 // `up` links, and the frame's values are `v[0..nv)` by IrValue id. NULL by default: the cost is
-// one test per instruction.
+// one test per instruction. It is also called while a module constant is evaluated at compile
+// time (ir_interpret_call, static_eval.h), before `main` runs; `ist->who` is set then.
 static void (*ii_on_instr)(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) = NULL;
 static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
     { char here; uintptr_t h = (uintptr_t)&here;
