@@ -417,14 +417,15 @@ echo "  REJECTED but documented : $fail      ← the README is wrong here"
 echo "  illustrate an error, and do fail : $expfail_ok"
 echo "  illustrate an error, but COMPILE : $expfail_bad   ← the README is wrong here too"
 echo "  fail, but not with the code named : $expfail_code   ← verified by accident"
-# Split by PAGE, because the two are held to different standards and the combined number reads
-# as a regression on the one that is clean. README.md is the showcase and its count is 0 by
-# policy; LANGUAGE.md is the old manual and its count is a backlog. Reading "66" against a
-# recorded "README has zero unverifiable fragments" cost a real detour before this split.
+# Split by PAGE, so a failure names the page. Every page is held to 0, BY THE EXIT STATUS: the
+# labels said "must stay 0" for README and USAGE while the exit condition never read either count,
+# so a fragment nobody tests printed a 1 and still passed. LANGUAGE.md's count was a backlog until
+# it reached 0 (4f2eb4a); it is held to 0 since. A form that cannot be a program starts with
+# `// SYNOPSIS` and is counted apart.
 echo "  UNVERIFIABLE fragments   : $unchecked   ← not noise: a claim nobody tests"
 [ $synopsis -gt 0 ] && echo "  SYNOPSIS blocks (a form, not a program): $synopsis"
 echo "      README.md   : $unchecked_readme   <- must stay 0"
-echo "      LANGUAGE.md : $unchecked_lang   <- the old manual: a backlog, not a regression"
+echo "      LANGUAGE.md : $unchecked_lang   <- must stay 0"
 echo "      USAGE.md    : $unchecked_usage   <- must stay 0"
   # ★ PRINT IT WHENEVER IT IS NON-ZERO, not only under --pages. The split below the total must
   # ACCOUNT FOR the total: a count this gate computes and then hides is a backlog nobody sees, and
@@ -458,5 +459,6 @@ fi
 echo "  blocks extracted, all accounted for : $extracted"
 echo "=================================================================="
 [ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $expfail_code -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
+    && [ $unchecked_readme -eq 0 ] && [ $unchecked_lang -eq 0 ] && [ $unchecked_usage -eq 0 ] \
     && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && [ $code_bad -eq 0 ] \
     && [ $undoc_bad -eq 0 ] && [ $usage_bad -eq 0 ] && exit 0 || exit 1
