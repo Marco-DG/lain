@@ -1,0 +1,14 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 9, Col 9: `else:` must be the last arm of a `case` (spec 15); the `else:` at Ln 8 is followed by this arm
+// `else:` is the last arm of a `case` (spec 15, Annex A). It was accepted anywhere and acted as the
+// default wherever it stood, so `else: 0` then `1: 1` gave f(1) = 1, while it read as if every
+// value took 0 (Documentation's grammar audit).
+func f(x i32) i32 {
+    return case x {
+        else: 0
+        1: 1
+    }
+}
+func main() i32 {
+    return f(1)
+}

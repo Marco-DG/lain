@@ -1407,6 +1407,9 @@ void sema_resolve_stmt(Stmt *s) {
     // Check exhaustiveness after resolving all cases (the scrutinee was typed above —
     // without it `case o.tag` on a struct FIELD reported a fully-covered match as
     // non-exhaustive, because a member expression has no type until inference runs).
+    { ExprList *arms[256]; int n = 0;
+      for (StmtMatchCase *c = s->as.match_stmt.cases; c && n < 256; c = c->next) arms[n++] = c->patterns;
+      sema_check_arms_once(arms, n, s->line, s->col); }
     if (!sema_check_match_exhaustive(s)) {
       sema_report_nonexhaustive_match(s);
       exit(1);

@@ -362,6 +362,61 @@ static void sema_report_uncovered(isize line, isize col, Expr *value, ExprList *
     diagnostic_show_line(line, col);
 }
 
+// ★ EVERY VALUE EXACTLY ONCE (E014, spec 15). A `case` must cover every value of its scrutinee,
+// and name none twice: an exact duplicate pattern (`1:` then `1:`, or `A.B, A.B`) was accepted,
+// and its later occurrence was dead: f(1) took the first arm and nothing said so (Documentation's
+// grammar audit). The comparison is exact and fails closed: two patterns it cannot compare
+// (a constructor pattern with bindings, anything not below) count as different, never as the same.
+// An arm SUBSUMED by earlier ones without equalling one (`1..5:` after `1..10:`) is the general
+// case, not checked here.
+static bool case_pattern_same(Expr *a, Expr *b) {
+    if (!a || !b || a->kind != b->kind) return false;
+    switch (a->kind) {
+        case EXPR_LITERAL:    return a->as.literal_expr.value == b->as.literal_expr.value &&
+                                     a->as.literal_expr.is_bool == b->as.literal_expr.is_bool;
+        case EXPR_CHAR:       return a->as.char_expr.value == b->as.char_expr.value;
+        case EXPR_STRING:     return a->as.string_expr.length == b->as.string_expr.length &&
+                                     memcmp(a->as.string_expr.value, b->as.string_expr.value,
+                                            (size_t)a->as.string_expr.length) == 0;
+        case EXPR_IDENTIFIER: return expr_struct_equal(a, b);
+        case EXPR_MEMBER: {   // `Color.Red`: its target is the RESOLVED type, which expr_struct_equal
+            Expr *ta = a->as.member_expr.target, *tb = b->as.member_expr.target;   // cannot compare
+            if (ta && tb && ta->kind == EXPR_TYPE && tb->kind == EXPR_TYPE) {
+                Type *x = ta->as.type_expr.type_value, *y = tb->as.type_expr.type_value;
+                bool same = x == y || (x && y && x->kind == TYPE_SIMPLE && y->kind == TYPE_SIMPLE &&
+                                       x->base_type && y->base_type &&
+                                       x->base_type->length == y->base_type->length &&
+                                       memcmp(x->base_type->name, y->base_type->name, (size_t)x->base_type->length) == 0);
+                Id *ma = a->as.member_expr.member, *mb = b->as.member_expr.member;
+                return same && ma && mb && ma->length == mb->length &&
+                       memcmp(ma->name, mb->name, (size_t)ma->length) == 0;
+            }
+            return expr_struct_equal(a, b);
+        }
+        case EXPR_UNARY:      return a->as.unary_expr.op == b->as.unary_expr.op &&
+                                     case_pattern_same(a->as.unary_expr.right, b->as.unary_expr.right);
+        case EXPR_RANGE:      return a->as.range_expr.inclusive == b->as.range_expr.inclusive &&
+                                     case_pattern_same(a->as.range_expr.start, b->as.range_expr.start) &&
+                                     case_pattern_same(a->as.range_expr.end, b->as.range_expr.end);
+        default:              return false;
+    }
+}
+static void sema_check_arms_once(ExprList **arms, int narms, isize line, isize col) {
+    for (int i = 0; i < narms; i++)
+        for (ExprList *p = arms[i]; p; p = p->next)
+            for (int j = 0; j <= i; j++)
+                for (ExprList *q = arms[j]; q && !(j == i && q == p); q = q->next) {
+                    if (!case_pattern_same(p->expr, q->expr)) continue;
+                    isize pl = p->expr->line ? p->expr->line : line, pc = p->expr->line ? p->expr->col : col;
+                    isize ql = q->expr->line ? q->expr->line : line;
+                    fprintf(stderr, "[E014] Error Ln %li, Col %li: this pattern is already covered by the "
+                            "arm at Ln %li: a `case` names each value once, and the later one is never "
+                            "chosen.\n", (long)pl, (long)pc, (long)ql);
+                    diagnostic_show_line(pl, pc);
+                    exit(1);
+                }
+}
+
 // Report non-exhaustive match error
 static void sema_report_nonexhaustive_match(Stmt *match_stmt) {
     ExprList *arms[256]; int n = 0;

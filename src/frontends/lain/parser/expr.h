@@ -286,9 +286,17 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         ExprMatchCase *first = NULL, **tail = &first;
         ExprList *current_patterns = NULL, **pat_tail = &current_patterns;
         int pending_count = 0;
+        isize else_line = 0;   // the `else:` arm's line, once one is seen (see parse_match_stmt)
 
         while (!parser_match(TOKEN_R_BRACE) && !parser_match(TOKEN_EOF)) {
+            if (else_line) {
+                char m[160];
+                snprintf(m, sizeof m, "`else:` must be the last arm of a `case` (spec 15); the `else:` at "
+                         "Ln %li is followed by this arm. Move it to the end.", (long)else_line);
+                parser_error(m);
+            }
             if (parser_match(TOKEN_KEYWORD_ELSE)) {
+                else_line = parser->line;
                 parser_advance();
                 pending_count++;
             } else {

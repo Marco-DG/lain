@@ -3768,6 +3768,9 @@ void sema_infer_expr(Expr *e) {
         }
     }
     
+    { ExprList *arms[256]; int n = 0;
+      for (ExprMatchCase *c = e->as.match_expr.cases; c && n < 256; c = c->next) arms[n++] = c->patterns;
+      sema_check_arms_once(arms, n, e->line, e->col); }
     if (!sema_check_expr_match_exhaustive(e)) {
         sema_report_nonexhaustive_match_expr(e);
         exit(1);

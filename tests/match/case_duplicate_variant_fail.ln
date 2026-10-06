@@ -1,0 +1,19 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: Error Ln 14, Col 9: this pattern is already covered by the arm at Ln 12
+// A duplicate QUALIFIED variant (E014). `Color.Red` is a member pattern whose target is the resolved
+// type, which the structural comparison of expressions cannot compare: the pattern comparison
+// handles it.
+type Color {
+    Red
+    Green
+}
+func f(c Color) i32 {
+    return case c {
+        Color.Red: 1
+        Color.Green: 2
+        Color.Red: 3
+    }
+}
+func main() i32 {
+    return f(Color.Green)
+}

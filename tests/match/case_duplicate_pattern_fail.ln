@@ -1,0 +1,16 @@
+// EXPECT: [E014]
+// EXPECT-TEXT: Error Ln 10, Col 9: this pattern is already covered by the arm at Ln 8
+// A `case` names each value once (E014: it covers every value of its scrutinee exactly once). A
+// duplicate pattern was accepted and its later arm was dead: here f(1) took `1: 1` and nothing said
+// that `1: 3` is never chosen (Documentation's grammar audit).
+func f(x i32) i32 {
+    return case x {
+        1: 1
+        2: 2
+        1: 3
+        else: 4
+    }
+}
+func main() i32 {
+    return f(1)
+}

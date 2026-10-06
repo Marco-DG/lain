@@ -1,0 +1,14 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 8, Col 9: `else:` must be the last arm of a `case` (spec 15); the `else:` at Ln 7 is followed by this arm
+// The statement form of `case`: `else:` is its last arm too (spec 15).
+func f(x i32) i32 {
+    var y = 7
+    case x {
+        else: y = 0
+        1: y = 1
+    }
+    return y
+}
+func main() i32 {
+    return f(1)
+}
