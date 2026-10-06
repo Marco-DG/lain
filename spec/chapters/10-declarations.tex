@@ -252,10 +252,10 @@ func at_first_space(a u8[>= 1]) u8 {
 \end{constraint}
 
 \begin{constraint}
-  A function shall not participate in mutual recursion unless its row names
-  \lain{diverge}~(\diagcode{E011}); termination cannot be established for a cycle
-  no measure covers.  Direct self-recursion \emph{with} an inferred or given
-  measure is permitted.
+  A function on a recursion cycle shall be shown to terminate, or its row shall name
+  \lain{diverge}~(\diagcode{E011}): direct self-recursion by an inferred or given measure,
+  and a cycle through several functions by one measure per function
+  (\S\,\ref{sec:fn.purity}).
 \end{constraint}
 
 \section{The entry point}

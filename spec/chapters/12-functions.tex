@@ -34,7 +34,7 @@ Unbounded \lain{while}            & forbidden          & \lain{effects diverge} 
 Bounded \lain{while decreasing}   & allowed            & allowed \\
 \lain{for} loops                  & allowed            & allowed \\
 Direct recursion (with measure)   & allowed            & allowed \\
-Mutual recursion                  & forbidden          & \lain{effects diverge} \\
+Recursion through several functions & allowed when ranked (\S\,\ref{sec:fn.purity}) & allowed \\
 Global mutable state              & does not exist in the language & --- \\
 Termination guarantee             & yes                & waived by \lain{diverge} only \\
 \end{longtable}
@@ -111,12 +111,66 @@ callee's \emph{keyword} rather than the callee's row.
 \end{constraint}
 
 \begin{constraint}
-  A function that participates in a \emph{mutual}-recursion cycle is
-  \illformed{}~(\diagcode{E011}) unless its row names \lain{diverge}: no measure
-  covers such a cycle, so termination cannot be established.  The implementation
-  shall detect mutual recursion by performing a depth-first search on the call
-  graph.
+  A function whose row does not name \lain{diverge}, and that lies on a recursion cycle with
+  at least one \emph{other} function, owes termination over that cycle.  The unit is its
+  \emph{component}: every function it calls, directly or through others, that calls it back.
+  The component is accepted when one integer parameter of each of its functions --- that
+  function's \emph{measure} --- can be chosen such that
+  \begin{enumerate}
+    \item at every call from a function of the component to a function of the component,
+          self-calls included, the argument passed for the callee's measure is at most the
+          caller's measure there, and the caller's measure is at least 0 there (an unsigned
+          type, or a guard that implies it); and
+    \item every cycle of calls inside the component, of any length and through any of its
+          calls, contains at least one call at which that argument is strictly smaller.
+  \end{enumerate}
+  Otherwise each function of the component is \illformed{}, reported at its first call into
+  the component: \diagcode{E011}, or \diagcode{E082} when that function has a written
+  \lain{decreasing} clause.
 \end{constraint}
+
+\begin{note}
+  The search is bounded and fails closed: a component of more than 16 functions, or with more
+  than 256 calls among them, is refused.  One parameter per function is the whole measure, so a
+  cycle that ends only by a sum of two parameters, or by a lexicographic pair, is refused; such a
+  function states \lain{effects diverge}.  A self-recursive function on no cycle with another
+  keeps the rule of \S\,\ref{sec:fn.termination}.  A call through a function pointer is, for
+  this purpose, a call to every function of the program whose address is taken and whose
+  parameter count matches.  An \lain{extern} that calls back into the program is outside the
+  proof: its row is believed, as every \lain{extern}'s is.
+\end{note}
+
+\begin{laincode}
+// VERIFY: exit 0
+func a(n u8) u8 {
+    if n == 0 { return 0 }
+    return b(n - 1)              // falls here
+}
+
+func b(n u8) u8 {
+    return c(n)                  // not here: one fall per way round is enough
+}
+
+func c(n u8) u8 {
+    if n == 0 { return 0 }
+    return a(n - 1)
+}
+
+func main() i32 {
+    if a(9) != 0 { return 1 }
+    return 0
+}
+\end{laincode}
+
+\begin{laincode}
+func ping(n u8) u8 {
+    return pong(n)               // ERROR [E011]: n never falls, so the cycle may not end
+}
+
+func pong(n u8) u8 {
+    return ping(n)
+}
+\end{laincode}
 
 \begin{note}
   Generic functions (\lain{func} with \lain{type} parameters) are
@@ -133,8 +187,9 @@ A \lain{func} is guaranteed to terminate because:
   \item every \lain{while} loop carries a verified termination measure,
         supplied explicitly or inferred (\S\,\ref{sec:stmt.while.infer});
   \item \lain{for} loops iterate over finite ranges;
-  \item every direct self-call strictly decreases a well-founded measure,
-        and mutual recursion is forbidden.
+  \item every direct self-call strictly decreases a well-founded measure, and a
+        recursion cycle through several functions is ranked by one measure per function
+        (\S\,\ref{sec:fn.purity}).
 \end{enumerate}
 
 \pnum
