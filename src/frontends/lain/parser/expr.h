@@ -45,8 +45,11 @@ Expr *parse_expr(Arena* arena, Parser* parser)
 Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
     Expr *left = parse_unary_expr(arena, parser);
 
-    // Handle postfix `as` cast immediately after the initial operand
-    if (parser_match(TOKEN_KEYWORD_AS)) {
+    // Postfix `as` casts after the operand, left-associative (spec 08): `a as u16 as i32` is
+    // `(a as u16) as i32`. This took ONE cast, so a second `as` ended the expression and was refused
+    // as "Expected ';' or newline". Each cast here binds tighter than any binary operator, so the
+    // operand of `+` in `a + b as u8` is `b as u8`.
+    while (parser_match(TOKEN_KEYWORD_AS)) {
         parser_advance();
         // F3.5 tier marker immediately after `as` (before the type). `?T`/`|`-union
         // never start a type here (`?T` is retired; a union `|` only follows a type),
@@ -104,15 +107,10 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
         }
         left = expr_binary(arena, op, left, right);
         left->line = op_line; left->col = op_col;
-
-        // Handle postfix `as` cast after each binary sub-expression
-        if (parser_match(TOKEN_KEYWORD_AS)) {
-            parser_advance();
-            Type *target = parse_type(arena, parser);
-            Expr *operand = left;
-            left = expr_cast(arena, left, target);
-            left->line = operand->line; left->col = operand->col;
-        }
+        // (A cast after a binary sub-expression was handled here too, without the `?`/`%`/`|` tier
+        // marker. With the loop above, every `as` is taken by the operand before it, so this was
+        // reached only when a SECOND cast had ended the right operand early: `a + b as u16 as i32`
+        // became `(a + (b as u16)) as i32`.)
     }
 
     return left;

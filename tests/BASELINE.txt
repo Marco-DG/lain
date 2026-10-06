@@ -1526,6 +1526,9 @@ out=
 at=const 8
 ty=Color scalar
 ty=Opt_i32 struct
+### tests/trust/cast_chain_pass.ln
+rc=0
+out=
 ### tests/trust/cast_checked_pass.ln
 rc=0
 out=255

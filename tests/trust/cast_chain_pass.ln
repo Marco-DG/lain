@@ -1,0 +1,17 @@
+// `as` is left-associative (spec 08): `a as u16 as i32` is `(a as u16) as i32`. The parser took one
+// cast after an operand, so a second `as` ended the expression and was refused (E100 "Expected ';'
+// or newline after statement"). Each step here is checked against its value, the `as%` (wrapping)
+// tier included: 300 wraps to 44 in a u8.
+func main() i32 {
+    a u8 = 7
+    b = a as u16 as i32
+    if b != 7 { return 1 }
+    w i32 = 300
+    t = w as% u8 as i32
+    if t != 44 { return 2 }
+    u = w as% u16 as% u8
+    if u != 44 { return 3 }
+    s = 1 + w as% u8 as i32
+    if s != 45 { return 4 }
+    return 0
+}
