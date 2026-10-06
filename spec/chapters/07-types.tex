@@ -373,6 +373,10 @@ their operands and never wider than the wider stated one:
         a \lain{u8} first would yield 54.  For \lain{+\%} the two readings coincide --- both
         yield 54 --- so a reader who assumes the reduction is wrong only about saturation, and
         only sometimes;
+  \item two literals, negated or not, state no type between them: the operation computes in
+        the type of the place its result goes, so \lain{x u8 = 250 +\% 10} is 4, and where the
+        result goes nowhere typed (\lain{var y = 250 +\% 10}, a variadic argument) in the
+        literals' own type, \lain{i32}, or \lain{i64} for a literal outside it;
   \item of two stated types that differ, the one that holds every value of the other, in either
         order: \lain{a +| b} and \lain{b +| a} with a \lain{u8} and a \lain{u32} are both a
         \lain{u32} saturating add;

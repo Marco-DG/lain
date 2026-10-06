@@ -544,7 +544,7 @@ func main() i32 {
 }
 ```
 
-The operand must be a `bool` constant — literals, named constants, operators, `as`, `@sizeof`,
+The operand must be a `bool` constant — literals, named constants, operators (the wrapping `+%` `-%` `*%` included), `as` and `as%`, `@sizeof`,
 `@alignof` ([E133] otherwise). A false one is [E134]: from Lain when it can compute the value,
 and from the C compiler (a `_Static_assert` carrying the same code) when it measures a type.
 
@@ -3822,6 +3822,10 @@ func clamp_add(a u32, b i32) u32 {
  2 |     return a +| b
    |            ^
 ```
+
+Two literals state no type between them, so the operation takes the type of the place its result
+goes: `x u8 = 250 +% 10` is 4. Where the result goes nowhere typed, as in `var y = 250 +% 10`, it is
+the literals' own type, `i32` (260 here), or `i64` for a literal outside `i32`.
 
 The full selection rule — including what happens when an operand is itself plain arithmetic the
 compiler has already widened — is stated once, in the specification's chapter 7 on types.

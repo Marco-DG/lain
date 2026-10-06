@@ -321,6 +321,19 @@ conversion between integer and floating-point types, or between an integer type 
 \lain{bool}, is \illformed{}~(\diagcode{E012}), and an array initialiser shall have exactly
 \lain{T}'s length~(\diagcode{E012}).
 
+\begin{laincode}
+// VERIFY: exit 0
+N = 7                      // i32: the initialiser's type
+BIG = 5000000000           // i64: too large for an i32
+
+func main() i32 {
+    k = N
+    if k != 7 { return 1 }
+    if BIG - 1 != 4999999999 { return 2 }
+    return 0
+}
+\end{laincode}
+
 \begin{constraint}
   When the initialiser is a constant expression (\S\,\ref{sec:decl.static-assert}) of an integer
   type, its value shall be representable in \lain{T}; for an array of an integer type, each
@@ -420,12 +433,21 @@ assert @sizeof(Token) == 8
 assert BUF % 16 == 0
 \end{laincode}
 
+\begin{laincode}
+assert (300 as% u8) == 44         // wrapped to the cast's type: 300 - 256
+
+func main() i32 {
+    return 0
+}
+\end{laincode}
+
 \pnum
 Its operand is a \emph{constant expression}: integer and character literals; named immutable
 module-level constants whose initialisers are constant expressions; \lain{@sizeof(T)} and
 \lain{@alignof(T)} (\S\,\ref{sec:mem.alignment}); the arithmetic, bitwise, shift, comparison and
-logical operators; and \lain{as}.  Its value is computed over the integers, not in the width of any
-one type: \lain{(1 << 32) - 1} is \(2^{32}-1\). The exception is \texttt{\textasciitilde}, which
+logical operators; \lain{as}; and the wrapping operators \lain{+\%}, \lain{-\%}, \lain{*\%} and the
+wrapping cast \lain{as\%}, each computed over the integers and then reduced modulo \(2^N\) to its
+type.  Its value is computed over the integers, not in the width of any one type: \lain{(1 << 32) - 1} is \(2^{32}-1\). The exception is \texttt{\textasciitilde}, which
 has no meaning over the integers for an unsigned operand: \texttt{\textasciitilde}$x$ of an
 unsigned $N$-bit value is \(2^N - 1 - x\), so \texttt{\textasciitilde(0 as u64)} is the largest
 \lain{u64}. The same constant expressions bound or size a struct field's length
@@ -440,6 +462,21 @@ unsigned $N$-bit value is \(2^N - 1 - x\), so \texttt{\textasciitilde(0 as u64)}
   known only at run time is asserted inside a function, where it is an obligation the value-range
   analysis must discharge (\S\,\ref{sec:13-vra}).
 \end{constraint}
+
+\pnum
+Inside a function, the analysis knows an element of a constant table read at a constant index
+exactly, so a fact about it is proven there:
+
+\begin{laincode}
+// VERIFY: exit 0
+T u8[4] = [1, 2, 3, 4]
+
+func main() i32 {
+    assert T[1] == 2              // proven: the element's value is fixed at translation time
+    if T[3] != 4 { return 1 }
+    return 0
+}
+\end{laincode}
 
 \begin{constraint}
   A module-scope assertion whose value is \lain{false} makes the program \illformed{}
