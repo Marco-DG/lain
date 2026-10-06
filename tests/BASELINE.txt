@@ -2191,6 +2191,13 @@ ty=Mixed struct
 ty=Pair_u64 struct
 ty=Slice_u8 scalar
 ty=Token struct
+### tests/trust/sub_guard_window_scan_pass.ln
+rc=0
+out=36 0
+at=access 2
+at=nonnull 2
+at=pure 2
+ty=Slice_u8 scalar
 ### tests/trust/subslice_empty_at_end_pass.ln
 rc=0
 out=
@@ -2823,6 +2830,14 @@ at=const 4
 rc=0
 out=
 at=const 2
+### tests/vra/bounds/sub_guard_simd_scan_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
+at=pure 2
+at=vector_size 2
+ty=Slice_u8 scalar
 ### tests/vra/bounds/sub_slice_empty_pass.ln
 rc=0
 out=

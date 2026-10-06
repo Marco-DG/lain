@@ -1,0 +1,18 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 9, Col 61: index is not provably within bounds
+// H9's other side: the guard on the difference is believed exactly. `s.len - i >= 3` leaves room
+// for s[i], s[i + 1] and s[i + 2]; s[i + 3] can be one past the end.
+func sum_by_four(s u8[]) u32 {
+    var acc u32 = 0
+    var i usize = 0
+    while i <= s.len and s.len - i >= 3 {
+        acc = acc +% (s[i] as u32) +% (s[i + 1] as u32) +% (s[i + 3] as u32)
+        i = i + 4
+    }
+    return acc
+}
+
+func main() i32 {
+    var buf u8[10]
+    return sum_by_four(buf) as i32
+}

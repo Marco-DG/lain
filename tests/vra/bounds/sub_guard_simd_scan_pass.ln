@@ -1,0 +1,20 @@
+// H9, the SIMD shape (Documentation's local/research/haystack/probes/m2.ln): a 16-byte load per
+// iteration over a PLAIN `u8[]`, bounded by what is left. `hay.len - i >= 16` gives `i + 16 <=
+// hay.len` once the guard on the exact difference is stated on i and hay.len, so the load and the
+// step prove with no bound on the slice's length in its type.
+func scan(hay u8[], c u8) u32 {
+    var acc u32 = 0
+    var i usize = 0
+    while i <= hay.len and hay.len - i >= 16 {
+        acc = acc | @movemask(@load(u8x16, hay, i) == c)
+        i = i + 16
+    }
+    return acc
+}
+
+func main() i32 {
+    var buf u8[40]
+    for k in 0..40 { buf[k] = k as u8 }
+    if scan(buf, 3) != 8 { return 1 }
+    return 0
+}

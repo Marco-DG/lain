@@ -1,0 +1,25 @@
+// H9 (Documentation's substring study): a guard on an EXACT difference is a fact about its two
+// operands. `n - i >= 4` bounded only the subtraction's result, and the octagon, which cannot hold
+// `r = n - i`, kept no link back to i and n, so the window's reads `s[i + 3]` were E085 and the step
+// `i + 4` E086. `x - y >= c` is itself the octagon fact `y - x <= -c`, and is now stated as one.
+// This is the shape a SIMD scan over a plain `u8[]` needs (tests/vra/bounds/sub_guard_simd_scan_pass.ln),
+// written here with scalar reads so that it runs under the interpreter as well.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func sum_by_four(s u8[]) u32 {
+    var acc u32 = 0
+    var i usize = 0
+    while i <= s.len and s.len - i >= 4 {
+        acc = acc + (s[i] as u32) + (s[i + 1] as u32) + (s[i + 2] as u32) + (s[i + 3] as u32)
+        if acc > 100000 { return acc }
+        i = i + 4
+    }
+    return acc
+}
+
+func main() i32 effects io {
+    var buf u8[10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var short u8[3] = [7, 7, 7]
+    libc_printf("%u %u\n", sum_by_four(buf), sum_by_four(short))
+    return 0
+}

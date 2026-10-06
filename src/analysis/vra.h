@@ -2231,6 +2231,32 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
         else if (gt) oct_add_ub(W,b,c-1); else if (ge) oct_add_ub(W,b,c);
         else if (eq) oct_add_const(W,b,c);
     }
+    // ★ A GUARD ON AN EXACT DIFFERENCE IS A FACT ABOUT ITS TWO OPERANDS (H9, Documentation's
+    // substring study). `hay.len - i >= 16` bounded the subtraction's RESULT, and the octagon,
+    // which cannot hold `r = len - i` (three values), kept no link from r back to i and len: the
+    // `@load(u8x16, hay, i)` behind it was E085 and `i + 16` E086. But `x - y >= c` is itself a
+    // two-variable octagon fact, `y - x <= -c`, so it is stated directly. Only for an EXACT
+    // subtraction (vra_zexact: no wrap in this state; a checked one that could wrap is refused
+    // anyway, and a wrapping `-%` never qualifies), and only when both operands are values the
+    // domain tracks. This is what lets a SIMD scan over a plain `u8[]` prove without bounding
+    // the slice's length in its type.
+    if (ac != bc) {
+        int r = bc ? a : b; int64_t c = bc ? V->cval[b] : V->cval[a];
+        // the predicate read as `r OP c` (with the constant on the left, the relation turns round)
+        bool rlt = bc ? lt : gt, rle = bc ? le : ge, rgt = bc ? gt : lt, rge = bc ? ge : le;
+        IrInstr *rd = (r >= 0 && r < V->nvar) ? V->def[r] : NULL;
+        if (rd && rd->op == IR_SUB && rd->n_operands >= 2 && vra_zexact(V, rd)) {
+            int x = rd->operands[0]->id, y = rd->operands[1]->id;
+            bool tx = x >= 0 && x < V->nvar && !V->cknown[x], ty = y >= 0 && y < V->nvar && !V->cknown[y];
+            if (tx && ty) {
+                if (rlt) vra_add_diff_le(V,W,x,y,c-1);          // x − y ≤ c − 1
+                else if (rle) vra_add_diff_le(V,W,x,y,c);       // x − y ≤ c
+                else if (rgt) vra_add_diff_le(V,W,y,x,-c-1);    // y − x ≤ −c − 1
+                else if (rge) vra_add_diff_le(V,W,y,x,-c);      // y − x ≤ −c
+                else if (eq) { vra_add_diff_le(V,W,x,y,c); vra_add_diff_le(V,W,y,x,-c); }
+            }
+        }
+    }
     else if (lt) vra_add_diff_le(V,W,a,b,-1);   // a − b ≤ −1
     else if (le) vra_add_diff_le(V,W,a,b,0);    // a − b ≤ 0
     else if (gt) vra_add_diff_le(V,W,b,a,-1);   // b − a ≤ −1
