@@ -125,9 +125,13 @@ void _parser_expect(Parser* parser, bool expr, const char *error_message) {
 }
 
 // Returns operator precedence (higher number = higher precedence)
-// Aligned with Lain Spec §8.7:
-//   1. * / %    2. + -    3. << >>    4. < > <= >=
-//   5. == !=    6. &      7. ^        8. |      9. and    10. or
+// Spec 08's table, highest first (the Rust and Zig order, not C's):
+//   * / %   + -   << >>   &   ^   |   < > <= >= in   == !=   and   or
+// The bitwise operators bind TIGHTER than the comparisons, so `a & 1 == 0` is `(a & 1) == 0`. The
+// parser had C's order, & ^ | below the comparisons, against the spec, LANGUAGE §7.7 and this
+// comment's own heading: `a & 1 == 0` was `a & (1 == 0)` and refused as "`&` on a `bool` operand".
+// Every unparenthesised mix of the two was refused that way (a bitwise operator refuses a bool),
+// so moving them changed the meaning of no program that compiled.
 int get_precedence(TokenKind op) {
     switch (op) {
         // * / %  → precedence 10
@@ -158,29 +162,29 @@ int get_precedence(TokenKind op) {
         case TOKEN_SHIFT_RIGHT:
             return 8;
 
-        // <  <=  >  >=  in  → precedence 7
+        // &  (bitwise‐and)  → precedence 7
+        case TOKEN_AMPERSAND:
+            return 7;
+
+        // ^  (bitwise‐xor)  → precedence 6
+        case TOKEN_CARET:
+            return 6;
+
+        // |  (bitwise‐or)   → precedence 5
+        case TOKEN_PIPE:
+            return 5;
+
+        // <  <=  >  >=  in  → precedence 4
         case TOKEN_ANGLE_BRACKET_LEFT:
         case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:
         case TOKEN_ANGLE_BRACKET_RIGHT:
         case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL:
         case TOKEN_KEYWORD_IN:
-            return 7;
-
-        // ==  !=   → precedence 6
-        case TOKEN_EQUAL_EQUAL:
-        case TOKEN_BANG_EQUAL:
-            return 6;
-
-        // &  (bitwise‐and)  → precedence 5
-        case TOKEN_AMPERSAND:
-            return 5;
-
-        // ^  (bitwise‐xor)  → precedence 4
-        case TOKEN_CARET:
             return 4;
 
-        // |  (bitwise‐or)   → precedence 3
-        case TOKEN_PIPE:
+        // ==  !=   → precedence 3
+        case TOKEN_EQUAL_EQUAL:
+        case TOKEN_BANG_EQUAL:
             return 3;
 
         // and  (logical‐and)  → precedence 2

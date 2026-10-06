@@ -85,7 +85,11 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
         // inner operation said Ln 0.
         isize op_line = parser->line, op_col = parser->column;
         parser_advance();  // consume this operator
-        Expr *right = parse_binary_expr(arena, parser, prec + 1);
+        // `in`'s right side, a range's bounds included, binds at the SHIFT level, as Annex A writes
+        // it. That was prec(in) + 1 while `in` sat just below the shifts; with the bitwise
+        // operators now between them, prec + 1 would let a bound swallow `&`, `^` and `|`.
+        int rprec = op == TOKEN_KEYWORD_IN ? get_precedence(TOKEN_SHIFT_LEFT) : prec + 1;
+        Expr *right = parse_binary_expr(arena, parser, rprec);
         // `x in lo..hi` / `x in lo..=hi`: membership in a RANGE (DECIDE-X, I.77). The range binds
         // tighter than the comparison, its bounds as tightly as an additive operand: `x in 0..n + 1`
         // is `x in 0..(n + 1)`. A range is not a value, so it exists only on the right of `in`
@@ -94,7 +98,7 @@ Expr *parse_binary_expr(Arena *arena, Parser *parser, int precedence) {
             bool inclusive = parser->token.kind == TOKEN_DOT_DOT_EQUAL;
             isize r_line = right->line, r_col = right->col;
             parser_advance();
-            Expr *hi = parse_binary_expr(arena, parser, prec + 1);
+            Expr *hi = parse_binary_expr(arena, parser, rprec);
             right = expr_range(arena, right, hi, inclusive);
             right->line = r_line; right->col = r_col;
         }

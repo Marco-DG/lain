@@ -1462,6 +1462,9 @@ out=18446744073709551614
 out=-13
 at=const 8
 ty=Slice_u8 scalar
+### tests/trust/bitwise_precedence_pass.ln
+rc=0
+out=
 ### tests/trust/block_local_var_write_pass.ln
 rc=0
 out=

@@ -1,0 +1,13 @@
+// The bitwise operators bind tighter than the comparisons (spec 08, the Rust and Zig order): `a & 1 == 0`
+// is `(a & 1) == 0`. The parser had C's order, so this program was refused, E012 "`&` on a `bool`
+// operand". Each line is checked against its parenthesised value, with a = 6 (0b110).
+func main() i32 {
+    a u8 = 6
+    if !(a & 1 == 0) { return 1 }
+    if !(a & 2 == 2) { return 2 }
+    if !(a | 1 == 7) { return 3 }
+    if a ^ 3 != 5 { return 4 }
+    if !(a & 4 > 3) { return 5 }
+    if !(a >> 1 & 1 == 1) { return 6 }
+    return 0
+}
