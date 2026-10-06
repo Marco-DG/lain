@@ -557,6 +557,7 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
             if (is_comparison_op(parser->token.kind)) {
                 do {
                     TokenKind op = parser->token.kind;
+                    long op_line = parser->line, op_col = parser->column;   // the clause's anchor
                     parser_advance();
                     Expr *rhs = NULL;
                     // A refinement bound may be NEGATIVE. Without this, `a i32 >= -10 and <= 10`
@@ -592,7 +593,7 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                         parser_error("Expected number or identifier after comparison operator");
                     }
                     { Expr *fc = expr_binary(arena, op, field_expr, rhs);
-                      fc->line = parser->line; fc->col = parser->column;
+                      fc->line = op_line; fc->col = op_col;
                       *fctail = expr_list(arena, fc); }
                     fctail = &(*fctail)->next;
                     if (parser_match(TOKEN_KEYWORD_AND)) {
@@ -841,6 +842,9 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
                 ExprList **ctail = &type_alias_constraints;
                 do {
                     TokenKind op = parser->token.kind;
+                    // The clause is placed at its operator, as a parameter's is. It took the
+                    // position AFTER the bound, often the next declaration's first token (F6).
+                    long op_line = parser->line, op_col = parser->column;
                     parser_advance();
                     Expr *rhs = NULL;
                     // A NEGATIVE bound, folded into the literal as parameters and fields fold it
@@ -854,13 +858,15 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
                         rhs = expr_literal(arena, neg ? -v : v);
                     } else if (!neg && parser_match(TOKEN_IDENTIFIER)) {
                         Id *rhs_id = id(arena, parser->token.length, parser->token.start);
+                        isize r_line = parser->line, r_col = parser->column;
                         parser_advance();
                         rhs = expr_identifier(arena, rhs_id);
+                        rhs->line = r_line; rhs->col = r_col;
                     } else {
                         parser_error("Expected number or identifier in type alias refinement");
                     }
                     Expr *constraint = expr_binary(arena, op, base_type_expr, rhs);
-                    constraint->line = parser->line; constraint->col = parser->column;
+                    constraint->line = op_line; constraint->col = op_col;
                     *ctail = expr_list(arena, constraint);
                     ctail = &(*ctail)->next;
                     if (parser_match(TOKEN_KEYWORD_AND)) {
@@ -1069,6 +1075,7 @@ static Expr *parse_return_constraint_term(Arena *arena, Parser *parser) {
     if (!parser_match(TOKEN_IDENTIFIER))
         parser_error("Expected a number, a parameter or `param.len` in a return constraint");
     Expr *t = expr_identifier(arena, id(arena, parser->token.length, parser->token.start));
+    t->line = parser->line; t->col = parser->column;
     parser_advance();
     if (parser_match(TOKEN_DOT)) {
         parser_advance();
@@ -1076,7 +1083,9 @@ static Expr *parse_return_constraint_term(Arena *arena, Parser *parser) {
             strncmp(parser->token.start, "len", 3) != 0)
             parser_error("Expected `len` after `.` in a return constraint (`a.len`)");
         parser_advance();
-        t = expr_member(arena, t, id(arena, 3, "len"));
+        Expr *m = expr_member(arena, t, id(arena, 3, "len"));
+        m->line = t->line; m->col = t->col;
+        t = m;
     }
     return t;
 }
@@ -1332,6 +1341,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
         
         do {
             TokenKind op = parser->token.kind;
+            long op_line = parser->line, op_col = parser->column;   // the clause's anchor
             parser_advance();  // consume operator
             
             // Parse the RHS: terms joined by `+`/`-` (`a.len`, `a.len - 1`, `n + 1`).
@@ -1344,7 +1354,7 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
             
             // Create binary constraint expression: result op rhs
             Expr *constraint = expr_binary(arena, op, result_expr, rhs);
-            constraint->line = parser->line; constraint->col = parser->column;
+            constraint->line = op_line; constraint->col = op_col;
             *rc_tail = expr_list(arena, constraint);
             rc_tail = &(*rc_tail)->next;
             

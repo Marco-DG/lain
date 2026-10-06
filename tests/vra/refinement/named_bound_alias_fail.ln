@@ -1,0 +1,18 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 17, Col 12: this value is not provably within [3, 2147483647], the refinement of the type it lands in
+// A refinement bound that is a NAME is a sibling (another parameter or field), or an integer
+// module constant, folded to its value; anything else is refused at the declaration (F7).
+// `type T = i32 >= K` dropped the bound: lowering keeps only a literal, so f(-5) compiled and ran
+// (exit 251, --interpret too). K is folded to 3, and -5 is refused at the call as -5 is for `>= 3`.
+
+K i32 = 3
+
+type T = i32 >= K
+
+func f(x T) i32 {
+    return x
+}
+
+func main() i32 {
+    return f(-5)
+}

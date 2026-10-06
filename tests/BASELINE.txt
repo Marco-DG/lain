@@ -1851,6 +1851,11 @@ out=14
 out=15
 at=const 4
 ty=Slice_u8 scalar
+### tests/trust/named_bound_pass.ln
+rc=0
+out=
+at=const 10
+ty=Item struct
 ### tests/trust/neg_width_pass.ln
 rc=0
 out=-5000000000

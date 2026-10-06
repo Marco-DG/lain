@@ -1,0 +1,18 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 12, Col 17: a refinement bound is a number, an integer module constant, or another parameter of the function (`x i32 >= n`); this one is not ('K' is a function).
+// A refinement bound that is a NAME is a sibling (another parameter or field), or an integer
+// module constant, folded to its value; anything else is refused at the declaration (F7).
+// A function as a parameter's bound was accepted at the declaration and refused at each call,
+// E137 "cannot be checked against the callee's parameter refinement".
+
+func K() i32 {
+    return 3
+}
+
+func f(x i32 >= K) i32 {
+    return x
+}
+
+func main() i32 {
+    return f(7)
+}

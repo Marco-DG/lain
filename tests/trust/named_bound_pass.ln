@@ -1,0 +1,47 @@
+// A refinement bound that is a NAME (F7), the allowed side. An integer module constant, typed or
+// not, is folded to its value in each of the four positions (an alias, a parameter, a field, a
+// return), and a sibling stays the relational bound it was. A return `i32 >= K` refused even
+// `return 7` (E086: the bound reached lowering as nothing it could prove against), and a field
+// `x i32 >= K` was E132 "names another field".
+K i32 = 3
+M = 10
+
+type Small = i32 >= K and <= M
+
+type Item {
+    x i32 >= K
+    cap usize
+    len usize <= cap
+}
+
+func at_least(x i32 >= K) i32 {
+    return x
+}
+
+func below_m(x i32 <= M - 1) i32 {
+    return x
+}
+
+func between(n i32, x i32 >= n) i32 {
+    return x
+}
+
+func seven() i32 >= K {
+    return 7
+}
+
+func id(x Small) i32 {
+    return x
+}
+
+func main() i32 {
+    if id(5) != 5 { return 1 }
+    if at_least(3) != 3 { return 2 }
+    if below_m(9) != 9 { return 3 }
+    if between(2, 5) != 5 { return 4 }
+    if seven() != 7 { return 5 }
+    it = Item(4, 8, 2)
+    if it.x != 4 { return 6 }
+    if it.len != 2 { return 7 }
+    return 0
+}

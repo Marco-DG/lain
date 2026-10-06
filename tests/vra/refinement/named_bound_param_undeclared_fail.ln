@@ -1,0 +1,14 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 8, Col 17: use of undeclared identifier 'K' in a refinement bound: a bound is a number, an integer module constant, or another parameter of the function (`x i32 >= n`).
+// A refinement bound that is a NAME is a sibling (another parameter or field), or an integer
+// module constant, folded to its value; anything else is refused at the declaration (F7).
+// An undeclared name in a parameter's bound reached the code generator: E100 "not supported by
+// the code generator yet (undeclared-identifier)".
+
+func f(x i32 >= K) i32 {
+    return x
+}
+
+func main() i32 {
+    return f(7)
+}

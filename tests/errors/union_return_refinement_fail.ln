@@ -1,5 +1,5 @@
 // EXPECT: [E012]
-// EXPECT-TEXT: a refinement clause constrains an integer, and this function returns 'u8 | NotFound'
+// EXPECT-TEXT: Error Ln 6, Col 31: a refinement clause constrains an integer, and this function returns 'u8 | NotFound'
 // I.94: `u8 | NotFound < 200` parsed the clause onto the UNION, and a return refinement is asserted
 // only on an integer value, so the clause was silently ignored. E064 pointed users at this spelling.
 // The way to refine the value inside a union is a refined alias, which the message names.

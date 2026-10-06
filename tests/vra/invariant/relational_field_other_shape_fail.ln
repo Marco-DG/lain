@@ -1,4 +1,5 @@
 // EXPECT: [E132]
+// EXPECT-TEXT: Error Ln 8, Col 13: field 'n' of struct 'T' has a refinement that names another field.
 // Only the two ENFORCED shapes are admitted — `f CMP g` for an integer field g, and
 // `f CMP g.len` for a slice or array field g. Anything else still names something nothing
 // checks, and stays refused.

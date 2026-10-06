@@ -1,0 +1,14 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 8, Col 14: use of undeclared identifier 'K' in a refinement bound: a bound is a number, an integer module constant, or another field of the struct (`pos usize <= len`).
+// A refinement bound that is a NAME is a sibling (another parameter or field), or an integer
+// module constant, folded to its value; anything else is refused at the declaration (F7).
+// An undeclared name in a field's bound was E132 "names another field".
+
+type S {
+    x i32 >= K
+}
+
+func main() i32 {
+    s = S(7)
+    return s.x
+}

@@ -1,0 +1,15 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 9, Col 17: a refinement bound is a number, an integer module constant, or a parameter of the function (`usize <= n`); this one is not ('K' has type 'i32[2]').
+// A refinement bound that is a NAME is a sibling (another parameter or field), or an integer
+// module constant, folded to its value; anything else is refused at the declaration (F7).
+// A table as a return's bound was E086 at every `return`, whatever its value.
+
+K = [1, 2]
+
+func f() i32 >= K {
+    return 7
+}
+
+func main() i32 {
+    return f()
+}

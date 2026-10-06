@@ -1,0 +1,15 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 7, Col 17: use of undeclared identifier 'K' in a refinement bound: a bound is a number or an integer module constant.
+// A refinement bound that is a NAME is a sibling (another parameter or field), or an integer
+// module constant, folded to its value; anything else is refused at the declaration (F7).
+// An undeclared name in an alias's bound was accepted and the bound dropped.
+
+type T = i32 >= K
+
+func f(x T) i32 {
+    return x
+}
+
+func main() i32 {
+    return f(7)
+}

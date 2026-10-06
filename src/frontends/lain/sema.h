@@ -3769,6 +3769,152 @@ static void sema_fold_field_lengths(DeclList *decls) {
 }
 
 
+// ★ A REFINEMENT BOUND THAT IS A NAME (F7): one rule for an alias, a parameter, a field and a
+// return. A bound is a number; a SIBLING, the relational form (another parameter of the function,
+// `x i32 >= n`; a parameter, in a return refinement; another field of the struct,
+// `pos usize <= src.len`); or an integer module CONSTANT, folded here to the literal it names, so
+// each consumer reads the literal bound it already enforces. Lowering keeps only a literal bound,
+// and a name reached it as nothing: `type T = i32 >= K` accepted -5 (exit 251, --interpret too), a
+// return `i32 >= K` refused even `return 7` (E086), a field `x i32 >= K` was E132 "names another
+// field", and an undeclared or non-integer name was refused late (the code generator, or E137 at
+// a call) or not at all. Runs once every module constant has its type (pass 0 below), before any
+// function or construction reads a bound.
+
+// The first name in `e` that is not an integer module constant; *undecl when it names nothing.
+static Expr *sema_bound_bad_name(Expr *e, bool *undecl, int depth) {
+    if (!e || depth > 16) return NULL;
+    switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            Id *n = e->as.identifier_expr.id;
+            if (!n || n->length >= 200) return e;
+            char nb[208]; snprintf(nb, sizeof nb, "%.*s", (int)n->length, n->name);
+            Symbol *sym = sema_lookup(nb);
+            if (!sym || !sym->decl) { *undecl = true; return e; }
+            Decl *d = sym->decl;
+            if (d->kind != DECL_VARIABLE || d->as.variable_decl.is_mutable || !sym->is_global) return e;
+            Type *t = d->as.variable_decl.type;
+            while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+            Type *ta = (t && t->kind == TYPE_SIMPLE) ? resolve_type_alias(t) : NULL;
+            return is_integer_type(ta ? ta : t) ? NULL : e;
+        }
+        case EXPR_UNARY:  return sema_bound_bad_name(e->as.unary_expr.right, undecl, depth + 1);
+        case EXPR_BINARY: {
+            Expr *l = sema_bound_bad_name(e->as.binary_expr.left, undecl, depth + 1);
+            return l ? l : sema_bound_bad_name(e->as.binary_expr.right, undecl, depth + 1);
+        }
+        case EXPR_CAST:   return sema_bound_bad_name(e->as.cast_expr.expr, undecl, depth + 1);
+        case EXPR_LITERAL: case EXPR_CHAR: return NULL;
+        default: return e;                          // `T.len` of a table, a call: not a constant
+    }
+}
+
+// pos: 0 an alias, 1 a parameter, 2 a return, 3 a field. sib/sib2: the names a relational bound
+// may use. sd/fd: the struct and field, for a field.
+static void sema_fold_bound(Expr *clause, int pos, DeclList *sib, DeclList *sib2, Decl *sd, Decl *fd) {
+    if (!clause || clause->kind != EXPR_BINARY) return;
+    Expr *rhs = clause->as.binary_expr.right;
+    if (!rhs || rhs->kind == EXPR_LITERAL) return;
+    static const char *const what_is[4] = {
+        "a number or an integer module constant",
+        "a number, an integer module constant, or another parameter of the function (`x i32 >= n`)",
+        "a number, an integer module constant, or a parameter of the function (`usize <= n`)",
+        "a number, an integer module constant, or another field of the struct (`pos usize <= len`)" };
+    Id *sid = sd ? sd->as.struct_decl.name : NULL;
+    Id *fnm = fd ? fd->as.variable_decl.name : NULL;
+    if (sema_expr_names_param(rhs, sib, 0) || sema_expr_names_param(rhs, sib2, 0)) {
+        if (pos != 3 || sema_field_relation_ok(sd, fd, clause)) return;     // relational: kept
+        // ★ A FIELD INVARIANT THE COMPILER IGNORES IS AN UNPAID ASSUME. A relation to another field
+        // is enforced in the two shapes a struct needs, `field CMP other` (two integer fields:
+        // `len usize <= cap`) and `field CMP other.len` (a POSITION: `pos usize <= src.len`), CMP
+        // one of < <= > >=: asserted at construction and at every write to either field, assumed
+        // at reads, and a `var` reference to either field is refused (ir_field_relations in
+        // lower.h). Any other shape names something nothing checks, and is refused.
+        long l = (long)(clause->line ? clause->line : fd->line), c = (long)(clause->line ? clause->col : fd->col);
+        fprintf(stderr,
+            "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' has a refinement "
+            "that names another field.\n"
+            "       Relational field invariants are not implemented, and this one would be\n"
+            "       silently ignored: it is neither checked when the struct is built nor\n"
+            "       usable as a fact afterwards. Refusing it rather than pretending.\n"
+            "       A refinement against a LITERAL (`%.*s usize <= 4096`) is supported.\n",
+            l, c, (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+            (int)(sid ? sid->length : 0), sid ? sid->name : "",
+            (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "");
+        diagnostic_show_line(l, c);
+        exit(1);
+    }
+    bool undecl = false;
+    Expr *bad = sema_bound_bad_name(rhs, &undecl, 0);
+    long l = (long)(bad && bad->line ? bad->line : clause->line);
+    long c = (long)(bad && bad->line ? bad->col : clause->col);
+    if (bad && undecl) {
+        Id *n = bad->as.identifier_expr.id;
+        fprintf(stderr, "[E106] Error Ln %li, Col %li: use of undeclared identifier '%.*s' in a refinement "
+                "bound: a bound is %s.\n", l, c, (int)n->length, n->name, what_is[pos]);
+        diagnostic_show_line(l, c);
+        exit(1);
+    }
+    bool lay = false; __int128 v = 0;
+    if (!bad) {
+        sema_bind_const_names(rhs, 0);
+        if (!(sa_is_const(rhs, &lay) && !lay && sa_eval(rhs, &v) && v >= INT64_MIN && v <= INT64_MAX))
+            bad = rhs;
+    }
+    if (bad) {
+        char what[384] = "not a constant";   // a 207-byte name and a 127-byte type fit
+        if (bad->kind == EXPR_IDENTIFIER) {
+            Id *n = bad->as.identifier_expr.id;
+            char nb[208]; snprintf(nb, sizeof nb, "%.*s", (int)n->length, n->name);
+            Symbol *sym = sema_lookup(nb);
+            Decl *d = sym ? sym->decl : NULL;
+            if (d && (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION))
+                snprintf(what, sizeof what, "'%s' is a function", nb);
+            else if (d && d->kind == DECL_VARIABLE && d->as.variable_decl.type) {
+                char tb[128]; type_describe(d->as.variable_decl.type, tb, sizeof tb);
+                snprintf(what, sizeof what, "'%s' has type '%s'", nb, tb);
+            } else snprintf(what, sizeof what, "'%s' is not a value", nb);
+        }
+        if (pos == 3)
+            fprintf(stderr, "[E132] Error Ln %li, Col %li: field '%.*s' of struct '%.*s' is bounded by "
+                    "something other than an integer constant (%s), so the bound would be silently "
+                    "ignored: a bound is %s.\n",
+                    l, c, (int)(fnm ? fnm->length : 0), fnm ? fnm->name : "",
+                    (int)(sid ? sid->length : 0), sid ? sid->name : "", what, what_is[pos]);
+        else
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: a refinement bound is %s; this one is not "
+                    "(%s).\n", l, c, what_is[pos], what);
+        diagnostic_show_line(l, c);
+        exit(1);
+    }
+    Expr *lit = expr_literal(sema_arena, (long long)v);
+    lit->line = rhs->line; lit->col = rhs->col;
+    clause->as.binary_expr.right = lit;
+}
+
+static void sema_fold_refinement_bounds(DeclList *decls) {
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        Decl *d = dl->decl;
+        if (!d) continue;
+        if (d->kind == DECL_TYPE_ALIAS) {
+            for (ExprList *c = d->as.type_alias_decl.constraints; c; c = c->next)
+                sema_fold_bound(c->expr, 0, NULL, NULL, NULL, NULL);
+        } else if (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION) {
+            DeclList *ps = d->as.function_decl.params;
+            for (DeclList *p = ps; p; p = p->next)
+                if (p->decl && p->decl->kind == DECL_VARIABLE)
+                    for (ExprList *c = p->decl->as.variable_decl.constraints; c; c = c->next)
+                        sema_fold_bound(c->expr, 1, ps, NULL, NULL, NULL);
+            for (ExprList *c = d->as.function_decl.return_constraints; c; c = c->next)
+                sema_fold_bound(c->expr, 2, ps, NULL, NULL, NULL);
+        } else if (d->kind == DECL_STRUCT) {
+            for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
+                if (f->decl && f->decl->kind == DECL_VARIABLE)
+                    for (ExprList *c = f->decl->as.variable_decl.constraints; c; c = c->next)
+                        sema_fold_bound(c->expr, 3, d->as.struct_decl.fields, d->as.struct_decl.type_params, d, f->decl);
+        }
+    }
+}
+
 static void sema_resolve_module(DeclList *decls, const char *module_path,
                                 Arena *arena) {
     sema_arena = arena;
@@ -3839,6 +3985,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // a constant APPENDED to the list after pass 0 (none is today) is still processed there.
     DeclList *sema_consts_end = NULL;
     for (int sema_pass = 0; sema_pass < 2; sema_pass++) {
+    if (sema_pass == 1) sema_fold_refinement_bounds(decls);   // every constant is typed now (F7)
     bool sema_past_consts = false;
     for (DeclList *dl = decls; dl; dl = dl->next) {
         Decl *d = dl->decl;
