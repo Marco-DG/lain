@@ -280,6 +280,16 @@ static long long parse_numeric_literal_at(isize line, isize col, const char *sta
             return bits;
         }
     }
+    // A decimal literal has no leading zero (Annex A: `nonzero-digit {digit} | "0"`). `010` was
+    // read as 10, where C reads 8: a program ported from C, or a reader who knows C, got another
+    // number with nothing said. Octal is spelled `0o10`. A float (`010.5`) is not read here.
+    if (j > 1 && buf[0] == '0') {
+        long k = 0; while (k < j - 1 && buf[k] == '0') k++;
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: a decimal literal has no leading zero: `%.*s` "
+                "would be octal in C. Write `%s`, or `0o%s` for octal.\n", (long)line, (long)col,
+                (int)length, start, buf + k, buf + k);
+        exit(1);
+    }
     errno = 0;
     long long value = strtoll(buf, NULL, 10);
     if (truncated || errno == ERANGE) {

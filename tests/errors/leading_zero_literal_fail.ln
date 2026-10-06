@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 8, Col 9: a decimal literal has no leading zero: `010` would be octal in C. Write `10`, or `0o10` for octal.
+// A decimal literal has no leading zero (Annex A). `010` compiled as 10, where C reads 8, so a
+// program ported from C, or a reader who knows C, got another number with nothing said
+// (Documentation's grammar audit). Octal is `0o10`.
+func main() i32 {
+    // a decimal with a leading zero
+    x = 010
+    return x
+}

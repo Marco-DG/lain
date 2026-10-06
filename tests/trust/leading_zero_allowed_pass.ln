@@ -1,0 +1,15 @@
+// The allowed side of the leading-zero rule: `0` itself, octal spelled `0o`, hex and binary, and a
+// float whose integer part has a leading zero (`010.5`, as in Python: no octal float to confuse).
+func main() i32 {
+    o = 0o10
+    z = 0
+    h = 0x10
+    b = 0b101
+    if o != 8 { return 1 }
+    if z != 0 { return 2 }
+    if h != 16 { return 3 }
+    if b != 5 { return 4 }
+    f = 010.5
+    if f < 10.0 or f > 11.0 { return 5 }
+    return 0
+}

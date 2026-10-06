@@ -1722,6 +1722,9 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/leading_zero_allowed_pass.ln
+rc=0
+out=
 ### tests/trust/list_membership_pass.ln
 rc=0
 out=1011
