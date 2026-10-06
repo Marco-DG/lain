@@ -13,8 +13,6 @@
 //   // ... use buf as *u8 ...
 //   mem_free(mov buf)
 
-c_include "<stdlib.h>"
-
 // ── Raw C bindings ────────────────────────────────────────────────────────────
 
 // Raw C bindings use C's exact types — malloc/calloc/realloc return `void*`,

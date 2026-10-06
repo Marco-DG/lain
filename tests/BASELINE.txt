@@ -1348,10 +1348,6 @@ at=nonnull 10
 at=pure 6
 ty=BumpAlloc struct
 ty=Slice_u8 scalar
-### tests/stdlib/c_include_smoke_pass.ln
-rc=0
-out=Hello from c_include!
-ty=Slice_u8 scalar
 ### tests/stdlib/extern_smoke_pass.ln
 rc=0
 out=Testing extern keyword...

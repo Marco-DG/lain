@@ -1,7 +1,4 @@
 
-c_include "<stdio.h>"
-c_include "<stdlib.h>"
-
 // Opaque type for C's FILE struct
 extern type FILE
 

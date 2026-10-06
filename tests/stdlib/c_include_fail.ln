@@ -1,0 +1,14 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 8, Col 1: `c_include` is not supported: an `extern` declaration carries its own C prototype, which the emitted C declares; a header's declarations would contradict it (spec 17). Remove the line.
+// `c_include` was parsed and dropped: no header reached the emitted C, and one that does not
+// exist was accepted. Emitting it is wrong too, because a header's prototypes contradict the
+// ones the emitted C declares for each `extern`. It was the smoke test c_include_smoke_pass.ln,
+// which printed through `libc_puts` with or without the line.
+
+c_include "<stdio.h>"
+
+extern func libc_puts(s *u8) i32 effects io
+
+func main() effects io {
+    libc_puts("Hello from c_include!")
+}

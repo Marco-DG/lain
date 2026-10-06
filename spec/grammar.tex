@@ -63,8 +63,8 @@ keyword ::=
   | "true"      | "try"      | "type"     | "unsafe"   | "use"
   | "var"       | "while"
 
-% nil and proc are reserved and appear in no production: they were removed, and stay
-% keywords so that using one is diagnosed with its replacement.
+% c_include, nil and proc are reserved and appear in no production: each was removed,
+% and stays a keyword so that using it is diagnosed with the reason.
 \end{grammar}
 
 \subsection*{§5.6 Identifiers}
@@ -158,7 +158,6 @@ program               ::= { top-level-declaration | end }
 
 top-level-declaration ::=
     import-declaration
-  | c-include-declaration
   | { attribute } type-declaration
   | { attribute } function-declaration
   | { attribute } extern-declaration
@@ -168,7 +167,6 @@ top-level-declaration ::=
 import-declaration    ::= "import" qualified-identifier
                           [ "." "{" identifier { "," identifier } "}" ]
                           [ "as" identifier ]
-c-include-declaration ::= "c_include" string-literal
 constant-declaration  ::= identifier [ type ] "=" expression     % compile-time constant
 module-assertion      ::= "assert" expression             % checked at compile time
 

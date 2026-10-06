@@ -202,7 +202,6 @@ Decl *   parse_extern_func_decl(Arena *arena, Parser *parser);
 Decl *   parse_extern_type_decl(Arena *arena, Parser *parser); // New
 Decl *   parse_type_decl(Arena *arena, Parser *parser);
 Decl *   parse_import_decl(Arena *arena, Parser *parser);
-Decl *   parse_c_include_decl(Arena *arena, Parser *parser);
 
 // helper for type fields (struct vs enum)
 DeclList* parse_type_fields(Arena *arena, Parser *parser, bool *is_enum, Variant **adt_variants);
@@ -284,11 +283,14 @@ Decl *parse_decl(Arena* arena, Parser* parser)
         goto done;
     }
 
-    if (parser_match(TOKEN_KEYWORD_C_INCLUDE))
-    {
-        parser_advance();
-        d = parse_c_include_decl(arena, parser);
-        goto done;
+    // ★ `c_include` IS REFUSED. It was parsed and dropped: no header reached the emitted C, so
+    // `c_include "<stdio.h>"` meant nothing, and emitting it is wrong too, because a header's
+    // prototypes contradict the ones the emitted C declares for each `extern` (13 of 14 programs
+    // stopped compiling when it was tried).
+    if (parser_match(TOKEN_KEYWORD_C_INCLUDE)) {
+        parser_error("`c_include` is not supported: an `extern` declaration carries its own C "
+                     "prototype, which the emitted C declares; a header's declarations would "
+                     "contradict it (spec 17). Remove the line.");
     }
 
     if (parser_match(TOKEN_KEYWORD_TYPE))
@@ -1568,30 +1570,6 @@ Decl *parse_import_decl(Arena* arena, Parser* parser) {
         parser_advance();
     }
     return d;
-}
-
-Decl *parse_c_include_decl(Arena *arena, Parser *parser) {
-    parser_expect(TOKEN_STRING_LITERAL, "Expected string literal after c_include");
-    
-    // Strip quotes to get the content
-    // e.g. "stdio.h" -> stdio.h
-    //      "<stdio.h>" -> <stdio.h>
-    
-    isize len = parser->token.length;
-    const char* raw = parser->token.start;
-    
-    char* path = arena_push_many(arena, char, len - 1); // len-2 chars + 1 null terminator
-    // Skip first quote, copy len-2 chars
-    if (len >= 2) {
-        memcpy(path, raw + 1, len - 2);
-        path[len - 2] = '\0';
-    } else {
-        path[0] = '\0'; // Should not happen for valid string literal
-    }
-
-    parser_advance(); // consume string literal
-    
-    return decl_c_include(arena, path); 
 }
 
 #endif // PARSER_DECL_H

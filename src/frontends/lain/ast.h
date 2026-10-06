@@ -226,7 +226,6 @@ typedef enum {
     DECL_ENUM,
     DECL_IMPORT,
     DECL_EVAL_IMPORT,
-    DECL_C_INCLUDE,
     DECL_DESTRUCT,
     DECL_EXTERN_TYPE,
     DECL_TYPE_ALIAS, // New: type Name = Expr
@@ -350,10 +349,6 @@ typedef struct {
     IdList *selected;  // `import foo.{a, b}` → [a, b] brought unqualified; NULL = whole (qualified only)
 } DeclImport;
 
-typedef struct {
-    const char *path;
-} DeclCInclude;
-
 // Attribute support (Q-017): [name] or [name(args)] before declarations
 typedef struct Attr {
     Id *name;             // attribute name (e.g., "fast_math", "private")
@@ -369,7 +364,6 @@ typedef struct Decl {
         DeclEnum        enum_decl;
         DeclFunction    function_decl;
         DeclImport      import_decl;
-        DeclCInclude    c_include_decl;
         DeclDestruct    destruct_decl;
         DeclExternType  extern_type_decl;
         DeclTypeAlias   type_alias_decl;
@@ -1180,16 +1174,6 @@ Decl* decl_destruct(Arena* arena, IdList* names, Type* type) {
     d->kind = DECL_DESTRUCT;
     d->as.destruct_decl.names = names;
     d->as.destruct_decl.type = type;
-    return d;
-}
-
-Decl* decl_c_include(Arena* arena, const char* path) {
-    Decl* d = arena_push_aligned(arena, Decl);
-    d->attributes = NULL;
-    d->is_private = false;
-    d->defining_module = NULL;
-    d->kind = DECL_C_INCLUDE;
-    d->as.c_include_decl.path = path;
     return d;
 }
 

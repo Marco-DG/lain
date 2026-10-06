@@ -50,17 +50,13 @@ this specification.
 functions.  It is the foundation on which all other standard library
 modules that require system calls are built.
 
-\subsection{Required C headers}
+\subsection{C headers}
 \label{sec:stdlib.c.headers}
 
 \pnum
-\lain{std.c} emits the following C include directives into the translation
-output:
-
-\begin{laincode}
-c_include "<stdio.h>"
-c_include "<stdlib.h>"
-\end{laincode}
+\lain{std.c} includes no C header.  Each binding is an \lain{extern} declaration,
+and the translation output declares it with the prototype that declaration states
+(\S\,\ref{sec:interop.cinclude}).
 
 \subsection{Opaque types}
 \label{sec:stdlib.c.types}

@@ -687,7 +687,6 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
         break;
       }
   
-      case DECL_C_INCLUDE:
       case DECL_IMPORT:
       case DECL_EVAL_IMPORT:
       case DECL_DESTRUCT:

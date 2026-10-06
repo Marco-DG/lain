@@ -103,7 +103,7 @@ The following identifiers are reserved keywords and cannot be used as variable o
 | `import` | Module import |
 | `extern` | External (C) declaration |
 | `unsafe` | Unsafe block |
-| `c_include` | Include a C header file |
+| `c_include` | Reserved: refused (`[E100]`); an `extern` declares the C function itself (§10.1) |
 | `defer` | Defer execution until end of scope |
 | `comptime` | Compile-time branch — only `comptime if` is implemented (§20) |
 | `assert` | A fact the compiler must prove where it is written (§6.8) |
@@ -2808,9 +2808,6 @@ Lain ships with a minimal standard library:
 
 **`std/c.ln`** — Core C bindings:
 ```lain
-c_include "<stdio.h>"
-c_include "<stdlib.h>"
-
 extern type FILE
 
 extern func printf(fmt *u8, ...) int effects io
@@ -2949,14 +2946,21 @@ func helper() int { return 42 }      // OK: defined after use
 
 Lain compiles to C99 and provides first-class mechanisms for interfacing with C code.
 
-### 10.1 `c_include` Directive
+### 10.1 C Headers
 
-Directly includes a C header file in the generated output:
+A Lain program includes no C header. Each C function it calls is declared with `extern`
+(§10.2), and the generated C declares that function with the prototype the `extern` states, in
+Lain's types. A header would declare the same function again in C's types, and the C compiler
+refuses the pair when they differ: `extern func puts(s *u8) int` declares `uint8_t *` where
+`<stdio.h>` declares `const char *`. The rest of a header, its macros and constants, cannot be
+named from Lain. So `c_include` is a reserved word, and a declaration is refused:
 
 ```lain
-c_include "<stdio.h>"
-c_include "<stdlib.h>"
-c_include "my_header.h"
+c_include "<stdio.h>"      // ERROR [E100]
+
+func main() i32 {
+    return 0
+}
 ```
 
 ### 10.2 Extern Functions
@@ -4255,7 +4259,7 @@ func scan_until(src u8[:0], delim u8) usize {
 | `and` | Logical AND operator |
 | `as` | Type cast operator (§7.6) |
 | `break` | Loop exit |
-| `c_include` | C header inclusion |
+| `c_include` | Reserved: refused (`[E100]`, §10.1) |
 | `case` | Pattern matching (§6.5) |
 | `comptime` | Compile-time branch, `comptime if` (§20) |
 | `continue` | Loop iteration skip |

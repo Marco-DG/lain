@@ -123,7 +123,6 @@ Heap allocation is performed exclusively through C interop
 \texttt{malloc}/\texttt{free} pair as an \lain{extern func} with its row:
 
 \begin{laincode}
-c_include "<stdlib.h>"
 extern func malloc(size usize) mov *void effects io, alloc
 extern func free(ptr mov *void) effects io
 \end{laincode}

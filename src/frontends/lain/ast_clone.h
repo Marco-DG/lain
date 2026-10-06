@@ -351,9 +351,6 @@ Decl *clone_decl(Arena *arena, Decl *d) {
         case DECL_EVAL_IMPORT:
             new_d->as.import_decl.module_name = clone_id(arena, d->as.import_decl.module_name);
             break;
-        case DECL_C_INCLUDE:
-            // Constant string pointer clone semantics
-            break;
         case DECL_DESTRUCT:
             new_d->as.destruct_decl.names = clone_id_list(arena, d->as.destruct_decl.names);
             new_d->as.destruct_decl.type = clone_type(arena, d->as.destruct_decl.type);

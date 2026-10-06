@@ -8,30 +8,38 @@
 
 \pnum
 Lain compiles to C99 and provides direct, zero-overhead interoperability
-with C libraries through three mechanisms:
+with C libraries through two mechanisms:
 \begin{enumerate}
-  \item \lain{c\_include} --- injects C \texttt{\#include} directives;
-  \item \lain{extern} declarations --- declares C functions for use in Lain;
+  \item \lain{extern} declarations --- declare C functions and opaque C types for
+        use in Lain;
   \item type mapping --- Lain types map to their C99 counterparts.
 \end{enumerate}
 
-\section{The \texttt{c\_include} declaration}
+\section{C headers}
 \label{sec:interop.cinclude}
 \index{c\_include}
 
 \pnum
-\lain{c\_include "header.h"} causes the compiler to emit a
-\texttt{\#include} directive in the generated C code.  The string content
-is emitted verbatim.
-
-\begin{laincode}
-c_include "<stdio.h>"
-c_include "<stdlib.h>"
-\end{laincode}
+A Lain program includes no C header.  Each C function it calls is declared by an
+\lain{extern} declaration (\S\,\ref{sec:interop.extern}), and the translation output
+declares that function with the prototype the \lain{extern} states, in Lain's types.
+A header would declare the same function again, in C's types, and a C compiler
+refuses the pair when they differ: an \lain{extern} taking \lain{*u8} declares
+\texttt{uint8\_t *} where \texttt{<stdio.h>} declares \texttt{const char *}.  The rest
+of a header, its macros and constants, cannot be named from Lain.
 
 \begin{constraint}
-  \lain{c\_include} shall appear only at module top level.
+  \lain{c\_include} is a reserved word.  A \lain{c\_include} declaration is
+  \illformed{}~(\diagcode{E100}).
 \end{constraint}
+
+\begin{laincode}
+c_include "<stdio.h>"      // ERROR [E100]
+
+func main() i32 {
+    return 0
+}
+\end{laincode}
 
 \section{Extern function declarations}
 \label{sec:interop.extern}
@@ -171,7 +179,6 @@ To pass a Lain string to a C function expecting \texttt{char*}, the
 \lain{.data} pointer must be extracted explicitly:
 
 \begin{laincode}
-c_include "<stdio.h>"
 extern func puts(s *u8) int effects io
 
 func main() int effects io {
