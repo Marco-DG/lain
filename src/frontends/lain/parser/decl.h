@@ -818,11 +818,16 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
                     TokenKind op = parser->token.kind;
                     parser_advance();
                     Expr *rhs = NULL;
+                    // A NEGATIVE bound, folded into the literal as parameters and fields fold it
+                    // (above): `type T = i32 >= -10` was refused ("Expected number or identifier"),
+                    // so an alias could not name half of a signed type's range.
+                    bool neg = false;
+                    if (parser_match(TOKEN_MINUS)) { neg = true; parser_advance(); }
                     if (parser_match(TOKEN_NUMBER)) {
                         long long v = parse_numeric_literal(parser->token.start, parser->token.length);
                         parser_advance();
-                        rhs = expr_literal(arena, v);
-                    } else if (parser_match(TOKEN_IDENTIFIER)) {
+                        rhs = expr_literal(arena, neg ? -v : v);
+                    } else if (!neg && parser_match(TOKEN_IDENTIFIER)) {
                         Id *rhs_id = id(arena, parser->token.length, parser->token.start);
                         parser_advance();
                         rhs = expr_identifier(arena, rhs_id);

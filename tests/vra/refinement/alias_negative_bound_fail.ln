@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 11, Col 12: this value is not provably within [-10, 10]
+// A negative bound in an alias refinement is enforced, not only parsed: -11 is outside [-10, 10].
+// The alias was refused outright before (E100 "Expected number or identifier in type alias
+// refinement"), so this program failed for the wrong reason.
+type T = i32 >= -10 and <= 10
+func f(x T) i32 {
+    return x
+}
+func main() i32 {
+    return f(-11)
+}

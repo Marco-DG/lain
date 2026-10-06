@@ -1,0 +1,12 @@
+// A type alias's refinement may have a NEGATIVE bound, as a parameter's or a field's may:
+// `type T = i32 >= -10 and <= 10` was refused ("Expected number or identifier in type alias
+// refinement"), so an alias could not name half of a signed type's range.
+type T = i32 >= -10 and <= 10
+func f(x T) i32 {
+    return x + 100
+}
+func main() i32 {
+    if f(-10) != 90 { return 1 }
+    if f(10) != 110 { return 2 }
+    return 0
+}

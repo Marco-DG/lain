@@ -1418,6 +1418,10 @@ at=access 4
 at=nonnull 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/alias_negative_bound_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/bare_variant_allowed_pass.ln
 rc=0
 out=red blue 10 20 nf 9 
