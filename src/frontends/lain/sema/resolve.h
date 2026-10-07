@@ -1302,6 +1302,19 @@ void sema_resolve_stmt(Stmt *s) {
   case STMT_ASSIGN: {
     Expr *lhs = s->as.assign_stmt.target;
     Expr *rhs = s->as.assign_stmt.expr;
+    // ★ THE LEFT SIDE OF `=` IS A PLACE. `f() = 3` and `5 = 3` reached the code generator, which
+    // said E100 "not supported by the code generator yet (unlowered-lvalue)": a value has nowhere
+    // to be stored. A field or an element of one (`get(b)[0] = 9`) is a place, through it.
+    if (lhs && lhs->kind != EXPR_IDENTIFIER && lhs->kind != EXPR_MEMBER &&
+        lhs->kind != EXPR_INDEX && lhs->kind != EXPR_DEREF) {
+      sema_resolve_expr(lhs);   // what it is wrong with first (`p.x() = 5`: a field called, E128)
+      sema_infer_expr(lhs);
+      long ll = (long)(lhs->line ? lhs->line : s->line), lc = (long)(lhs->line ? lhs->col : s->col);
+      fprintf(stderr, "[E100] Error Ln %li, Col %li: the left side of `=` must be a variable, a field "
+              "or an element, where a value can be stored.\n", ll, lc);
+      diagnostic_show_line(ll, lc);
+      exit(1);
+    }
 
     // Implicit immutable declaration: bare `name = expr` where `name`
     // is not yet declared creates an immutable binding (type inferred).

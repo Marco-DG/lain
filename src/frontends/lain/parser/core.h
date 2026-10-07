@@ -21,6 +21,39 @@ int     get_precedence(TokenKind op);
 // helper to parse dotted paths in calls/use
 Expr *parse_path_expr(Arena *arena, Parser *parser);
 
+// ★ A PARSE ERROR NAMES ITS FILE (spec 04: a diagnostic includes the source file name). A
+// parse error printed only "Ln, Col": in a program that imports, nothing said which file, and
+// the source line and caret that sema's diagnostics show were missing. The loader sets these
+// before each file is parsed (module.h).
+static const char *parser_file = NULL;
+static const char *parser_src  = NULL;
+static void parser_show_line(long line, long col) {
+    if (!parser_file || !parser_src || line <= 0) return;
+    const char *p = parser_src; long cur = 1;
+    while (*p && cur < line) { if (*p == '\n') cur++; p++; }
+    if (!*p && cur < line) { fprintf(stderr, "  --> %s:%li:%li\n", parser_file, line, col); return; }
+    const char *ls = p, *le = p;
+    while (*le && *le != '\n') le++;
+    int w = 1; { long t = line; while (t >= 10) { w++; t /= 10; } }
+    fprintf(stderr, "  --> %s:%li:%li\n", parser_file, line, col);
+    fprintf(stderr, " %*s |\n", w, "");
+    fprintf(stderr, " %li | %.*s\n", line, (int)(le - ls), ls);
+    fprintf(stderr, " %*s | ", w, "");
+    for (long i = 0; i < (col > 0 ? col - 1 : 0); i++) fputc(i < le - ls && ls[i] == '\t' ? '\t' : ' ', stderr);
+    fputs("^\n", stderr);
+}
+// The current token as the source spells it (`=`, `9`, `x`), or in words where it has no
+// spelling: a message said "TOKEN_MINUS" and "TOKEN_EQUAL (23)", the compiler's names.
+static const char *parser_token_desc(const Token *t, char *buf, size_t cap) {
+    if (t->kind == TOKEN_EOL || t->kind == TOKEN_NEWLINE) return "end of line";
+    if (t->kind == TOKEN_EOF) return "end of file";
+    if (!t->start || t->length <= 0) return "a token";
+    int n = (int)t->length > 60 ? 60 : (int)t->length;
+    if (t->kind == TOKEN_STRING_LITERAL) snprintf(buf, cap, "the string \"%.*s\"", n, t->start);
+    else snprintf(buf, cap, "`%.*s`", n, t->start);
+    return buf;
+}
+
 // convenient macros
 #define parser_match(k)       (parser->token.kind == k)
 #define parser_error(msg)     _parser_error(parser, msg)
@@ -96,6 +129,7 @@ Token _parser_advance(Parser* parser) {
             fprintf(stderr, "[E100] Error Ln %li, Col %li: unterminated %s literal: no closing `%c` "
                     "before the end of the file\n", parser->line, parser->column,
                     *token.start == '"' ? "string" : "character", *token.start);
+        parser_show_line((long)(parser->line), (long)(parser->column));
         exit(1);
     }
 
@@ -114,12 +148,14 @@ Token _parser_advance(Parser* parser) {
 
 void _parser_error(Parser* parser, const char *error_message) {
     fprintf(stderr, "[E100] Error Ln %li, Col %li: %s\n", parser->line, parser->column, error_message);
+    parser_show_line(parser->line, parser->column);
     exit(1);
 }
 
 void _parser_expect(Parser* parser, bool expr, const char *error_message) {
     if (expr) {
         fprintf(stderr, "[E100] Error Ln %li, Col %li: %s\n", parser->line, parser->column, error_message);
+        parser_show_line(parser->line, parser->column);
         exit(1);
     }
 }
@@ -274,6 +310,7 @@ static long long parse_numeric_literal_at(isize line, isize col, const char *sta
             if (truncated || errno == ERANGE) {
                 fprintf(stderr, "[E086] Error Ln %li, Col %li: integer literal '%.*s' has more "
                         "than 64 bits.\n", (long)line, (long)col, (int)length, start);
+                parser_show_line((long)((long)line), (long)((long)col));
                 exit(1);
             }
             long long bits; memcpy(&bits, &u, sizeof bits);      // the pattern, two's complement
@@ -288,6 +325,7 @@ static long long parse_numeric_literal_at(isize line, isize col, const char *sta
         fprintf(stderr, "[E100] Error Ln %li, Col %li: a decimal literal has no leading zero: `%.*s` "
                 "would be octal in C. Write `%s`, or `0o%s` for octal.\n", (long)line, (long)col,
                 (int)length, start, buf + k, buf + k);
+        parser_show_line((long)((long)line), (long)((long)col));
         exit(1);
     }
     errno = 0;
@@ -295,6 +333,7 @@ static long long parse_numeric_literal_at(isize line, isize col, const char *sta
     if (truncated || errno == ERANGE) {
         fprintf(stderr, "[E086] Error Ln %li, Col %li: integer literal '%.*s' is too large to "
                 "fit in a signed 64-bit integer.\n", (long)line, (long)col, (int)length, start);
+        parser_show_line((long)((long)line), (long)((long)col));
         exit(1);
     }
     return value;

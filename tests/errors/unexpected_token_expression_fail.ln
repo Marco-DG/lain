@@ -1,0 +1,9 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 7, Col 9: unexpected `=` where an expression starts
+// A parse error names the token as written. It said "Unexpected token in expression: TOKEN_EQUAL
+// (23)", the compiler's name for `=` and its enum value.
+
+func main() i32 {
+    x = = 3
+    return 0
+}

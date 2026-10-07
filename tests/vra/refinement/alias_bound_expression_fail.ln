@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 6, Col 19: an alias's bound is one number or one integer module constant, not an expression: for `M - 1`, declare a constant (`LAST = M - 1`) and bound by it
+// An alias's bound is one term (Annex A). `<= 9 - 1` was "Unexpected token at top level: TOKEN_MINUS"
+// (Documentation).
+
+type T = i32 <= 9 - 1
+
+func main() i32 {
+    return 0
+}

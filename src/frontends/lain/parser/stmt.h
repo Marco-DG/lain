@@ -824,6 +824,7 @@ Stmt *parse_match_stmt(Arena *arena, Parser *parser) {
         // trailing patterns with no body → error
         fprintf(stderr, "[E100] Error Ln %li, Col %li: a `case` pattern with no body ends the "
                 "block; give it an arm.\n", parser->line, parser->column);
+        parser_show_line((long)(parser->line), (long)(parser->column));
         exit(1);
     }
 

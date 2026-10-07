@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 10, Col 1: a top-level constant must have a value — write `NAME = value` or `NAME T = value`.
+// A top-level constant with no value is reported at its name. It was reported where the parser
+// stood after the type, past the end of the line: one line below the constant.
+
+func main() i32 {
+    return 0
+}
+
+foo bar

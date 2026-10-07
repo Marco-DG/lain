@@ -2039,10 +2039,20 @@ func process_file() effects io, raises, alloc {
 }
 ```
 
-> [!NOTE]
-> `defer { … }` with a braced block **is not accepted** — a block is not a statement here, and the
-> parser reports `[E100] Unexpected token in expression: TOKEN_L_BRACE`. For several cleanup
-> actions, write several `defer`s; they run in LIFO order, so the one written last runs first.
+`defer { … }` with a braced block **is not accepted**: a block is not a statement here.
+
+```lain
+func f() {
+    defer { g() }     // ERROR [E100]
+}
+```
+
+```
+[E100] Error Ln 2, Col 11: unexpected `{` where an expression starts
+```
+
+For several cleanup actions, write several `defer`s; they run in LIFO order, so the one written
+last runs first.
 
 **Rules for defer:**
 1. Deferred statements execute in reverse order (LIFO, Last In First Out).

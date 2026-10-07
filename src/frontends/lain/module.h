@@ -333,6 +333,12 @@ static DeclList* load_module(Arena *ast_arena,
 
     // 3) lex + parse into ast_arena
     Lexer   lex    = lexer_new(f.contents);
+    {   // a parse error names this file and shows its line (parser/core.h); the copy outlives `path`
+        size_t pl = strlen(path) + 1;
+        char *pc = arena_push_many_aligned(ast_arena, char, pl);
+        memcpy(pc, path, pl);
+        parser_file = pc; parser_src = f.contents;
+    }
     Parser  parser = {
       .lexer  = &lex,
       .line   = 1,

@@ -1,0 +1,10 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 10, Col 1: unexpected `-` at the top level, where a declaration starts
+// A top-level parse error names the token as written (it said "TOKEN_MINUS"), and the rest of the
+// line is not reported token by token ("TOKEN_NUMBER", then "TOKEN_EOL" for each line after).
+
+func main() i32 {
+    return 0
+}
+
+- 3

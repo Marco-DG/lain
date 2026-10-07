@@ -1,0 +1,13 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 11, Col 5: the left side of `=` must be a variable, a field or an element, where a value can be stored.
+// The left side of `=` is a place. `f() = 3` reached the code generator: E100 "not supported by the
+// code generator yet (unlowered-lvalue)".
+
+func f() i32 {
+    return 1
+}
+
+func main() i32 {
+    f() = 3
+    return 0
+}

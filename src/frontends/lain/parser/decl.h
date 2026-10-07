@@ -64,6 +64,7 @@ static void parse_in_refinement(Arena *arena, Parser *parser, Expr *subject, Exp
                     "the length, or `in 0..=%.*s.len` for a cursor that may rest at the end.\n",
                     (long)lo->line, (long)lo->col, (int)c->length, c->name, (int)c->length, c->name,
                     (int)c->length, c->name);
+            parser_show_line((long)((long)lo->line), (long)((long)lo->col));
             exit(1);
         }
         parser_error("Expected a range `lo..hi` or `lo..=hi` after 'in'");
@@ -126,6 +127,7 @@ static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private
         if (!parser_match(TOKEN_IDENTIFIER)) {
             fprintf(stderr, "[E102] Error Ln %li, Col %li: expected attribute name after '['\n",
                     parser->line, parser->column);
+            parser_show_line((long)(parser->line), (long)(parser->column));
             return head;
         }
 
@@ -140,6 +142,7 @@ static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private
             fprintf(stderr, "[E103] Error Ln %li, Col %li: `[fast_math]` is not supported: floating "
                     "point is never contracted (spec 12), and no function opts out of it. Remove the "
                     "attribute.\n", name_line, name_col);
+            parser_show_line((long)(name_line), (long)(name_col));
             exit(1);
         }
 
@@ -147,6 +150,7 @@ static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private
         if (!is_known_attribute(name->name, name->length)) {
             fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: private, packed, ordered, cold, hot, allocator, noreturn)\n",
                     parser->line, parser->column, (int)name->length, name->name);
+            parser_show_line((long)(parser->line), (long)(parser->column));
             exit(1);
         }
 
@@ -227,13 +231,16 @@ DeclList *parse_module(Arena* arena, Parser* parser) {
     while (!parser_match(TOKEN_EOF)) {
         Decl* decl = parse_decl(arena, parser);
         if (!decl) {
-            const char *tname = token_kind_name(parser->token.kind);
-            fprintf(stderr, "[E100] Error Ln %li, Col %li: Unexpected token at top level: %s\n",
-                    parser->line, parser->column,
-                    tname ? tname : "UNKNOWN_TOKEN");
-            parser_advance(); // consume to avoid infinite loop
+            char tb[96]; const char *what = parser_token_desc(&parser->token, tb, sizeof tb);
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: unexpected %s at the top level, where a "
+                    "declaration starts\n", parser->line, parser->column, what);
+            parser_show_line(parser->line, parser->column);
             had_top_level_error = true;
-            continue;         // keep reporting further top-level errors...
+            // Keep reporting further top-level errors, one per line: the rest of this line is
+            // skipped (each of its tokens was reported, down to the end of the line).
+            while (!parser_match(TOKEN_EOF) && !parser_is_eol()) parser_advance();
+            parser_skip_eol();
+            continue;
         }
 
         *list_tail = decl_list(arena, decl);
@@ -388,6 +395,7 @@ Decl *parse_decl(Arena* arena, Parser* parser)
                     "in the row. Write `func NAME(...) RET effects %s`, listing every effect the "
                     "function has (silence means none).\n",
                     (long)at_line, (long)at_col, io ? "io" : "diverges", io ? "io" : "diverge");
+            parser_show_line((long)((long)at_line), (long)((long)at_col));
             exit(1);
         }
         if (decl_is_cold || decl_is_hot || decl_is_allocator || decl_is_noreturn) {
@@ -408,6 +416,7 @@ Decl *parse_decl(Arena* arena, Parser* parser)
                     "function. It tells the C compiler the result is non-null and aliases nothing, "
                     "which a body cannot be checked to satisfy; declare the allocator `extern`.\n",
                     (long)d->line, (long)d->col);
+            parser_show_line((long)((long)d->line), (long)((long)d->col));
             exit(1);
         }
         if (d) {
@@ -471,6 +480,7 @@ done:
                 fprintf(stderr, "[E103] Error Ln %li, Col %li: [ordered] applies to a struct, or "
                         "to a sum whose variants carry payloads: it keeps their fields in "
                         "declaration order.\n", (long)d->line, (long)d->col);
+                parser_show_line((long)((long)d->line), (long)((long)d->col));
                 exit(1);
             }
             if (d->kind == DECL_STRUCT) d->as.struct_decl.is_ordered = true;
@@ -606,6 +616,12 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                     } else {
                         parser_error("Expected number or identifier after comparison operator");
                     }
+                    // A field's bound is one term (Annex A); `M - 1` was "Expected ',' or newline
+                    // after field or enum value", which named nothing the writer did (Documentation).
+                    if (parser_match(TOKEN_PLUS) || parser_match(TOKEN_MINUS))
+                        parser_error("a field's bound is one number, one integer module constant or "
+                                     "another field, not an expression: for `M - 1`, declare a "
+                                     "constant (`LAST = M - 1`) and bound by it");
                     { Expr *fc = expr_binary(arena, op, field_expr, rhs);
                       fc->line = op_line; fc->col = op_col;
                       *fctail = expr_list(arena, fc); }
@@ -879,6 +895,12 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
                     } else {
                         parser_error("Expected number or identifier in type alias refinement");
                     }
+                    // An alias's bound is one term (Annex A); `9 - 1` was "Unexpected token at top
+                    // level: TOKEN_MINUS" (Documentation).
+                    if (parser_match(TOKEN_PLUS) || parser_match(TOKEN_MINUS))
+                        parser_error("an alias's bound is one number or one integer module constant, "
+                                     "not an expression: for `M - 1`, declare a constant "
+                                     "(`LAST = M - 1`) and bound by it");
                     Expr *constraint = expr_binary(arena, op, base_type_expr, rhs);
                     constraint->line = op_line; constraint->col = op_col;
                     *ctail = expr_list(arena, constraint);
@@ -936,6 +958,7 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
             fprintf(stderr, "[E100] Error Ln %li, Col %li: '%.*s' cannot back enum '%.*s': "
                     "the backing width is %s.\n", backing_line, backing_col, bl, bs,
                     (int)name->length, name->name, widths);
+            parser_show_line((long)(backing_line), (long)(backing_col));
             exit(1);
         }
         const char *why = NULL;
@@ -953,6 +976,7 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
                 fprintf(stderr, "[E100] Error Ln %li, Col %li: only a plain enum takes a backing "
                         "width (%s), and '%.*s' %s.\n", backing_line, backing_col, widths,
                         (int)name->length, name->name, why);
+            parser_show_line((long)(backing_line), (long)(backing_col));
             exit(1);
         }
         long long n = 0;
@@ -961,6 +985,7 @@ Decl* parse_type_decl(Arena* arena, Parser* parser) {
             fprintf(stderr, "[E100] Error Ln %li, Col %li: enum '%.*s' has %lld variants and "
                     "u%d holds %lld; the backing width is %s.\n", backing_line, backing_col,
                     (int)name->length, name->name, n, backing_bits, 1LL << backing_bits, widths);
+            parser_show_line((long)(backing_line), (long)(backing_col));
             exit(1);
         }
     }
@@ -1000,7 +1025,11 @@ Decl *parse_var_decl(Arena* arena, Parser* parser)
         parser_advance();
         d->as.variable_decl.init = parse_expr(arena, parser);
     } else {
-        parser_error("a top-level constant must have a value — write `NAME = value` or `NAME T = value`.");
+        // At the name: the parser stands after the type, often past the end of the line.
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: a top-level constant must have a value — write "
+                "`NAME = value` or `NAME T = value`.\n", (long)line, (long)col);
+        parser_show_line((long)line, (long)col);
+        exit(1);
     }
     return d;
 }

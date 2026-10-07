@@ -1,0 +1,14 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 9, Col 20: a field's bound is one number, one integer module constant or another field, not an expression: for `M - 1`, declare a constant (`LAST = M - 1`) and bound by it
+// A field's bound is one term (Annex A). `<= M - 1` was "Expected ',' or newline after field or enum
+// value" (Documentation).
+
+M usize = 10
+
+type S {
+    pos usize <= M - 1
+}
+
+func main() i32 {
+    return 0
+}

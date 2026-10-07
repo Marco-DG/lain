@@ -335,6 +335,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         if (pending_count > 0) {
             fprintf(stderr, "[E100] Error Ln %li, Col %li: a `case` pattern with no body ends the "
                     "block; give it an arm.\n", parser->line, parser->column);
+            parser_show_line((long)(parser->line), (long)(parser->column));
             exit(1);
         }
         
@@ -518,6 +519,7 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
                         "character or one escape; %.*s holds more, and would have been read as its "
                         "first. For several characters write a string, \"...\".\n",
                         (long)parser->line, (long)parser->column, (int)len, s);
+                parser_show_line((long)((long)parser->line), (long)((long)parser->column));
                 exit(1);
             }
         }
@@ -739,16 +741,16 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
         } else {
             fprintf(stderr, "[E106] Error Ln %li, Col %li: unknown builtin '@%.*s'.\n",
                     at_line, at_col, (int)len, name);
+            parser_show_line((long)(at_line), (long)(at_col));
             exit(1);
         }
     }
 
     {
-        const char *tname = token_kind_name(parser->token.kind);
-        fprintf(stderr, "[E100] Error Ln %li, Col %li: Unexpected token in expression: %s (%d)\n",
-                parser->line, parser->column,
-                tname ? tname : "UNKNOWN_TOKEN",
-                parser->token.kind);
+        char tb[96]; const char *what = parser_token_desc(&parser->token, tb, sizeof tb);
+        fprintf(stderr, "[E100] Error Ln %li, Col %li: unexpected %s where an expression starts\n",
+                parser->line, parser->column, what);
+        parser_show_line(parser->line, parser->column);
     }
     exit(1);
     return NULL;

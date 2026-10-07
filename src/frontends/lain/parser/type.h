@@ -362,6 +362,7 @@ static Type *parse_type_core(Arena *arena, Parser *parser) {
             fprintf(stderr, "[E100] Error Ln %li, Col %li: an array's length is a constant greater "
                     "than zero, and this one is %lld. For no elements, use an empty slice.\n",
                     (long)parser->line, (long)parser->column, (long long)array_len);
+            parser_show_line((long)((long)parser->line), (long)((long)parser->column));
             exit(1);
         }
         parser_advance(); // consume the number
