@@ -199,6 +199,7 @@ for f in "$TMP"/b*.txt; do
                         LANGUAGE.md) unchecked_lang=$((unchecked_lang+1))     ;;
                         USAGE.md)    unchecked_usage=$((unchecked_usage+1))   ;;
                         *)           unchecked_other=$((unchecked_other+1))   ;; esac
+        echo "  ★ $page:$ln — UNVERIFIABLE: an empty block, nothing to compile"
         continue
     fi
     out=$("$LAIN" "$prog" -o "$PROGC" 2>&1); rc=$?
@@ -234,8 +235,10 @@ for f in "$TMP"/b*.txt; do
                         LANGUAGE.md) unchecked_lang=$((unchecked_lang+1))     ;;
                         USAGE.md)    unchecked_usage=$((unchecked_usage+1))   ;;
                         *)           unchecked_other=$((unchecked_other+1))   ;; esac
-        [ $VERBOSE -eq 1 ] && { echo "  UNVERIFIABLE $page:$ln"
-                                echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'; }
+        # Every page's count fails the exit (see the end), so the block is named whether or not
+        # --verbose is given: spec_gate explains a failure by these ★ lines alone.
+        echo "  ★ $page:$ln — UNVERIFIABLE fragment: declare what it names, or make it a program"
+        echo "$out" | grep -m1 -E '^\[E' | sed 's/^/      /'
         continue
     fi
     if [ $expect_fail -eq 1 ]; then
@@ -429,11 +432,14 @@ echo "      LANGUAGE.md : $unchecked_lang   <- must stay 0"
 echo "      USAGE.md    : $unchecked_usage   <- must stay 0"
   # ★ PRINT IT WHENEVER IT IS NON-ZERO, not only under --pages. The split below the total must
   # ACCOUNT FOR the total: a count this gate computes and then hides is a backlog nobody sees, and
-  # on a default run the "other" line was printed by nothing. It is 0 today because the default
-  # pages are exactly README and LANGUAGE — but the next page added to that list would land here
-  # silently, and the two numbers would stop adding up with no line saying so.
+  # on a default run the "other" line was printed by nothing.
+  # ★ AND IT FAILS THE EXIT, like the three above. "Other pages" are what spec_gate passes with
+  # --pages, the specification's own examples, and this line called them "a backlog, not a
+  # regression" while the exit read only README, LANGUAGE and USAGE: on Secondary's st/l8/c7
+  # (2026-10-06) the spec carried 3 fragments naming an undeclared FILE or Point and spec_gate
+  # stayed green. bac4c79 has 0 there, so nothing on main is newly red; a label is not a check.
   { [ $DEFAULT_PAGES -eq 0 ] || [ $unchecked_other -gt 0 ]; } && \
-      echo "      other pages : $unchecked_other   <- a backlog, not a regression"
+      echo "      other pages : $unchecked_other   <- must stay 0"
   split_sum=$((unchecked_readme + unchecked_lang + unchecked_usage + unchecked_other))
   [ $split_sum -ne $unchecked ] && \
       echo "  ★ the split above sums to $split_sum but the total is $unchecked — a page is uncounted"
@@ -460,5 +466,6 @@ echo "  blocks extracted, all accounted for : $extracted"
 echo "=================================================================="
 [ $fail -eq 0 ] && [ $expfail_bad -eq 0 ] && [ $expfail_code -eq 0 ] && [ $flag_bad -eq 0 ] && [ $falseclaim -eq 0 ] \
     && [ $unchecked_readme -eq 0 ] && [ $unchecked_lang -eq 0 ] && [ $unchecked_usage -eq 0 ] \
+    && [ $unchecked_other -eq 0 ] \
     && [ $verify_bad -eq 0 ] && [ $accounting_bad -eq 0 ] && [ $code_bad -eq 0 ] \
     && [ $undoc_bad -eq 0 ] && [ $usage_bad -eq 0 ] && exit 0 || exit 1
