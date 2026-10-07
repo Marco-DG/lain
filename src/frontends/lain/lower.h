@@ -768,6 +768,14 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
         // ★ BY SEMA'S OWN NAME, WHICH INCLUDES THE VALUE TYPE (I.106). This matched the MARKER
         // NAMES alone, so `*u8 | NotFound` and `Small | NotFound` were one union here: a call to
         // the second stored its byte in the first's pointer, and gcc refused the C.
+        // ★ BY IDENTITY FIRST (I.172, chain 5): an enum's name may have been made unique
+        // (`__U_..._2`), so recomputing it can name another union's enum. By name only when the
+        // union's value type is not yet resolved as sema compared it.
+        Decl *same = union_find_lowered(t);
+        if (same) {
+            Type tt; memset(&tt, 0, sizeof tt); tt.kind = TYPE_SIMPLE; tt.base_type = same->as.enum_decl.type_name;
+            return ir_lower_type(c, &tt);
+        }
         char un[256]; union_mangled_name(t, un, sizeof un);
         size_t ul = strlen(un);
         for (DeclList *d = c->globals; d; d = d->next) {

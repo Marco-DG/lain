@@ -39,23 +39,22 @@ typedef struct MonoInst {
     Id   *name;                       // e.g. "Option_i32"
     Decl *tmpl, *inst;                // the template, and the instance made from it (I.172)
     Type *args[MONO_MAX_TPARAMS];     // in type-parameter order
+    bool  renamed;                    // its name is not base+suffix (numbered or hashed): shown as
+                                      // its template spelling in diagnostics
     int   n;
     struct MonoInst *next;
 } MonoInst;
 static MonoInst *g_mono_insts = NULL;
 
-static void mono_record_inst(Id *name, Decl *tmpl, Decl *inst, Type **args, int n) {
+static void mono_record_inst(Id *name, Decl *tmpl, Decl *inst, Type **args, int n, bool renamed) {
     MonoInst *m = arena_push_aligned(sema_arena, MonoInst);
     m->name = name; m->tmpl = tmpl; m->inst = inst; m->n = n < MONO_MAX_TPARAMS ? n : MONO_MAX_TPARAMS;
+    m->renamed = renamed;
     for (int i = 0; i < m->n; i++) m->args[i] = args[i];
     m->next = g_mono_insts; g_mono_insts = m;
 }
 static MonoInst *mono_find_inst(Id *name) {
     for (MonoInst *m = g_mono_insts; m; m = m->next) if (mono_id_eq(m->name, name)) return m;
-    return NULL;
-}
-static MonoInst *mono_find_inst_decl(Decl *inst) {
-    for (MonoInst *m = g_mono_insts; m; m = m->next) if (m->inst == inst) return m;
     return NULL;
 }
 
@@ -243,11 +242,11 @@ static bool mono_alias_refinement(Id *n, Id **base, int64_t *lo, int64_t *hi,
     refine_apply_clauses(d->as.type_alias_decl.constraints, lo, hi, has_ne, ne);
     return true;
 }
-// ★ NO NAME IS WRITTEN PAST ITS BUFFER (I.172, the stopgap; chain 5 replaces the names). Every
-// caller did `off += snprintf(buf + off, cap - off, ...)`: snprintf returns what it WOULD have
-// written, so after one truncation `cap - off` wrapped and the next write was told it had a huge
-// buffer. An append that does not fit now stops at the end of the buffer and sets mono_name_cut;
-// the instantiation that built the name refuses (mono_refuse_cut).
+// ★ NO NAME IS WRITTEN PAST ITS BUFFER (I.172). Every caller did
+// `off += snprintf(buf + off, cap - off, ...)`: snprintf returns what it WOULD have written, so
+// after one truncation `cap - off` wrapped and the next write was told it had a huge buffer. An
+// append that does not fit now stops at the end of the buffer and sets mono_name_cut; a cut name
+// is shortened and hashed (mono_instance_names), since two cut names may be one.
 static bool mono_name_cut = false;
 static void mono_cat(char *buf, size_t cap, int *off, const char *fmt, ...) {
     if (*off < 0 || (size_t)*off >= cap) { mono_name_cut = true; return; }
@@ -284,9 +283,9 @@ static void mono_mangle_type(Type *t, char *buf, size_t cap) {
                      t->base_type ? t->base_type->name : "?");
             break;
         }
-        case TYPE_POINTER: {
+        case TYPE_POINTER: {    // `*var T` is not `*T`: its pointee may be written
             char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
-            mono_cat(buf, cap, &o, "ptr_%s", inner); break;
+            mono_cat(buf, cap, &o, t->pointee_mutable ? "mutptr_%s" : "ptr_%s", inner); break;
         }
         case TYPE_ARRAY: {      // the length is part of the type: u8[4] and u8[8] are two instances
             char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
@@ -295,17 +294,51 @@ static void mono_mangle_type(Type *t, char *buf, size_t cap) {
             break;
         }
         case TYPE_CONST: mono_cat(buf, cap, &o, "%lld", (long long)t->array_len); break;
-        default: mono_cat(buf, cap, &o, "t%d", (int)t->kind); break;
+        // ★ A NAME THAT MOVES ONLY WHEN THE TYPE DOES (I.172, chain 5). These kinds were `t<kind>`,
+        // one name for every function pointer, every sentinel slice and every vector, so an
+        // instance needed a counter to be unique, and a counter renumbers when an unrelated
+        // instantiation is added above it (the C names, #line maps and the debugger's view move).
+        case TYPE_FUNC: {       // `*func(mov R, i32) u8 effects io` is `fn_mov_R_i32_to_u8_io`
+            mono_cat(buf, cap, &o, "fn");
+            for (TypeList *p = t->func_params; p; p = p->next) {
+                char pb[128]; mono_mangle_type(p->type, pb, sizeof pb);
+                const char *md = (p->type && p->type->mode == MODE_OWNED) ? "mov_"
+                               : (p->type && p->type->mode == MODE_MUTABLE) ? "mut_" : "";
+                mono_cat(buf, cap, &o, "_%s%s", md, pb);
+            }
+            char rb[128];
+            if (t->element_type) mono_mangle_type(t->element_type, rb, sizeof rb); else snprintf(rb, sizeof rb, "void");
+            mono_cat(buf, cap, &o, "_to_%s", rb);
+            if (t->func_effects & EFFECT_IO)      mono_cat(buf, cap, &o, "_io");     // the row is part
+            if (t->func_effects & EFFECT_DIVERGE) mono_cat(buf, cap, &o, "_diverge"); // of the type
+            if (t->func_effects & EFFECT_RAISES)  mono_cat(buf, cap, &o, "_raises");
+            if (t->func_effects & EFFECT_ALLOC)   mono_cat(buf, cap, &o, "_alloc");
+            break;
+        }
+        case TYPE_SLICE: {      // `u8[:0]`, the sentinel slice
+            char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
+            mono_cat(buf, cap, &o, t->has_sentinel ? "slice0_%s" : "slice_%s", inner); break;
+        }
+        case TYPE_VECTOR: {     // `Vec(4, f32)`
+            char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
+            mono_cat(buf, cap, &o, "vec%lld_%s", (long long)t->array_len, inner); break;
+        }
+        case TYPE_UNION: {      // resolved to its enum before an argument is named; kept for safety
+            char inner[128]; mono_mangle_type(t->element_type, inner, sizeof inner);
+            mono_cat(buf, cap, &o, "u_%s", inner);
+            for (IdList *m = t->union_markers; m; m = m->next) mono_cat(buf, cap, &o, "_%.*s", (int)m->id->length, m->id->name);
+            break;
+        }
+        default: mono_cat(buf, cap, &o, "t%d", (int)t->kind); break;    // made unique by a counter
     }
 }
 
-// ★ AN INSTANCE IS ITS TEMPLATE AND ITS ARGUMENTS, NOT ITS NAME (I.172, the stopgap). Names are
-// not injective: every function-pointer argument mangled to `t7` (`Box(*func(u8) u8)` was the
+// ★ AN INSTANCE IS ITS TEMPLATE AND ITS ARGUMENTS, NOT ITS NAME (I.172). Names were not
+// injective: every function-pointer argument mangled to `t7` (`Box(*func(u8) u8)` was the
 // instance `Box(*func(i32) i32)` had made, its field typed i32 -> i32), as did a sentinel slice,
-// a union or a vector; `*var T` and `*T` share `ptr_T`; and `_` joins names that may hold one
-// (`Pair(My_Type, X)`, `Pair(My, Type_X)`). Where a name is already taken, the arguments it was
-// made from are compared structurally, as the names mean them (a refinement alias by its base
-// and refinement), and a mismatch is refused, not reused.
+// a union or a vector; `*var T` and `*T` shared `ptr_T`; and `_` joins names that may hold one
+// (`Pair(My_Type, X)`, `Pair(My, Type_X)`). Arguments are compared structurally, as the names
+// mean them (a refinement alias by its base and refinement), and an instance is found by them.
 static bool mono_arg_same(Type *a, Type *b, int depth) {
     if (depth > 32) return false;
     while (a && a->kind == TYPE_COMPTIME) a = a->element_type;
@@ -386,29 +419,6 @@ static bool mono_args_same(Type **a, int na, Type **b, int nb) {
 // Where the type being resolved is written (mono_resolve_type_apps_at), or the call that
 // instantiates; every refusal below names it.
 static isize mono_at_line = 0, mono_at_col = 0;
-static void mono_refuse_cut(const char *what) {
-    if (!mono_name_cut) return;
-    fprintf(stderr, "[E124] Error Ln %li, Col %li: the name of this instantiation of '%s' is longer "
-            "than the compiler keeps; this is a known limitation (I.172).\n",
-            (long)mono_at_line, (long)mono_at_col, what);
-    diagnostic_show_line(mono_at_line, mono_at_col);
-    exit(1);
-}
-// The name `raw` is taken by `existing`: reuse it only when it is this template's instance at
-// these arguments. A name taken by a declaration that is no instance (`type Box_i32`) is I.168.
-static void mono_check_existing(Decl *existing, Decl *tmpl, Type **args, int n, const char *what, const char *raw) {
-    MonoInst *mi = mono_find_inst_decl(existing);
-    if (mi && mi->tmpl == tmpl && mono_args_same(mi->args, mi->n, args, n)) return;
-    if (mi)
-        fprintf(stderr, "[E124] Error Ln %li, Col %li: two instantiations of '%s' have the same name "
-                "'%s'; this is a known limitation (I.172).\n", (long)mono_at_line, (long)mono_at_col, what, raw);
-    else
-        fprintf(stderr, "[E124] Error Ln %li, Col %li: this instantiation of '%s' is named '%s', and a "
-                "declaration has that name; this is a known limitation (I.168).\n",
-                (long)mono_at_line, (long)mono_at_col, what, raw);
-    diagnostic_show_line(mono_at_line, mono_at_col);
-    exit(1);
-}
 // The arguments bound in `ctx`, in the template's type-parameter order (inference binds them in
 // the order the fields name them). A template with more parameters than are kept is refused.
 static int mono_ordered_args(DeclList *tparams, SubstCtx *ctx, Type **out, const char *what) {
@@ -432,6 +442,128 @@ static char *mono_dup(const char *s, size_t n) {
     char *p = arena_push_many(sema_arena, char, (isize)(n + 1));
     memcpy(p, s, n); p[n] = '\0';
     return p;
+}
+
+// ★ AN INSTANCE IS FOUND BY ITS TEMPLATE AND ITS ARGUMENTS; ITS NAME IS ONLY UNIQUE (I.172,
+// I.168). A mangled name is not injective (`_` joins names that may hold one, a long one is cut),
+// and a user's declaration may hold it (`type Box_i32`, `func pick_i32`): an instantiation found
+// the declaration by that name and became it (`pick(i32, 0, 5)` called the user's `pick_i32`).
+// Chain 4 refused those cases. Now the registry is searched by identity (mono_arg_same), and a
+// NEW instance takes today's name when nothing holds it, else the first free `<name>_<k>`; the
+// user's declaration keeps the name it was written with. A name longer than the buffers keep is
+// its first 96 bytes and a hash of its arguments (`_h<8 hex>`), unique the same way: the hash
+// shortens, the registry decides. A renamed instance is shown in diagnostics as `Box(i32)`.
+static MonoInst *mono_find_identity(Decl *tmpl, Type **args, int n) {
+    for (MonoInst *m = g_mono_insts; m; m = m->next)
+        if (m->tmpl == tmpl && mono_args_same(m->args, m->n, args, n)) return m;
+    return NULL;
+}
+static uint32_t mono_hash_bytes(uint32_t h, const void *p, size_t n) {    // FNV-1a
+    const unsigned char *c = (const unsigned char *)p;
+    for (size_t i = 0; i < n; i++) { h ^= c[i]; h *= 16777619u; }
+    return h;
+}
+static uint32_t mono_hash_id(uint32_t h, const Id *n) {
+    return n ? mono_hash_bytes(h, n->name, (size_t)n->length) : mono_hash_bytes(h, "?", 1);
+}
+static uint32_t mono_hash_i64(uint32_t h, int64_t v) { return mono_hash_bytes(h, &v, sizeof v); }
+static uint32_t mono_hash_type(uint32_t h, Type *t, int depth) {      // what mono_arg_same reads
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t || depth > 32) return mono_hash_bytes(h, "~", 1);
+    h = mono_hash_i64(h, (int64_t)t->kind);
+    switch (t->kind) {
+        case TYPE_SIMPLE: {
+            Id *rb = NULL; int64_t lo = 0, hi = 0, ne = 0; bool hne = false;
+            if (!t->type_args && mono_alias_refinement(t->base_type, &rb, &lo, &hi, &hne, &ne, 0)) {
+                const char *c = mono_canonical_scalar(rb);
+                h = c ? mono_hash_bytes(h, c, strlen(c)) : mono_hash_id(h, rb);
+                h = mono_hash_i64(mono_hash_i64(h, lo), hi);
+                return hne ? mono_hash_i64(h, ne) : h;
+            }
+            const char *c = mono_canonical_scalar(t->base_type);
+            h = c ? mono_hash_bytes(h, c, strlen(c)) : mono_hash_id(h, t->base_type);
+            for (TypeList *a = t->type_args; a; a = a->next) h = mono_hash_type(h, a->type, depth + 1);
+            return h;
+        }
+        case TYPE_POINTER: return mono_hash_type(mono_hash_i64(h, t->pointee_mutable), t->element_type, depth + 1);
+        case TYPE_ARRAY: case TYPE_SLICE: case TYPE_VECTOR:
+            h = mono_hash_i64(mono_hash_i64(h, (int64_t)t->array_len), t->has_sentinel);
+            if (t->size_expr && t->size_expr->kind == EXPR_LITERAL)
+                h = mono_hash_i64(mono_hash_i64(h, (int64_t)t->size_relop), (int64_t)t->size_expr->as.literal_expr.value);
+            return mono_hash_type(h, t->element_type, depth + 1);
+        case TYPE_CONST: return mono_hash_i64(h, (int64_t)t->array_len);
+        case TYPE_FUNC:
+            h = mono_hash_i64(h, (int64_t)t->func_effects);
+            for (TypeList *p = t->func_params; p; p = p->next)
+                h = mono_hash_type(mono_hash_i64(h, p->type ? (int64_t)p->type->mode : -1), p->type, depth + 1);
+            return mono_hash_type(h, t->element_type, depth + 1);
+        case TYPE_UNION:
+            for (IdList *m = t->union_markers; m; m = m->next) {
+                h = mono_hash_id(h, m->id);
+                for (DeclList *f = m->fields; f; f = f->next)
+                    if (f->decl && f->decl->kind == DECL_VARIABLE)
+                        h = mono_hash_type(mono_hash_id(h, f->decl->as.variable_decl.name), f->decl->as.variable_decl.type, depth + 1);
+            }
+            return mono_hash_type(h, t->element_type, depth + 1);
+        default: return h;
+    }
+}
+// LAIN_TEST_NAME_HASH_MASK (hex) masks the hash, for a test that makes two cut names hash alike
+// and must find them distinct anyway (tests/generics/instance_name_distinct.sh).
+static uint32_t mono_hash_mask(void) {
+    static bool read = false; static uint32_t mask = 0xffffffffu;
+    if (!read) { read = true; const char *e = getenv("LAIN_TEST_NAME_HASH_MASK"); if (e) mask = (uint32_t)strtoul(e, NULL, 16); }
+    return mask;
+}
+static bool mono_raw_name_taken(const char *raw) {
+    if (sema_lookup(raw)) return true;
+    size_t n = strlen(raw);
+    for (MonoInst *m = g_mono_insts; m; m = m->next)
+        if (m->name && (size_t)m->name->length == n && memcmp(m->name->name, raw, n) == 0) return true;
+    return false;
+}
+// The names of a new instance: `raw`, sema's key, is the template's raw name and the suffix;
+// `cname`, the C name, is the template's C name and the same suffix. `cut` says the suffix lost
+// bytes: it is then its first 96 bytes and the hash. Returns whether the name is not the plain one.
+static bool mono_instance_names(const char *what, const char *tmpl_raw, const char *tmpl_c, const char *suffix,
+                                bool cut, uint32_t hash, char *raw, size_t rcap, char *cname, size_t ccap) {
+    char es[128]; int eo = 0; es[0] = '\0';
+    mono_name_cut = false;
+    if (cut) mono_cat(es, sizeof es, &eo, "%.96s_h%08x", suffix, (unsigned)(hash & mono_hash_mask()));
+    else     mono_cat(es, sizeof es, &eo, "%s", suffix);
+    bool overflow = mono_name_cut;          // a suffix not cut by its builder yet over 127 bytes
+    for (int k = 1; ; k++) {
+        int ro = 0, co = 0; raw[0] = '\0'; cname[0] = '\0';
+        if (k == 1) { mono_cat(raw, rcap, &ro, "%s%s", tmpl_raw, es);       mono_cat(cname, ccap, &co, "%s%s", tmpl_c, es); }
+        else        { mono_cat(raw, rcap, &ro, "%s%s_%d", tmpl_raw, es, k); mono_cat(cname, ccap, &co, "%s%s_%d", tmpl_c, es, k); }
+        if (mono_name_cut || overflow) {    // only a template NAME of hundreds of bytes gets here
+            fprintf(stderr, "[E124] Error Ln %li, Col %li: the name of this instantiation of '%s' is longer "
+                    "than the compiler keeps; this is a known limitation (I.172).\n",
+                    (long)mono_at_line, (long)mono_at_col, what);
+            diagnostic_show_line(mono_at_line, mono_at_col);
+            exit(1);
+        }
+        if (!mono_raw_name_taken(raw)) return cut || k > 1;
+    }
+}
+// A renamed instance in a diagnostic: its template and arguments as written, `Box(i32)`, not the
+// name made unique for C (`Box_i32_2`). Called by type_describe (sema/typecheck.h).
+static bool mono_describe_renamed(Id *name, char *buf, size_t cap) {
+    if (!name || cap == 0) return false;
+    for (MonoInst *m = g_mono_insts; m; m = m->next) {
+        if (!m->renamed || !m->tmpl || !mono_id_eq(m->name, name)) continue;
+        if (m->tmpl->kind != DECL_STRUCT && m->tmpl->kind != DECL_ENUM) return false;
+        Id *tn = m->tmpl->kind == DECL_STRUCT ? m->tmpl->as.struct_decl.name : m->tmpl->as.enum_decl.type_name;
+        int o = 0; buf[0] = '\0';
+        mono_cat(buf, cap, &o, "%.*s(", tn ? (int)tn->length : 1, tn ? tn->name : "?");
+        for (int i = 0; i < m->n; i++) {
+            char ab[96]; type_describe(m->args[i], ab, sizeof ab);
+            mono_cat(buf, cap, &o, "%s%s", i ? ", " : "", ab);
+        }
+        mono_cat(buf, cap, &o, ")");
+        return true;
+    }
+    return false;
 }
 
 // ★ A PARAMETER'S OR RETURN'S MODE BELONGS TO THE USE, NOT TO THE TYPE ARGUMENT. `mov x T` is a
@@ -600,26 +732,23 @@ static void mono_unify(Type *pat, Type *arg, SubstCtx *ctx, Id **tp, int ntp) {
 // recursing forever. Appended to the decl list, where the per-decl passes + emit
 // reach it. Returns the instance decl.
 static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
+    bool cut = mono_name_cut;               // the suffix the caller built lost bytes
     Id *base = (tmpl->kind == DECL_STRUCT) ? tmpl->as.struct_decl.name : tmpl->as.enum_decl.type_name;
     char what[128]; snprintf(what, sizeof what, "%.*s", (int)base->length, base->name);
     Type *oargs[MONO_MAX_TPARAMS];
     int on = mono_ordered_args(tmpl->kind == DECL_STRUCT ? tmpl->as.struct_decl.type_params
                                                          : tmpl->as.enum_decl.type_params, ctx, oargs, what);
-    char rawbuf[256]; int ro = 0; rawbuf[0] = '\0';
-    mono_cat(rawbuf, sizeof rawbuf, &ro, "%.*s%s", (int)base->length, base->name, suffix);
-    mono_refuse_cut(what);                  // the suffix the caller built, and this name
-    Symbol *existing = sema_lookup(rawbuf);
-    if (existing) {
-        mono_check_existing(existing->decl, tmpl, oargs, on, what, rawbuf);
-        return existing->decl;
-    }
-    char *raw = mono_dup(rawbuf, strlen(rawbuf));
-    Id *inst_id = id(sema_arena, (isize)strlen(raw), raw);
+    MonoInst *same = mono_find_identity(tmpl, oargs, on);
+    if (same) return same->inst;
+    uint32_t h = mono_hash_id(2166136261u, base);
+    for (int i = 0; i < on; i++) h = mono_hash_type(h, oargs[i], 0);
     char tmplraw[224]; snprintf(tmplraw, sizeof tmplraw, "%.*s", (int)base->length, base->name);
     Symbol *tsym = sema_lookup(tmplraw);
-    char cnamebuf[288]; int co = 0; cnamebuf[0] = '\0';
-    mono_cat(cnamebuf, sizeof cnamebuf, &co, "%s%s", tsym ? tsym->c_name : rawbuf, suffix);
-    mono_refuse_cut(what);
+    char rawbuf[512], cnamebuf[640];
+    bool renamed = mono_instance_names(what, tmplraw, tsym ? tsym->c_name : tmplraw, suffix, cut, h,
+                                       rawbuf, sizeof rawbuf, cnamebuf, sizeof cnamebuf);
+    char *raw = mono_dup(rawbuf, strlen(rawbuf));
+    Id *inst_id = id(sema_arena, (isize)strlen(raw), raw);
     char *cname = mono_dup(cnamebuf, strlen(cnamebuf));
 
     // 1) clone + rename + drop the header (the shell).
@@ -630,7 +759,7 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
     // 2) register + append BEFORE specializing fields (breaks self-reference).
     Type *ity = type_simple(sema_arena, inst_id);
     sema_insert_global(raw, cname, ity, inst, false);
-    mono_record_inst(inst_id, tmpl, inst, oargs, on);   // for inference: Foo_i32 → [i32]
+    mono_record_inst(id(sema_arena, (isize)strlen(raw), raw), tmpl, inst, oargs, on, renamed);   // Foo_i32 → [i32]
     DeclList *node = decl_list(sema_arena, inst);
     DeclList *tail = sema_decls; while (tail && tail->next) tail = tail->next;
     if (tail) tail->next = node; else sema_decls = node;
@@ -659,8 +788,8 @@ static Decl *mono_type_instance(Decl *tmpl, SubstCtx *ctx, const char *suffix) {
 // payload variant `some { __v: T }` + one empty variant per marker. Deduped by a
 // deterministic mangled name so the same union in two signatures shares one enum.
 // ZERO-COST MANDATORY: the IR refuses (E064) a layout that needs a tag (ir_emit_layout_report).
-// The synthesized enum's name: the value type and every marker (with a payload marker's field
-// types). It IS the union's identity, so lowering finds the enum by this name too (I.106).
+// The synthesized enum's name: the value type and every marker (with a payload marker's fields).
+// It is not the union's identity (union_is_lowered_as is); lowering finds the enum by identity too.
 static void union_mangled_name(Type *u, char *nb, size_t cap) {
     Type *value = u->element_type;
     int off = 0; nb[0] = '\0';
@@ -668,12 +797,13 @@ static void union_mangled_name(Type *u, char *nb, size_t cap) {
     mono_cat(nb, cap, &off, "__U_%s", vb);
     for (IdList *m = u->union_markers; m; m = m->next) {
         mono_cat(nb, cap, &off, "_%.*s", (int)m->id->length, m->id->name);
-        // Payload markers mangle their field types too, so `E{line u32}` and
-        // `E{col u16}` are distinct unions (no dedup collision).
+        // Payload markers name their fields too, NAME and type: `Err(line u32)` and `Err(col u32)`
+        // are two unions, and were one enum (`__U_i32_Err_u32`) whose field one of them lacked.
         for (DeclList *f = m->fields; f; f = f->next) {
             if (!f->decl || f->decl->kind != DECL_VARIABLE) continue;
             char fb[128]; mono_mangle_type(f->decl->as.variable_decl.type, fb, sizeof fb);
-            mono_cat(nb, cap, &off, "_%s", fb);
+            Id *fn = f->decl->as.variable_decl.name;
+            mono_cat(nb, cap, &off, "_%.*s_%s", fn ? (int)fn->length : 1, fn ? fn->name : "?", fb);
         }
     }
 }
@@ -700,22 +830,25 @@ static bool union_is_lowered_as(Decl *ed, Type *u) {
     return !v && !m;
 }
 
+// Every union's synthesized enum, so a union is found by identity (union_lower, and lowering's
+// raw TYPE_UNION in lower.h), not by recomputing a name that may have been made unique.
+static DeclList *g_union_enums = NULL;
+static Decl *union_find_lowered(Type *u) {
+    if (!u || u->kind != TYPE_UNION) return NULL;
+    for (DeclList *d = g_union_enums; d; d = d->next) if (union_is_lowered_as(d->decl, u)) return d->decl;
+    return NULL;
+}
+
 static Type *union_lower(Type *u) {
     Type *value = u->element_type;
-    char nb[256];
+    Decl *same = union_find_lowered(u);
+    if (same) return type_simple(sema_arena, same->as.enum_decl.type_name);
+    char nb0[256];
     mono_name_cut = false;
-    union_mangled_name(u, nb, sizeof nb);
-    mono_refuse_cut("a union");
-    Symbol *ex = sema_lookup(nb);
-    if (ex) {
-        if (!union_is_lowered_as(ex->decl, u)) {
-            fprintf(stderr, "[E124] Error Ln %li, Col %li: two different unions have the same name '%s'; "
-                    "this is a known limitation (I.172).\n", (long)mono_at_line, (long)mono_at_col, nb);
-            diagnostic_show_line(mono_at_line, mono_at_col);
-            exit(1);
-        }
-        return type_simple(sema_arena, ex->decl->as.enum_decl.type_name);
-    }
+    union_mangled_name(u, nb0, sizeof nb0);
+    bool cut = mono_name_cut;
+    char nb[512], cb[640];
+    mono_instance_names("a union", "", "", nb0, cut, mono_hash_type(2166136261u, u, 0), nb, sizeof nb, cb, sizeof cb);
 
     char *raw = mono_dup(nb, strlen(nb));
     Id *ename = id(sema_arena, (isize)strlen(raw), raw);
@@ -748,6 +881,7 @@ static Type *union_lower(Type *u) {
     DeclList *node = decl_list(sema_arena, ed);
     DeclList *tl = sema_decls; while (tl && tl->next) tl = tl->next;
     if (tl) tl->next = node; else sema_decls = node;
+    { DeclList *un = decl_list(sema_arena, ed); un->next = g_union_enums; g_union_enums = un; }
 
     // Zero cost is MANDATORY for a union whose markers carry no payload (E064), and whether a
     // layout achieves it is ir/layout.h's answer, asked once the union is an IR type
@@ -1125,39 +1259,40 @@ static bool sema_monomorphize_call(Expr *call) {
         mono_cat(suffix, sizeof suffix, &soff, "_%s", tb);
     }
 
-    // Mangled raw name: base ⧺ suffix (e.g. "max_i32"). Dedup via the symbol table.
+    // The instance at these arguments (by identity), or a new one named base ⧺ suffix
+    // (e.g. "max_i32"), made unique.
+    bool cut = mono_name_cut;
     char what[128]; snprintf(what, sizeof what, "%.*s", (int)base->length, base->name);
     isize sl = mono_at_line, sc = mono_at_col;
     mono_at_line = call->line; mono_at_col = call->col;
-    char rawbuf[256]; int ro = 0; rawbuf[0] = '\0';
-    mono_cat(rawbuf, sizeof rawbuf, &ro, "%.*s%s", (int)base->length, base->name, suffix);
-    mono_refuse_cut(what);
-    Symbol *existing = sema_lookup(rawbuf);
-    if (existing) mono_check_existing(existing->decl, tmpl, oargs, ntp, what, rawbuf);
-    Decl *inst = existing ? existing->decl : NULL;
+    MonoInst *same = mono_find_identity(tmpl, oargs, ntp);
+    Decl *inst = same ? same->inst : NULL;
     Id *inst_id;
-    if (existing) {
+    if (same) {
         // ★ THE SYMBOL IS KEYED BY THE RAW NAME, so the rewritten call must carry the raw name.
         // This used the instance DECL's name, which by the second call has been qualified to its
         // C name (`mod_ident_i32`) — a name the symbol table does not know — so the call's type
         // inferred to nothing, and `var b = ident(i32, 4)` after `var a = ident(i32, 3)` left
         // `b` without a type and later "undeclared" (E106). Calling a generic function twice at
-        // the same type argument, with an unannotated binding, never worked.
-        char *raw2 = mono_dup(rawbuf, strlen(rawbuf));
-        inst_id = id(sema_arena, (isize)strlen(raw2), raw2);
+        // the same type argument, with an unannotated binding, never worked. The registry keeps
+        // its own copy of the raw name for this.
+        char *raw2 = mono_dup(same->name->name, (size_t)same->name->length);
+        inst_id = id(sema_arena, same->name->length, raw2);
     } else {
-        char *raw = mono_dup(rawbuf, strlen(rawbuf));
-        inst_id = id(sema_arena, (isize)strlen(raw), raw);
+        uint32_t h = mono_hash_id(2166136261u, base);
+        for (int i = 0; i < ntp; i++) h = mono_hash_type(h, oargs[i], 0);
         // cname = template's cname ⧺ suffix (e.g. "mod_max" → "mod_max_i32").
         char tmplraw[224];
         snprintf(tmplraw, sizeof tmplraw, "%.*s", (int)base->length, base->name);
         Symbol *tsym = sema_lookup(tmplraw);
-        char cnamebuf[288]; int co = 0; cnamebuf[0] = '\0';
-        mono_cat(cnamebuf, sizeof cnamebuf, &co, "%s%s", tsym ? tsym->c_name : rawbuf, suffix);
-        mono_refuse_cut(what);
+        char rawbuf[512], cnamebuf[640];
+        bool renamed = mono_instance_names(what, tmplraw, tsym ? tsym->c_name : tmplraw, suffix, cut, h,
+                                           rawbuf, sizeof rawbuf, cnamebuf, sizeof cnamebuf);
+        char *raw = mono_dup(rawbuf, strlen(rawbuf));
+        inst_id = id(sema_arena, (isize)strlen(raw), raw);
         char *cname = mono_dup(cnamebuf, strlen(cnamebuf));
         inst = mono_instantiate_function(tmpl, &ctx, inst_id);
-        mono_record_inst(inst_id, tmpl, inst, oargs, ntp);
+        mono_record_inst(id(sema_arena, (isize)strlen(raw), raw), tmpl, inst, oargs, ntp, renamed);
         // Resolve the instance's signature NOW (`Option(T)` → Option_i32) so a
         // caller inferring this call's result type sees the concrete type even
         // though the instance is appended after (and processed later than) it.

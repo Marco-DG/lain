@@ -1,0 +1,32 @@
+// I.172: every function-pointer argument mangled to `t7`, and an instance was found by its name,
+// so `Box(*func(u8) u8)` was the instance `Box(*func(i32) i32)` had made: its field typed
+// i32 -> i32, and the program compiled (chain 4 refused it, a stopgap). An instance is now found
+// by its template and its arguments, and a function pointer is named by them
+// (`Box_fn_i32_to_i32`, `Box_fn_u8_to_u8`). Each box is built and called through, and the first
+// instantiation, written again, is the same instance. E124 on the parent.
+type Box(T type) {
+    v T
+}
+func twice(x i32) i32 {
+    return x / 2 + x / 2
+}
+func low(x u8) u8 {
+    return x & 15
+}
+func run1(b Box(*func(i32) i32)) i32 {
+    return b.v(40)
+}
+func run2(b Box(*func(u8) u8)) u8 {
+    return b.v(250)
+}
+func again(b Box(*func(i32) i32)) i32 {
+    return b.v(6)
+}
+func main() i32 {
+    var a Box(*func(i32) i32) = Box(twice)
+    var b Box(*func(u8) u8) = Box(low)
+    if run1(a) != 40 { return 1 }
+    if run2(b) != 10 { return 2 }
+    if again(a) != 6 { return 3 }
+    return 0
+}

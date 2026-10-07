@@ -1,0 +1,31 @@
+// I.168: an instance found by its NAME became whatever held that name. With a user's
+// `func pick_i32` declared, `pick(i32, 0, 5)` called it and returned 5 (and with a user's
+// `type Box_i32`, `Box(i32)` was that struct); chain 4 refused both, a stopgap. An instance is now
+// found by its template and arguments, and a new one takes the first free name (`pick_i32_2`,
+// `Box_i32_2`): the user's declarations keep the names they were written with. In one program
+// the generic and the user's function each return their own value, and the generic struct and
+// the user's struct each hold their own field. E124 on the parent.
+type Box_i32 {
+    w u8
+}
+type Box(T type) {
+    v T
+}
+func pick_i32(a i32, b i32) i32 {
+    return b
+}
+func pick(T type, a T, b T) T {
+    return a
+}
+func read(b Box(i32)) i32 {
+    return b.v
+}
+func main() i32 {
+    if pick(i32, 0, 5) != 0 { return 1 }
+    if pick_i32(0, 5) != 5 { return 2 }
+    var g Box(i32) = Box(100000)
+    var u = Box_i32(7)
+    if read(g) != 100000 { return 3 }
+    if u.w != 7 { return 4 }
+    return 0
+}

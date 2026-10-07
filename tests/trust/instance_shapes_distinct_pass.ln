@@ -1,0 +1,49 @@
+// I.172: `*var i32` and `*i32` were both `ptr_i32`, and `i32 | Err(line u32)` and
+// `i32 | Err(col u32)` were both `__U_i32_Err_u32`, so the second of each pair was the first's
+// type (chain 4 refused them, a stopgap). A mutable pointer is now `mutptr_`, and a payload marker
+// names its fields: `__U_i32_Err_line_u32`, `__U_i32_Err_col_u32`. A store through the `*var` box
+// is read back through a `*i32` box (`Box(&x)` of a `var` is the `*var` one, now another type),
+// and each union's payload is read by its own field's name. E124 on the parent.
+type Box(T type) {
+    v T
+}
+func peek(b Box(*i32)) i32 {
+    var r i32 = 0
+    unsafe { r = *b.v }
+    return r
+}
+func shared(p *i32) Box(*i32) {
+    return Box(p)
+}
+func poke(b Box(*var i32)) {
+    unsafe { *b.v = 41 }
+}
+func f(k i32) i32 | Err(line u32) {
+    if k == 1 { return Err(7) }
+    return k
+}
+func g(k i32) i32 | Err(col u32) {
+    if k == 1 { return Err(9) }
+    return k
+}
+func lines(k i32) i64 {
+    case f(k) {
+        Err(line): return line as i64
+        else: return -1
+    }
+}
+func cols(k i32) i64 {
+    case g(k) {
+        Err(col): return col as i64
+        else: return -1
+    }
+}
+func main() i32 {
+    var x i32 = 3
+    poke(Box(&x))
+    if peek(shared(&x)) != 41 { return 1 }
+    if lines(1) != 7 { return 2 }
+    if cols(1) != 9 { return 3 }
+    if lines(2) != -1 { return 4 }
+    return 0
+}

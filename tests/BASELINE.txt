@@ -193,7 +193,7 @@ out=err line=42
 out=ok=7
 at=const 2
 ty=Slice_u8 scalar
-ty=__U_i32_ParseErr_i32 struct
+ty=__U_i32_ParseErr_line_i32 struct
 ### tests/errors/try_bool_union_pass.ln
 rc=0
 out=nope
@@ -1792,16 +1792,53 @@ at=access 4
 at=nonnull 4
 at=pure 4
 ty=Slice_u8 scalar
+### tests/trust/instance_fnptr_distinct_pass.ln
+rc=0
+out=
+at=const 4
+at=nonnull 6
+at=pure 6
+ty=Box_fn_i32_to_i32 struct
+ty=Box_fn_u8_to_u8 struct
+### tests/trust/instance_named_like_declaration_pass.ln
+rc=0
+out=
+at=const 4
+at=nonnull 2
+at=pure 2
+ty=Box_i32 struct
+ty=Box_i32_2 struct
 ### tests/trust/instance_reused_pass.ln
 rc=0
 out=
 at=const 14
 at=nonnull 6
 at=pure 6
-ty=Box_t7 struct
+ty=Box_fn_i32_to_i32 struct
 ty=Two_i32_u8 struct
-ty=__U_i32_NotFound_Err_i32 struct
+ty=__U_i32_NotFound_Err_code_i32 struct
 ty=__U_u8_r0_199_none scalar
+### tests/trust/instance_shapes_distinct_pass.ln
+rc=0
+out=
+at=const 8
+at=nonnull 4
+at=pure 4
+ty=Box_mutptr_i32 struct
+ty=Box_ptr_i32 struct
+ty=__U_i32_Err_col_u32 struct
+ty=__U_i32_Err_line_u32 struct
+### tests/trust/instance_underscore_distinct_pass.ln
+rc=0
+out=
+at=nonnull 4
+at=pure 4
+ty=My struct
+ty=My_Type struct
+ty=Pair_My_Type_X struct
+ty=Pair_My_Type_X_2 struct
+ty=Type_X struct
+ty=X struct
 ### tests/trust/interproc_bounds_pass.ln
 rc=0
 out=30
@@ -2054,13 +2091,13 @@ rc=0
 out=1234
 at=const 2
 ty=Slice_u8 scalar
-ty=__U_i32_ParseErr_i32 struct
+ty=__U_i32_ParseErr_line_i32 struct
 ### tests/trust/payload_marker_try_pass.ln
 rc=0
 out=line=99
 at=const 4
 ty=Slice_u8 scalar
-ty=__U_i32_NotFound_ParseErr_i32 struct
+ty=__U_i32_NotFound_ParseErr_line_i32 struct
 ### tests/trust/payload_pattern_not_a_call_pass.ln
 rc=0
 out=5
@@ -2422,8 +2459,8 @@ rc=0
 out=val=5 nf line=99 at=7:12 val=6 line=99 at=7:12 
 at=const 6
 ty=Slice_u8 scalar
-ty=__U_i32_NotFound_ParseErr_i32_At_i32_i32 struct
-ty=__U_i64_NotFound_ParseErr_i32_At_i32_i32 struct
+ty=__U_i32_NotFound_ParseErr_line_i32_At_line_i32_col_i32 struct
+ty=__U_i64_NotFound_ParseErr_line_i32_At_line_i32_col_i32 struct
 ### tests/trust/type_range_at_every_source_pass.ln
 rc=0
 out=
@@ -2457,19 +2494,19 @@ ty=__U_u8_r0_199_NotFound scalar
 rc=0
 out=
 at=const 4
-ty=__U_i32_NotFound_ParseErr_i32 struct
+ty=__U_i32_NotFound_ParseErr_line_i32 struct
 ### tests/trust/union_if_tagged_local_pass.ln
 rc=0
 out=
 at=const 4
-ty=__U_i32_Err_i32 struct
+ty=__U_i32_Err_code_i32 struct
 ### tests/trust/union_narrowing_pass.ln
 rc=0
 out=
 at=const 14
 at=pure 6
 ty=Slice_u8 scalar
-ty=__U_i32_NotFound_Err_i32 struct
+ty=__U_i32_NotFound_Err_code_i32 struct
 ty=__U_ptr_u8_NotFound_Denied scalar
 ty=__U_u8_r0_199_NotFound_Denied scalar
 ### tests/trust/union_presence_test_pass.ln

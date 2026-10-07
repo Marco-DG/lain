@@ -568,6 +568,7 @@ static bool type_is_union(Type *t) {
     return s && s->decl && s->decl->kind == DECL_ENUM && s->decl->as.enum_decl.is_union;
 }
 
+static bool mono_describe_renamed(Id *name, char *buf, size_t cap);   // sema/monomorph.h
 static void type_describe(Type *t, char *buf, size_t cap) {
     if (cap == 0) return;
     buf[0] = '\0';
@@ -594,6 +595,8 @@ static void type_describe(Type *t, char *buf, size_t cap) {
                     break;
                 }
             }
+            // An instance whose name was made unique (`Box_i32_2`, I.168) is shown as written.
+            if (t->base_type && !t->type_args && mono_describe_renamed(t->base_type, buf, cap)) break;
             if (t->base_type)
                 snprintf(buf, cap, "%.*s", (int)t->base_type->length, t->base_type->name);
             else snprintf(buf, cap, "?");
