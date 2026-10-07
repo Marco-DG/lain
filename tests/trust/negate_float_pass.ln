@@ -1,0 +1,32 @@
+// I.154: unary `-` on a float takes the float's type. The operand fell to the i32 default every
+// non-pointer unary had, so `x f64 = -y` was E012 "implicit conversion between float and integer",
+// `y * -1.5` was E012 "mixed float/integer arithmetic", and only `0.0 - y` compiled. Each spelling
+// is here, with an f32 and the four lanes of an f32x4.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func neg(y f64) f64 {
+    x f64 = -y
+    return x
+}
+
+func scale(y f64) f64 {
+    a = -1.5 * y
+    b = (-1.5) * y
+    c = y * -1.5
+    return a + b + c
+}
+
+func neg32(y f32) f32 {
+    return -y
+}
+
+func lanes(v f32x4) f32 {
+    w f32x4 = -v
+    return w[0] + w[1] + w[2] + w[3]
+}
+
+func main() i32 effects io {
+    var v f32x4 = [0.5, 1.0, 1.5, 2.0]
+    libc_printf("%.2f %.2f %.2f %.2f %.2f\n", neg(2.5), scale(2.0), neg(-0.25), neg32(1.25) as f64, lanes(v) as f64)
+    return 0
+}

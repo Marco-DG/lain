@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 7, Col 12: `~` complements an integer, and its operand is 'f64'.
+// I.154: `~` on a float was typed i32 and went on to C, `v2 = ~v0` on a double, which gcc refuses
+// ("wrong type argument to bit-complement"). So did `~` on an f32x4. Spec 08: the bitwise
+// operators take integers.
+func f(y f64) f64 {
+    return ~y
+}
+
+func main() i32 { return 0 }

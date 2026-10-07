@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 8, Col 16: `-` negates a number, and its operand is '*i32'.
+// I.154: `-p` on a pointer was typed i32. Outside `unsafe` it met E086 only because a pointer's
+// range does not fit an i32; inside, the overflow check is waived and the C was `v1 = -v0` on an
+// `int32_t*`, which gcc refuses. `unsafe` licenses memory operations, not arithmetic on an address.
+func f(p *i32) i32 {
+    unsafe {
+        return -p
+    }
+}
+
+func main() i32 { return 0 }

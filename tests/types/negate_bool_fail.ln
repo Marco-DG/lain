@@ -1,0 +1,9 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 6, Col 12: `-` negates a number, and its operand is 'bool'.
+// I.154: `-b` and `~b` on a bool were typed i32 and compiled, an implicit bool-to-integer
+// conversion, which spec 07 requires to be written: `-(b as i32)`.
+func f(b bool) i32 {
+    return -b
+}
+
+func main() i32 { return 0 }

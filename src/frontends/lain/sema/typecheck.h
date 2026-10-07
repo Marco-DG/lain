@@ -3494,10 +3494,34 @@ void sema_infer_expr(Expr *e) {
         // neg(5000000000) returned -705032704 instead of -5000000000, with no diagnostic.
         // The narrow types escaped it only by accident, because the negation-overflow
         // check below refuses `-x` on an iN with N < 32 before codegen ever runs.
+        //
+        // ★ A FLOAT TOO, for minus (I.154). The float operand fell to the same i32 default, so
+        // `x f64 = -y` was E012 "implicit conversion between float and integer" and `y * -1.5`
+        // was E012 "mixed float/integer arithmetic", while `0.0 - y` compiled: negating a float
+        // could only be spelled as a subtraction.
+        //
+        // ★ AND ANY OTHER OPERAND IS REFUSED, as `*` refuses a non-pointer. It was typed i32 and
+        // went on: `-b` and `~b` on a bool compiled, `~y` on an f64 or an f32x4 emitted C that gcc
+        // refused ("wrong type argument to bit-complement"), and so did `-p` on a pointer inside
+        // `unsafe`; outside it, `-p`, `-s` on a slice and `-c` on an enum met E086 only because
+        // their ranges happened not to fit the i32. `~` complements an integer (spec 08: the
+        // operands of the bitwise operators are integers); `-` negates a number.
         if (e->as.unary_expr.op == TOKEN_TILDE || e->as.unary_expr.op == TOKEN_MINUS) {
+            bool tilde = e->as.unary_expr.op == TOKEN_TILDE;
             Type *ot = e->as.unary_expr.right ? e->as.unary_expr.right->type : NULL;
             while (ot && ot->kind == TYPE_COMPTIME) ot = ot->element_type;
-            if (ot && (is_integer_type(ot) || ot->kind == TYPE_VECTOR)) e->type = ot;
+            Type *rt = resolve_type_alias(ot), *el = rt && rt->kind == TYPE_VECTOR ? rt->element_type : rt;
+            if (ot) {
+                if (is_integer_type(el) || (!tilde && is_float_type(el))) e->type = ot;
+                else {
+                    char tb[128]; type_describe(e->as.unary_expr.right->type, tb, sizeof tb);
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: %s, and its operand is '%s'.\n",
+                            (long)e->line, (long)e->col,
+                            tilde ? "`~` complements an integer" : "`-` negates a number", tb);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
+            }
         }
         // Unary negation overflow: `-x` overflows at the type minimum
         // (e.g. -INT_MIN is not representable). Check against the operand's

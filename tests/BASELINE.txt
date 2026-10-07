@@ -1856,6 +1856,12 @@ rc=0
 out=
 at=const 10
 ty=Item struct
+### tests/trust/negate_float_pass.ln
+rc=0
+out=-2.50 -9.00 0.25 -1.25 -5.00
+at=const 8
+at=vector_size 1
+ty=Slice_u8 scalar
 ### tests/trust/neg_width_pass.ln
 rc=0
 out=-5000000000
