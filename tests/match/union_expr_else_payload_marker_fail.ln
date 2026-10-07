@@ -1,0 +1,22 @@
+// EXPECT: [E063]
+// EXPECT-TEXT: Error Ln 15, Col 15: the `else` arm yields 'r', which may still be a marker here: an `else` arm holds the value only when every marker has an arm of its own.
+// I.129 with I.163: a payload marker left to a case expression's `else:` is a marker there too.
+
+func fe(k i32) i32 | NotFound | Err(code i32) {
+    if k == 1 { return NotFound }
+    if k == 2 { return Err(77) }
+    return k
+}
+
+func g(k i32) i32 {
+    r i32 | NotFound | Err(code i32) = fe(k)
+    v i32 = case r {
+        NotFound: -1
+        else: r
+    }
+    return v
+}
+
+func main() i32 {
+    return 0
+}

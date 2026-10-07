@@ -1,0 +1,25 @@
+// EXPECT: [E063]
+// EXPECT-TEXT: Error Ln 18, Col 15: the `else` arm yields 'r', which may still be a marker here: an `else` arm holds the value only when every marker has an arm of its own.
+// I.129: a case EXPRESSION's `else:` holds the value only when every marker has an arm, as a
+// statement's does; here Denied is left to it.
+
+type Small = u8 < 200
+
+func fs(k Small) Small | NotFound | Denied {
+    if k == 1 { return NotFound }
+    if k == 2 { return Denied }
+    return k
+}
+
+func g(k Small) Small {
+    r Small | NotFound | Denied = fs(k)
+    v Small = case r {
+        NotFound: 101
+        else: r
+    }
+    return v
+}
+
+func main() i32 {
+    return 0
+}

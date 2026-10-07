@@ -1,0 +1,22 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 16, Col 9: operator '+' is not defined on the union 'Small | NotFound | Denied': it may hold a marker. Test it (`if x { ... }`) or match it (`case x { ... }`), and use the value there.
+// I.129: arithmetic on a union is refused because it may hold a marker; the message advised a
+// method, as for a struct.
+
+type Small = u8 < 200
+
+func fs(k Small) Small | NotFound | Denied {
+    if k == 1 { return NotFound }
+    if k == 2 { return Denied }
+    return k
+}
+
+func g(k Small) i32 {
+    r Small | NotFound | Denied = fs(k)
+    y = r + 1
+    return 0
+}
+
+func main() i32 {
+    return 0
+}

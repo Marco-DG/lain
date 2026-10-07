@@ -514,6 +514,7 @@ static Decl *ir_find_type_alias(LowerCtx *c, Id *name) {
 // The alias's *runtime* base type — the leftmost leaf of the RHS (refinement
 // constraints like `!= 0` are for the VRA, not the representation).
 static IrType *ir_lower_type(LowerCtx *c, Type *t);              // fwd
+static IrValue *ir_sum_optional_payload(LowerCtx *c, IrValue *v, int some_k);   // fwd
 static IrType *ir_lower_type_impl(LowerCtx *c, Type *t);        // fwd (wrapped for the linear bit)
 
 // Does a mutable borrow (`var x`) of this type have to travel as an ADDRESS for writes to
@@ -2262,6 +2263,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             IrValue *tagv = sumty ? ir_sum_tag(c->f, c->cur, v) : NULL;
             IrBlock *join = ir_new_block(c->f);
             ExprMatchCase *elsec = NULL;
+            uint64_t matched = 0;          // which variants the arms selected (for `else`)
             for (ExprMatchCase *cs = e->as.match_expr.cases; cs; cs = cs->next) {
                 if (!cs->patterns) { elsec = cs; continue; }
                 IrBlock *body = ir_new_block(c->f);
@@ -2280,6 +2282,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                             ir_incomplete(c, "a pattern that names no variant of the scrutinee"); ir_set_br(c->cur, body); c->cur = nxt; continue;
                         }
                         if (pe->kind==EXPR_CALL) { bound_k = k; bound_pat = pe; }
+                        if (k < 64) matched |= (uint64_t)1 << k;
                         IrValue *kc = ir_const_int(c->f, c->cur, k, ir_type_int(c->a,32,true));
                         ir_match_branch(c, sumty, k, pe, v,
                                         ir_icmp(c->f,c->cur,IR_CMP_EQ,tagv,kc), body, nxt);
@@ -2323,7 +2326,19 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 c->cur = ftblk;
             }
             if (elsec && elsec->body) {
+                // The `else` arm narrows as the statement's does (I.129): when exactly one variant
+                // is left and it carries a payload, the scrutinee here is that payload.
+                IrLocal *esaved = c->locals;
+                if (sumty && val && val->kind==EXPR_IDENTIFIER && sumty->n_fields <= 64) {
+                    int rem = -1, nrem = 0;
+                    for (int q=0; q<sumty->n_fields; q++)
+                        if (!((matched >> q) & 1u)) { rem = q; nrem++; }
+                    if (nrem == 1 && rem >= 0 && sumty->fields[rem])
+                        ir_env_add(c, val->as.identifier_expr.id, NULL,
+                                   ir_sum_optional_payload(c, v, rem));
+                }
                 IrValue *av = ir_lower_expr(c, elsec->body);
+                c->locals = esaved;
                 if (av) ir_store(c->f, c->cur, cell, av);
                 if (!ir_is_set_term(c->cur)) ir_set_br(c->cur, join);
             } else if (!ir_is_set_term(c->cur)) {

@@ -405,7 +405,32 @@ static Id *sema_unknown_type_name(Type *t, DeclList *tp1, DeclList *tp2, int dep
             return NULL;
     }
 }
+// A union's marker that has a declared TYPE's name (I.129): `type NotFound { code i32 }` beside
+// `Small | NotFound` reached the code generator as "unhandled-expr", since `return NotFound` reads
+// the name as the type. Markers and types share one namespace.
+static void sema_check_marker_names(Type *t, isize line, isize col, int depth) {
+    if (!t || depth > 32) return;
+    if (t->kind == TYPE_UNION)
+        for (IdList *m = t->union_markers; m; m = m->next) {
+            Id *n = m->id;
+            if (!n || n->length <= 0 || n->length >= 120) continue;
+            char nb[128]; memcpy(nb, n->name, (size_t)n->length); nb[n->length] = '\0';
+            Symbol *sym = sema_lookup(nb);
+            Decl *d = sym ? sym->decl : NULL;
+            if (!d || !(d->kind == DECL_STRUCT || (d->kind == DECL_ENUM && !d->as.enum_decl.is_union) ||
+                        d->kind == DECL_TYPE_ALIAS || d->kind == DECL_EXTERN_TYPE)) continue;
+            fprintf(stderr, "[E100] Error Ln %li, Col %li: the marker `%s` has the name of the type `%s` "
+                    "declared at Ln %li; markers and types share one namespace, so rename one.\n",
+                    (long)line, (long)col, nb, nb, (long)d->line);
+            diagnostic_show_line(line, col);
+            exit(1);
+        }
+    if (t->kind == TYPE_FUNC)
+        for (TypeList *a = t->func_params; a; a = a->next) sema_check_marker_names(a->type, line, col, depth + 1);
+    sema_check_marker_names(t->element_type, line, col, depth + 1);
+}
 static void sema_check_type_known(Type *t, DeclList *tp1, DeclList *tp2, isize line, isize col) {
+    sema_check_marker_names(t, line, col, 0);
     Id *u = sema_unknown_type_name(t, tp1, tp2, 0);
     if (!u) return;
     fprintf(stderr, "[E106] Error Ln %li, Col %li: unknown type '%.*s': no struct, enum, union, "
@@ -949,11 +974,12 @@ void sema_resolve_stmt(Stmt *s) {
     // 1) resolve & infer initializer
     // 1) resolve & infer initializer
     Expr *rhs = s->as.var_stmt.expr;
+    // I.127: a local's type names a type, judged as written (a union before it is lowered).
+    sema_check_type_known(s->as.var_stmt.type, NULL, NULL, s->line, s->col);
     // Resolve a generic type-application annotation (`var v Vec(i32)`).
     if (s->as.var_stmt.type)
         s->as.var_stmt.type = mono_resolve_type_apps_at(s->as.var_stmt.type, s->line, s->col);
     Type *ty = s->as.var_stmt.type; // Start with the annotation (if any)
-    sema_check_type_known(ty, NULL, NULL, s->line, s->col);   // I.127: a local's type names a type
     // ★ A LOCAL ARRAY'S LENGTH. `T[N]` needs a compile-time constant N (spec 7), and a local
     // with a RUNTIME length and no initializer is a VLA (the note there). A declared length
     // that is neither was dropped in silence: `var a u8[K] = [1, 2, 3]` with `K usize = 4` made

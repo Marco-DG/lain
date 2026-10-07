@@ -1,0 +1,17 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 11, Col 5: the marker `NotFound` has the name of the type `NotFound` declared at Ln 6; markers and types share one namespace, so rename one.
+// I.129: the clash in a local's union with an `extern type`, which the message places (it had no
+// position, so it read Ln 0).
+
+extern type NotFound
+
+type Small = u8 < 200
+
+func f(k Small) i32 {
+    r Small | NotFound = k
+    return 0
+}
+
+func main() i32 {
+    return 0
+}

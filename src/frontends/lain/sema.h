@@ -76,6 +76,7 @@ static Type *union_payload_type(Type *t);
 // Forward-declared so the `try`/`else` inference in typecheck.h can enumerate a
 // union's markers for the ⊆ propagation check and stash the enum for emit.
 static Decl *find_union_enum(Type *t);
+static bool union_else_covers_payload_expr(Expr *value, ExprMatchCase *cases);   // below
 
 // L3: pointer monotone table — pointers whose upper bound is dead inside while loops.
 // When p is monotone non-increasing and was initialized at a valid index into arr,
@@ -197,6 +198,26 @@ static bool union_else_covers_payload(Expr *value, StmtMatchCase *cases) {
         bool covered = false;
         for (StmtMatchCase *c = cases; c && !covered; c = c->next) {
             if (!c->patterns) continue;              // the `else` arm itself doesn't cover markers
+            for (ExprList *p = c->patterns; p; p = p->next)
+                if (pattern_matches_variant(p->expr, v->name)) { covered = true; break; }
+        }
+        if (!covered) return false;
+    }
+    return true;
+}
+
+// The same for a case EXPRESSION's arms (I.129: its `else` did not narrow).
+static bool union_else_covers_payload_expr(Expr *value, ExprMatchCase *cases) {
+    if (!value || value->kind != EXPR_IDENTIFIER || !value->type) return false;
+    Type *t = value->type;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    Decl *U = find_union_enum(t);
+    if (!U) return false;
+    for (Variant *v = U->as.enum_decl.variants ? U->as.enum_decl.variants->next : NULL; v; v = v->next) {
+        if (!v->name) continue;
+        bool covered = false;
+        for (ExprMatchCase *c = cases; c && !covered; c = c->next) {
+            if (!c->patterns) continue;
             for (ExprList *p = c->patterns; p; p = p->next)
                 if (pattern_matches_variant(p->expr, v->name)) { covered = true; break; }
         }
@@ -1686,21 +1707,18 @@ static Expr *synth_measure_from_cond(Expr *cond, isize line, isize col) {
 │ In-guard table: function definitions (type + global declared before includes)│
 ╚─────────────────────────────────────────────────────────────────────────────*/
 
-// Is e an identifier whose type is a single-marker union (`T | m`)? Only those
-// get `if r` narrowing: `if (r)` soundly excludes one sentinel; a multi-marker
-// union must be discriminated with `case` (its markers sit at several sentinels).
-static bool nn_is_single_marker_var(Expr *e) {
+// Is e an identifier whose type is a union (`T | m1 | ...`)? `if r` narrows it to its value in the
+// then-branch. ★ ANY UNION (I.129). This was the one-marker shape only, on the reasoning that
+// `if (r)` excluded one sentinel; since I.128 a union's truth is `tag == payload` for every shape,
+// so `if r` proves the value present however many markers it has, and lowering binds r to its
+// payload there (STMT_IF, I.163). `if r { return r }` on `Small | NotFound | Denied` was E063,
+// whose remedy was `if r { ... }`.
+static bool nn_is_union_var(Expr *e) {
     if (!e || e->kind != EXPR_IDENTIFIER || !e->type) return false;
     Type *t = e->type;
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
     Decl *U = find_union_enum(t);
-    if (U) {
-        int markers = 0;                   // every variant after the payload (variant 0) is a marker,
-        for (Variant *v = U->as.enum_decl.variants ? U->as.enum_decl.variants->next : NULL; v; v = v->next)
-            markers++;                     // one with fields (`Err(x i32)`) as much as one without
-        return markers == 1;
-    }
-    return false;
+    return U && U->as.enum_decl.variants && U->as.enum_decl.variants->next;
 }
 
 // Push the variables a condition proves NON-nil for the branch being entered.
@@ -1711,7 +1729,7 @@ static bool nn_is_single_marker_var(Expr *e) {
 static void sema_push_narrows(Expr *cond, bool negated) {
     if (!cond) return;
     if (cond->kind == EXPR_IDENTIFIER) {
-        if (!negated && nn_is_single_marker_var(cond)) {
+        if (!negated && nn_is_union_var(cond)) {
             NarrowEntry *e = arena_push_aligned(sema_arena, NarrowEntry);
             e->var = cond; e->next = sema_narrows; sema_narrows = e;
         }

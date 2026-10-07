@@ -2438,6 +2438,15 @@ rc=0
 out=
 at=const 4
 ty=__U_i32_Err_i32 struct
+### tests/trust/union_narrowing_pass.ln
+rc=0
+out=
+at=const 14
+at=pure 6
+ty=Slice_u8 scalar
+ty=__U_i32_NotFound_Err_i32 struct
+ty=__U_ptr_u8_NotFound_Denied scalar
+ty=__U_Small_NotFound_Denied scalar
 ### tests/trust/union_presence_test_pass.ln
 rc=0
 out=100 100 1100 110

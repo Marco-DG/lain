@@ -1,0 +1,105 @@
+// I.129: `if x` narrows ANY union to its value in the then-branch, and a case expression's `else:`
+// narrows as a statement's does when every marker has an arm. Only a one-marker union narrowed under
+// `if` (before I.128 a union's truth was not its tag), and an expression `else:` never did; the
+// documented rule (LANGUAGE 14.2) has no such limit. Each union shape below (a niche integer, a
+// pointer, a tagged union with a payload marker) is built in each of its cases and read, natively
+// and with --interpret. tests/match/union_multi_marker_if_fail.ln, which pinned the old limit, is
+// the parameter case here (`use_ptr`).
+type Small = u8 < 200
+
+func fs(k Small) Small | NotFound | Denied {
+    if k == 1 { return NotFound }
+    if k == 2 { return Denied }
+    return k
+}
+
+func fe(k i32) i32 | NotFound | Err(code i32) {
+    if k == 1 { return NotFound }
+    if k == 2 { return Err(77) }
+    return k
+}
+
+func fp(k i32, s *u8) *u8 | NotFound | Denied {
+    if k == 1 { return NotFound }
+    if k == 2 { return Denied }
+    return s
+}
+
+func if_small(k Small) Small {
+    r Small | NotFound | Denied = fs(k)
+    if r {
+        return r
+    }
+    return 199
+}
+
+func if_err(k i32) i32 {
+    r i32 | NotFound | Err(code i32) = fe(k)
+    if r {
+        return r
+    }
+    return -1
+}
+
+func use_ptr(r *u8 | NotFound | Denied) u8 {
+    if r {
+        return peek(r)
+    }
+    return 7
+}
+
+func peek(p *u8) u8 {
+    var b u8 = 0
+    unsafe { b = *p }
+    return b
+}
+
+func if_ptr(k i32, s *u8) u8 {
+    var r *u8 | NotFound | Denied = fp(k, s)
+    if r {
+        return peek(r)
+    }
+    return 0
+}
+
+func ex_small(k Small) Small {
+    r Small | NotFound | Denied = fs(k)
+    v Small = case r {
+        NotFound: 101
+        Denied: 102
+        else: r
+    }
+    return v
+}
+
+func ex_err(k i32) i32 {
+    r i32 | NotFound | Err(code i32) = fe(k)
+    v i32 = case r {
+        NotFound: -1
+        Err(code): code
+        else: r
+    }
+    return v
+}
+
+func main() i32 {
+    if if_small(5) != 5 { return 1 }
+    if if_small(1) != 199 { return 2 }
+    if if_small(2) != 199 { return 3 }
+    if if_small(0) != 0 { return 4 }
+    if if_err(9) != 9 { return 5 }
+    if if_err(1) != -1 { return 6 }
+    if if_err(2) != -1 { return 7 }
+    if if_ptr(0, "*") != 42 { return 8 }
+    if if_ptr(1, "*") != 0 { return 9 }
+    if if_ptr(2, "*") != 0 { return 10 }
+    if use_ptr(fp(0, "*")) != 42 { return 17 }
+    if use_ptr(fp(2, "*")) != 7 { return 18 }
+    if ex_small(5) != 5 { return 11 }
+    if ex_small(1) != 101 { return 12 }
+    if ex_small(2) != 102 { return 13 }
+    if ex_err(9) != 9 { return 14 }
+    if ex_err(1) != -1 { return 15 }
+    if ex_err(2) != 77 { return 16 }
+    return 0
+}

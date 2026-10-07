@@ -1540,12 +1540,15 @@ Decl *parse_extern_type_decl(Arena *arena, Parser *parser) {
     // extern type Name;
     parser_expect(TOKEN_IDENTIFIER, "Expected type name after 'extern type'");
     Id *name = id(arena, parser->token.length, parser->token.start);
+    long name_line = parser->line, name_col = parser->column;   // a message citing it said Ln 0
     parser_advance();
 
     parser_expect_eol("Expected ';' or newline after extern type decl");
     parser_advance();
 
-    return decl_extern_type(arena, name);
+    Decl *d = decl_extern_type(arena, name);
+    d->line = name_line; d->col = name_col;
+    return d;
 }
 
 

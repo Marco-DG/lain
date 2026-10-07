@@ -338,7 +338,16 @@ static void match_describe_uncovered(Type *vtype, ExprList **arms, int narms, ch
         for (int a = 0; a < narms && !covered; a++)
             for (ExprList *p = arms[a]; p && !covered; p = p->next)
                 if (pattern_matches_variant(p->expr, v->name)) covered = true;
-        if (!covered)
+        if (covered) continue;
+        // A union (`Small | NotFound`) is written by its parts, not by the enum it lowers to:
+        // its payload has no pattern, only an `else:` reaches it, and a marker is written bare.
+        // The message named `__U_Small_NotFound.__payload` (I.129).
+        if (ed->as.enum_decl.is_union && v == ed->as.enum_decl.variants)
+            o += (size_t)snprintf(buf + o, cap - o, "%sthe value (an `else:` arm)", n++ ? ", " : "");
+        else if (ed->as.enum_decl.is_union)
+            o += (size_t)snprintf(buf + o, cap - o, "%s%.*s", n++ ? ", " : "",
+                                  (int)v->name->length, v->name->name);
+        else
             o += (size_t)snprintf(buf + o, cap - o, "%s%.*s.%.*s", n++ ? ", " : "",
                                   en ? (int)en->length : 0, en ? en->name : "",
                                   (int)v->name->length, v->name->name);

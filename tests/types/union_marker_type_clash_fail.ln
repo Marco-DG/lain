@@ -1,0 +1,18 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 12, Col 6: the marker `NotFound` has the name of the type `NotFound` declared at Ln 6; markers and types share one namespace, so rename one.
+// I.129: markers and types share one namespace. A marker named like a declared type reached the
+// code generator as "unhandled-expr".
+
+type NotFound {
+    code i32
+}
+
+type Small = u8 < 200
+
+func f(k Small) Small | NotFound {
+    return NotFound
+}
+
+func main() i32 {
+    return 0
+}

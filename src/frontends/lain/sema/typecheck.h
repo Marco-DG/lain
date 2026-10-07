@@ -556,6 +556,18 @@ static void sema_report_function_as_member(Expr *e, Type *t) {
 
 // P2/S3: render a Type into `buf` for diagnostics (best-effort, a couple of
 // levels of pointer/slice/array nesting; falls back to "?").
+// A union `T | m1 | ...`, as written or as the enum it lowers to (I.129: a message about one gave
+// advice for a struct or an integer).
+static bool type_is_union(Type *t) {
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    if (!t) return false;
+    if (t->kind == TYPE_UNION) return true;
+    if (t->kind != TYPE_SIMPLE || !t->base_type || t->base_type->length <= 0 || t->base_type->length >= 255) return false;
+    char nm[256]; memcpy(nm, t->base_type->name, (size_t)t->base_type->length); nm[t->base_type->length] = '\0';
+    Symbol *s = sema_lookup(nm);
+    return s && s->decl && s->decl->kind == DECL_ENUM && s->decl->as.enum_decl.is_union;
+}
+
 static void type_describe(Type *t, char *buf, size_t cap) {
     if (cap == 0) return;
     buf[0] = '\0';
@@ -3176,6 +3188,23 @@ void sema_infer_expr(Expr *e) {
                 bool str_lit_cmp = eqop &&
                     (e->as.binary_expr.left->kind == EXPR_STRING ||
                      e->as.binary_expr.right->kind == EXPR_STRING);
+                // A UNION is not compared and has no arithmetic: what it holds is asked by testing
+                // it (I.129). A union on the LEFT of `==` is refused above with this wording; on the
+                // right (`none == r`) it was told to write an `equals` helper.
+                if (!str_lit_cmp && (type_is_union(alt) || type_is_union(art))) {
+                    char tb[128]; type_describe(type_is_union(alt) ? alt : art, tb, sizeof tb);
+                    if (eqop)
+                        fprintf(stderr, "[E012] Error Ln %li, Col %li: cannot use '%s' on the union '%s'. "
+                                "Match it with `case` instead.\n",
+                                (long)e->line, (long)e->col, token_kind_to_str(bop), tb);
+                    else
+                        fprintf(stderr, "[E012] Error Ln %li, Col %li: operator '%s' is not defined on the "
+                                "union '%s': it may hold a marker. Test it (`if x { ... }`) or match it "
+                                "(`case x { ... }`), and use the value there.\n",
+                                (long)e->line, (long)e->col, token_kind_to_str(bop), tb);
+                    diagnostic_show_line(e->line, e->col);
+                    exit(1);
+                }
                 if (!str_lit_cmp) {
                     const char *what = (is_nominal_aggregate(alt) || is_nominal_aggregate(art))
                                        ? "struct/enum" : "array/slice";
@@ -3523,6 +3552,12 @@ void sema_infer_expr(Expr *e) {
             // Inside `unsafe` too: `unsafe` licenses memory operations, not implicit conversions.
             if (o && o->type && !is_bool_type(o->type)) {
                 char tb[128]; type_describe(o->type, tb, sizeof tb);
+                if (type_is_union(o->type))      // `if !r` was told `n == 0`, itself refused (I.129)
+                    fprintf(stderr, "[E012] Error Ln %li, Col %li: `!` applied to the union '%s', not "
+                            "`bool` (spec 08): a union is tested by itself, so its absence is the "
+                            "`else` of `if x { ... } else { ... }`, or a `case x { ... }` arm.\n",
+                            (long)e->line, (long)e->col, tb);
+                else
                 fprintf(stderr, "[E012] Error Ln %li, Col %li: `!` applied to '%s', not `bool` (spec 08) — "
                         "compare it: `n == 0`.\n", (long)e->line, (long)e->col, tb);
                 diagnostic_show_line(e->line, e->col);
@@ -3812,8 +3847,16 @@ void sema_infer_expr(Expr *e) {
     sema_infer_expr(e->as.match_expr.value);
     sema_check_case_scrutinee(e->as.match_expr.value, e->line, e->col);
     Type *inferred_type = NULL;
+    // A union scrutinee's `else` arm holds its value when every marker has an arm, as in a case
+    // statement (I.129: here it did not narrow, so `else: r` was a union among integer arms).
+    bool else_narrows = union_else_covers_payload_expr(e->as.match_expr.value, e->as.match_expr.cases);
     for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next) {
         sema_push_scope();
+        NarrowEntry *old_narrows = sema_narrows;
+        if (else_narrows && c->patterns == NULL) {
+            NarrowEntry *ne = arena_push_aligned(sema_arena, NarrowEntry);
+            ne->var = e->as.match_expr.value; ne->next = sema_narrows; sema_narrows = ne;
+        }
         for (ExprList *p = c->patterns; p; p = p->next) {
             sema_infer_expr(p->expr);
         }
@@ -3821,12 +3864,31 @@ void sema_infer_expr(Expr *e) {
                                     c->patterns);
         sema_check_case_pattern_kinds(e->as.match_expr.value, c->patterns);
         sema_infer_expr(c->body);
+        // The arm that IS the narrowed scrutinee yields its value: lowering binds the name to the
+        // payload in that arm, so the arm's type is the payload's.
+        if (else_narrows && c->patterns == NULL && c->body && sema_is_narrowed(c->body)) {
+            Type *pt = union_payload_type(c->body->type);
+            if (pt) c->body->type = pt;
+        }
+        sema_narrows = old_narrows;
         sema_pop_scope();
         
         if (!inferred_type && c->body->type) {
             inferred_type = c->body->type;
         } else if (inferred_type && c->body && c->body->type &&
                    !sema_arm_types_agree(inferred_type, c->body->type)) {
+            // The `else` arm yields the scrutinee while a marker is left to it (I.129): say that,
+            // not that the arms disagree.
+            if (c->patterns == NULL && type_is_union(c->body->type) &&
+                expr_struct_equal(c->body, e->as.match_expr.value)) {
+                fprintf(stderr, "[E063] Error Ln %li, Col %li: the `else` arm yields '%.*s', which may "
+                        "still be a marker here: an `else` arm holds the value only when every marker "
+                        "has an arm of its own.\n", (long)c->body->line, (long)c->body->col,
+                        c->body->kind == EXPR_IDENTIFIER ? (int)c->body->as.identifier_expr.id->length : 1,
+                        c->body->kind == EXPR_IDENTIFIER ? c->body->as.identifier_expr.id->name : "?");
+                diagnostic_show_line(c->body->line, c->body->col);
+                exit(1);
+            }
             char ta[128], tb[128];
             type_describe(inferred_type, ta, sizeof ta); type_describe(c->body->type, tb, sizeof tb);
             fprintf(stderr, "[E012] Error Ln %li, Col %li: the arms of a `case` have incompatible "

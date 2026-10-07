@@ -1,0 +1,23 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 15, Col 8: cannot use '==' on the union 'Small | none'. Match it with `case` instead.
+// I.129: a union is not compared with `==`, on either side. With the union on the LEFT it was
+// already refused with this wording; on the right (`5 == r`) the message advised an `equals` helper ("Implement
+// a method instead").
+
+type Small = u8 < 200
+
+func f(k Small) Small | none {
+    return k
+}
+
+func g(k Small) i32 {
+    r Small | none = f(k)
+    if 5 == r {
+        return 1
+    }
+    return 0
+}
+
+func main() i32 {
+    return 0
+}
