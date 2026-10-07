@@ -328,7 +328,7 @@ The following casts are permitted:
 integer & integer & The same value where \lain{T} holds it; otherwise the tier's policy \\
 integer & float   & Nearest representable value (IEEE~754) \\
 float   & integer & Truncation toward zero; \lain{as} owes a proof that it fits (below) \\
-float   & float   & Precision change \\
+float   & float   & \lain{f32} to \lain{f64} exact; \lain{f64} to \lain{f32} rounds to nearest, $\pm\infty$ beyond its range \\
 pointer & pointer & Reinterpretation (\lain{unsafe} required) \\
 integer & pointer & Reinterpretation (\lain{unsafe} required) \\
 pointer & integer & Reinterpretation (\lain{unsafe} required) \\

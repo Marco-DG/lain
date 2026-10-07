@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 7, Col 5: implicit conversion from 'f64' to 'f32' in initialization of variable 'x' rounds the value: write `as f32`.
+// I.161 (decided 2026-10-06): an f64 narrows to an f32 only where it is written, `y as f32`, as
+// every other narrowing in Lain is. `x f32 = y` compiled and rounded silently. A float literal
+// still takes an f32 destination's type: `x f32 = 1.5` is fine.
+func f(y f64) f32 {
+    x f32 = y
+    return x
+}
+
+func main() i32 { return 0 }

@@ -1,0 +1,27 @@
+// I.161: f64 -> f32 is written (`as f32`); f32 -> f64 is implicit (exact). A float literal takes
+// the other operand's type, on either side (`x * 0.5` and `2.0 * x` were f32 and f64), and an f32
+// with an f64 computes in f64, where `a * b` was typed f32 and narrowed b silently.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func scale(x f32) f32 {
+    return 2.0 * x + x * 0.5 - 1.0
+}
+
+func mixed(a f32, b f64) f64 {
+    return a * b
+}
+
+func widen(a f32) f64 {
+    return a
+}
+
+func narrow(y f64) f32 {
+    return y as f32
+}
+
+func main() i32 effects io {
+    x f32 = 1.5
+    y f32 = -0.25
+    libc_printf("%.4f %.4f %.4f %.4f %.4f\n", scale(x) as f64, mixed(y, 4.0), widen(x), narrow(0.125) as f64, (x + y) as f64)
+    return 0
+}

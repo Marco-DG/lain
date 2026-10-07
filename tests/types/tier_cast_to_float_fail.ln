@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 7, Col 12: `as|` says what happens at an integer type's ends, and 'f32' is a float: write `as`.
+// I.161: `as|`, `as?` and `as%` name what happens at an integer type's ends, and a float has none:
+// IEEE 754 defines every conversion to a float, an infinity past its range. They emitted the plain
+// conversion and promised a clamp, a check or a wrap that never happened.
+func f(n i64) f32 {
+    return n as| f32
+}
+
+func main() i32 { return 0 }

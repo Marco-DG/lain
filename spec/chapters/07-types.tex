@@ -437,6 +437,41 @@ Arithmetic on \lain{f32} and \lain{f64} follows IEEE~754 semantics:
 overflow produces $\pm\infty$; the result of $0.0/0.0$ and similar
 operations is NaN.  These are defined behaviors in Lain.
 
+\pnum
+An \lain{f32} converts to \lain{f64} implicitly, because every \lain{f32} is exactly an
+\lain{f64}.  The other way rounds, so it is written: \lain{d as f32} gives the nearest
+\lain{f32} (IEEE~754 rounding), $\pm\infty$ beyond its range, and a NaN for a NaN, and it owes no
+proof.  A float literal, negated or not, takes the type of an \lain{f32} destination; in
+arithmetic a float literal takes the other operand's type, and \lain{f32} with \lain{f64}
+computes in \lain{f64}.  So \lain{x f32 = 0.5 * 3.0}, two literals, computes in \lain{f64}
+and needs \lain{as f32}.
+
+\begin{constraint}
+  An \lain{f64} value used where an \lain{f32} is expected, without \lain{as f32}, is
+  \illformed{}~(\diagcode{E012}).  \lain{as|}, \lain{as?} and \lain{as\%} say what happens at an
+  integer type's ends and do not take a float target~(\diagcode{E012}).
+\end{constraint}
+
+\begin{laincode}
+// VERIFY: exit 0
+func main() i32 {
+    d f64 = 0.1
+    s f32 = d as f32          // rounds: written
+    back f64 = s              // exact: implicit
+    h f32 = 1.5               // a literal takes the f32 destination
+    if back == d { return 1 } // 0.1 has no exact f32
+    if h * 2.0 != 3.0 { return 2 }
+    return 0
+}
+\end{laincode}
+
+\begin{laincode}
+func narrow(d f64) f32 {
+    x f32 = d                 // ERROR [E012]: rounds the value, write `as f32`
+    return x
+}
+\end{laincode}
+
 \subsection{Boolean type}
 \label{sec:types.bool}
 \index{boolean type}

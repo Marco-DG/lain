@@ -166,6 +166,16 @@ static bool is_bool_type(Type *t) {
     return t->base_type->length == 4 && memcmp(t->base_type->name, "bool", 4) == 0;
 }
 
+static bool is_float_type(Type *t);
+// A float literal, negated or not, takes the float type `t` (I.161): the literal node and every
+// `-` above it, so the constant is lowered, and rounds, in that type.
+static void sema_float_literal_as(Expr *x, Type *t) {
+    for (Expr *q = x; q; q = (q->kind == EXPR_UNARY && q->as.unary_expr.op == TOKEN_MINUS) ? q->as.unary_expr.right : NULL) {
+        if (q->kind != EXPR_UNARY && q->kind != EXPR_FLOAT_LITERAL) return;
+        q->type = t;
+        if (q->kind == EXPR_FLOAT_LITERAL) return;
+    }
+}
 static bool is_float_type(Type *t) {
     if (!t || t->kind != TYPE_SIMPLE || !t->base_type) return false;
     return t->base_type->length == 3 &&
@@ -1581,6 +1591,25 @@ static void check_conversion(Type *from, Type *to, Range r, Expr *src_expr,
     if (value_fits(from, r, to)) return;
 
     reject_float_int_mismatch(from, to, line, col, ctx, label);
+    // ★ f64 TO f32 IS WRITTEN (I.161, Marco's decision): it ROUNDS, and every other narrowing in
+    // Lain is explicit. `x f32 = y` with y an f64 compiled. A float literal still takes an f32
+    // destination's type (`x f32 = 1.5`), negated or not; anything computed needs `as f32`.
+    {
+        Type *fu = from, *tu = to;
+        while (fu && fu->kind == TYPE_COMPTIME) fu = fu->element_type;
+        while (tu && tu->kind == TYPE_COMPTIME) tu = tu->element_type;
+        fu = resolve_type_alias(fu); tu = resolve_type_alias(tu);
+        Expr *lit = src_expr;
+        while (lit && lit->kind == EXPR_UNARY && lit->as.unary_expr.op == TOKEN_MINUS) lit = lit->as.unary_expr.right;
+        if (fu && tu && is_float_type(fu) && is_float_type(tu) && memcmp(fu->base_type->name, "f64", 3) == 0 &&
+            memcmp(tu->base_type->name, "f32", 3) == 0 && !(lit && lit->kind == EXPR_FLOAT_LITERAL)) {
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: implicit conversion from 'f64' to 'f32' in %s '%s' "
+                    "rounds the value: write `as f32`.\n", (long)line, (long)col,
+                    ctx ? ctx : "this conversion", label ? label : "");
+            diagnostic_show_line(line, col);
+            exit(1);
+        }
+    }
     reject_incompatible_conversion(from, to, src_expr, line, col, ctx, label);
     reject_sentinel_fabrication(from, to, src_expr, line, col, ctx);
     reject_fixed_string_length_mismatch(from, to, line, col);
@@ -3367,6 +3396,22 @@ void sema_infer_expr(Expr *e) {
                         diagnostic_show_line(e->line, e->col);
                         exit(1);
                     }
+                } else if (l_flt && r_flt) {
+                    // ★ BOTH FLOATS (I.161). The result took the LEFT operand's type, so `x * 2.0` on
+                    // an f32 was f32 and `2.0 * x` was f64, and `a * b` with a an f32 and b an f64
+                    // was typed f32: the f64 narrowed silently. A float literal takes the other
+                    // side's type, as an integer literal does (and is retyped, so an f32 constant
+                    // rounds as one); otherwise f32 meets f64 in f64, which holds every f32.
+                    Expr *le = e->as.binary_expr.left, *re = e->as.binary_expr.right;
+                    while (le && le->kind == EXPR_UNARY && le->as.unary_expr.op == TOKEN_MINUS) le = le->as.unary_expr.right;
+                    while (re && re->kind == EXPR_UNARY && re->as.unary_expr.op == TOKEN_MINUS) re = re->as.unary_expr.right;
+                    bool llit = le && le->kind == EXPR_FLOAT_LITERAL, rlit = re && re->kind == EXPR_FLOAT_LITERAL;
+                    bool l32 = memcmp(resolve_type_alias(lt)->base_type->name, "f32", 3) == 0;
+                    bool r32 = memcmp(resolve_type_alias(rt)->base_type->name, "f32", 3) == 0;
+                    if (llit && !rlit)      { e->type = rt; sema_float_literal_as(e->as.binary_expr.left, rt); }
+                    else if (rlit && !llit) { e->type = lt; sema_float_literal_as(e->as.binary_expr.right, lt); }
+                    else if (l32 && !r32)   e->type = rt;
+                    else                    e->type = lt;
                 } else if (l_flt || r_flt) {
                     e->type = l_flt ? lt : rt;
                 } else {
@@ -3883,6 +3928,21 @@ void sema_infer_expr(Expr *e) {
             fprintf(stderr, "[E012] Error Ln %li, Col %li: `as%%` wraps an integer, and this operand is "
                     "'%s': write `as` (proven to fit), `as|` (clamps; a NaN is 0) or `as?` with `else`.\n",
                     (long)e->line, (long)e->col, sb);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
+    }
+    // ★ A TIER SAYS WHAT HAPPENS AT AN INTEGER TYPE'S ENDS (I.161), and a float has none to
+    // name: IEEE 754 defines every conversion to a float (an infinity past its range). `as|`,
+    // `as?` and `as%` to f32 or f64 emitted the plain conversion and promised nothing.
+    if (e->as.cast_expr.kind != CAST_PROVEN && !src_is_ptr && !tgt_is_ptr) {
+        Type *tgt_r = resolve_type_alias(tgt_u);
+        if (tgt_r && is_float_type(tgt_r)) {
+            char tb[128]; type_describe(tgt_r, tb, sizeof tb);
+            const char *tier = e->as.cast_expr.kind == CAST_SATURATING ? "as|"
+                             : e->as.cast_expr.kind == CAST_CHECKED ? "as?" : "as%";
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `%s` says what happens at an integer type's "
+                    "ends, and '%s' is a float: write `as`.\n", (long)e->line, (long)e->col, tier, tb);
             diagnostic_show_line(e->line, e->col);
             exit(1);
         }

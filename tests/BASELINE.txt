@@ -1649,6 +1649,11 @@ ty=St struct
 rc=0
 out=4 0.50 3 0.25
 ty=Slice_u8 scalar
+### tests/trust/f32_literals_and_widening_pass.ln
+rc=0
+out=2.7500 -1.0000 1.5000 0.1250 1.2500
+at=const 8
+ty=Slice_u8 scalar
 ### tests/trust/falling_measure_trips_pass.ln
 rc=0
 out=1980 2008 4717 255

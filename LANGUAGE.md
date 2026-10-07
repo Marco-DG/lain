@@ -2336,6 +2336,18 @@ var b = n as u8      // Explicit: int -> u8
 // cast tiers.
 ```
 
+**Float/float.** `f32` to `f64` is implicit, because it is exact. `f64` to `f32` rounds, so it
+is written: `d as f32` ([E012] without it), giving the nearest `f32`, ±infinity beyond its range,
+and a NaN for a NaN. A float literal takes an `f32` destination's type, but two literals compute in
+`f64`, so `x f32 = 0.5 * 3.0` also needs `as f32`.
+
+```lain
+func narrow(d f64) f32 {
+    x f32 = d                 // ERROR [E012]: rounds the value, write `as f32`
+    return x
+}
+```
+
 **Float/int (explicit, requires `as`).** Note the literal: `var f f64 = 3` is itself `[E012]`,
 because an integer literal does not implicitly become a float either.
 
