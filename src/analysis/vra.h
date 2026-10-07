@@ -2574,12 +2574,14 @@ static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir) {
     // form would silently drop the guard entirely and `i < 100` would constrain nothing.
     // The absolute form is also the stronger fact: it needs no closure step to be usable.
     bool ac = (a>=0 && a<V->nvar && V->cknown[a]), bc = (b>=0 && b<V->nvar && V->cknown[b]);
+    // (`c - 1` and `c + 1` at the ends of the i64 range overflowed: undefined in C, I.170. The
+    // guard cannot then hold for any value, and stating no fact is the sound reading.)
     if (bc && !ac) { int64_t c=V->cval[b];
-        if (lt) oct_add_ub(W,a,c-1); else if (le) oct_add_ub(W,a,c);
-        else if (gt) oct_add_lb(W,a,c+1); else if (ge) oct_add_lb(W,a,c);
+        if (lt) { if (c > INT64_MIN) oct_add_ub(W,a,c-1); } else if (le) oct_add_ub(W,a,c);
+        else if (gt) { if (c < INT64_MAX) oct_add_lb(W,a,c+1); } else if (ge) oct_add_lb(W,a,c);
         else if (eq) oct_add_const(W,a,c);
     } else if (ac && !bc) { int64_t c=V->cval[a];
-        if (lt) oct_add_lb(W,b,c+1); else if (le) oct_add_lb(W,b,c);
+        if (lt) { if (c < INT64_MAX) oct_add_lb(W,b,c+1); } else if (le) oct_add_lb(W,b,c);
         else if (gt) oct_add_ub(W,b,c-1); else if (ge) oct_add_ub(W,b,c);
         else if (eq) oct_add_const(W,b,c);
     }
@@ -6632,7 +6634,7 @@ static void vra_print_measure(Vra *V, IrFunc *f, isize line, bool rec, bool ok) 
 // the module's functions and a signature of their sizes, so a module lowered again, or changed, is
 // rebuilt.
 typedef struct {
-    IrFunc *mod; int n; long sig;
+    IrFunc *mod; int n; unsigned long sig;
     IrFunc **idx;                  // the functions in module order
     int *hash, hcap;               // name -> index, open addressing
     int *off, *to; IrInstr **ecall;   // the calls of function k are edges off[k] .. off[k+1]
@@ -6665,10 +6667,10 @@ static bool vra_cg_build(IrFunc *mod) {
     // per function (effects, nested call-site analyses), and a walk of every instruction at each
     // run cost a 1000-function module twice its compile time. A function's value and block counters
     // grow with every instruction and block added to it, and the functions are compared by identity.
-    int n = 0; long sig = 0; bool same = vra_cg.mod == mod && vra_cg.comp;
+    int n = 0; unsigned long sig = 0; bool same = vra_cg.mod == mod && vra_cg.comp;   // a hash: unsigned, it wraps by definition (I.170)
     for (IrFunc *g = mod; g; g = g->next) {
         if (same && (n >= vra_cg.n || vra_cg.idx[n] != g)) same = false;
-        n++; sig = sig * 31 + g->next_value_id * 7 + g->next_block_id;
+        n++; sig = sig * 31u + (unsigned long)g->next_value_id * 7u + (unsigned long)g->next_block_id;
     }
     if (same && vra_cg.n == n && vra_cg.sig == sig) return true;
     vra_cg_free();

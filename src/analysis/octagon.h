@@ -74,8 +74,10 @@ static inline int oct_neg(int i) { int s = oct_slot(i); return s<0 ? -1 : 2*s+1;
 static inline int oct_bar(int d) { return d ^ 1; }   // switch +/−
 static inline int64_t oct_min64(int64_t a, int64_t b) { return a<b?a:b; }
 static inline int64_t oct_max64(int64_t a, int64_t b) { return a>b?a:b; }
-// floor division toward −∞ (C's / truncates toward 0)
-static inline int64_t oct_fdiv2(int64_t a) { return a>=0 ? a/2 : -((-a+1)/2); }
+// floor division toward −∞ (C's / truncates toward 0). It negated `a`, undefined for INT64_MIN
+// (I.170, a UBSan-built compiler on nine corpus programs); truncate, then step down for a negative
+// odd value, which no input can overflow.
+static inline int64_t oct_fdiv2(int64_t a) { int64_t q = a / 2; return (a < 0 && (a & 1)) ? q - 1 : q; }
 
 // An UNMAPPED dimension (−1) reads as ⊤ and absorbs writes: the domain simply does not
 // track that value, which is sound in both directions.
@@ -281,7 +283,11 @@ static void oct_close(Octagon *o) {
             for (int ja=0;ja<na;ja++) { int j=act[ja];
                 int64_t kj = oct_get(o,k,j);
                 if (kj >= OCT_INF) continue;
-                int64_t s = ik + kj;
+                // Entries are capped above by OCT_INF, not below, and two large negative ones
+                // overflowed here (undefined in C; I.170, found by a UBSan-built compiler). The true
+                // sum is below INT64_MIN: any value above it is a weaker, still sound, bound.
+                int64_t s;
+                if (__builtin_add_overflow(ik, kj, &s)) s = INT64_MIN / 2;
                 int64_t *ij = oct_at(o,i,j);
                 if (s < *ij) *ij = s;
             }
@@ -296,7 +302,8 @@ static void oct_close(Octagon *o) {
         for (int ja=0;ja<na;ja++) { int j=act[ja];
             int64_t b = oct_get(o,oct_bar(j),j);
             if (b >= OCT_INF) continue;
-            int64_t s = oct_fdiv2(a) + oct_fdiv2(b);
+            int64_t s;                                   // each half is at least -2^62 (I.170)
+            if (__builtin_add_overflow(oct_fdiv2(a), oct_fdiv2(b), &s)) s = INT64_MIN / 2;
             int64_t *ij = oct_at(o,i,j);
             if (s < *ij) *ij = s;
         }

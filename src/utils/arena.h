@@ -13,8 +13,12 @@
 #define ARENA_DEBUG 1
 #endif
 
-#define arena_push(arena, type)                     (type *)_arena_push(arena, sizeof(type), 1)
-#define arena_push_many(arena, type, count)         (type *)_arena_push(arena, sizeof(type), count)
+// Every push is aligned to its type (I.170): the unaligned form placed Expr, Stmt and ExprList
+// nodes at odd addresses behind a string, a misaligned access that is undefined in C and that a
+// UBSan-built compiler reported on 30 corpus programs. Pushes of one type stay contiguous, since
+// a type's size is a multiple of its alignment.
+#define arena_push(arena, type)                     (type *)_arena_push_aligned(arena, sizeof(type), 1, alignof(type))
+#define arena_push_many(arena, type, count)         (type *)_arena_push_aligned(arena, sizeof(type), count, alignof(type))
 #define arena_push_aligned(arena, type)             (type *)_arena_push_aligned(arena, sizeof(type), 1, alignof(type))
 #define arena_push_many_aligned(arena, type, count) (type *)_arena_push_aligned(arena, sizeof(type), count, alignof(type))
 #define arena_pop(arena, type)                      (type *)_arena_pop(arena, sizeof(type), 1)

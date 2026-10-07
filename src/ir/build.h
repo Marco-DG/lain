@@ -44,7 +44,7 @@ bool irtype_int_range(const IrType *t, int64_t *lo, int64_t *hi) {
         else         { *lo = -(1LL << (b - 1));     *hi = (1LL << (b - 1)) - 1; }
     } else {
         *lo = 0;
-        *hi = (b >= 64) ? INT64_MAX : (1LL << b) - 1;   // domain is i64; u64 clamps to i64 max
+        *hi = (b >= 64) ? INT64_MAX : (int64_t)((1ULL << b) - 1);   // domain is i64; u64 clamps to i64 max (1LL << 63 was undefined: I.170)
     }
     // B4: a static refinement on the TYPE tightens the interval for EVERY consumer at once —
     // bounds, overflow, div-by-zero — because they all seed from here.

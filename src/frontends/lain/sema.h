@@ -2199,7 +2199,7 @@ static void walk_stmt(Stmt *s) {
                             int64_t ymin = yr.min < (int64_t)tlo ? (int64_t)tlo : yr.min;
                             int64_t ymax = yr.max > (int64_t)thi ? (int64_t)thi : yr.max;
                             if (ymin <= ymax)
-                                no_wrap = (ymin + k >= (int64_t)tlo) && (ymax + k <= (int64_t)thi);
+                                no_wrap = ((__int128)ymin + k >= (__int128)tlo) && ((__int128)ymax + k <= (__int128)thi);   // (I.170: overflowed)
                         }
                         if (no_wrap) {
                             constraint_add(sema_ranges, nm, il->as.identifier_expr.id,  k);
