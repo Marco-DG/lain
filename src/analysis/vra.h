@@ -4323,6 +4323,92 @@ static bool vra_mul_ovf(int64_t a, int64_t b, int64_t *out) {
     *out = r; return false;
 }
 
+static int vra_succs_all(IrBlock *b, IrBlock **out, int cap);                                   // fwd (I.162)
+static int vra_reach(Vra *V, IrBlock *from, IrBlock *H, int nbb, const char *in, const char *stop, const char *goal);
+// ★ A MEASURE THAT FALLS BY AT LEAST k EACH TRIP (I.158). The trip count read only a counter
+// RISING toward its bound, so a loop over a falling measure had none, and every running total
+// in it was "unbounded". Where the octagon happened to carry `c + d <= n` (a counter from 0
+// beside a measure falling by 1) the total proved anyway; from any other start, or beside a
+// measure falling by 365, it was E086. Zune 30's ConvertDays, `while days > 365 { ... days -= 366
+// ... days -= 365 ... year += 1 }`, fixed with `else { break }`, was refused on `year + 1`
+// though its trips are at most days / 365.
+//
+// Here the header continues while `d > b` (or `d >= b`, or either written the other way round),
+// b is loop-invariant, every store to d inside the loop is `d = d - k` with k >= 1 and exact,
+// and every path from the header back to it passes one. Then after t trips d <= D - t*k_min,
+// with D the largest value d enters with (the stores outside the loop: inside it d only falls),
+// and a trip runs only while the guard holds.
+static bool vra_loop_trips_falls(Vra *V, Octagon *W, IrBlock *H, IrInstr *ic, int64_t *T) {
+    int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+    for (int side = 0; side < 2; side++) {
+        IrValue *ivv = ic->operands[side], *bnd = ic->operands[side ^ 1];
+        IrCmp p = side == 0 ? ic->aux.cmp : vra_cmp_swap(ic->aux.cmp);    // `ivv p bnd`
+        bool strict = p == IR_CMP_SGT || p == IR_CMP_UGT, weak = p == IR_CMP_SGE || p == IR_CMP_UGE;
+        if (!strict && !weak) continue;
+        IrInstr *ivd = (ivv && ivv->id >= 0 && ivv->id < V->nvar) ? V->def[ivv->id] : NULL;
+        if (!ivd || ivd->op != IR_LOAD || ivd->n_operands < 1) continue;
+        int cell = ivd->operands[0]->id;
+        if (!vra_is_scalar_cell(V, cell) || !vra_loop_invariant(V, bnd, H)) continue;
+        int64_t blo, bhi; vra_range(V, W, bnd, &blo, &bhi); (void)bhi;
+        if (blo <= INT64_MIN / 4) continue;
+        char *body = malloc((size_t)nbb), *dec = calloc((size_t)nbb, 1), *latch = calloc((size_t)nbb, 1);
+        bool ok = body && dec && latch;
+        if (ok) vra_natural_loop(V, H, nbb, body);
+        // the header continues on its TRUE edge
+        if (ok && !(H->term.a && H->term.b && body[H->term.a->id] && !body[H->term.b->id])) ok = false;
+        int64_t D = INT64_MIN, kmin = INT64_MAX; bool any = false;
+        for (IrBlock *b = V->f->blocks; ok && b; b = b->next) {
+            if (b->id < 0 || b->id >= nbb) continue;
+            bool in = body[b->id]; int here = 0;
+            for (IrInstr *st = b->instrs; ok && st; st = st->next) {
+                if (st->op != IR_STORE || st->n_operands < 2 || st->operands[0]->id != cell) continue;
+                IrValue *sv = st->operands[1];
+                if (!in) {                                   // the value d enters with
+                    int64_t vlo, vhi;
+                    if (!sv || !sv->type || sv->type->kind != IRT_INT) { ok = false; break; }
+                    vra_range(V, W, sv, &vlo, &vhi);
+                    if (vhi > D) D = vhi;
+                    any = true; continue;
+                }
+                if (++here > 1) { ok = false; break; }
+                IrInstr *vd = V->def[sv->id];
+                IrInstr *ld = (vd && vd->op == IR_SUB && vd->n_operands >= 2 && vra_zexact(V, vd)) ? V->def[vd->operands[0]->id] : NULL;
+                int k = vd && vd->n_operands >= 2 ? vd->operands[1]->id : -1;
+                if (!ld || ld->op != IR_LOAD || ld->n_operands < 1 || ld->operands[0]->id != cell ||
+                    V->defblk[ld->result->id] != b->id || k < 0 || k >= V->nvar || !V->cknown[k] || V->cval[k] < 1) { ok = false; break; }
+                bool after = false;                          // the load precedes the store, nothing between
+                for (IrInstr *q = b->instrs; q && q != st; q = q->next) {
+                    if (q == ld) after = true;
+                    else if (after && q->op == IR_STORE && q->n_operands >= 1 && q->operands[0]->id == cell) after = false;
+                }
+                if (!after) { ok = false; break; }
+                if (V->cval[k] < kmin) kmin = V->cval[k];
+                dec[b->id] = 1;
+            }
+        }
+        if (ok && (!any || kmin == INT64_MAX || D >= INT64_MAX / 4)) ok = false;
+        if (ok && vra_cell_opaque_write(V, cell, nbb, body)) ok = false;
+        // every trip passes a decrement: no path from the header to a latch avoids one
+        if (ok && !dec[H->id]) {
+            for (IrBlock *b = V->f->blocks; b; b = b->next) {
+                if (b->id < 0 || b->id >= nbb || !body[b->id]) continue;
+                IrBlock *su[64]; int ns = vra_succs_all(b, su, 64);
+                if (ns < 0) { ok = false; break; }
+                for (int q = 0; q < ns; q++) if (su[q] == H) latch[b->id] = 1;
+            }
+            if (ok && latch[H->id]) ok = false;              // the header loops to itself, undecremented
+            for (int i = 0; ok && i < nbb; i++) if (dec[i]) latch[i] = 0;
+            if (ok && vra_reach(V, H, H, nbb, body, dec, latch) != 0) ok = false;
+        }
+        free(body); free(dec); free(latch);
+        if (!ok) continue;
+        if (strict) *T = D > blo ? (int64_t)(((__int128)D - blo + kmin - 1) / kmin) : 0;
+        else        *T = D >= blo ? (int64_t)(((__int128)D - blo) / kmin + 1) : 0;
+        return *T >= 0;
+    }
+    return false;
+}
+
 // The trip count of the natural loop headed at H, when the induction variable rises by a
 // positive constant toward a bounded limit. Mirrors vra_loop_terminates' recovery of
 // (cell, bound, step): that function proves the loop ENDS, this asks how late.
@@ -4332,6 +4418,7 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     IrInstr *ic = V->def[H->term.cond->id];
     if (!ic || ic->op!=IR_ICMP || ic->n_operands<2) return false;
     IrCmp pr = ic->aux.cmp;
+    if (vra_loop_trips_falls(V, W, H, ic, T)) return true;        // a measure falling to its bound
     if (!(pr==IR_CMP_SLT||pr==IR_CMP_ULT||pr==IR_CMP_SLE||pr==IR_CMP_ULE)) return false;
     IrValue *ivv = ic->operands[0], *bnd = ic->operands[1];
     IrInstr *ivd = V->def[ivv->id];

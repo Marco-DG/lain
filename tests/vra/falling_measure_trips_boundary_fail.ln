@@ -1,0 +1,16 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 11, Col 9: this running total can overflow the type it is stored in
+// I.158: the boundary of falling_measure_trips_pass.ln. d <= 1000 falling by 4 while d >= 4 runs
+// at most 250 trips, and a u8 counter from 6 reaches 256 (d = 1000 does). The bound for `>=` is
+// floor((D - b) / k) + 1: an off-by-one in either direction shows here or in the pass test.
+func count(n u16 <= 1000) u8 {
+    var d u16 = n
+    var c u8 = 6
+    while d >= 4 {
+        d = d - 4
+        c = c + 1
+    }
+    return c
+}
+
+func main() i32 { return 0 }

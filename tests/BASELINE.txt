@@ -1649,6 +1649,11 @@ ty=St struct
 rc=0
 out=4 0.50 3 0.25
 ty=Slice_u8 scalar
+### tests/trust/falling_measure_trips_pass.ln
+rc=0
+out=1980 2008 4717 255
+at=const 6
+ty=Slice_u8 scalar
 ### tests/trust/fixed_array_len_refinement_pass.ln
 rc=0
 out=

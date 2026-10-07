@@ -1,0 +1,46 @@
+// I.158: a loop's trip count from a measure that FALLS by at least k each trip. The trip count
+// read only a counter rising toward its bound, so every running total beside a falling measure was
+// "unbounded" (E086) unless the octagon happened to hold `c + d <= n`. Zune 30's ConvertDays, in the
+// driver's own types and with its `else { break }` fix, was refused on `year + 1`; its trips are at
+// most days / 365. `count` pins the bound exactly: d <= 1000 falling by 4 while d >= 4 runs at
+// most 250 trips, the most a u8 counter from 5 can take (falling_measure_trips_boundary_fail.ln
+// starts it at 6).
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func is_leap(y i32 >= 0) bool {
+    return (y % 4 == 0 and y % 100 != 0) or y % 400 == 0
+}
+
+func year_of(days0 u32) i32 {
+    var days u32 = days0
+    var year i32 = 1980
+    while days > 365 {
+        if is_leap(year) {
+            if days > 366 {
+                days = days - 366
+                year = year + 1
+            } else {
+                break
+            }
+        } else {
+            days = days - 365
+            year = year + 1
+        }
+    }
+    return year
+}
+
+func count(n u16 <= 1000) u8 {
+    var d u16 = n
+    var c u8 = 5
+    while d >= 4 {
+        d = d - 4
+        c = c + 1
+    }
+    return c
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d %d\n", year_of(366), year_of(10593), year_of(1000000), count(1000) as i32)
+    return 0
+}
