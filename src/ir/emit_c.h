@@ -895,8 +895,78 @@ static void ir_emit_packed_store(IrInstr *i, FILE *o) {
             b, L.container_bits, b, m, L.off[k], i->operands[1]->id, m, L.off[k]);
 }
 
+// ★ #line DIRECTIVES (I.100). The emitted C had none since the IR emitter replaced src/emit/
+// (2026-09-23), so a debugger or a gcc warning pointed into out.c, and `--no-line-directives` was
+// parsed, documented and read nowhere. A function's C now maps to its source, the file being the
+// function's own (IrFunc.src_file, I.98) as the command line gave it; the prelude and the
+// helpers, which are not Lain, come before every function and carry none. `#line N` names the
+// NEXT line and C counts on from it, so a directive is written exactly where C's count would
+// differ from the source line: the body is written with markers (a line before each instruction
+// and each return, the prologue's bounds), then rewritten counting C lines. A prologue line (a
+// local, a split slice parameter rebuilt) is the function's first line: counted on from a
+// directive before the header, a 17-line file's locals sat at lines 7 to 55 in the line table.
+// A global, so a tool that embeds the compiler (the Lain Debugger's probe) can set it as the
+// flag does; off, the C is what it was, byte for byte.
+bool ir_emit_line_directives = true;
+const char *ir_emit_main_file  = NULL;   // the program's file, as given on the command line
+const char *ir_emit_import_dir = NULL;   // an import's src_file is relative to it, when not to the cwd
+static bool ir_line_marks = false;       // writing a body with markers (ir_emit_func_c)
+static void ir_emit_cstr_path(FILE *o, const char *s) {
+    for (; *s; s++) { if (*s == '"' || *s == '\\') fputc('\\', o); fputc(*s, o); }
+}
+static void ir_emit_line(FILE *o, const IrFunc *f, isize line) {
+    (void)f;
+    if (ir_line_marks && line > 0) fprintf(o, "\001%lld\n", (long long)line);
+}
+static void ir_line_rewrite(FILE *in, const IrFunc *f, const char *file, FILE *o) {
+    long long expected = -1, first = 0, n;
+    bool named = false, prologue = false;
+    char line[8192];
+    while (fgets(line, sizeof line, in)) {
+        if (line[0] == '\001') {
+            n = atoll(line + 1);
+            if (!first) first = n;
+            if (n != expected) {
+                if (!named) {
+                    fprintf(o, "#line %lld \"", n);
+                    if (f->src_file && ir_emit_import_dir && f->src_file[0] != '/') {
+                        ir_emit_cstr_path(o, ir_emit_import_dir); fputc('/', o);
+                    }
+                    ir_emit_cstr_path(o, file); fputs("\"\n", o);
+                    named = true;
+                } else fprintf(o, "#line %lld\n", n);
+                expected = n;
+            }
+            continue;
+        }
+        if (line[0] == '\002') { prologue = line[1] == 'B'; continue; }
+        if (prologue && first && expected != first) { fprintf(o, "#line %lld\n", first); expected = first; }
+        fputs(line, o);
+        if (strchr(line, '\n') && expected > 0) expected++;   // a line longer than the buffer counts once
+    }
+}
+
+static void ir_emit_func_body_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a);
 static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
+    const char *file = f->src_file ? f->src_file : ir_emit_main_file;
+    FILE *t = ir_emit_line_directives && file ? tmpfile() : NULL;
+    if (!t) { ir_emit_func_body_c(f, mod, o, a); return; }
+    ir_line_marks = true;
+    ir_emit_func_body_c(f, mod, t, a);
+    ir_line_marks = false;
+    rewind(t);
+    ir_line_rewrite(t, f, file, o);
+    fclose(t);
+}
+static void ir_emit_func_body_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     ir_pk_build(f, a);
+    // The signature and the locals take the function's first positioned line.
+    { isize first = 0;
+      for (IrBlock *b=f->blocks; b && !first; b=b->next) {
+          for (IrInstr *i=b->instrs; i && !first; i=i->next) if (i->line > 0) first = i->line;
+          if (!first && b->term.line > 0) first = b->term.line;
+      }
+      ir_emit_line(o, f, first); }
     bool is_main = f->name->length==4 && strncmp(f->name->name,"main",4)==0;
     // signature
     // `main(argc i32, argv **u8)` is C's `int main(int, char **)` (I.153): the platform's types,
@@ -936,6 +1006,7 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
         fputc(')', o);
     }
     fputs(" {\n", o);
+    if (ir_line_marks) fputs("\002B\n", o);   // the prologue: the function's first line
     if (is_main && f->params && f->params->next) {
         IrValue *pc = f->params->value, *pv = f->params->next->value;
         fputs("  ", o); ir_ctype(pc->type, o); fprintf(o, " v%d = (", pc->id); ir_ctype(pc->type, o); fputs(")__lain_argc;\n", o);
@@ -1009,6 +1080,7 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
         fprintf(o, " v%d = { __ptr_v%d, __len_v%d };\n",
                 p->value->id, p->value->id, p->value->id);
     }
+    if (ir_line_marks) fputs("\002E\n", o);
     // blocks
     for (IrBlock *b=f->blocks; b; b=b->next) {
         fprintf(o, " L%d: ;\n", b->id);
@@ -1025,9 +1097,11 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
             // (a division by the parameter, a load through it) must already see the fact.
             if (nh && i->op != IR_ICMP && i->op != IR_CONST && i->op != IR_SLICE_LEN)
                 ir_emit_hints(hint, &nh, o);
+            ir_emit_line(o, f, i->line);
             ir_emit_instr_c(i, o);
         }
         ir_emit_hints(hint, &nh, o);
+        if (b->term.kind == IR_TERM_RET) ir_emit_line(o, f, b->term.line);
         switch (b->term.kind) {
             // IR_TERM_BR is the ZERO value of the enum, so an UNTERMINATED block reads as a
             // branch to nowhere. Emitting `goto L(null)` crashed the emitter; the honest

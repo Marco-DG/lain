@@ -114,6 +114,8 @@ int main(int argc, char **argv) {
     // `///m.ln`, and the driver could not open the program it was given. Made absolute against
     // the working directory, it takes the branch below exactly as `lain /abs/m.ln` does: the
     // same module name, the same emitted C.
+    ir_emit_main_file = args.filename;              // #line names the program as given (I.100)
+    ir_emit_line_directives = !args.no_line_directives;
     if (args.filename && args.filename[0] != '/' && args.filename[0] != '\\') {
         bool climbs = false;
         for (const char *p = args.filename; *p && !climbs; ) {
@@ -160,6 +162,10 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "lain: cannot chdir to '%s' for module resolution.\n", dirbuf);
                     return 1;
                 }
+                // An import's file is now relative to this directory, not to the C compiler's.
+                static char import_dir[4096];
+                memcpy(import_dir, dirbuf, dirlen + 1);
+                ir_emit_import_dir = import_dir;
                 args.filename = (char *)(last_sep + 1);
             }
         }
