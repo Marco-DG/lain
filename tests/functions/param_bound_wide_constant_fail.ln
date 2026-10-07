@@ -1,0 +1,11 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: a required precondition is not established here
+// The same wide bound, now that it is checked in the parameter's type, still holds: 2^41 is not
+// below 2^40.
+func half(n usize < 1099511627776) usize {
+    return n / 2
+}
+
+func main() i32 {
+    return half(2199023255552) as i32
+}

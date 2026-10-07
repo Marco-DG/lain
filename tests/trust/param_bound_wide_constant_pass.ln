@@ -1,0 +1,16 @@
+// A parameter refinement with a bound wider than i32, called with a literal. The precondition was
+// checked in the ARGUMENT's type, and the literal `3` is an i32, so the bound 2^40 became an i32
+// constant and the IR verifier stopped the build: "internal error: the integer constant
+// 1099511627776 does not fit its type i32". Every Lain caller of a SIMD scan written
+// `func f(n usize < 1099511627776, hay u8[n], ...)` hit it. The check is now made in the
+// parameter's type, after the conversion the call performs anyway.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func half(n usize < 1099511627776) usize {
+    return n / 2
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d\n", half(3) as i32, half(1000000) as i32)
+    return 0
+}

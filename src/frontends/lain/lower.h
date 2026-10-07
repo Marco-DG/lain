@@ -1394,6 +1394,27 @@ static void ir_lower_call_requires(LowerCtx *c, Decl *callee, IrInstr *call) {
         if (idx >= call->n_operands) break;
         IrValue *arg = call->operands[idx];
         if (!arg || !arg->type || arg->type->kind!=IRT_INT) continue;
+        // ★ THE PRECONDITION IS ON THE PARAMETER'S VALUE, IN THE PARAMETER'S TYPE. The argument
+        // can reach here still in its own type (the literal `3`, an i32, passed to a usize), and
+        // the bound was built in that type: `f(3)` to `func f(n usize < 1099511627776)` made the
+        // constant 2^40 an i32, and the IR verifier stopped the build with an internal error
+        // (found writing a benchmark over Documentation's SIMD scans, which use exactly that
+        // signature). The call converts the argument to the parameter's type anyway, a conversion
+        // sema has checked fits; the check is made after the same conversion.
+        if (p->decl->as.variable_decl.constraints) {
+            IrType *pty = ir_lower_type(c, p->decl->as.variable_decl.type);
+            if (pty && pty->kind == IRT_INT &&
+                (pty->bits != arg->type->bits || pty->is_signed != arg->type->is_signed)) {
+                IrInstr *cv = ir_instr(c->f, IR_CAST, pty, 1);
+                cv->operands[0] = arg;
+                cv->aux.cast_kind = arg->type->bits > pty->bits ? IR_CAST_TRUNC
+                                  : arg->type->bits < pty->bits ? (arg->type->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT)
+                                  : IR_CAST_BITCAST;
+                cv->wrap = IR_WRAP_CHECK;
+                ir_emit(c->cur, cv);
+                arg = cv->result;
+            }
+        }
         for (ExprList *cn=p->decl->as.variable_decl.constraints; cn; cn=cn->next) {
             Expr *con=cn->expr;
             if (!con || con->kind!=EXPR_BINARY) continue;

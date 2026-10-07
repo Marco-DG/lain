@@ -1940,6 +1940,11 @@ out=
 at=access 2
 at=nonnull 2
 ty=Slice_u8 scalar
+### tests/trust/param_bound_wide_constant_pass.ln
+rc=0
+out=1 500000
+at=const 2
+ty=Slice_u8 scalar
 ### tests/trust/paren_postfix_pass.ln
 rc=0
 out=5 3 2 5
