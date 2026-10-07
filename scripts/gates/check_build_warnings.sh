@@ -35,7 +35,13 @@ for u in $UNITS; do
         echo "── $u  DOES NOT COMPILE"; echo "$all" | grep -E "error" | head -4
         bad=$((bad+1)); continue
     fi
-    out=$(echo "$all" | grep -E "\[-W(return-type|uninitialized|maybe-uninitialized|implicit-function-declaration|int-conversion|incompatible-pointer-types)\]")
+    # ...and the warnings that ARE undefined behaviour in the compiler itself (I.171): a format
+    # string with an unknown conversion (E133 printed "`as%`" through fprintf), a constant
+    # expression that overflows (`((__int128)1 << 127) - 1`), and the shift and division classes.
+    # gcc folds a constant one at compile time, so a UBSan-built compiler never sees it (I.170's
+    # audit missed both); only the warning does. -Wformat-truncation is not here: truncation is
+    # defined behaviour, and its sites are judged one by one (I.172).
+    out=$(echo "$all" | grep -E "\[-W(return-type|uninitialized|maybe-uninitialized|implicit-function-declaration|int-conversion|incompatible-pointer-types|format=|format-extra-args|format-security|overflow|shift-count-overflow|shift-count-negative|shift-overflow=?[0-9]*|shift-negative-value|div-by-zero)\]")
     if [ -n "$out" ]; then
         echo "── $u"; echo "$out" | head -8
         bad=$((bad + $(echo "$out" | wc -l)))

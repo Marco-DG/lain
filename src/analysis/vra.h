@@ -3341,7 +3341,10 @@ static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
         IrType *ut = (ins->result && ins->result->type) ? ins->result->type : a->type;
         int64_t ulo, uhi; if (!irtype_int_range(ut, &ulo, &uhi)) return;
         int64_t alo, ahi; vra_range(V, W, a, &alo, &ahi);
-        __int128 top = (alo >= 0 && ahi < OCT_INF/2) ? (__int128)ahi * ((__int128)1 << bhi) : ((__int128)1 << 127) - 1;
+        // (`((__int128)1 << 127) - 1` shifted into the sign bit and overflowed: undefined in C,
+        // folded by gcc at compile time so a UBSan build never saw it; -Woverflow did. I.171.)
+        __int128 top = (alo >= 0 && ahi < OCT_INF/2) ? (__int128)ahi * ((__int128)1 << bhi)
+                                                     : (__int128)(((unsigned __int128)1 << 127) - 1);
         VraCheck u; memset(&u,0,sizeof u); u.kind = VRA_OVERFLOW; u.at = ins;
         u.line = ins->line; u.col = ins->col; u.shift = 4;
         u.ok = alo >= 0 && ahi < OCT_INF/2 && top <= (__int128)uhi;
