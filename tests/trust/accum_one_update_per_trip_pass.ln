@@ -1,0 +1,51 @@
+// I.162: the running-total bound s0 + T*d, where it holds. One update per trip on either side of
+// an `if` (a trip passes one of them); a total reset in the outer loop before the inner one runs
+// (`var s` in the outer body); and a total carried through both loops, bounded by the outer trips
+// times the inner trips: 20 x 20 x 163 = 65200 fits a u16, and accum_nested_carried_fail.ln adds
+// 164 instead.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func branches(k usize) u8 {
+    var s u8 = 0
+    var i usize = 0
+    while i < 200 {
+        if i < k { s = s + 1 } else { s = s + 0 }
+        i = i + 1
+    }
+    return s
+}
+
+func rows() u8 {
+    var best u8 = 0
+    var r usize = 0
+    while r < 20 {
+        var s u8 = 0
+        var c usize = 0
+        while c < 20 {
+            s = s + 12
+            c = c + 1
+        }
+        if s > best { best = s }
+        r = r + 1
+    }
+    return best
+}
+
+func carried() u16 {
+    var s u16 = 0
+    var i usize = 0
+    while i < 20 {
+        var j usize = 0
+        while j < 20 {
+            s = s + 163
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return s
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d\n", branches(7) as i32, rows() as i32, carried() as i32)
+    return 0
+}

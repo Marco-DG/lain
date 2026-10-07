@@ -1,0 +1,22 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 12, Col 9: arithmetic is not provably free of overflow
+// I.162: s0 + T*d bounds a running total that is updated ONCE per trip. Each update was bounded
+// by itself, so two in sequence over 200 trips were bounded at 200, "proven" to fit a u8, and s
+// wrapped to 144 (the interpreter: "256 lands in a u8, which cannot hold it (proven to fit)").
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func f() u8 {
+    var s u8 = 0
+    var i usize = 0
+    while i < 200 {
+        s = s + 1
+        s = s + 1
+        i = i + 1
+    }
+    return s
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", f() as i32)
+    return 0
+}

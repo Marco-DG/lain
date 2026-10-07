@@ -1,0 +1,26 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 15, Col 13: this running total can overflow the type it is stored in
+// I.162: an update in an inner loop runs inner-trips times per outer trip. The rule took the
+// first loop header around the store, the OUTER one, and counted it once per outer trip: a u8
+// total over 20 x 20 increments was bounded at 20 and wrapped. Carried through both loops, the
+// bound is 20 x 20 x 164 = 65600, past a u16 (accum_one_update_per_trip_pass.ln adds 163).
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func carried() u16 {
+    var s u16 = 0
+    var i usize = 0
+    while i < 20 {
+        var j usize = 0
+        while j < 20 {
+            s = s + 164
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return s
+}
+
+func main() i32 effects io {
+    libc_printf("%d\n", carried() as i32)
+    return 0
+}

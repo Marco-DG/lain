@@ -4495,6 +4495,141 @@ static bool vra_guard_counter_fits(Vra *V, Octagon *W, IrInstr *ins, int64_t thi
     return false;
 }
 
+// ★ ONE ITERATION, ONE UPDATE, ONE ENTRY VALUE (I.162). `s0 + T·δ` bounds a running total for one
+// entry of the loop H only if three things hold, and none was checked:
+//   - each trip updates s at most once. Two `s = s + 1` in sequence over 200 trips were bounded
+//     at 200, "proven" to fit a u8, and wrapped to 144 (the interpreter: "256 lands in a u8").
+//   - no update sits in a loop nested inside H, which would run it many times per trip. The
+//     rule took the FIRST header whose loop held the store, so an inner `s = s + 1` was counted
+//     once per outer trip: 20 x 20 increments bounded at 20.
+//   - s enters H holding a value one of the stores OUTSIDE H wrote (that join is s0). Inside
+//     another loop L, s enters H with whatever the previous entry left, unless every path from
+//     L's header to H stores to s first (`var s = 0` declared in L's body does).
+// Here every store to the cell inside H must be `s = s ± δ` (its load in the same block, with no
+// store to s between), no path through one trip may reach two of them, and none may lie in a loop
+// nested in H (vra_accum_sound). The per-trip δ is the join over the stores (a trip may also skip
+// them all, which the callers' clamps to 0 already allow). Where s is NOT reset before H, H's whole
+// run is one trip of L, adding between T_H·min(δ, 0) and T_H·max(δ, 0), and the question moves out
+// to L (vra_accum_delta), provided L stores to s nowhere outside H.
+static int vra_succs_all(IrBlock *b, IrBlock **out, int cap) {
+    int n = 0;
+    if (b->term.kind == IR_TERM_BR || b->term.kind == IR_TERM_BR_COND || b->term.kind == IR_TERM_SWITCH) {
+        if (b->term.a && n < cap) out[n++] = b->term.a;
+        if (b->term.kind == IR_TERM_BR_COND && b->term.b && n < cap) out[n++] = b->term.b;
+        if (b->term.kind == IR_TERM_SWITCH)
+            for (IrSwitchCase *c = b->term.cases; c; c = c->next) {
+                if (n >= cap) return -1;                     // more than we can hold: caller gives up
+                if (c->target) out[n++] = c->target;
+            }
+    }
+    return n;
+}
+// Can `from` reach a block of `goal` moving only through `in` blocks, never entering `stop`
+// blocks (a stop block may be `from` itself) and never through H? -1 when the walk cannot answer.
+static int vra_reach(Vra *V, IrBlock *from, IrBlock *H, int nbb, const char *in, const char *stop, const char *goal) {
+    char *seen = calloc((size_t)nbb, 1);
+    IrBlock **st = malloc((size_t)nbb * sizeof(IrBlock*) + sizeof(IrBlock*));
+    if (!seen || !st) { free(seen); free(st); return -1; }
+    int sp = 0, r = 0; st[sp++] = from; seen[from->id] = 1;
+    while (sp > 0 && r == 0) {
+        IrBlock *u = st[--sp], *su[64];
+        int ns = vra_succs_all(u, su, 64);
+        if (ns < 0) { r = -1; break; }
+        for (int k = 0; k < ns; k++) {
+            IrBlock *s2 = su[k];
+            if (!s2 || s2->id < 0 || s2->id >= nbb || s2 == H || !in[s2->id]) continue;
+            if (goal[s2->id]) { r = 1; break; }
+            if (stop && stop[s2->id]) continue;
+            if (!seen[s2->id]) { seen[s2->id] = 1; st[sp++] = s2; }
+        }
+    }
+    (void)V; free(seen); free(st);
+    return r;
+}
+static bool vra_accum_sound(Vra *V, Octagon *W, int cell, IrBlock *H, int64_t *dlo, int64_t *dhi) {
+    int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+    char *body = malloc((size_t)nbb), *sb = calloc((size_t)nbb, 1), *ob = malloc((size_t)nbb);
+    char *anyst = calloc((size_t)nbb, 1);
+    bool ok = body && sb && ob && anyst;
+    if (ok) vra_natural_loop(V, H, nbb, body);
+    int ccell = vra_canon_cell(V, cell);
+    int64_t lo = INT64_MAX, hi = INT64_MIN; int nst = 0;
+    // (1) every store to the cell inside H is `s = s ± δ`, one per block; and where are stores at all
+    for (IrBlock *b = V->f->blocks; ok && b; b = b->next) {
+        if (b->id < 0 || b->id >= nbb) continue;
+        int here = 0;
+        for (IrInstr *st = b->instrs; ok && st; st = st->next) {
+            if (st->op != IR_STORE || st->n_operands < 2 || vra_canon_cell(V, st->operands[0]->id) != ccell) continue;
+            anyst[b->id] = 1;
+            if (!body[b->id]) continue;
+            if (++here > 1) { ok = false; break; }
+            IrInstr *vd = V->def[st->operands[1]->id];
+            IrInstr *ld = (vd && (vd->op == IR_ADD || vd->op == IR_SUB) && vd->n_operands >= 2)
+                        ? V->def[vd->operands[0]->id] : NULL;
+            if (!ld || ld->op != IR_LOAD || ld->n_operands < 1 || vra_canon_cell(V, ld->operands[0]->id) != ccell ||
+                V->defblk[ld->result->id] != b->id) { ok = false; break; }
+            bool after = false;                       // the load precedes the store, with no store between
+            for (IrInstr *q = b->instrs; q && q != st; q = q->next) {
+                if (q == ld) after = true;
+                else if (after && q->op == IR_STORE && q->n_operands >= 1 && vra_canon_cell(V, q->operands[0]->id) == ccell) after = false;
+            }
+            if (!after) { ok = false; break; }
+            int64_t a, z; vra_range(V, W, vd->operands[1], &a, &z);
+            if (vd->op == IR_SUB) { int64_t t = a; a = -z; z = -t; }
+            if (a < lo) lo = a;
+            if (z > hi) hi = z;
+            sb[b->id] = 1; nst++;
+        }
+    }
+    if (ok && nst == 0) ok = false;
+    // (2) no store in a loop nested in H
+    for (IrBlock *h = V->f->blocks; ok && h; h = h->next) {
+        if (!h->is_loop_header || h == H || !body[h->id]) continue;
+        vra_natural_loop(V, h, nbb, ob);
+        for (int i = 0; i < nbb; i++) if (ob[i] && sb[i]) { ok = false; break; }
+    }
+    // (2b) no trip passes two stores: from each store block, no other store block is reachable
+    for (IrBlock *b = V->f->blocks; ok && b; b = b->next)
+        if (b->id >= 0 && b->id < nbb && sb[b->id] && vra_reach(V, b, H, nbb, body, NULL, sb) != 0) ok = false;
+    free(body); free(sb); free(ob); free(anyst);
+    if (!ok) return false;
+    *dlo = lo; *dhi = hi;
+    return true;
+}
+// Where does s enter H from? *L is the innermost loop around H (NULL: none). True when s0 is its
+// entry value: H is in no loop, or every path from L's header to H stores to s outside H first.
+// *between: L stores to s somewhere outside H.
+static bool vra_accum_entry(Vra *V, int cell, IrBlock *H, IrBlock **L, bool *between) {
+    int nbb = V->f->next_block_id > 0 ? V->f->next_block_id : 1, Lsize = 0;
+    char *body = malloc((size_t)nbb), *ob = malloc((size_t)nbb), *anyst = calloc((size_t)nbb, 1);
+    char *in = calloc((size_t)nbb, 1), *goal = calloc((size_t)nbb, 1);
+    *L = NULL; *between = false;
+    if (!body || !ob || !anyst || !in || !goal) { free(body); free(ob); free(anyst); free(in); free(goal); return false; }
+    vra_natural_loop(V, H, nbb, body);
+    int ccell = vra_canon_cell(V, cell);
+    for (IrBlock *b = V->f->blocks; b; b = b->next)
+        for (IrInstr *st = b->instrs; st; st = st->next)
+            if (st->op == IR_STORE && st->n_operands >= 2 && b->id >= 0 && b->id < nbb &&
+                vra_canon_cell(V, st->operands[0]->id) == ccell) anyst[b->id] = 1;
+    for (IrBlock *h = V->f->blocks; h; h = h->next) {
+        if (!h->is_loop_header || h == H || body[h->id]) continue;
+        vra_natural_loop(V, h, nbb, ob);
+        if (!ob[H->id]) continue;
+        int sz = 0; for (int i = 0; i < nbb; i++) sz += ob[i] ? 1 : 0;
+        if (!*L || sz < Lsize) { *L = h; Lsize = sz; }
+    }
+    bool ok = true;
+    if (*L) {
+        vra_natural_loop(V, *L, nbb, ob);
+        for (int i = 0; i < nbb; i++) { in[i] = ob[i] && !body[i]; if (in[i] && anyst[i]) *between = true; }
+        goal[H->id] = 1; in[H->id] = 1;
+        // a store in L's header itself covers every path
+        if (!anyst[(*L)->id] && vra_reach(V, *L, NULL, nbb, in, anyst, goal) != 0) ok = false;
+    }
+    free(body); free(ob); free(anyst); free(in); free(goal);
+    return ok;
+}
+
 // Is `val` a running total in a loop, and what does one iteration add?
 static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
                             int64_t *s0lo, int64_t *s0hi, int64_t *dlo, int64_t *dhi) {
@@ -4510,12 +4645,17 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
     char *body = malloc((size_t)nbb); if (!body) return false;
     // `is_loop_header` is set by the back-edge pass; anything else is not a loop and
     // vra_natural_loop over it means nothing.
-    IrBlock *found = NULL;
-    for (IrBlock *h=V->f->blocks; h && !found; h=h->next) {
+    // ★ THE INNERMOST loop around the store (I.162): the first header found was often the OUTER
+    // one, whose trip count says nothing of how often an inner loop runs the store.
+    IrBlock *found = NULL; int fsize = 0;
+    for (IrBlock *h=V->f->blocks; h; h=h->next) {
         if (!h->is_loop_header) continue;
         vra_natural_loop(V, h, nbb, body);
-        if (blk>=0 && blk<nbb && body[blk]) found = h;
+        if (!(blk>=0 && blk<nbb && body[blk])) continue;
+        int sz = 0; for (int i = 0; i < nbb; i++) sz += body[i] ? 1 : 0;
+        if (!found || sz < fsize) { found = h; fsize = sz; }
     }
+    if (found) vra_natural_loop(V, found, nbb, body);
     // `body` still holds the found loop's block set. The ACCUMULATOR's cell needs the same
     // question asked of it as the counter's: s0 + T*delta says nothing if a callee can assign
     // to s behind the loop's back.
@@ -4526,8 +4666,19 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
     // The addend's range. vra_range follows widening casts to the source's own type, so
     // `(a[i] as i32)` on a u8 element reads as [0,255] rather than [-2^31,255] — without
     // which no sum is bounded by anything.
-    vra_range(V, W, add->operands[1], dlo, dhi);
-    if (add->op==IR_SUB) { int64_t t=*dlo; *dlo = -*dhi; *dhi = -t; }
+    // ...joined over EVERY update of the cell in H, which must be one per trip (vra_accum_sound),
+    // and carried out through every enclosing loop that does not reset s before H.
+    if (!vra_accum_sound(V, W, cell, found, dlo, dhi)) { free(body); return false; }
+    for (int lift = 0; ; lift++) {
+        IrBlock *L = NULL; bool between = false; int64_t Tin, a, z;
+        if (vra_accum_entry(V, cell, found, &L, &between)) break;
+        if (lift >= 8 || !L || between || !vra_loop_trips(V, W, found, &Tin)) { free(body); return false; }
+        if (vra_mul_ovf(Tin, *dlo < 0 ? *dlo : 0, &a) || vra_mul_ovf(Tin, *dhi > 0 ? *dhi : 0, &z)) { free(body); return false; }
+        *dlo = a; *dhi = z; found = L;
+    }
+    vra_natural_loop(V, found, nbb, body);
+    if (vra_cell_opaque_write(V, cell, nbb, body)) { free(body); return false; }
+    *H = found;
     // ★ s0 IS THE VALUE ON ENTRY TO THE LOOP, and it must be read from the stores that happen
     // OUTSIDE it. This used to read the cell's octagon interval at the check point — inside
     // the loop, where the accumulator has been WIDENED — and fall back to 0 when that gave

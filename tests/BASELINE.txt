@@ -1398,6 +1398,11 @@ at=const 8
 rc=0
 out=
 at=const 4
+### tests/trust/accum_one_update_per_trip_pass.ln
+rc=0
+out=7 240 65200
+at=const 6
+ty=Slice_u8 scalar
 ### tests/trust/adt_payload_pass.ln
 rc=0
 out=r 42
