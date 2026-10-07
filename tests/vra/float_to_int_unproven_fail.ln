@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 9, Col 12: this float is not provably a number whose integral part fits the integer type
+// I.157: Ariane 5 flight 501. The horizontal bias, a 64-bit float, converted to a 16-bit integer
+// with no range check; the value exceeded 32767. C's conversion is then undefined (C11 6.3.1.4),
+// and `bh as i16` compiled to `(int16_t)v0` with no proof asked: the analysis tracks no float, and
+// its narrowing check returned early for a source that is not an integer.
+func horizontal_bias(bh f64) i16 {
+    // a guard `if bh >= -32768.0 and bh < 32768.0` proves it, as `as|` and `as?` define it
+    return bh as i16
+}
+
+func main() i32 { return 0 }

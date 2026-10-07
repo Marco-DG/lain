@@ -2272,6 +2272,12 @@ var n = 'A' as int        // char to int: 65
   narrowing, or a signedness change such as `u32` to `i32` or `usize` to `i64` — `as` needs a
   proof ([E086] otherwise), and `as?`, `as%`, `as|` state what happens to a value that does not
   fit.
+- A float-to-integer conversion truncates toward zero, and `as` needs a proof that the float is
+  a **number** (not a NaN) whose integral part fits the target ([E086] otherwise). The proof comes
+  from a constant, a float local stored once, or comparisons that guard the cast
+  (`if x >= 0.0 and x < 256.0 { x as u8 }`). An early return on the opposite test does not prove
+  it: a NaN fails every comparison and reaches the cast. `as|` clamps (a NaN gives 0), `as?` takes
+  its `else` arm for a NaN or a value out of range, and `as%` does not take a float ([E012]).
 - Pointer casts (`*int as *void`) require an `unsafe` block.
 - Non-numeric casts (e.g., struct to int) are not allowed.
 
@@ -2336,8 +2342,32 @@ because an integer literal does not implicitly become a float either.
 ```lain
 func main() i32 {
     var f f64 = 3.0
-    var i = f as int     // Explicit: float -> int
+    var i = f as int     // Explicit: float -> int (3.0 is a constant, so it is proven to fit)
     var g = i as f64     // Explicit: int -> float
+    return 0
+}
+```
+
+A float that is not a constant must be shown to fit before `as` converts it. This is the
+conversion that destroyed Ariane 5 in 1996: a 64-bit float, larger than 32767, converted to a
+16-bit integer.
+
+```lain
+func horizontal_bias(bh f64) i16 {
+    return bh as i16     // ERROR [E086]: bh may be a NaN, or beyond what an i16 holds
+}
+```
+
+```lain
+// VERIFY: exit 0
+func bias(bh f64) i16 {
+    if bh >= -32768.0 and bh < 32768.0 { return bh as i16 }   // proven
+    return bh as| i16                                          // or say what you mean: clamp
+}
+
+func main() i32 {
+    if bias(100.9) != 100 { return 1 }
+    if bias(40000.0) != 32767 { return 2 }
     return 0
 }
 ```

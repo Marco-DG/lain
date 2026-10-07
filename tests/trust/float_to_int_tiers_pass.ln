@@ -1,0 +1,47 @@
+// I.157: converting a float to an integer, in each tier. C's conversion is undefined when the
+// float's integral part does not fit the target (C11 6.3.1.4), and every tier emitted it bare:
+// `bh as i16` owed no proof (Ariane 5 flight 501's conversion), `bh as| i16` did not clamp, and
+// `as?` was "not supported by the code generator". Now `as` is proven from a constant or from the
+// comparisons that guard it (or from a cell stored to once, like `f`), `as|` clamps and takes a
+// NaN to 0, and `as?` takes its `else` arm for a NaN or a value out of range.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func bias(bh f64) i16 {
+    if bh >= -32768.0 and bh < 32768.0 { return bh as i16 }
+    return 0
+}
+
+func wide(x f64) i64 {
+    if x >= -9223372036854775808.0 and x < 9223372036854775808.0 { return x as i64 }
+    return 0
+}
+
+func bucket(t i32[], x f64) i32 {
+    if t.len == 4 and x >= 0.0 and x < 4.0 { return t[x as usize] }
+    return -1
+}
+
+func clamp16(x f64) i16 { return x as| i16 }
+func clamp_u8(x f32) u8 { return x as| u8 }
+func clamp_u64(x f64) u64 { return x as| u64 }
+func checked16(x f64) i16 { return x as? i16 else -1 }
+func checked_u64(x f64) u64 { return x as? u64 else 7 }
+
+func main() i32 effects io {
+    var t i32[4] = [10, 20, 30, 40]
+    z = 0.0
+    nan = z / z
+    inf = 1.0 / z
+    libc_printf("%d %d %d %d\n", bias(32767.9) as i32, bias(-32768.0) as i32, bias(40000.0) as i32, bias(nan) as i32)
+    libc_printf("%lld %lld\n", wide(-9223372036854775808.0), wide(9223372036854775808.0))
+    libc_printf("%d %d %d\n", bucket(t, 3.99), bucket(t, 0.0), bucket(t, 4.0))
+    libc_printf("%d %d %d %d %d\n", clamp16(nan) as i32, clamp16(inf) as i32, clamp16(-inf) as i32, clamp16(-123.9) as i32, clamp16(1.0e300) as i32)
+    libc_printf("%d %d %d\n", clamp_u8(-5.5) as i32, clamp_u8(255.9) as i32, clamp_u8(300.0) as i32)
+    libc_printf("%llu %llu %llu\n", clamp_u64(-1.0), clamp_u64(1.0e30), clamp_u64(12345.75))
+    libc_printf("%d %d %d %d %d\n", checked16(nan) as i32, checked16(32768.0) as i32, checked16(-32768.5) as i32, checked16(-32769.0) as i32, checked16(inf) as i32)
+    libc_printf("%llu %llu %llu\n", checked_u64(-0.5), checked_u64(-1.0), checked_u64(18446744073709551616.0))
+    c i16 = -32768.5 as i16
+    var f f64 = 3.75
+    libc_printf("%d %d\n", c as i32, f as i32)
+    return 0
+}

@@ -3872,6 +3872,21 @@ void sema_infer_expr(Expr *e) {
             exit(1);
         }
     }
+    // ★ `as%` WRAPS AN INTEGER'S BITS, and a float has none to wrap (I.157): the conversion
+    // truncates the VALUE, undefined in C past the target's ends, and the wrapping tier owes no
+    // proof, so `x as% i16` on 40000.0 was `(int16_t)v0`. Nothing about a float says which
+    // integer it should wrap to; `as|` and `as?` say what happens at the ends.
+    if (e->as.cast_expr.kind == CAST_WRAPPING && !src_is_ptr && !tgt_is_ptr) {
+        Type *src_r = resolve_type_alias(src_u), *tgt_r = resolve_type_alias(tgt_u);
+        if (src_r && tgt_r && is_float_type(src_r) && is_integer_type(tgt_r)) {
+            char sb[128]; type_describe(src_r, sb, sizeof sb);
+            fprintf(stderr, "[E012] Error Ln %li, Col %li: `as%%` wraps an integer, and this operand is "
+                    "'%s': write `as` (proven to fit), `as|` (clamps; a NaN is 0) or `as?` with `else`.\n",
+                    (long)e->line, (long)e->col, sb);
+            diagnostic_show_line(e->line, e->col);
+            exit(1);
+        }
+    }
     // type already set at parse time (target_type)
     break;
   }

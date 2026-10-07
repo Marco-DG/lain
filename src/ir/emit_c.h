@@ -709,7 +709,28 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             }
             fprintf(o, "  v%d = -v%d;\n", i->result->id, i->operands[0]->id); break;
         case IR_BNOT:   fprintf(o, "  v%d = ~v%d;\n", i->result->id, i->operands[0]->id); break;
-        case IR_CAST:   if (i->wrap != IR_WRAP_CHECK && i->n_operands == 1 && i->operands[0]->type &&
+        case IR_CAST:   if (i->wrap == IR_WRAP_SATURATE && i->n_operands == 1 && i->operands[0]->type &&
+                            i->operands[0]->type->kind == IRT_FLOAT && i->result->type &&
+                            i->result->type->kind == IRT_INT && i->result->type->bits >= 1 &&
+                            i->result->type->bits <= 64) {
+                            // `x as| T` from a float (I.157): a NaN is 0, and x clamps to T's ends
+                            // BEFORE the C conversion, which is undefined outside them. Both ends are
+                            // powers of two, exact as hex literals; in between, the conversion
+                            // truncates to a value of T.
+                            IrType *dt = i->result->type; int nb = dt->bits;
+                            __int128 tmin = dt->is_signed ? -((__int128)1 << (nb - 1)) : 0;
+                            __int128 tmax = dt->is_signed ? ((__int128)1 << (nb - 1)) - 1 : ((__int128)1 << nb) - 1;
+                            int x = i->operands[0]->id, r = i->result->id, top = dt->is_signed ? nb - 1 : nb;
+                            fprintf(o, "  v%d = (v%d != v%d) ? (", r, x, x); ir_ctype(dt, o); fputs(")0 : ", o);
+                            if (dt->is_signed) fprintf(o, "(v%d <= -0x1p%d) ? (", x, nb - 1);
+                            else               fprintf(o, "(v%d <= 0.0) ? (", x);
+                            ir_ctype(dt, o); fputs(")", o); ir_emit_c_int128(tmin, o);
+                            fprintf(o, " : (v%d >= 0x1p%d) ? (", x, top);
+                            ir_ctype(dt, o); fputs(")", o); ir_emit_c_int128(tmax, o);
+                            fputs(" : (", o); ir_ctype(dt, o); fprintf(o, ")v%d;\n", x);
+                            break;
+                        }
+                        if (i->wrap != IR_WRAP_CHECK && i->n_operands == 1 && i->operands[0]->type &&
                             i->operands[0]->type->kind == IRT_INT && i->result->type &&
                             i->result->type->kind == IRT_INT) { ir_emit_cast_policy(i, o); break; }
                         fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);

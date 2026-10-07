@@ -103,11 +103,11 @@ for name, ty, v1, v2, fmt, pr, want in TYPES:
 
 add("type-var-return", "f32",
     'func go() f32 {\n    var a f32 = 1.0\n    a = 2.5\n    return a\n}\n'
-    'func main() i32 effects io {\n    r = go()\n    libc_printf("%d\\n", (r * 2.0) as i32)\n    return 0\n}\n',
+    'func main() i32 effects io {\n    r = go()\n    libc_printf("%d\\n", (r * 2.0) as| i32)\n    return 0\n}\n',
     "5\n")
 add("type-var-return", "f64",
     'func go() f64 {\n    var a f64 = 1.0\n    a = 2.5\n    return a\n}\n'
-    'func main() i32 effects io {\n    r = go()\n    libc_printf("%d\\n", (r * 2.0) as i32)\n    return 0\n}\n',
+    'func main() i32 effects io {\n    r = go()\n    libc_printf("%d\\n", (r * 2.0) as| i32)\n    return 0\n}\n',
     "5\n")
 add("type-var-return", "fixed array",
     'func go() i32 {\n    var a i32[4] = [1, 2, 3, 4]\n    a[2] = 9\n    return a[2]\n}\n'

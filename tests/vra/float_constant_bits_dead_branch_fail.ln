@@ -1,0 +1,22 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 13, Col 16: index is not provably within bounds
+// I.157: the constant table read a float constant through the integer half of its storage, so
+// 1.0 was the integer 4607182418800017408 (its bit pattern), and the cast copied it: n held that
+// number, `n < 100` looked never taken, and the read below was discharged as dead code. It
+// compiled and read t[1000001] (the interpreter: "index 1000001 outside [0, 4) (proven in
+// bounds)"). A float now carries no fact; n is any i64 here, and the index is unproven, as it is.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func pick(a i32[]) i32 {
+    n = 1.0 as i64
+    if n < 100 {
+        return a[n as usize + 1000000]
+    }
+    return 0
+}
+
+func main() i32 effects io {
+    var t i32[4] = [1, 2, 3, 4]
+    libc_printf("%d\n", pick(t))
+    return 0
+}

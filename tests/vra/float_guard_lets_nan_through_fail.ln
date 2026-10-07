@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 10, Col 12: this float is not provably a number whose integral part fits the integer type
+// I.157: an early return on the FALSE edges of ordered comparisons bounds x only if x is a number.
+// Every ordered comparison with a NaN is false, so a NaN passes both tests here and reaches the
+// conversion, which is undefined for it. Written as `if x >= -32768.0 and x < 32768.0 { ... }`,
+// the true edges rule the NaN out and the conversion proves.
+func to_i16(x f64) i16 {
+    if x < -32768.0 { return 0 }
+    if x >= 32768.0 { return 0 }
+    return x as i16
+}
+
+func main() i32 { return 0 }

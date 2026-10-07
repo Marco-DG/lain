@@ -559,9 +559,21 @@ static void ii_cast(IrInstr *ins, IVal *r) {
                  : (dt->float_bits == 32 ? (double)(float)(uint64_t)iv_get(a, st, ins) : (double)(uint64_t)iv_get(a, st, ins));
         memset(r, 0, sizeof *r); r->k = IV_FLT; r->f = ii_fround(x, dt); return;
     }
-    if ((dt->kind == IRT_INT || dt->kind == IRT_BOOL) && a->k == IV_FLT) {
+    if (dt->kind == IRT_INT && a->k == IV_FLT && ins->wrap == IR_WRAP_SATURATE) {   // `as|` (I.157)
         double x = a->f;
-        if (!(x > (double)it_min(dt) - 1.0 && x < (double)it_max(dt) + 1.0)) II_PROOF(ins, "a float out of the integer type's range");
+        if (x != x) { iv_int(r, 0); return; }
+        if (x <= (double)it_min(dt)) { iv_int(r, it_min(dt)); return; }
+        if (x >= (double)it_max(dt) + 1.0) { iv_int(r, it_max(dt)); return; }
+        iv_int(r, (__int128)x); return;
+    }
+    if (dt->kind == IRT_INT && a->k == IV_FLT) {
+        double x = a->f;
+        // Exactly: the integral part fits. `(double)it_min - 1.0` rounds back to -2^63 at 64 bits,
+        // which refused the i64 that a guard `x >= -9223372036854775808.0` proves (I.157). A
+        // `bool` target is C's _Bool conversion below, not a truncation: 0.5 is true.
+        bool fits = x == x && x > -0x1p64 && x < 0x1p64 && it_fits((__int128)x, dt);
+        if (!fits && ins->unchecked) II_UB(ins, "conversion of a float outside the integer type");
+        if (!fits) II_PROOF(ins, "a float out of the integer type's range");
         iv_int(r, (__int128)x); return;
     }
     if (dt->kind == IRT_BOOL && (a->k == IV_INT || a->k == IV_FLT)) {     // C's _Bool: nonzero is 1

@@ -133,7 +133,8 @@ typedef struct {
     bool     measure_mismatch;   // I.74: the loop ends, but not by the WRITTEN measure
     // A VRA_OVERFLOW check about a SHIFT: 1 = the amount is not provably in [0, width-1],
     // 2 = a signed left shift may carry a bit into/through the sign. Both are UB in the C the
-    // backend emits, and each needs its own sentence.
+    // backend emits, and each needs its own sentence. (3 to 5 are the division and unsigned
+    // shift cases report.h words; 6 = a float converted to an integer, I.157.)
     int      shift;
     bool     bitcount;       // a VRA_DIVZERO check on the argument of @ctz/@clz, not a divisor
     // A VRA_OVERFLOW check that is a narrowing into a REFINED type: 1 = its range [ref_lo, ref_hi],
@@ -289,6 +290,8 @@ static bool vra_land_range(const IrType *slot, const IrType *src, int64_t *lo, i
 // ── small helpers ────────────────────────────────────────────────────────────
 static bool vra_is_int(IrValue *v){ return v && v->type &&
         (v->type->kind==IRT_INT || v->type->kind==IRT_BOOL); }
+// A float is not an integer to this domain: no constant, no fact (I.157, before vra_transfer_instr).
+static bool vra_is_float(const IrValue *v) { return v && v->type && v->type->kind == IRT_FLOAT; }
 
 // is value id `v` a slice-typed alloca cell?
 // Follow an address back to the alloca it roots in and mark that cell escaped.
@@ -786,7 +789,8 @@ static void vra_prepass(Vra *V) {
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (ins->result){ V->def[ins->result->id]=ins; V->defblk[ins->result->id]=b->id;
                               V->val[ins->result->id]=ins->result; }
-            if (ins->op==IR_CONST && ins->result){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
+            // A float constant is not an integer one: aux.imm would read its BIT PATTERN (I.157).
+            if (ins->op==IR_CONST && ins->result && !vra_is_float(ins->result)){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
         }
     // A NEGATED CONSTANT is a constant. A negative literal is `-` applied to a positive one, and
     // left as an octagon interval it was exact only while it fit the octagon's usable range
@@ -1387,11 +1391,209 @@ static void vra_add_via_diff(Vra *V, Octagon *W, int r, int a, int q) {
     }
 }
 
+// ── A FLOAT IS NOT AN INTEGER (I.157) ────────────────────────────────────────────────────────
+// The domain is over the integers. A float has no octagon dimension, but it reached the domain
+// anyway, through the constant table: IR_CONST keeps a float in `aux.fimm`, which shares its
+// storage with `aux.imm`, so 1.0 was the known constant 4607182418800017408, its bit pattern.
+// A cast out of a float then COPIED that value: `n = 1.0 as i64` held n = 4607182418800017408,
+// `if n < 100` looked never taken, and `a[n + 1000000]` inside it was discharged as dead code,
+// an out-of-bounds read that compiled ("index 1000001 outside [0, 4) (proven in bounds)", says
+// the interpreter). And nothing asked for the conversion's own proof: C's float-to-integer
+// conversion is undefined when the integral part does not fit (C11 6.3.1.4), and
+// `bh as i16` on any f64 compiled to `(int16_t)v0`, Ariane 5 flight 501's conversion.
+//
+// So a float carries no fact here at all (vra_is_float), and what the program knows about one is
+// read where it is owed: from a constant, or from the comparisons that guard the use
+// (vra_float_bounds).
+
+// A double against an integer, exactly: -1, 0 or 1, and 2 for a NaN. Nothing rounds: the integral
+// part of x is exact as an integer, and the fraction it leaves is exact as a double.
+static int vra_fcmp_int(double x, __int128 b) {
+    if (x != x) return 2;
+    if (x >= 0x1p100) return 1;
+    if (x <= -0x1p100) return -1;
+    __int128 t = (__int128)x;
+    if (t != b) return t < b ? -1 : 1;
+    double fr = x - (double)t;
+    return fr > 0 ? 1 : fr < 0 ? -1 : 0;
+}
+
+// A float constant: a literal, or one negated (`-1.5` is `neg 1.5`). An f32 holds its rounding.
+static bool vra_float_const(Vra *V, IrValue *v, double *out, int depth) {
+    if (!vra_is_float(v) || depth > 8 || v->id < 0 || v->id >= V->nvar) return false;
+    IrInstr *d = V->def[v->id];
+    if (!d) return false;
+    if (d->op == IR_CONST) { *out = v->type->float_bits == 32 ? (double)(float)d->aux.fimm : d->aux.fimm; return true; }
+    if (d->op == IR_NEG && d->n_operands >= 1 && vra_float_const(V, d->operands[0], out, depth + 1)) {
+        *out = -*out; return true;
+    }
+    // A float cell stored to exactly once, whose address never escapes, holds that value at every
+    // load: definite initialisation (E005) rules out a load before the store. `var f f64 = 3.0`
+    // then `f as int` (LANGUAGE.md's own example) is a conversion of 3.0.
+    if (d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0]) {
+        int cell = d->operands[0]->id;
+        IrInstr *ad = (cell >= 0 && cell < V->nvar) ? V->def[cell] : NULL;
+        if (!ad || ad->op != IR_ALLOCA || !V->escaped || V->escaped[cell]) return false;
+        IrValue *only = NULL; int n = 0;
+        for (IrBlock *b = V->f->blocks; b; b = b->next)
+            for (IrInstr *q = b->instrs; q; q = q->next)
+                if (q->op == IR_STORE && q->n_operands >= 2 && q->operands[0] && q->operands[0]->id == cell) { n++; only = q->operands[1]; }
+        return n == 1 && vra_float_const(V, only, out, depth + 1);
+    }
+    return false;
+}
+
+// What is known of a float at one use: a bound on each side, and whether it is a NUMBER. An
+// ordered comparison with a NaN is false, so the TRUE edge of `x < c` says x is a number and the
+// FALSE edge says only "x >= c, or x is a NaN": `if x < 0.0 or x >= 256.0 { return 0 }` lets a
+// NaN through, and the conversion after it is still undefined.
+typedef struct { bool lo_known, hi_known, lo_strict, hi_strict, number; double lo, hi; } VraFBound;
+
+static void vra_fb_lo(VraFBound *fb, double c, bool strict) {
+    if (!fb->lo_known || c > fb->lo || (c == fb->lo && strict)) { fb->lo = c; fb->lo_strict = strict; fb->lo_known = true; }
+}
+static void vra_fb_hi(VraFBound *fb, double c, bool strict) {
+    if (!fb->hi_known || c < fb->hi || (c == fb->hi && strict)) { fb->hi = c; fb->hi_strict = strict; fb->hi_known = true; }
+}
+
+// Do the instructions [from, stop) leave the scalar cell `cell` as they found it? A store to it, a
+// store through an address this analysis cannot attribute once the cell has escaped, and once
+// escaped any call or opaque writer: the kills vra_guarded_nonzero applies, and a store through
+// an address that roots in the cell itself.
+static bool vra_cell_kept(Vra *V, IrInstr *from, IrInstr *stop, int cell) {
+    bool esc = cell < V->nvar && V->escaped && V->escaped[cell];
+    for (IrInstr *q = from; q && q != stop; q = q->next) {
+        if (q->op == IR_STORE && q->n_operands >= 1 && q->operands[0]) {
+            int tc = vra_arg_cell(V, q->operands[0]);
+            if (q->operands[0]->id == cell || tc == cell || (esc && tc == VRA_ARG_UNKNOWN)) return false;
+        }
+        if (esc && (q->op == IR_CALL || (q->op == IR_OPAQUE && q->aux.opaque.writes))) return false;
+    }
+    return true;
+}
+
+// Is `x` the float `v`: the same SSA value, or a load of v's own cell (a float `var`)? `*ld` is
+// that load, whose block the caller must check for writes after it.
+static bool vra_fsame(Vra *V, IrValue *x, IrValue *v, int cell, IrInstr **ld) {
+    *ld = NULL;
+    if (!x || x->id < 0 || x->id >= V->nvar) return false;
+    if (x->id == v->id) return true;
+    if (cell < 0) return false;
+    IrInstr *d = V->def[x->id];
+    if (d && d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0] && d->operands[0]->id == cell) { *ld = d; return true; }
+    return false;
+}
+
+// The bounds on the float `v` at `at`, in block `b`. A constant is its own bound. Otherwise the
+// single-predecessor chain above the use is read as vra_guarded_nonzero reads it, for an ordered
+// comparison of v with a constant; a write to v's cell between a guard and the use ends the walk.
+static void vra_float_bounds(Vra *V, IrBlock *b, IrInstr *at, IrValue *v, VraFBound *fb) {
+    memset(fb, 0, sizeof *fb);
+    double cv;
+    if (vra_float_const(V, v, &cv, 0)) {
+        if (cv == cv) { fb->lo_known = fb->hi_known = fb->number = true; fb->lo = fb->hi = cv; }
+        return;
+    }
+    if (!v || v->id < 0 || v->id >= V->nvar || !b) return;
+    IrInstr *vd = V->def[v->id];
+    int cell = (vd && vd->op == IR_LOAD && vd->n_operands >= 1 && vd->operands[0]) ? vd->operands[0]->id : -1;
+    if (cell >= 0 && !(cell < V->nvar && V->def[cell] && V->def[cell]->op == IR_ALLOCA)) cell = -1;
+    if (cell >= 0 && !vra_cell_kept(V, b->instrs, at, cell)) return;   // the use's block, above it
+    for (int depth = 0; b && depth < 64; depth++) {
+        IrEdge *e = b->preds;
+        if (!e || e->next || !e->block) return;                         // not a single-predecessor chain
+        IrBlock *p = e->block;
+        if (p->term.kind == IR_TERM_BR_COND && p->term.cond && p->term.a != p->term.b &&
+            p->term.cond->id >= 0 && p->term.cond->id < V->nvar) {
+            IrInstr *ic = V->def[p->term.cond->id];
+            if (ic && ic->op == IR_ICMP && ic->n_operands >= 2) {
+                IrCmp pr = ic->aux.cmp; double c = 0; IrInstr *ld = NULL; bool mine = false;
+                if (vra_fsame(V, ic->operands[0], v, cell, &ld) && vra_float_const(V, ic->operands[1], &c, 0)) mine = true;
+                else if (vra_fsame(V, ic->operands[1], v, cell, &ld) && vra_float_const(V, ic->operands[0], &c, 0)) {
+                    mine = true;                                        // `c < v` is `v > c`
+                    pr = pr == IR_CMP_SLT ? IR_CMP_SGT : pr == IR_CMP_SGT ? IR_CMP_SLT
+                       : pr == IR_CMP_SLE ? IR_CMP_SGE : pr == IR_CMP_SGE ? IR_CMP_SLE : pr;
+                }
+                // The load the guard compared must be p's own, with no write to the cell after it.
+                if (mine && ld && (V->defblk[ld->result->id] != p->id || !vra_cell_kept(V, ld->next, NULL, cell))) mine = false;
+                if (mine && c == c) {
+                    bool then = (p->term.a == b);
+                    switch (pr) {
+                        case IR_CMP_SLT: if (then) { vra_fb_hi(fb, c, true);  fb->number = true; } else vra_fb_lo(fb, c, false); break;
+                        case IR_CMP_SLE: if (then) { vra_fb_hi(fb, c, false); fb->number = true; } else vra_fb_lo(fb, c, true);  break;
+                        case IR_CMP_SGT: if (then) { vra_fb_lo(fb, c, true);  fb->number = true; } else vra_fb_hi(fb, c, false); break;
+                        case IR_CMP_SGE: if (then) { vra_fb_lo(fb, c, false); fb->number = true; } else vra_fb_hi(fb, c, true);  break;
+                        case IR_CMP_EQ:  if (then) { vra_fb_lo(fb, c, false); vra_fb_hi(fb, c, false); fb->number = true; } break;
+                        case IR_CMP_NE:  if (!then) { vra_fb_lo(fb, c, false); vra_fb_hi(fb, c, false); fb->number = true; } break;
+                        default: break;                                 // an unsigned predicate: no float has one
+                    }
+                }
+            }
+        }
+        if (cell >= 0 && !vra_cell_kept(V, p->instrs, NULL, cell)) return;   // guards above p are stale
+        b = p;
+    }
+}
+
+// T's range, exactly: a u64's top is 2^64 - 1, not the INT64_MAX the domain clamps it to.
+static bool vra_int_bounds128(const IrType *t, __int128 *lo, __int128 *hi) {
+    if (!t || t->kind != IRT_INT || t->bits < 1 || t->bits > 64) return false;
+    *lo = t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0;
+    *hi = t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+    return true;
+}
+
+// Does `x as T` convert a float the bounds describe, with nothing undefined? The value is a
+// number and its integral part lies in T: x > T_MIN - 1 and x < T_MAX + 1.
+static bool vra_fb_fits(const VraFBound *fb, __int128 tlo, __int128 thi) {
+    if (!fb->number || !fb->lo_known || !fb->hi_known) return false;
+    int l = vra_fcmp_int(fb->lo, tlo - 1), h = vra_fcmp_int(fb->hi, thi + 1);
+    if (l == 2 || h == 2) return false;
+    return (fb->lo_strict ? l >= 0 : l > 0) && (fb->hi_strict ? h <= 0 : h < 0);
+}
+
+// The integer range of `x as T` (`as|` when sat): the conversion truncates toward zero, which is
+// monotone, so it maps the bounds; a clamp maps them to T's ends, and a NaN clamps to 0. A
+// conversion that is not proven, and an empty answer, are T's whole range.
+static void vra_float_cast_range(const VraFBound *fb, __int128 tlo, __int128 thi, bool sat,
+                                 __int128 *rlo, __int128 *rhi) {
+    *rlo = tlo; *rhi = thi;
+    if (!sat && !vra_fb_fits(fb, tlo, thi)) return;
+    __int128 lo = tlo, hi = thi;
+    if (fb->lo_known) {
+        if (vra_fcmp_int(fb->lo, thi) >= 0) lo = thi;
+        else if (vra_fcmp_int(fb->lo, tlo) > 0) {
+            __int128 t = (__int128)fb->lo;          // |lo| < 2^64 here
+            if (fb->lo_strict && (double)t == fb->lo && t < 0) t += 1;
+            lo = t;
+        }
+    }
+    if (fb->hi_known) {
+        if (vra_fcmp_int(fb->hi, tlo) <= 0) hi = tlo;
+        else if (vra_fcmp_int(fb->hi, thi) < 0) {
+            __int128 t = (__int128)fb->hi;
+            if (fb->hi_strict && (double)t == fb->hi && t > 0) t -= 1;
+            hi = t;
+        }
+    }
+    if (sat && !fb->number) { if (lo > 0) lo = 0; if (hi < 0) hi = 0; }
+    if (lo > hi) return;
+    *rlo = lo < tlo ? tlo : lo; *rhi = hi > thi ? thi : hi;
+}
+
+// The block holding `ins`, for the transfer, which is not told.
+static IrBlock *vra_block_of(Vra *V, IrInstr *ins) {
+    if (!ins->result || ins->result->id < 0 || ins->result->id >= V->nvar) return NULL;
+    int id = V->defblk[ins->result->id];
+    for (IrBlock *b = V->f->blocks; b; b = b->next) if (b->id == id) return b;
+    return NULL;
+}
+
 static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
     int r = ins->result ? ins->result->id : -1;
     switch (ins->op) {
         case IR_CONST:
-            if (r>=0){ oct_forget(W,r); oct_add_const(W,r,ins->aux.imm); }
+            if (r>=0){ oct_forget(W,r); if (!vra_is_float(ins->result)) oct_add_const(W,r,ins->aux.imm); }
             break;
         case IR_LOAD: {
             if (r<0) break;
@@ -2023,6 +2225,21 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             break;
         }
         case IR_CAST:
+            // ★ OUT OF A FLOAT, a conversion: never a copy of the float's bits (I.157). The result
+            // is what the guards on the float say it truncates to, where the conversion is proven
+            // or clamps, and the target's whole range otherwise; `x as bool` is 0 or 1.
+            if (r>=0 && ins->n_operands>=1 && vra_is_float(ins->operands[0]) && ins->result && ins->result->type) {
+                IrType *t = ins->result->type; __int128 tlo, thi, rlo, rhi;
+                oct_forget(W, r);
+                if (t->kind == IRT_BOOL) { oct_add_lb(W, r, 0); oct_add_ub(W, r, 1); break; }
+                if (!vra_int_bounds128(t, &tlo, &thi)) break;
+                VraFBound fb; vra_float_bounds(V, vra_block_of(V, ins), ins, ins->operands[0], &fb);
+                vra_float_cast_range(&fb, tlo, thi, ins->wrap == IR_WRAP_SATURATE, &rlo, &rhi);
+                if (rlo >= INT64_MIN && rlo <= INT64_MAX && vra_bound_fits((int64_t)rlo)) oct_add_lb(W, r, (int64_t)rlo);
+                else if (!t->is_signed) oct_add_lb(W, r, 0);
+                if (rhi >= INT64_MIN && rhi <= INT64_MAX && vra_bound_fits((int64_t)rhi)) oct_add_ub(W, r, (int64_t)rhi);
+                break;
+            }
             // ★ `x as bool` IS NOT A COPY. It is C's _Bool conversion: any non-zero value is 1. The
             // copy below made `(-5) as bool` read as -5, so `if (b as i32) < 0` looked always
             // taken and a division by zero on the other branch was proven (SIGFPE). Found by
@@ -3018,6 +3235,18 @@ static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
 // f(-2147483648) is UB (UBSan: "negation of -2147483648 cannot be represented"). Unary `-` was
 // prove-or-reject in the old engine and the obligation did not survive the move to the IR — the
 // same gap the shift checks had. `0 -% x` is the wrapping spelling; `unsafe` waives it.
+// `x as T` from a float, the proven tier: x is a number and its integral part fits T, read from
+// a constant or from the guards on x (vra_float_bounds). E086 with its own sentence (shift 6).
+static void vra_check_float_cast(Vra *V, IrInstr *ins, IrBlock *b) {
+    IrType *t = ins->result ? ins->result->type : NULL; __int128 tlo, thi;
+    if (!t || t->kind != IRT_INT || !vra_int_bounds128(t, &tlo, &thi)) return;
+    VraFBound fb; vra_float_bounds(V, b, ins, ins->operands[0], &fb);
+    VraCheck c; memset(&c,0,sizeof c);
+    c.kind = VRA_OVERFLOW; c.at = ins; c.line = ins->line; c.col = ins->col; c.shift = 6;
+    c.ok = vra_fb_fits(&fb, tlo, thi);
+    vra_add_check(V, c);
+}
+
 static void vra_check_neg(Vra *V, Octagon *W, IrInstr *ins) {
     if (ins->unchecked || ins->n_operands < 1 || !ins->result) return;
     IrType *tt = ins->result->type; int64_t tlo, thi;
@@ -5161,6 +5390,11 @@ static Vra *vra_analyze(IrFunc *f) {
                     break;
                 }
                 case IR_CAST:
+                    // A float converted by the PROVEN tier owes the conversion's own proof (I.157).
+                    if (ins->n_operands >= 1 && vra_is_float(ins->operands[0])) {
+                        if (ins->wrap == IR_WRAP_CHECK && !ins->unchecked) vra_check_float_cast(V, ins, b);
+                        break;
+                    }
                     // Any CHECK-mode cast that may lose a value owes the proof — the kind says
                     // only how the bits move, and a same-width signedness change moves none.
                     if (ins->n_operands >= 1 && ins->wrap == IR_WRAP_CHECK

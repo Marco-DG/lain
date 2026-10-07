@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 7, Col 12: `as%` wraps an integer, and this operand is 'f64'
+// I.157: `as%` wraps an integer's bits, and a float has none to wrap. It owed no proof and emitted
+// C's conversion, undefined for 40000.0 into an i16. `as|` clamps (a NaN is 0) and `as?` takes
+// its `else` arm, and both say what happens at the ends.
+func f(x f64) i16 {
+    return x as% i16
+}
+
+func main() i32 { return 0 }

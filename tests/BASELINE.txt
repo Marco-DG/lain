@@ -1667,6 +1667,23 @@ ty=Slice_u8 scalar
 ### tests/trust/float_literal_forms_pass.ln
 rc=0
 out=
+### tests/trust/float_to_int_tiers_pass.ln
+rc=0
+out=32767 -32768 0 0
+out=-9223372036854775808 0
+out=40 10 -1
+out=0 32767 -32768 -123 32767
+out=0 255 255
+out=0 18446744073709551615 12345
+out=-1 -1 -32768 -1 -1
+out=0 7 7
+out=-32768 3
+at=access 2
+at=const 14
+at=nonnull 2
+at=pure 2
+ty=Slice_i32 scalar
+ty=Slice_u8 scalar
 ### tests/trust/fnptr_from_call_pass.ln
 rc=0
 out=

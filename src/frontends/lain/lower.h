@@ -2014,6 +2014,29 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                     if (opx->kind == EXPR_CAST) {
                         IrValue *sv = ir_lower_expr(c, opx->as.cast_expr.expr);
                         IrType *S = sv ? sv->type : NULL;
+                        // `x as? T` FROM A FLOAT (I.157): the `else` arm unless x is a number whose
+                        // integral part fits T, tested as x > T_MIN - 1 and x < T_MAX + 1, both false
+                        // for a NaN. T_MAX + 1 is a power of two, exact in any float; T_MIN - 1 is
+                        // exact below the mantissa's width, and above it the test is x >= T_MIN.
+                        if (S && S->kind == IRT_FLOAT) {
+                            int db = rt2->bits, mant = S->float_bits == 32 ? 24 : 53;
+                            __int128 dmin = rt2->is_signed ? -((__int128)1 << (db-1)) : 0;
+                            __int128 dmax = rt2->is_signed ? ((__int128)1 << (db-1)) - 1 : ((__int128)1 << db) - 1;
+                            bool lo_exact = dmin - 1 >= -((__int128)1 << mant);
+                            IrBlock *nb = ir_new_block(c->f), *nb2 = ir_new_block(c->f);
+                            ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, lo_exact ? IR_CMP_SGT : IR_CMP_SGE, sv,
+                                           ir_const_float(c->f, c->cur, (double)(lo_exact ? dmin - 1 : dmin), S)), nb, bad2);
+                            c->cur = nb;
+                            ir_set_br_cond(c->cur, ir_icmp(c->f, c->cur, IR_CMP_SLT, sv,
+                                           ir_const_float(c->f, c->cur, (double)(dmax + 1), S)), nb2, bad2);
+                            c->cur = nb2;
+                            IrInstr *nr = ir_instr(c->f, IR_CAST, rt2, 1); nr->operands[0] = sv;
+                            nr->aux.cast_kind = IR_CAST_FTOI;
+                            nr->unchecked = true;         // the two tests above ARE the proof
+                            ir_emit(c->cur, nr);
+                            ir_store(c->f, c->cur, cell2, nr->result);
+                            goto checked_cast_done;
+                        }
                         if (!S || S->kind != IRT_INT)
                             return ir_opaque_expr(c, ty, false, "checked-cast-non-int", NULL, NULL);
                         int sb = S->bits, db = rt2->bits;
@@ -2046,6 +2069,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                                                         la, ra, rt2, tlo, thi, bad2);
                         ir_store(c->f, c->cur, cell2, okv);
                     }
+                checked_cast_done:
                     ir_set_br(c->cur, jn2);
                     c->cur = bad2;
                     if (e->as.else_expr.arm_is_return) {
@@ -3089,6 +3113,15 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 else                          ins->aux.cast_kind = IR_CAST_BITCAST;   // same width
                 ins->wrap = tier == CAST_WRAPPING   ? IR_WRAP_MODULAR
                           : tier == CAST_SATURATING ? IR_WRAP_SATURATE : IR_WRAP_CHECK;
+            } else if (st && dt && st->kind==IRT_FLOAT && dt->kind==IRT_INT) {
+                // ★ OUT OF A FLOAT, the tier travels too (I.157). It was dropped, as it was for the
+                // integers once: `bh as| i16` emitted the plain C conversion, undefined for a
+                // value past 32767, like `bh as i16`. `as` owes the proof, `as|` clamps (a NaN
+                // is 0); `as%` from a float is refused before here.
+                ins->aux.cast_kind = IR_CAST_FTOI;
+                ins->wrap = tier == CAST_SATURATING ? IR_WRAP_SATURATE : IR_WRAP_CHECK;
+            } else if (st && dt && st->kind==IRT_INT && dt->kind==IRT_FLOAT) {
+                ins->aux.cast_kind = IR_CAST_ITOF;
             } else {
                 ins->aux.cast_kind = IR_CAST_BITCAST;
             }

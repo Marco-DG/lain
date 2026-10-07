@@ -169,6 +169,15 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                     ir_diag(file, c->line, c->col, "E086",
                             "unsigned left shift may lose bits — the result may not fit the left "
                             "operand's type; prove it fits, or say you mean to discard them: `<<%` wraps");
+                } else if (c->shift == 6) {
+                    ir_diag(file, c->line, c->col, "E086",
+                            "this float is not provably a number whose integral part fits the "
+                            "integer type, and converting any other float is undefined");
+                    fprintf(stderr,
+                        "       a float's range is read from a constant or from comparisons that "
+                        "guard it, e.g. `if x >= 0.0 and x < 256.0`\n"
+                        "       or say what you mean: `as|` clamps (a NaN becomes 0), `as?` takes "
+                        "its `else` arm\n");
                 } else if (c->shift == 2) {
                     ir_diag(file, c->line, c->col, "E086",
                             "signed left shift may overflow — a bit can reach the sign (`1 << 31` on an i32 is UB)");

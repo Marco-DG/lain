@@ -1,0 +1,15 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 13, Col 13: this float is not provably a number whose integral part fits the integer type
+// I.157: a float cell stored to once, whose address never leaves, holds that value at every load,
+// so `var f f64 = 3.0` then `f as int` converts 3.0. Here the address leaves: `set(var f)` may
+// store anything, and 1.0e10 does not fit an i16.
+func set(x var f64) {
+    x = 1.0e10
+}
+
+func main() i32 {
+    var f f64 = 3.0
+    set(var f)
+    var i = f as i16
+    return i as i32
+}
