@@ -3942,6 +3942,9 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // 1) Clear old globals + insert top-level decls
     sema_clear_globals();
     sema_build_scope(decls, module_path);
+    // I.127: every written type names a type. Before the signatures are lowered, so a union is
+    // judged as written (`Nope | none` at the function), not as the enum it becomes.
+    sema_check_declared_types(decls);
     sema_fold_field_lengths(decls);
 
     // Q-008: enforce `mov` on every linear field of every struct/enum.

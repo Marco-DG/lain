@@ -166,6 +166,8 @@ has this type).
 \lain{File} is a linear struct that wraps a C \texttt{FILE*} handle:
 
 \begin{laincode}
+import std.c.{FILE}
+
 type File {
     mov handle *FILE
 }

@@ -1785,6 +1785,17 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/known_type_names_pass.ln
+rc=0
+out=
+at=const 6
+at=nonnull 4
+at=pure 8
+ty=Buf_4 struct
+ty=Color scalar
+ty=Option_bool scalar
+ty=Pair_i32 struct
+ty=__U_Small_none scalar
 ### tests/trust/leading_zero_allowed_pass.ln
 rc=0
 out=

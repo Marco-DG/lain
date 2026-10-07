@@ -488,6 +488,8 @@ func main() i32 {
 Struct fields annotated with `mov` indicate ownership and make the containing struct **linear** (move-only):
 
 ```lain
+extern type FILE         // C's opaque FILE
+
 type File {
     mov handle *FILE     // Owned handle; makes the struct linear
 }
@@ -3768,9 +3770,14 @@ func main() i32 {
 All local variables, structs, and arrays in Lain are **stack-allocated** by default. There is no implicit heap allocation.
 
 ```lain
-var x int = 42           // Stack-allocated integer
-var arr int[100]         // Stack-allocated array of 100 ints
-var p Point              // Stack-allocated struct
+type Point { x i32, y i32 }
+
+func main() i32 {
+    var x int = 42           // Stack-allocated integer
+    var arr int[100]         // Stack-allocated array of 100 ints
+    var p Point              // Stack-allocated struct
+    return 0
+}
 ```
 
 ### 15.2 Heap Allocation

@@ -1,0 +1,89 @@
+// I.127, the allowed side: an unknown type name is E106, and every legitimate source of a type
+// name still compiles where a type is written (a parameter, a return, a local, a field, a
+// constant, inside a pointer, an array or a function pointer): a type parameter, a const-generic
+// argument, an alias, an enum, a union, an import (bare and qualified), a generic application and
+// an `extern type`.
+import std.c.{FILE}
+import std.option.{Option}
+
+extern type Handle
+
+type Pair(T type) {
+    a T
+    b T
+}
+
+type Buf(N usize) {
+    data u8[N]
+}
+
+SIZE usize = 4
+
+type Small = u8 < 200
+
+type Color {
+    Red
+    Green
+}
+
+type Holder {
+    c Color
+    s Small
+    h *Handle
+}
+
+LIMITS i32[2] = [3, 9]
+
+func first(T type, p Pair(T)) T {
+    var x T = p.a
+    return x
+}
+
+func last(b Buf(SIZE)) u8 {
+    return b.data[3]
+}
+
+func find(k Small) Small | none {
+    if k > 0 {
+        return k
+    }
+    return none
+}
+
+func bare(f *FILE) i32 {
+    return 0
+}
+
+func qualified(f *c.FILE) i32 {
+    return 0
+}
+
+func apply(f *func(Small) i32, v Small) i32 {
+    return f(v)
+}
+
+func widen(v Small) i32 {
+    return v as i32
+}
+
+func present() Option(bool) {
+    return Option(bool).Some(true)
+}
+
+func main() i32 {
+    var p Pair(i32) = Pair(i32, 3, 4)
+    if first(i32, p) != 3 { return 1 }
+    var b Buf(SIZE) = Buf(SIZE, [1, 2, 3, 4])
+    if last(b) != 4 { return 2 }
+    s Small = 150
+    if apply(widen, s) != 150 { return 3 }
+    var got = 0
+    if find(5) { got = 1 }
+    if got != 1 { return 4 }
+    k Color = Color.Green
+    xs Small[2] = [1, 2]
+    if xs[1] != 2 { return 5 }
+    if LIMITS[1] != 9 { return 6 }
+    var o Option(bool) = present()
+    return 0
+}

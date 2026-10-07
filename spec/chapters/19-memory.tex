@@ -93,9 +93,14 @@ the call stack.  No implicit heap allocation is ever performed by the
 compiler.
 
 \begin{laincode}
-var x int = 42     // stack: sizeof(int32_t) bytes
-var arr int[100]    // stack: 100 * sizeof(int32_t) bytes
-var p Point         // stack: sizeof(Point) bytes
+type Point { x i32, y i32 }
+
+func main() i32 {
+    var x int = 42      // stack: sizeof(int32_t) bytes
+    var arr int[100]    // stack: 100 * sizeof(int32_t) bytes
+    var p Point         // stack: sizeof(Point) bytes
+    return 0
+}
 \end{laincode}
 
 \pnum

@@ -1,0 +1,10 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 6, Col 15: unknown type 'zzqq': no struct, enum, union, alias, `extern type`, import or type parameter has this name.
+// I.127: an unknown type name is E106 wherever a type is written, here an extern's parameter type. It
+// compiled: a name nothing declares switched off type checking for the binding.
+
+extern func g(x zzqq) i32
+
+func main() i32 {
+    return 0
+}

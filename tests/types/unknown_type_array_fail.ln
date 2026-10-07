@@ -1,0 +1,9 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 7, Col 5: unknown type 'zzqq': no struct, enum, union, alias, `extern type`, import or type parameter has this name.
+// I.127: an unknown type name is E106 wherever a type is written, here an array's element type. It
+// compiled: a name nothing declares switched off type checking for the binding.
+
+func main() i32 {
+    var a zzqq[4] = [1, 2, 3, 4]
+    return 0
+}

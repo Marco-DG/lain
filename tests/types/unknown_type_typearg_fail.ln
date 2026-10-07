@@ -1,0 +1,16 @@
+// EXPECT: [E106]
+// EXPECT-TEXT: Error Ln 10, Col 8: unknown type 'zzqq': no struct, enum, union, alias, `extern type`, import or type parameter has this name.
+// I.127: an unknown type name is E106 wherever a type is written, here a generic's type argument type. It
+// compiled: a name nothing declares switched off type checking for the binding.
+
+type Pair(T type) {
+    a T
+}
+
+func f(p Pair(zzqq)) i32 {
+    return 0
+}
+
+func main() i32 {
+    return 0
+}

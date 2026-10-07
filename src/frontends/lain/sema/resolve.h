@@ -337,6 +337,113 @@ static void sema_check_value_type(Type *t, isize line, isize col, const char *wh
     exit(1);
 }
 
+// ★ A TYPE NAME NAMES A TYPE (I.127). `y zzqq = 3` compiled (the slot was `void*` and the
+// interpreter returned 3), `var y zzqq = 2.5` compiled to C that gcc refused, and so did a
+// parameter, a return, a module constant and a struct field of a name nothing declared, inside
+// a pointer, an array or a slice too: a typo switched off type checking for that binding. A
+// name is a builtin, a type parameter in scope (`T type`), or a declared struct, enum, union,
+// alias or `extern type`, its own module's or an import's (bound by its bare name, so a
+// qualified `dep.Widget` is `Widget` here).
+static int parse_iN_uN(Type *t, int *out_bits, bool *out_signed);   // typecheck.h
+static bool sema_type_param_named(DeclList *tps, Id *n) {
+    for (DeclList *p = tps; p; p = p->next) {
+        Decl *d = p->decl;
+        if (!d || d->kind != DECL_VARIABLE || !d->as.variable_decl.type) continue;
+        if (d->as.variable_decl.type->kind != TYPE_META) continue;
+        Id *pn = d->as.variable_decl.name;
+        if (pn && pn->length == n->length && memcmp(pn->name, n->name, (size_t)n->length) == 0) return true;
+    }
+    return false;
+}
+static Id *sema_unknown_type_name(Type *t, DeclList *tp1, DeclList *tp2, int depth) {
+    if (!t || depth > 32) return NULL;
+    switch (t->kind) {
+        case TYPE_SIMPLE: {
+            Id *n = t->base_type;
+            if (!n || n->length <= 0 || n->length >= 120) return NULL;
+            char nb[128]; memcpy(nb, n->name, (size_t)n->length); nb[n->length] = '\0';
+            if (t->type_args) {
+                // An application `G(A, ...)`: an argument is judged as a type where G's parameter is
+                // a type parameter (`T type`); a value parameter's argument (`Buf(SIZE)`) and an
+                // application of something not generic are E124's to judge.
+                Symbol *gs = sema_lookup(nb);
+                Decl *g = gs ? gs->decl : NULL;
+                DeclList *gp = !g ? NULL : g->kind == DECL_STRUCT ? g->as.struct_decl.type_params
+                             : g->kind == DECL_ENUM ? g->as.enum_decl.type_params : NULL;
+                for (TypeList *a = t->type_args; a && gp; a = a->next, gp = gp->next) {
+                    Decl *pd = gp->decl;
+                    if (!pd || pd->kind != DECL_VARIABLE || !pd->as.variable_decl.type ||
+                        pd->as.variable_decl.type->kind != TYPE_META) continue;
+                    Id *u = sema_unknown_type_name(a->type, tp1, tp2, depth + 1);
+                    if (u) return u;
+                }
+            }
+            static const char *const prim[] = { "bool", "f32", "f64", "float", "void", "int",
+                                                "usize", "isize", NULL };
+            for (int i = 0; prim[i]; i++)
+                if ((size_t)n->length == strlen(prim[i]) && memcmp(n->name, prim[i], (size_t)n->length) == 0)
+                    return NULL;
+            int bits; bool sgn;
+            if (parse_iN_uN(t, &bits, &sgn)) return NULL;
+            if (sema_type_param_named(tp1, n) || sema_type_param_named(tp2, n)) return NULL;
+            Symbol *sym = sema_lookup(nb);
+            Decl *d = sym ? sym->decl : NULL;
+            if (d && (d->kind == DECL_STRUCT || d->kind == DECL_ENUM || d->kind == DECL_TYPE_ALIAS ||
+                      d->kind == DECL_EXTERN_TYPE)) return NULL;
+            return n;
+        }
+        case TYPE_FUNC:
+            for (TypeList *a = t->func_params; a; a = a->next) {
+                Id *u = sema_unknown_type_name(a->type, tp1, tp2, depth + 1);
+                if (u) return u;
+            }
+            return sema_unknown_type_name(t->element_type, tp1, tp2, depth + 1);
+        case TYPE_ARRAY: case TYPE_SLICE: case TYPE_POINTER: case TYPE_UNION: case TYPE_COMPTIME:
+        case TYPE_VECTOR:
+            return sema_unknown_type_name(t->element_type, tp1, tp2, depth + 1);
+        default:
+            return NULL;
+    }
+}
+static void sema_check_type_known(Type *t, DeclList *tp1, DeclList *tp2, isize line, isize col) {
+    Id *u = sema_unknown_type_name(t, tp1, tp2, 0);
+    if (!u) return;
+    fprintf(stderr, "[E106] Error Ln %li, Col %li: unknown type '%.*s': no struct, enum, union, "
+            "alias, `extern type`, import or type parameter has this name.\n",
+            (long)line, (long)col, (int)u->length, u->name);
+    diagnostic_show_line(line, col);
+    exit(1);
+}
+// Every type a module's declarations write: a constant's, a parameter's and a return's (an
+// extern's too), a struct's fields and an enum's variant fields, with the declaration's own
+// type parameters in scope. Run once every global is registered.
+static void sema_check_declared_types(DeclList *decls) {
+    for (DeclList *dl = decls; dl; dl = dl->next) {
+        Decl *d = dl->decl;
+        if (!d) continue;
+        if (d->kind == DECL_VARIABLE) {
+            sema_check_type_known(d->as.variable_decl.type, NULL, NULL, d->line, d->col);
+        } else if (d->kind == DECL_FUNCTION || d->kind == DECL_EXTERN_FUNCTION) {
+            DeclList *ps = d->as.function_decl.params;
+            for (DeclList *p = ps; p; p = p->next)
+                if (p->decl && p->decl->kind == DECL_VARIABLE)
+                    sema_check_type_known(p->decl->as.variable_decl.type, ps, NULL, p->decl->line, p->decl->col);
+            sema_check_type_known(d->as.function_decl.return_type, ps, NULL, d->line, d->col);
+        } else if (d->kind == DECL_STRUCT) {
+            for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
+                if (f->decl && f->decl->kind == DECL_VARIABLE)
+                    sema_check_type_known(f->decl->as.variable_decl.type, d->as.struct_decl.type_params, NULL,
+                                          f->decl->line, f->decl->col);
+        } else if (d->kind == DECL_ENUM && !d->as.enum_decl.is_union) {   // a union: where written
+            for (Variant *v = d->as.enum_decl.variants; v; v = v->next)
+                for (DeclList *f = v->fields; f; f = f->next)
+                    if (f->decl && f->decl->kind == DECL_VARIABLE)
+                        sema_check_type_known(f->decl->as.variable_decl.type, d->as.enum_decl.type_params, NULL,
+                                              f->decl->line, f->decl->col);
+        }
+    }
+}
+
 void sema_build_scope(DeclList *decls, const char *module_path) {
     // ––––––– Instead of “sema_clear_table()”, use:
     sema_clear_globals();
@@ -846,6 +953,7 @@ void sema_resolve_stmt(Stmt *s) {
     if (s->as.var_stmt.type)
         s->as.var_stmt.type = mono_resolve_type_apps_at(s->as.var_stmt.type, s->line, s->col);
     Type *ty = s->as.var_stmt.type; // Start with the annotation (if any)
+    sema_check_type_known(ty, NULL, NULL, s->line, s->col);   // I.127: a local's type names a type
     // ★ A LOCAL ARRAY'S LENGTH. `T[N]` needs a compile-time constant N (spec 7), and a local
     // with a RUNTIME length and no initializer is a VLA (the note there). A declared length
     // that is neither was dropped in silence: `var a u8[K] = [1, 2, 3]` with `K usize = 4` made
