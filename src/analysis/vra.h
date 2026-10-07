@@ -3115,6 +3115,15 @@ static bool vra_guarded_nonzero(Vra *V, IrBlock *b, int vid) {
 static int vra_sdiv_may_trap_count = 0;   // measurement: divisions the STRICT rule would refuse
 static void vra_check_divzero(Vra *V, Octagon *W, IrInstr *ins, IrBlock *at) {
     if (ins->n_operands<2 || ins->unchecked) return;         // `unsafe` waives it, as for bounds
+    // ★ A FLOAT DIVISION OWES NOTHING (I.155). IEEE 754 defines x / 0.0 (±inf, or NaN for 0/0),
+    // and spec 08 makes only an INTEGER division by a possibly-zero divisor ill-formed. The
+    // check ran on every division, so `a / b` over two f64 was E015 unless b was a literal or
+    // guarded by `b != 0.0`, and that guard proved only because 0.0's bit pattern is the
+    // integer 0 the guard search compares against.
+    // The lanes of a float vector are floats too.
+    IrType *qt = ins->result ? ins->result->type : NULL;
+    if (qt && qt->kind == IRT_VECTOR) qt = qt->elem;
+    if (qt && qt->kind == IRT_FLOAT) return;
     int64_t lo,hi; vra_range(V,W,ins->operands[1],&lo,&hi);
     // ★ SIGNED TYPE_MIN / -1 overflows (UB; SIGFPE on x86). Stated here as the legacy front-end
     // check stated it — the divisor is provably EXACTLY -1 and the dividend can reach TYPE_MIN —

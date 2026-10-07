@@ -1,0 +1,26 @@
+// I.155: a float division owes no proof that its divisor is non-zero. IEEE 754 defines it (spec 07:
+// overflow gives an infinity, 0.0 / 0.0 a NaN) and spec 08 makes only an INTEGER division by a
+// possibly-zero divisor ill-formed, yet `a / b` over two f64 was E015 unless `b` was a literal or
+// guarded by `b != 0.0`. The lanes of a float vector divide the same way.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func ratio(a f64, b f64) f64 {
+    return a / b
+}
+
+func ratio32(a f32, b f32) f32 {
+    return a / b
+}
+
+func lanes(a f64) f64 {
+    var v f64x4 = [5.0, a, a, 1.0]
+    var w f64x4 = [2.0, 0.0, 0.0, 4.0]
+    q f64x4 = v / w
+    return q[0] + q[3]
+}
+
+func main() i32 effects io {
+    n = ratio(0.0, 0.0)
+    libc_printf("%f %f %d %f %f\n", ratio(1.0, 0.0), ratio(-1.0, 0.0), (n != n) as i32, ratio32(1.0, 4.0) as f64, lanes(1.0))
+    return 0
+}

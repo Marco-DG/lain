@@ -1658,6 +1658,12 @@ at=nonnull 4
 at=pure 4
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/float_division_by_zero_pass.ln
+rc=0
+out=inf -inf 1 0.250000 2.750000
+at=const 6
+at=vector_size 1
+ty=Slice_u8 scalar
 ### tests/trust/float_literal_forms_pass.ln
 rc=0
 out=
