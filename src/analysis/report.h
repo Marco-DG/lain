@@ -296,6 +296,16 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                               ? "the `decreasing` measure is not provably well-founded here"
                               : "this loop is not provably terminating, and no measure could "
                                 "be inferred");
+                    // I.165: the path on which the counter does not move
+                    if (c->wit_counter && c->wit_n > 0 && !c->had_measure) {
+                        char nm[64]; vra_src_expr(V, c->wit_counter, nm, sizeof nm, 0);
+                        fprintf(stderr, "       `%s` moves toward the loop's bound on some paths, but not on the one where\n"
+                                        "      ", nm);
+                        for (int j = 0; j < c->wit_n; j++)
+                            fprintf(stderr, "%s the test at Ln %lld, Col %lld is %s", j == 0 ? "" : (j == c->wit_n - 1 ? " and" : ","),
+                                    (long long)c->wit_line[j], (long long)c->wit_col[j], c->wit_true[j] ? "true" : "false");
+                        fprintf(stderr, ", so this measure does not cover every way round the loop\n");
+                    }
                     // in source order: the next note is the least position after the last one
                     for (int64_t pl = -1, pc = -1; c->loop1 > 0; ) {
                         VraCheck *nx = NULL;

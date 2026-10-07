@@ -123,6 +123,12 @@ typedef struct {
     // (0: none). A running total with no bound only because its loop has no trip count is a
     // consequence of that loop's E011, and is reported under it (I.159).
     int      loop1;
+    // A failed loop termination: a counter that falls (or rises) on some paths round the loop,
+    // and the branch decisions of one path on which it does not (I.165), for the E011's note.
+    IrValue *wit_counter;
+    int      wit_n;
+    int64_t  wit_line[6], wit_col[6];
+    bool     wit_true[6];
     // A VRA_TERMINATION check about a RECURSION rather than a loop. The two are one
     // obligation — "this does not run forever" — proved by two different arguments (a loop
     // measure, a well-founded ranking over the self-call's arguments), and a user needs to be
@@ -3967,8 +3973,28 @@ static bool vra_edge_live(Vra *V, IrBlock *q, int k) {
     free(sc);
     return live;
 }
+// ★ WHY A LOOP IS NOT SHOWN TO END (I.165). E011 said only "no measure could be inferred", and
+// the reader of the Zune 30's ConvertDays had to find the path round the loop on which `days`
+// does not change. The analysis below knows it: a latch that is reached without progress has,
+// walking back through predecessors that are reached without progress either, a path from the
+// header. Its branch decisions are recorded, for the first counter that makes progress on SOME
+// path (vra_loop_terminates_at), keyed by the function and the loop.
+static IrFunc *vra_wit_f = NULL; static int vra_wit_loop = -1, vra_wit_n = 0;
+static IrValue *vra_wit_counter = NULL;
+static int64_t vra_wit_line[6], vra_wit_col[6]; static bool vra_wit_true[6];
+static bool vra_wit_pending = false;              // a path was found by the last failing walk
+static int64_t vra_pw_line[6], vra_pw_col[6]; static bool vra_pw_true[6]; static int vra_pw_n = 0;
+static void vra_pw_note(Vra *V, IrBlock *p, int k) {
+    if (vra_pw_n >= 6 || p->term.kind != IR_TERM_BR_COND || !p->term.cond) return;
+    int c = p->term.cond->id;
+    IrInstr *ci = (c >= 0 && c < V->nvar) ? V->def[c] : NULL;
+    int64_t line = ci && ci->line ? ci->line : p->term.line, col = ci && ci->line ? ci->col : p->term.col;
+    if (line <= 0) return;
+    vra_pw_line[vra_pw_n] = line; vra_pw_col[vra_pw_n] = col; vra_pw_true[vra_pw_n] = (k == 0); vra_pw_n++;
+}
 static bool vra_progress_on_every_path(Vra *V, IrBlock *H, int nbb,
                                        const char *inloop, const char *prog) {
+    vra_wit_pending = false;
     char *seen = malloc((size_t)nbb);
     if (!seen) return false;                                  // fail closed
     char *live = malloc((size_t)nbb*2);                       // live[q*2+k]: edge q → succ k
@@ -3998,6 +4024,7 @@ static bool vra_progress_on_every_path(Vra *V, IrBlock *H, int nbb,
         if (!changed) break;
     }
     bool any=false, anydead=false, ok=true;
+    IrBlock *badq = NULL; int badk = 0;
     for (IrBlock *q=V->f->blocks; q && ok; q=q->next) {
         if (!(q->id>=0 && q->id<nbb && inloop[q->id])) continue;
         IrBlock *sc[2]; int ns=vra_succs(q,sc);
@@ -4005,7 +4032,34 @@ static bool vra_progress_on_every_path(Vra *V, IrBlock *H, int nbb,
             if (!sc[k] || sc[k]->id!=H->id) continue;
             if (!live[q->id*2+k]) { anydead=true; continue; }
             any=true;
-            if (!(seen[q->id] || prog[q->id])) ok=false;
+            if (!(seen[q->id] || prog[q->id])) { ok=false; badq = q; badk = k; }
+        }
+    }
+    // the witness: back from the failing latch to the header through blocks reached without
+    // progress, noting each branch taken (the header's own test is the loop's, and is left out)
+    if (!ok && badq) {
+        IrBlock *trail[64]; int tk[64], nt = 0;
+        char *vis = calloc((size_t)nbb, 1);
+        IrBlock *b = badq;
+        if (b != H && nt < 64) { trail[nt] = b; tk[nt] = badk; nt++; }
+        while (vis && b && b != H && nt < 64) {
+            vis[b->id] = 1;
+            IrBlock *pick = NULL; int pk = 0;
+            for (IrBlock *p = V->f->blocks; p && !pick; p = p->next) {
+                if (!(p->id >= 0 && p->id < nbb && inloop[p->id]) || seen[p->id] || prog[p->id]) continue;
+                IrBlock *sc[2]; int ns = vra_succs(p, sc);
+                for (int k = 0; k < ns; k++)
+                    if (sc[k] == b && live[p->id*2+k] && !(p != H && vis[p->id])) { pick = p; pk = k; break; }
+            }
+            if (!pick) { nt = -1; break; }
+            if (pick != H) { trail[nt] = pick; tk[nt] = pk; nt++; }
+            b = pick;
+        }
+        free(vis);
+        if (nt >= 0 && b == H) {
+            vra_pw_n = 0;
+            for (int i = nt - 1; i >= 0; i--) vra_pw_note(V, trail[i], tk[i]);
+            vra_wit_pending = vra_pw_n > 0;
         }
     }
     free(seen); free(live);
@@ -4397,6 +4451,11 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
             free(body); free(prog); continue;          // the callee may write the counter
         }
         bool ok = vra_progress_on_every_path(V, H, nbb, body, prog);
+        if (!ok && vra_wit_pending && !(vra_wit_f == V->f && vra_wit_loop == H->id)) {
+            vra_wit_f = V->f; vra_wit_loop = H->id; vra_wit_counter = ivv; vra_wit_n = vra_pw_n;
+            memcpy(vra_wit_line, vra_pw_line, sizeof vra_pw_line); memcpy(vra_wit_col, vra_pw_col, sizeof vra_pw_col);
+            memcpy(vra_wit_true, vra_pw_true, sizeof vra_pw_true);
+        }
         free(body); free(prog);
         if (ok && vra_meas_accept(lt ? VRA_MEAS_RISES : VRA_MEAS_FALLS, ivv, bnd)) {
             vra_last_measure = (VraMeasure){ lt ? VRA_MEAS_RISES : VRA_MEAS_FALLS, ivv, bnd };
@@ -4410,6 +4469,7 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
 
 static bool vra_loop_terminates(Vra *V, IrBlock *H) {
     vra_last_measure.kind = VRA_MEAS_NONE;
+    if (vra_wit_f == V->f && vra_wit_loop == H->id) vra_wit_loop = -1;   // a fresh question
     IrBlock *ex[8];
     int n = vra_exit_tests(V, H, ex, 8);
     for (int k = 0; k < n; k++)
@@ -5904,6 +5964,11 @@ static Vra *vra_analyze(IrFunc *f) {
         if (f->may_diverge && !b->has_measure) continue;
         VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.loop1 = b->id + 1;
         c.ok = V->checking ? vra_check_termination(V, b) : vra_loop_terminates(V,b);
+        if (!c.ok && vra_wit_f == V->f && vra_wit_loop == b->id && vra_wit_counter) {
+            c.wit_counter = vra_wit_counter; c.wit_n = vra_wit_n;
+            memcpy(c.wit_line, vra_wit_line, sizeof c.wit_line); memcpy(c.wit_col, vra_wit_col, sizeof c.wit_col);
+            memcpy(c.wit_true, vra_wit_true, sizeof c.wit_true);
+        }
         if (V->certifying) vra_cert_measure(V, CERT_M_LOOP, b->id, c.ok);
         c.had_measure = b->has_measure;
         // I.74: the loop ends, but is it by what the programmer WROTE? Checked against the
