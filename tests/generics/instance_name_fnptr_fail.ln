@@ -1,0 +1,18 @@
+// EXPECT: [E124]
+// I.172: an instance is found by its name, and every function-pointer argument mangled to `t7`, so
+// `Box(*func(u8) u8)` was the instance `Box(*func(i32) i32)` had made: `use2`'s field was typed
+// i32 -> i32, and the program compiled. Where a name is already taken, the template and the
+// arguments it was made from are compared, and two instantiations under one name are refused
+// (a known limitation, until instances are keyed by their arguments). Accepted on the parent.
+type Box(T type) {
+    v T
+}
+func use1(b Box(*func(i32) i32)) i32 {
+    return 0
+}
+func use2(b Box(*func(u8) u8)) i32 {
+    return 0
+}
+func main() i32 {
+    return 0
+}

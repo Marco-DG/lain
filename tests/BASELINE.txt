@@ -1787,6 +1787,16 @@ at=access 4
 at=nonnull 4
 at=pure 4
 ty=Slice_u8 scalar
+### tests/trust/instance_reused_pass.ln
+rc=0
+out=
+at=const 14
+at=nonnull 6
+at=pure 6
+ty=Box_t7 struct
+ty=Two_i32_u8 struct
+ty=__U_i32_NotFound_Err_i32 struct
+ty=__U_u8_r0_199_none scalar
 ### tests/trust/interproc_bounds_pass.ln
 rc=0
 out=30

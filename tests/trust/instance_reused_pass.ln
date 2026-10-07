@@ -1,0 +1,69 @@
+// I.172, the allowed side: where an instance's name is already taken, the template and the
+// arguments it was made from are compared, and the same instantiation written again is the same
+// instance, reused. A generic struct at a function-pointer argument in three signatures and a
+// binding; a generic function called twice at one type; a two-parameter generic built by
+// inference (which binds B first, from the first field) and named in a signature in parameter
+// order; one union in two signatures, with and without a payload marker. Each value is built and
+// read. It passes on the parent too: this test fails if the comparison refuses what it must reuse.
+type Box(T type) {
+    v T
+}
+type Two(A type, B type) {
+    second B
+    first A
+}
+type Small = u8 < 200
+func ident(x i32) i32 {
+    return x
+}
+func use1(b Box(*func(i32) i32)) i32 {
+    return b.v(3)
+}
+func use2(b Box(*func(i32) i32)) i32 {
+    return b.v(4)
+}
+func make() Box(*func(i32) i32) {
+    var b Box(*func(i32) i32) = Box(ident)
+    return b
+}
+func pick(T type, a T, b T) T {
+    return a
+}
+func firsts(t Two(i32, u8)) i32 {
+    if t.first != 30 { return -1 }
+    return t.second as i32
+}
+func cap(k Small) Small | none {
+    if k > 100 { return none }
+    return k
+}
+func get(o Small | none) Small {
+    if o { return o }
+    return 199
+}
+func fe(k i32) i32 | NotFound | Err(code i32) {
+    if k == 1 { return NotFound }
+    if k == 2 { return Err(77) }
+    return k
+}
+func read(r i32 | NotFound | Err(code i32)) i32 {
+    case r {
+        NotFound: return -1
+        Err(c): return c
+        else: return r
+    }
+}
+func main() i32 {
+    if use1(make()) != 3 { return 1 }
+    if use2(make()) != 4 { return 2 }
+    if pick(i32, 5, 6) != 5 { return 3 }
+    if pick(i32, 7, 8) != 7 { return 4 }
+    var t = Two(9 as u8, 30)
+    if firsts(t) != 9 { return 5 }
+    if get(cap(7)) != 7 { return 6 }
+    if get(cap(150)) != 199 { return 7 }
+    if read(fe(5)) != 5 { return 8 }
+    if read(fe(1)) != -1 { return 9 }
+    if read(fe(2)) != 77 { return 10 }
+    return 0
+}
