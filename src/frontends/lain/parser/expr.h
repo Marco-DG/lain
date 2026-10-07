@@ -380,6 +380,24 @@ Expr *parse_primary_expr(Arena* arena, Parser* parser)
     }
 
     if (parser_match(TOKEN_NUMBER)) {
+        // ★ A u64 LITERAL ABOVE i64's RANGE (I.119). A literal is an i64 to the whole front end,
+        // so `m u64 = 10000000000000000000` was E086 "too large to fit in a signed 64-bit
+        // integer", and a u64 above 2^63 could be written only as `0x8AC7230489E80000 as% u64`.
+        // That spelling is exactly what such a decimal literal is made into here, its bit pattern
+        // wrapped to u64: typed u64, evaluated by the constant evaluator, and read by the range
+        // analysis as a u64 above i64's range, as every value made that way already is.
+        unsigned long long big;
+        if (parse_decimal_above_i64(parser->token.start, parser->token.length, &big)) {
+            isize l = parser->line, cl = parser->column;
+            long long bits; memcpy(&bits, &big, sizeof bits);
+            parser_advance();
+            Expr *lit = expr_literal(arena, bits);
+            lit->line = l; lit->col = cl;
+            Expr *c = expr_cast(arena, lit, type_simple(arena, id(arena, 3, "u64")));
+            c->as.cast_expr.kind = CAST_WRAPPING;
+            c->line = l; c->col = cl;
+            return c;
+        }
         long long value = parse_numeric_literal(parser->token.start, parser->token.length);
         parser_advance();
         return expr_literal(arena, value);

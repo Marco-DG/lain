@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 6, Col 5: arithmetic is not provably free of overflow
+// I.119: a decimal literal above i64's range is a u64 (tests/trust/u64_literal_above_i64_pass.ln),
+// and an i64 does not hold it.
+func main() i32 {
+    x i64 = 10000000000000000000
+    return 0
+}

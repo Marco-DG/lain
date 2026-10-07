@@ -1,0 +1,22 @@
+// I.119: a decimal literal above i64's range is a u64. The front end held every literal as an i64,
+// so `m u64 = 10000000000000000000` was E086 "too large to fit in a signed 64-bit integer", and a
+// u64 above 2^63 could be written only as its bit pattern, `0x8AC7230489E80000 as% u64`. That is
+// what such a literal now is, typed u64; module constants evaluate it (BIG / 2), it compares, and
+// modular arithmetic takes it. 2^63 itself is INT64_MIN's bit pattern, which C has no literal for:
+// the C says `(-9223372036854775807LL - 1)`.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+BIG u64 = 18446744073709551615
+HALF u64 = BIG / 2
+
+func top(x u64) bool {
+    return x >= 10000000000000000000
+}
+
+func main() i32 effects io {
+    m u64 = 10000000000000000000
+    n = m +% 1
+    p u64 = 9223372036854775808
+    libc_printf("%llu %llu %llu %llu %d %d\n", m, BIG, HALF, p, top(n) as i32, top(9223372036854775807) as i32)
+    return 0
+}

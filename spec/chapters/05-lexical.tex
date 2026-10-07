@@ -238,17 +238,47 @@ two's-complement \lain{i64}: \lain{0x7FFF\_FFFF\_FFFF\_FFFF} is the largest \lai
 \lain{0x8000\_0000\_0000\_0000} the smallest.  A pattern with the top bit set is therefore
 negative, and a \lain{u64} context does not accept it implicitly; \lain{as\%} takes the same bits
 as the unsigned value, e.g.\ \lain{0xcbf29ce484222325 as\% u64}.  A decimal literal denotes its
-value, which shall fit in \lain{i64}.
+value.  In an expression, a decimal literal above the range of \lain{i64} that a \lain{u64} holds,
+\(2^{63}\) to \(2^{64} - 1\), is a \lain{u64}: it is its bit pattern taken \lain{as\% u64}, as for
+hexadecimal.  Everywhere else a literal's value is read as an \lain{i64}: in a refinement bound,
+an array length and a pattern, a decimal literal shall fit in \lain{i64}.
 
 \begin{constraint}
-  A hexadecimal, octal or binary literal of more than 64 bits, or a decimal literal outside the
-  range of \lain{i64}, is \illformed{}~(\diagcode{E086}).
+  A hexadecimal, octal or binary literal of more than 64 bits, a decimal literal above
+  \(2^{64} - 1\), or, outside an expression, a decimal literal outside the range of \lain{i64},
+  is \illformed{}~(\diagcode{E086}).
 \end{constraint}
+
+\pnum
+The range analysis holds no constant above the range of \lain{i64}, so arithmetic that must
+be proven on such a value is refused even where it fits: with \lain{m} =
+\lain{10000000000000000000}, \lain{m + 1} is \diagcode{E086}, and \lain{m +\% 1} is accepted.
+
+\begin{laincode}
+// VERIFY: exit 0
+BIG u64 = 18446744073709551615          // above i64's range: a u64
+
+func main() i32 {
+    var u u64 = 18446744073709551615
+    if u != BIG { return 1 }
+    if BIG / 2 != 9223372036854775807 { return 2 }
+    if u +% 1 != 0 { return 3 }
+    return 0
+}
+\end{laincode}
+
+\begin{laincode}
+func f() i64 {
+    x i64 = 10000000000000000000    // ERROR [E086]: a u64 value does not fit an i64
+    return x
+}
+\end{laincode}
 
 \pnum
 The type of an integer literal is inferred from context (see
 \S\,\ref{sec:07-types}).  In the absence of type context, its type is \lain{i32} (whose alias
-is \lain{int}) when the value fits, and \lain{i64} otherwise.
+is \lain{int}) when the value fits, \lain{i64} when it does not, and \lain{u64} for a decimal
+literal above the range of \lain{i64}.
 
 \begin{constraint}
   An integer literal whose value does not fit in the type determined by

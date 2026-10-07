@@ -299,6 +299,25 @@ static long long parse_numeric_literal_at(isize line, isize col, const char *sta
     }
     return value;
 }
+// A DECIMAL literal above i64's range that a u64 holds (I.119): *out is its value. Only the
+// expression parser asks; every other position (a refinement bound, an array length, a pattern)
+// still refuses it in parse_numeric_literal, since each reads the value as an i64.
+static bool parse_decimal_above_i64(const char *start, long length, unsigned long long *out) {
+    char buf[80]; long j = 0;
+    for (long i = 0; i < length; i++) {
+        if (start[i] == '_') continue;
+        if (start[i] < '0' || start[i] > '9' || j >= (long)sizeof(buf) - 1) return false;   // a base prefix, or too long
+        buf[j++] = start[i];
+    }
+    buf[j] = '\0';
+    if (j == 0) return false;
+    if (buf[0] == '0') return false;          // a leading zero is parse_numeric_literal's to refuse
+    errno = 0;
+    unsigned long long u = strtoull(buf, NULL, 10);
+    if (errno == ERANGE || u <= (unsigned long long)INT64_MAX) return false;
+    *out = u;
+    return true;
+}
 // Every caller reads the parser's current token, so the position is the parser's.
 #define parse_numeric_literal(s, l) parse_numeric_literal_at(parser->line, parser->column, (s), (l))
 

@@ -2392,6 +2392,11 @@ at=nonnull 2
 at=pure 2
 ty=Opt struct
 ty=P struct
+### tests/trust/u64_literal_above_i64_pass.ln
+rc=0
+out=10000000000000000000 18446744073709551615 9223372036854775807 9223372036854775808 1 0
+at=const 2
+ty=Slice_u8 scalar
 ### tests/trust/union_arg_pass.ln
 rc=0
 out=nf ok nf ok 

@@ -350,6 +350,11 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
         case IR_CONST:
             if (i->result->type && i->result->type->kind==IRT_FLOAT)
                  fprintf(o, "  v%d = %.17g;\n", i->result->id, i->aux.fimm);
+            // INT64_MIN has no C literal: `-9223372036854775808` negates an UNSIGNED constant
+            // (gcc: "integer constant is so large that it is unsigned"), and reaches an int64_t
+            // only through an implementation-defined conversion (I.119: the bit pattern of
+            // 9223372036854775808 as a u64, and of 0x8000000000000000).
+            else if (i->aux.imm == INT64_MIN) fprintf(o, "  v%d = (-9223372036854775807LL - 1);\n", i->result->id);
             else fprintf(o, "  v%d = %lld;\n", i->result->id, (long long)i->aux.imm);
             break;
         case IR_ALLOCA: // array decays to its element base; scalar takes the slot address
