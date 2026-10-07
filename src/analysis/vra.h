@@ -4499,10 +4499,13 @@ static bool vra_loop_terminates(Vra *V, IrBlock *H) {
    4096 × 255 fits an i32 with room to spare.
    ───────────────────────────────────────────────────────────────────────────────────────── */
 static bool vra_mul_ovf(int64_t a, int64_t b, int64_t *out) {
-    if (a==0 || b==0) { *out = 0; return false; }
-    int64_t r = a * b;
-    if (r / b != a) return true;                      // wrapped
-    *out = r; return false;
+    // ★ THE OVERFLOW TEST WAS ITSELF AN OVERFLOW (I.169). It computed `r = a * b` and asked
+    // `r / b != a`, but a signed multiplication that overflows is undefined in C, and gcc at -O2
+    // may assume it does not and fold the test away. Then T * delta = 4 * (2^62 - 1) "was" -4,
+    // the clamp made it 0, and `var s i64 = 0; while i < 4 { s = s + a }` with a up to 2^62 - 1
+    // was proven to fit an i64 (UBSan: "signed integer overflow"; the program printed -4).
+    // fuzz_overflow found it; the interpreter cannot, since at 64 bits there is no wider type.
+    return __builtin_mul_overflow(a, b, out);
 }
 
 static int vra_succs_all(IrBlock *b, IrBlock **out, int cap);                                   // fwd (I.162)

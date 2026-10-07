@@ -1,0 +1,19 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 13, Col 13: this running total can overflow the type it is stored in
+// I.169: the running-total bound multiplies the trip count by the step, and the overflow test of
+// that product was itself an overflow: `r = a * b; if (r / b != a)`, a signed multiplication that
+// overflows being undefined in C, which gcc at -O2 may fold away. 4 * (2^62 - 1) "was" -4, the
+// clamp made it 0, and this total was proven to fit an i64: the program printed -4 (UBSan: signed
+// integer overflow). fuzz_overflow found it; the interpreter cannot, since at 64 bits there is no
+// wider type to compute in.
+func f(a i64 >= 0 and <= 4611686018427387903) i64 {
+    var s i64 = 0
+    var i i32 = 0
+    while i < 4 {
+        s = s + a
+        i = i + 1
+    }
+    return s
+}
+
+func main() i32 { return 0 }
