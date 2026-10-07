@@ -2477,6 +2477,24 @@ func main() i32 {
 | `b int > a` | b must be greater than a |
 | `b int == 1` | b must equal 1 |
 
+A bound is a number, an integer module constant (folded to its value), another parameter, or a sum
+or difference of these. A name that is none of these is refused: `[E106]` when nothing has that
+name, `[E100]` when it names something else.
+
+```lain
+// VERIFY: exit 0
+MAX i32 = 1000
+
+func scale(x i32 >= 0 and <= MAX) i32 {
+    return x * 1000          // proven: at most 1,000,000
+}
+
+func main() i32 {
+    if scale(7) != 7000 { return 1 }
+    return 0
+}
+```
+
 ### 8.2 Return Type Constraints
 
 Constraints on the return value are written after the return type:

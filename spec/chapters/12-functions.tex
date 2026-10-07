@@ -97,8 +97,22 @@ callee's \emph{keyword} rather than the callee's row.
   nor establish by inferring one (\S\,\ref{sec:stmt.while.infer}) is
   \illformed{}~(\diagcode{E011}) \emph{unless its row names} \lain{diverge}.
   Naming it is not a suppression: \lain{diverge} enters this function's row and
-  every caller must acknowledge it in turn.
+  every caller must acknowledge it in turn.  A caller that does not is \illformed{}:
+  \diagcode{E011} when it states no row, and \diagcode{E130} when its written row omits
+  \lain{diverge}.
 \end{constraint}
+
+\begin{laincode}
+func spin(x i32) i32 effects diverge {
+    var y i32 = x
+    while y != 0 { y = y }
+    return y
+}
+
+func g(x i32) i32 {
+    return spin(x)        // ERROR [E011]: g states no row, and spin may not return
+}
+\end{laincode}
 
 \begin{constraint}
   A \lain{func} that calls itself directly is permitted only if it carries a

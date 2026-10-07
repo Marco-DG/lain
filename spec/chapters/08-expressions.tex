@@ -105,8 +105,9 @@ follows IEEE~754.
 \end{constraint}
 
 \pnum
-The unary \lain{-} operator negates its operand.  For unsigned integer
-types the result wraps modulo $2^N$.
+The unary \lain{-} operator negates its operand, in the operand's type.  On an unsigned
+type only 0 has a negation, so \lain{-x} is \illformed{}~(\diagcode{E086}) unless \lain{x}
+is proven to be 0; the wrapping negation, modulo \(2^N\), is written \lain{0 -\% x}.
 
 \pnum
 The unary \lain{*} operator reads through a pointer: \lain{*p} is the value \lain{p} points to, and

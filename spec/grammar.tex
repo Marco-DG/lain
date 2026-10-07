@@ -230,10 +230,12 @@ refinement-op    ::= "<" | "<=" | ">" | ">=" | "==" | "!="
 bound            ::= bound-term { ( "+" | "-" ) bound-term }
 bound-term       ::= [ "-" ] integer-literal | identifier [ "." identifier ]
 
-% Where each form is allowed (chapters 7, 10 and 12): a parameter takes all of them.
-% A struct field's bound is one bound-term; a variant field's bound is a number. A
-% return type's comparison-list has no negative number and no range. An alias's bound
-% is a number or a name.
+% Where each form is allowed (chapter 7, constrained types): a parameter takes all of
+% them, a name being an integer module constant or another parameter. A struct field's
+% bound is one bound-term, a name being an integer module constant or another field; a
+% variant field's bound is a number. A return type's comparison-list has no negative
+% number and no range, a name being an integer module constant or a parameter. An
+% alias's bound is a number or an integer module constant.
 \end{grammar}
 
 % =========================================================================
