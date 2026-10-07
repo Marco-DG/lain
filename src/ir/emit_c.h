@@ -1698,6 +1698,18 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
         "#if defined(__AVX2__) && !defined(LAIN_PORTABLE_SIMD)\n"
         "#include <immintrin.h>\n"
         "#define LAIN_MOVEMASK_32(v) ((uint32_t)_mm256_movemask_epi8((__m256i)(v)))\n"
+        // ★ WITHOUT AVX2, TWO SSE2 MASKS (H7, Documentation's substring study). Every x86-64 has
+        // SSE2 and only some have AVX2, and the 32-lane mask fell straight to the byte loop: 0.3
+        // GB/s against 14 GB/s for the 16-lane intrinsic in the same -O2 build, so u8x32 code was
+        // silently 50x slower on baseline x86-64. The halves give the same bits: lane k's top bit
+        // at bit k, the high half shifted by 16.
+        "#elif defined(__SSE2__) && !defined(LAIN_PORTABLE_SIMD)\n"
+        "static inline uint32_t lain_movemask_32_sse2(const void *p) {\n"
+        "    __m128i lo, hi;\n"
+        "    __builtin_memcpy(&lo, p, 16); __builtin_memcpy(&hi, (const char *)p + 16, 16);\n"
+        "    return (uint32_t)_mm_movemask_epi8(lo) | ((uint32_t)_mm_movemask_epi8(hi) << 16);\n"
+        "}\n"
+        "#define LAIN_MOVEMASK_32(v) lain_movemask_32_sse2(&(v))\n"
         "#else\n"
         "#define LAIN_MOVEMASK_32(v) lain_movemask_bytes((const unsigned char *)&(v), 32)\n"
         "#endif\n\n", o); }
