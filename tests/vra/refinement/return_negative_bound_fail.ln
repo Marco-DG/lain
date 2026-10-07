@@ -1,0 +1,11 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 6, Col 5: return value cannot be proven to satisfy the function's return refinement
+// A negative return bound is enforced as a literal one is: -9 is outside [-5, -1].
+
+func f(x i32) i32 >= -5 and <= -1 {
+    return -9
+}
+
+func main() i32 {
+    return 0
+}

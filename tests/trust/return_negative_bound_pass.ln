@@ -1,0 +1,19 @@
+// A return refinement may have a NEGATIVE bound, as a parameter's, a field's and an alias's may:
+// `func f() i32 >= -5` was a parse error ("Expected a number, a parameter or `param.len`"), so a
+// return could name half of a signed type's range only as `0 - 5`.
+func clamp_low(x i32) i32 >= -5 {
+    if x < -5 {
+        return -5
+    }
+    return x
+}
+
+func main() i32 {
+    if clamp_low(-9) != -5 {
+        return 1
+    }
+    if clamp_low(3) != 3 {
+        return 2
+    }
+    return 0
+}

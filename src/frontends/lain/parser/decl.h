@@ -1071,10 +1071,19 @@ static bool parse_effects_clause(Parser *parser, EffectSet *out) {
 // `.len`. `usize < a.len` is the bound a search returns ("an index into a"), and a caller can
 // only USE it if the refinement can name a's length (O-7 / plan 7I, I.1).
 static Expr *parse_return_constraint_term(Arena *arena, Parser *parser) {
+    // A NEGATIVE bound, folded into the literal as a parameter's, a field's and an alias's are:
+    // `func f() i32 >= -5` was a parse error, so a return refinement could not name half of a
+    // signed type's range except as `0 - 5`.
+    bool neg = false;
+    if (parser_match(TOKEN_MINUS)) {
+        neg = true; parser_advance();
+        if (!parser_match(TOKEN_NUMBER))
+            parser_error("Expected a number after '-' in a return constraint");
+    }
     if (parser_match(TOKEN_NUMBER)) {
         long long value = parse_numeric_literal(parser->token.start, parser->token.length);
         parser_advance();
-        return expr_literal(arena, value);
+        return expr_literal(arena, neg ? -value : value);
     }
     if (!parser_match(TOKEN_IDENTIFIER))
         parser_error("Expected a number, a parameter or `param.len` in a return constraint");
