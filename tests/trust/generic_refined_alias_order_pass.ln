@@ -1,0 +1,39 @@
+// The instance a refinement alias names does not depend on which site builds it first: here the
+// first is an expression in main, above every signature. An excluded value (`!= 7`) is part of
+// the refinement, so NotSeven and NotNine are two types. Refused on the parent (E012).
+import std.option.{Option}
+
+type Small = u8 < 200
+type NotSeven = u8 < 200 and != 7
+type NotNine = u8 < 200 and != 9
+
+func main() i32 {
+    a i32 = get(Option(Small).Some(3))
+    if a != 3 { return 1 }
+    var n Option(NotSeven) = Option(NotSeven).Some(8)
+    var m Option(NotNine) = Option(NotNine).None
+    if getn(n) != 8 { return 2 }
+    if getm(m) != -1 { return 3 }
+    return 0
+}
+
+func get(o Option(Small)) i32 {
+    case o {
+        Some(v): return v as i32
+        None: return -1
+    }
+}
+
+func getn(o Option(NotSeven)) i32 {
+    case o {
+        Some(v): return v as i32
+        None: return -1
+    }
+}
+
+func getm(o Option(NotNine)) i32 {
+    case o {
+        Some(v): return v as i32
+        None: return -1
+    }
+}

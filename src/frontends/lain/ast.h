@@ -1581,4 +1581,38 @@ Expr *expr_builtin_assume_aligned(Arena *arena, Expr *ptr, isize align) {
     return e;
 }
 
+// ★ ONE READER OF A REFINEMENT. The literal clauses of an alias or a field (`u8 < 200`,
+// `i32 >= 0 and <= 3`, `!= 7`) applied to an integer interval [*lo, *hi], and the excluded value
+// if any. Lowering's IrType refinement (ir_refine_int_type_from) and a generic instance's name
+// (mono_mangle_type) both read it here: an alias argument named `Option_Small` in a signature
+// and `Option_u8` in an expression because two readers saw two different facts. A clause whose
+// bound is not a literal is per-value, not the type's, and is skipped (F7 folds constants first).
+// Returns whether any clause applied.
+static bool refine_apply_clauses(ExprList *constraints, int64_t *lo, int64_t *hi,
+                                 bool *has_ne, int64_t *ne) {
+    bool got = false;
+    for (ExprList *cn = constraints; cn; cn = cn->next) {
+        Expr *e = cn->expr;
+        if (!e || e->kind != EXPR_BINARY) continue;
+        Expr *r = e->as.binary_expr.right;
+        if (!r || r->kind != EXPR_LITERAL) continue;
+        int64_t k = (int64_t)r->as.literal_expr.value;
+        switch (e->as.binary_expr.op) {
+            case TOKEN_ANGLE_BRACKET_LEFT:        if (k-1 < *hi) { *hi = k-1; got = true; } break;
+            case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (k   < *hi) { *hi = k;   got = true; } break;
+            case TOKEN_ANGLE_BRACKET_RIGHT:       if (k+1 > *lo) { *lo = k+1; got = true; } break;
+            case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (k   > *lo) { *lo = k;   got = true; } break;
+            // `type Zero = i32 == 0` is the interval [0,0].
+            case TOKEN_EQUAL_EQUAL:
+                if (k > *lo) *lo = k;
+                if (k < *hi) *hi = k;
+                got = true; break;
+            case TOKEN_BANG_EQUAL:
+                *has_ne = true; *ne = k; got = true; break;
+            default: break;
+        }
+    }
+    return got;
+}
+
 #endif /* AST_H */

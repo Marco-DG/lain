@@ -210,10 +210,53 @@ static const char *mono_canonical_scalar(const Id *n) {
     return NULL;
 }
 
+// ★ A REFINEMENT ALIAS AS A TYPE ARGUMENT IS ITS BASE AND ITS WHOLE REFINEMENT. `Option(Small)`
+// with `type Small = u8 < 200` was `Option_Small` in a signature and `Option_u8` in an expression
+// (the expression read the alias's base and dropped its refinement), so no value of the one could
+// be returned as the other; and the refinement is the niche (200..255 is free). The interval and
+// the excluded value are read by refine_apply_clauses (ast.h), as lowering reads them, through a
+// chain of aliases (`type Tiny = Small < 100`), from the base scalar's range.
+static bool mono_alias_refinement(Id *n, Id **base, int64_t *lo, int64_t *hi,
+                                  bool *has_ne, int64_t *ne, int depth) {
+    if (!n || depth > 16 || n->length <= 0 || n->length >= 224) return false;
+    char nb[224]; snprintf(nb, sizeof nb, "%.*s", (int)n->length, n->name);
+    Symbol *sym = sema_lookup(nb);
+    Decl *d = sym ? sym->decl : NULL;
+    if (!d || d->kind != DECL_TYPE_ALIAS || !d->as.type_alias_decl.constraints) return false;
+    Expr *bx = d->as.type_alias_decl.expr;                    // the base: `u8` in `u8 < 200`
+    Id *bn = !bx ? NULL : bx->kind == EXPR_IDENTIFIER ? bx->as.identifier_expr.id
+           : (bx->kind == EXPR_TYPE && bx->as.type_expr.type_value) ? bx->as.type_expr.type_value->base_type : NULL;
+    if (!bn) return false;
+    if (!mono_alias_refinement(bn, base, lo, hi, has_ne, ne, depth + 1)) {
+        signed char w; bool sg;
+        ast_parse_int_width(bn->name, bn->length, &w, &sg);
+        if (w <= 0) return false;
+        if (sg) { *lo = w >= 64 ? INT64_MIN : -(1LL << (w - 1)); *hi = w >= 64 ? INT64_MAX : (1LL << (w - 1)) - 1; }
+        else    { *lo = 0;                                        *hi = w >= 64 ? INT64_MAX : (1LL << w) - 1; }
+        *base = bn;
+    }
+    refine_apply_clauses(d->as.type_alias_decl.constraints, lo, hi, has_ne, ne);
+    return true;
+}
+static int mono_mangle_int(char *buf, size_t cap, int64_t v) {      // `-5` → `m5`: a C identifier
+    return v < 0 ? snprintf(buf, cap, "m%llu", (unsigned long long)(-(v + 1)) + 1ULL)
+                 : snprintf(buf, cap, "%lld", (long long)v);
+}
+
 static void mono_mangle_type(Type *t, char *buf, size_t cap) {
     if (!t) { snprintf(buf, cap, "?"); return; }
     switch (t->kind) {
         case TYPE_SIMPLE: {
+            Id *rb = NULL; int64_t rlo = 0, rhi = 0, rne = 0; bool rhas_ne = false;
+            if (!t->type_args && mono_alias_refinement(t->base_type, &rb, &rlo, &rhi, &rhas_ne, &rne, 0)) {
+                const char *bc = mono_canonical_scalar(rb);
+                int o = bc ? snprintf(buf, cap, "%s_r", bc) : snprintf(buf, cap, "%.*s_r", (int)rb->length, rb->name);
+                o += mono_mangle_int(buf + o, cap - (size_t)o, rlo);
+                o += snprintf(buf + o, cap - (size_t)o, "_");
+                o += mono_mangle_int(buf + o, cap - (size_t)o, rhi);
+                if (rhas_ne) { o += snprintf(buf + o, cap - (size_t)o, "_ne"); mono_mangle_int(buf + o, cap - (size_t)o, rne); }
+                break;
+            }
             const char *canon = mono_canonical_scalar(t->base_type);
             if (canon) { snprintf(buf, cap, "%s", canon); break; }
             snprintf(buf, cap, "%.*s", t->base_type ? (int)t->base_type->length : 1,
@@ -321,6 +364,10 @@ static Type *mono_arg_to_type(Expr *e) {
     // identifier in expression position; as a type argument it is the type it names.
     // Read off the alias's own declaration: G(Quad) is then the same instance as G(u8[4]).
     if (e->kind == EXPR_IDENTIFIER && e->decl && e->decl->kind == DECL_TYPE_ALIAS) {
+        // A REFINEMENT alias is not its base: the argument is the alias, whose refinement the
+        // instance carries (and its name, mono_mangle_type), as in a signature.
+        if (e->decl->as.type_alias_decl.constraints && e->decl->as.type_alias_decl.name)
+            return type_simple(sema_arena, e->decl->as.type_alias_decl.name);
         Expr *rx = e->decl->as.type_alias_decl.expr;
         return rx && rx != e ? mono_arg_to_type(rx) : NULL;
     }

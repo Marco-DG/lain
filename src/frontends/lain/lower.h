@@ -633,33 +633,9 @@ static IrType *ir_refine_int_type_from(LowerCtx *c, IrType *base, ExprList *cons
     int64_t lo, hi;
     if (!constraints) return base;
     if (!irtype_int_range(base, &lo, &hi)) return base;
-    int64_t nlo = lo, nhi = hi; bool got = false;
+    int64_t nlo = lo, nhi = hi;
     bool ne = false; int64_t nek = 0;
-    for (ExprList *cn = constraints; cn; cn = cn->next) {
-        Expr *e = cn->expr;
-        {
-            if (!e || e->kind != EXPR_BINARY) continue;
-            Expr *r = e->as.binary_expr.right;
-            if (!r || r->kind != EXPR_LITERAL) continue;
-            int64_t k = (int64_t)r->as.literal_expr.value;
-            switch (e->as.binary_expr.op) {
-                case TOKEN_ANGLE_BRACKET_LEFT:        if (k-1 < nhi) { nhi = k-1; got = true; } break;
-                case TOKEN_ANGLE_BRACKET_LEFT_EQUAL:  if (k   < nhi) { nhi = k;   got = true; } break;
-                case TOKEN_ANGLE_BRACKET_RIGHT:       if (k+1 > nlo) { nlo = k+1; got = true; } break;
-                case TOKEN_ANGLE_BRACKET_RIGHT_EQUAL: if (k   > nlo) { nlo = k;   got = true; } break;
-                // `type Zero = i32 == 0` is the interval [0,0]. It was skipped, so the alias
-                // constrained nothing and `var z Zero = 1` was refused only by the front end's
-                // legacy check.
-                case TOKEN_EQUAL_EQUAL:
-                    if (k > nlo) nlo = k;
-                    if (k < nhi) nhi = k;
-                    got = true; break;
-                case TOKEN_BANG_EQUAL:
-                    ne = true; nek = k; got = true; break;
-                default: break;
-            }
-        }
-    }
+    bool got = refine_apply_clauses(constraints, &nlo, &nhi, &ne, &nek);   // ast.h: the one reader
     if (!got || nlo > nhi) return base;
     IrType *r = ir_type_new(c->a, IRT_INT);
     *r = *base;

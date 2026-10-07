@@ -1432,7 +1432,7 @@ out=red blue 10 20 nf 9
 at=const 4
 ty=Color scalar
 ty=Slice_u8 scalar
-ty=__U_Small_NotFound scalar
+ty=__U_u8_r0_199_NotFound scalar
 ### tests/trust/binary_search_slice_pass.ln
 rc=0
 out=0 0
@@ -1745,6 +1745,19 @@ out=
 at=const 4
 ty=Pair_u64 struct
 ty=Pair_u8 struct
+### tests/trust/generic_refined_alias_order_pass.ln
+rc=0
+out=
+at=const 6
+ty=Option_u8_r0_199 scalar
+ty=Option_u8_r0_199_ne7 scalar
+ty=Option_u8_r0_199_ne9 scalar
+### tests/trust/generic_refined_alias_pass.ln
+rc=0
+out=
+at=const 10
+ty=Option_u8 struct
+ty=Option_u8_r0_199 scalar
 ### tests/trust/hex_escape_values_pass.ln
 rc=0
 out=
@@ -1795,7 +1808,7 @@ ty=Buf_4 struct
 ty=Color scalar
 ty=Option_bool scalar
 ty=Pair_i32 struct
-ty=__U_Small_none scalar
+ty=__U_u8_r0_199_none scalar
 ### tests/trust/leading_zero_allowed_pass.ln
 rc=0
 out=
@@ -1967,7 +1980,7 @@ rc=0
 out=7
 at=const 2
 ty=Slice_u8 scalar
-ty=__U_Small_TooBig scalar
+ty=__U_i32_r0_9_TooBig scalar
 ### tests/trust/niche_union_pass.ln
 rc=0
 out=OK
@@ -2419,7 +2432,7 @@ at=const 2
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
-ty=__U_Small_Missing scalar
+ty=__U_u8_r0_199_Missing scalar
 ### tests/trust/union_arg_same_markers_pass.ln
 rc=0
 out=nf ok 7 199 
@@ -2427,7 +2440,7 @@ at=const 2
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
-ty=__U_Small_NotFound scalar
+ty=__U_u8_r0_199_NotFound scalar
 ### tests/trust/union_else_payload_marker_pass.ln
 rc=0
 out=
@@ -2446,7 +2459,7 @@ at=pure 6
 ty=Slice_u8 scalar
 ty=__U_i32_NotFound_Err_i32 struct
 ty=__U_ptr_u8_NotFound_Denied scalar
-ty=__U_Small_NotFound_Denied scalar
+ty=__U_u8_r0_199_NotFound_Denied scalar
 ### tests/trust/union_presence_test_pass.ln
 rc=0
 out=100 100 1100 110
@@ -2455,14 +2468,14 @@ at=pure 4
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_none_Denied scalar
 ty=__U_ptr_u8_NotFound_Denied scalar
-ty=__U_Small_NotFound scalar
-ty=__U_Small_NotFound_Denied scalar
+ty=__U_u8_r0_199_NotFound scalar
+ty=__U_u8_r0_199_NotFound_Denied scalar
 ### tests/trust/union_refined_alias_pass.ln
 rc=0
 out=ok nf size=1
 at=const 2
 ty=Slice_u8 scalar
-ty=__U_Small_NotFound scalar
+ty=__U_u8_r0_199_NotFound scalar
 ### tests/trust/union_shared_marker_pass.ln
 rc=0
 out=nf ok nf ok 
@@ -2470,7 +2483,7 @@ at=const 2
 at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
-ty=__U_Small_NotFound scalar
+ty=__U_u8_r0_199_NotFound scalar
 ### tests/trust/unsafe_field_invariant_kept_pass.ln
 rc=0
 out=

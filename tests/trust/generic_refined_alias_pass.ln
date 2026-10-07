@@ -1,0 +1,53 @@
+// A generic applied to a refinement alias is one instance per base and refinement: Option(Small)
+// was Option_Small in a signature and Option_u8 in an expression (the expression read the alias's
+// base and dropped its refinement), so no value of the one could be returned as the other, and
+// the refinement is the niche (200..255 is free). Small and Below, spelled differently with one
+// refinement, are one type; Option(u8) has no spare value and keeps its tag. Each value is built
+// and read, natively and with --interpret. Refused on the parent (E012).
+import std.option.{Option}
+
+type Small = u8 < 200
+type Below = u8 <= 199
+
+func sig_first(k Small) Option(Small) {
+    if k > 100 { return Option(Small).None }
+    return Option(Small).Some(k)
+}
+
+func expr_first(k Below) Small {
+    var o Option(Below) = Option(Below).Some(k)
+    case o {
+        Some(v): return v
+        None: return 0
+    }
+}
+
+func plain(k u8) Option(u8) {
+    if k > 100 { return Option(u8).None }
+    return Option(u8).Some(k)
+}
+
+func get(o Option(Small)) i32 {
+    case o {
+        Some(v): return v as i32
+        None: return -1
+    }
+}
+
+func getp(o Option(u8)) i32 {
+    case o {
+        Some(v): return v as i32
+        None: return -1
+    }
+}
+
+func main() i32 {
+    if get(sig_first(7)) != 7 { return 1 }
+    if get(sig_first(150)) != -1 { return 2 }
+    if get(sig_first(0)) != 0 { return 3 }
+    if expr_first(42) != 42 { return 4 }
+    if getp(plain(255)) != -1 { return 5 }
+    if getp(plain(99)) != 99 { return 6 }
+    if getp(plain(0)) != 0 { return 7 }
+    return 0
+}
