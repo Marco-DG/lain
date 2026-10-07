@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 11, Col 12: arithmetic is not provably free of overflow
+// I.164: a load of an element is the value an earlier load of the same element read only if
+// nothing in between can write the array. Here the guard reads tab[k], the store makes it 255,
+// and `days - tab[k]` can then go below 0: the guard's fact belongs to the OLD value.
+func f(d0 u32, k usize < 4) u32 {
+    var tab u8[4] = [10, 20, 30, 40]
+    var days u32 = d0
+    if days <= tab[k] { return 0 }
+    tab[k] = 255
+    return days - tab[k]
+}
+
+func main() i32 { return 0 }

@@ -1574,6 +1574,17 @@ ty=Buf_16 struct
 ty=Buf_4 struct
 ty=Buf_8 struct
 ty=Ring_8 struct
+### tests/trust/convert_days_pass.ln
+rc=0
+out=1: 1980-01-01
+out=366: 1980-12-31
+out=10593: 2008-12-31
+out=10594: 2009-01-01
+out=1000000: 4717-11-27
+at=const 2
+at=nonnull 2
+ty=Slice_u8 scalar
+ty=SystemTime struct
 ### tests/trust/ctz_popcount_range_pass.ln
 rc=0
 out=10 25 18 33 12

@@ -1593,6 +1593,121 @@ static IrBlock *vra_block_of(Vra *V, IrInstr *ins) {
     return NULL;
 }
 
+static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd (I.164)
+// ── THE SAME ELEMENT, READ TWICE (I.164) ─────────────────────────────────────────────────
+// `if days <= tab[month] { break }` then `days = days - tab[month]` reads tab[month] through two
+// loads, and month through two more, so the guard's fact `days > L1` said nothing of `L2`: the
+// subtraction, proven step by step in the driver's own ConvertDays, was E086. A load of an element
+// IS the value an earlier load of the same element read, when that load dominates it (the same
+// block, or up the single-predecessor chain), the base is the same place, the index is provably
+// equal, and nothing in between can write memory: only a store to a scalar local is let through.
+static bool vra_equal_values(Vra *V, Octagon *W, IrValue *x, IrValue *y) {
+    if (!x || !y) return false;
+    if (x->id == y->id) return true;
+    int a = x->id, b = y->id;
+    if (a < 0 || b < 0 || a >= V->nvar || b >= V->nvar) return false;
+    if (V->cknown[a] || V->cknown[b]) return V->cknown[a] && V->cknown[b] && V->cval[a] == V->cval[b];
+    oct_close(W);
+    return vra_diff_ub(V, W, a, b) <= 0 && vra_diff_ub(V, W, b, a) <= 0;
+}
+static bool vra_same_place(Vra *V, Octagon *W, IrValue *a, IrValue *b, int depth) {
+    if (!a || !b || depth > 6) return false;
+    if (a->id == b->id) return true;
+    if (a->id < 0 || b->id < 0 || a->id >= V->nvar || b->id >= V->nvar) return false;
+    IrInstr *da = V->def[a->id], *db = V->def[b->id];
+    if (!da || !db || da->op != db->op || da->n_operands != db->n_operands || da->n_operands < 1) return false;
+    switch (da->op) {
+        case IR_SLICE_DATA: return vra_same_place(V, W, da->operands[0], db->operands[0], depth + 1);
+        case IR_FIELD_PTR:  return da->aux.field_idx == db->aux.field_idx &&
+                                   vra_same_place(V, W, da->operands[0], db->operands[0], depth + 1);
+        case IR_ELEM_PTR:   return da->n_operands >= 2 && vra_same_place(V, W, da->operands[0], db->operands[0], depth + 1) &&
+                                   vra_equal_values(V, W, da->operands[1], db->operands[1]);
+        default:            return false;
+    }
+}
+static bool vra_writes_no_element(Vra *V, IrInstr *q) {
+    switch (q->op) {
+        case IR_CONST: case IR_CAST: case IR_ADD: case IR_SUB: case IR_MUL: case IR_SDIV: case IR_UDIV:
+        case IR_SREM: case IR_UREM: case IR_NEG: case IR_AND: case IR_OR: case IR_XOR: case IR_SHL:
+        case IR_LSHR: case IR_ASHR: case IR_BNOT: case IR_CTZ: case IR_CLZ: case IR_POPCOUNT:
+        case IR_SIZEOF: case IR_ALIGNOF: case IR_ICMP: case IR_LOAD: case IR_ELEM_PTR: case IR_FIELD_PTR:
+        case IR_SLICE_DATA: case IR_ASSUME:
+            return true;
+        case IR_STORE: {                                  // to a scalar local: no array's element
+            IrInstr *d = (q->n_operands >= 1 && q->operands[0] && q->operands[0]->id >= 0 &&
+                          q->operands[0]->id < V->nvar) ? V->def[q->operands[0]->id] : NULL;
+            return d && d->op == IR_ALLOCA && d->n_operands == 0 && d->aux.alloca_ty &&
+                   d->aux.alloca_ty->kind != IRT_ARRAY && d->aux.alloca_ty->kind != IRT_STRUCT &&
+                   d->aux.alloca_ty->kind != IRT_SLICE;
+        }
+        default: return false;
+    }
+}
+static IrInstr *vra_earlier_same_load(Vra *V, Octagon *W, IrInstr *ld) {
+    if (!ld->result || ld->n_operands < 1 || !ld->operands[0]) return NULL;
+    IrInstr *ad = (ld->operands[0]->id >= 0 && ld->operands[0]->id < V->nvar) ? V->def[ld->operands[0]->id] : NULL;
+    if (!ad || ad->op != IR_ELEM_PTR) return NULL;
+    IrBlock *b = vra_block_of(V, ld);
+    IrInstr *stop = ld;
+    for (int depth = 0; b && depth < 16; depth++) {
+        IrInstr *buf[512]; int n = 0;
+        for (IrInstr *q = b->instrs; q && q != stop && n < 512; q = q->next) buf[n++] = q;
+        if (n == 512) return NULL;                         // too long to scan: no claim
+        for (int k = n - 1; k >= 0; k--) {
+            IrInstr *q = buf[k];
+            if (q->op == IR_LOAD && q != ld && q->result && q->n_operands >= 1 && q->result->type &&
+                ld->result->type && q->result->type->kind == IRT_INT && ld->result->type->kind == IRT_INT &&
+                q->result->type->bits == ld->result->type->bits &&
+                q->result->type->is_signed == ld->result->type->is_signed &&
+                vra_same_place(V, W, q->operands[0], ld->operands[0], 0))
+                return q;
+            if (!vra_writes_no_element(V, q)) return NULL;
+        }
+        IrEdge *e = b->preds;
+        if (!e || e->next || !e->block) return NULL;       // a single-predecessor chain only
+        b = e->block; stop = NULL;
+    }
+    return NULL;
+}
+
+// ★ THE TOTAL'S START IS ITS RANGE WHERE THE LOOP IS ENTERED (I.164). s0 was joined from the
+// TYPES of the values stored before the loop, and after another loop that is a widened
+// subtraction's type: ConvertDays' month loop was told `days` "starts in [-8589934592,
+// 8589934591]" though the year loop leaves it in [0, 366]. The cell's interval in the state on
+// each edge into H from outside the loop (replayed as vra_edge_live replays one) is its entry
+// range; false when there is no converged state to read.
+static bool vra_cell_entry_range(Vra *V, IrBlock *H, const char *body, int cell, int64_t *lo, int64_t *hi) {
+    if (!V->in || !V->reached || cell < 0 || cell >= V->nvar) return false;
+    int64_t L = INT64_MAX, U = INT64_MIN; bool any = false;
+    for (IrEdge *e = H->preds; e; e = e->next) {
+        IrBlock *q = e->block;
+        if (!q || body[q->id]) continue;                  // a back edge
+        if (!V->reached[q->id] || !V->in[q->id]) continue; // never reached: no entry from there
+        int64_t *sc = malloc((size_t)V->dsz*8);
+        if (!sc) return false;
+        memcpy(sc, V->in[q->id], (size_t)V->dsz*8);
+        Octagon E = { V->noct, 2*V->noct, sc };
+        oct_close(&E);
+        for (IrInstr *x = q->instrs; x; x = x->next) vra_transfer_instr(V, &E, x);
+        oct_close(&E);
+        if (q->term.kind == IR_TERM_BR_COND && q->term.cond && (q->term.a == H) != (q->term.b == H)) {
+            vra_refine_guard(V, &E, q->term.cond, q->term.a == H);
+            oct_close(&E);
+        }
+        if (oct_is_bottom(&E)) { free(sc); continue; }
+        int64_t a, z; bool hl, hh;
+        vra_interval(V, &E, cell, &a, &hl, &z, &hh);
+        free(sc);
+        if (!hl || !hh) return false;
+        if (a < L) L = a;
+        if (z > U) U = z;
+        any = true;
+    }
+    if (!any) return false;
+    *lo = L; *hi = U;
+    return true;
+}
+
 static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
     int r = ins->result ? ins->result->id : -1;
     switch (ins->op) {
@@ -1646,6 +1761,9 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                         }
                     }
                 }
+                // ...and the value an earlier load of the same element read (I.164).
+                { IrInstr *e1 = vra_earlier_same_load(V, W, ins);
+                  if (e1 && e1->result) { int x = e1->result->id; vra_add_diff_le(V, W, r, x, 0); vra_add_diff_le(V, W, x, r, 0); } }
                 // ...and ANY integer read from memory is bounded by its TYPE, the values its bits
                 // can represent: a `u8` element is in [0, 255]. That bound lived only in vra_range,
                 // for the same reason as above, so it was lost once the value went through a
@@ -4802,6 +4920,13 @@ static bool vra_accum_delta(Vra *V, Octagon *W, IrValue *val, IrBlock **H,
             if (vlo < s_lo) s_lo = vlo;
             if (vhi > s_hi) s_hi = vhi;
             any = true;
+        }
+    }
+    if (any && s_lo <= s_hi) {                       // ...and its range where the loop is entered
+        int64_t elo, ehi;
+        if (vra_cell_entry_range(V, found, body, cell, &elo, &ehi) && elo <= s_hi && ehi >= s_lo) {
+            if (elo > s_lo) s_lo = elo;
+            if (ehi < s_hi) s_hi = ehi;
         }
     }
     free(body);

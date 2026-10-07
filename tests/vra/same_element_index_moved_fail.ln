@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 11, Col 12: arithmetic is not provably free of overflow
+// I.164: the same element means the same base at a provably EQUAL index. The guard reads tab[k];
+// after `k = k + 1` the subtraction reads the next element, which the guard says nothing about.
+func f(d0 u32, k0 usize < 3) u32 {
+    var tab u8[4] = [10, 20, 30, 40]
+    var days u32 = d0
+    var k usize = k0
+    if days <= tab[k] { return 0 }
+    k = k + 1
+    return days - tab[k]
+}
+
+func main() i32 { return 0 }

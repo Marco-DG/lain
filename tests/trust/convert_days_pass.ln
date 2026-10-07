@@ -1,0 +1,66 @@
+// I.164: the Zune 30's ConvertDays (31 Dec 2008), year loop and month loop, as the driver wrote
+// them, with the fix `else { break }` (I.158 bounds the year loop's total). The month loop,
+//     if days <= month_tab[month] { break }
+//     days = days - month_tab[month]
+// was E086 on the subtraction: the guard and the subtraction read month_tab[month] through two
+// loads, so the guard's `days > L1` said nothing of `L2`; and the total's start was taken from the
+// widened TYPE of `days - 366` ([-2^33, 2^33)), not from the [0, 366] the year loop leaves.
+// (Ported by the Documentation session from the driver's rtc.c.)
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type SystemTime { year i32, month i32, day u32 }
+
+func is_leap_year(year i32) bool {
+    var leap bool = false
+    if year % 4 == 0 {
+        leap = true
+        if year % 100 == 0 {
+            leap = year % 400 == 0
+        }
+    }
+    return leap
+}
+
+func convert_days(days0 u32, var t SystemTime) {
+    var days u32 = days0
+    var year i32 = 1980
+    while days > 365 {
+        if is_leap_year(year) {
+            if days > 366 {
+                days = days - 366
+                year = year + 1
+            } else {
+                break
+            }
+        } else {
+            days = days - 365
+            year = year + 1
+        }
+    }
+    var month_tab u8[12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if is_leap_year(year) { month_tab[1] = 29 }
+    var month usize = 0
+    while month < 12 {
+        if days <= month_tab[month] { break }
+        days = days - month_tab[month]
+        month = month + 1
+    }
+    t.day = days
+    t.month = (month + 1) as i32
+    t.year = year
+}
+
+func show(days u32) effects io {
+    var t SystemTime = SystemTime(0, 0, 0)
+    convert_days(days, var t)
+    libc_printf("%u: %d-%02d-%02u\n", days, t.year, t.month, t.day)
+}
+
+func main() i32 effects io {
+    show(1)
+    show(366)
+    show(10593)
+    show(10594)
+    show(1000000)
+    return 0
+}
