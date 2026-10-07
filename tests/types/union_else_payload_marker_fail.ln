@@ -1,0 +1,25 @@
+// EXPECT: [E063]
+// EXPECT-TEXT: Error Ln 19, Col 15: return from function value may be a marker; test it (`if r { … }`) or match it (`case r { … }`) before using it as 'i32'.
+// I.163: the `else` of a `case` on a union narrows to the value only when every marker is matched,
+// a payload marker (`ParseErr(line i32)`) as much as a bare one. The payload is variant 0, and every
+// variant with fields was skipped as if it were the payload, so the `else` below narrowed past an
+// unmatched ParseErr: lain accepted it, the C returned the union where an i32 was expected, and
+// --interpret returned 0 for it.
+
+func step(mode i32) i32 | NotFound | ParseErr(line i32) {
+    if mode == 1 { return NotFound }
+    if mode == 2 { return ParseErr(99) }
+    return 5
+}
+
+func get(mode i32) i32 {
+    r i32 | NotFound | ParseErr(line i32) = step(mode)
+    case r {
+        NotFound: return 1
+        else: return r
+    }
+}
+
+func main() i32 {
+    return get(2)
+}

@@ -2428,6 +2428,16 @@ at=pure 2
 ty=Slice_u8 scalar
 ty=__U_ptr_u8_NotFound scalar
 ty=__U_Small_NotFound scalar
+### tests/trust/union_else_payload_marker_pass.ln
+rc=0
+out=
+at=const 4
+ty=__U_i32_NotFound_ParseErr_i32 struct
+### tests/trust/union_if_tagged_local_pass.ln
+rc=0
+out=
+at=const 4
+ty=__U_i32_Err_i32 struct
 ### tests/trust/union_presence_test_pass.ln
 rc=0
 out=100 100 1100 110

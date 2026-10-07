@@ -3927,12 +3927,26 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
             IrLocal *saved = c->locals;
             { Expr *cx = s->as.if_stmt.cond;
               if (cx && cx->kind==EXPR_IDENTIFIER) {
-                  IrLocal *lo = ir_env_find(c, cx->as.identifier_expr.id);
-                  IrValue *cv = lo ? (lo->param ? lo->param : lo->slot) : NULL;
+                  // ★ THE VALUE, NOT ITS CELL (I.163). This read the local's SLOT, a pointer to
+                  // the sum, so for a local nothing was rebound: invisible on a niche union, whose
+                  // payload has the union's own C type, and wrong on a tagged one: `r i32 | Err(code
+                  // i32) = ...; if r { return r }` returned the union where an i32 was declared
+                  // (gcc refused it; --interpret returned 0 for 9). A union's value is its payload,
+                  // variant 0, whenever `if x` holds (I.128); an optional sum's is its `some` variant.
+                  // Only a sum is read here: `if b` on a bool rebinds nothing, and a read of it would
+                  // be a dead load in the emitted C.
+                  IrType *ct = cx->type ? ir_lower_type(c, cx->type) : NULL;
+                  IrValue *cv = (ct && ct->kind == IRT_SUM) ? ir_lower_expr(c, cx) : NULL;
                   int sk, nk;
                   if (cv && cv->type && ir_sum_optional_shape(cv->type, &sk, &nk))
                       ir_env_add(c, cx->as.identifier_expr.id, NULL,
                                  ir_sum_optional_payload(c, cv, sk));
+                  else if (cv && cv->type && cv->type->kind == IRT_SUM && cv->type->n_fields >= 2 &&
+                           cv->type->fields[0] && cv->type->field_names && cv->type->field_names[0] &&
+                           cv->type->field_names[0]->length == 9 &&
+                           memcmp(cv->type->field_names[0]->name, "__payload", 9) == 0)
+                      ir_env_add(c, cx->as.identifier_expr.id, NULL,
+                                 ir_sum_optional_payload(c, cv, 0));
               } }
             ir_lower_stmts(c, s->as.if_stmt.then_body);
             c->locals = saved;

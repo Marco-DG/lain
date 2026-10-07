@@ -1,0 +1,23 @@
+// I.163: `if r` makes r its value in the then-branch, a LOCAL too. Lowering rebound only a
+// parameter (it read a local's cell, a pointer), which went unseen on a niche union and not on a
+// tagged one: with `Err(code i32)` a marker, `return r` returned the union where an i32 was
+// declared (gcc refused it; --interpret returned 0 for 9). Its parent refused it (E063), counting
+// no marker in a union whose only marker has fields.
+func fe(k i32) i32 | Err(code i32) {
+    if k == 2 { return Err(77) }
+    return k
+}
+
+func get(k i32) i32 {
+    r i32 | Err(code i32) = fe(k)
+    if r {
+        return r
+    }
+    return -1
+}
+
+func main() i32 {
+    if get(9) != 9 { return 1 }
+    if get(2) != -1 { return 2 }
+    return 0
+}

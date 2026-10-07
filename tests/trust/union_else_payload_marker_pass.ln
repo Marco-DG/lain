@@ -1,0 +1,23 @@
+// I.163, the allowed side: with every marker matched, a payload marker (`ParseErr(line)`) included,
+// the `else` of a `case` on a union holds the value. Each of the three cases is built and read.
+func step(mode i32) i32 | NotFound | ParseErr(line i32) {
+    if mode == 1 { return NotFound }
+    if mode == 2 { return ParseErr(99) }
+    return 5
+}
+
+func get(mode i32) i32 {
+    r i32 | NotFound | ParseErr(line i32) = step(mode)
+    case r {
+        NotFound: return 1
+        ParseErr(line): return line
+        else: return r
+    }
+}
+
+func main() i32 {
+    if get(0) != 5 { return 1 }
+    if get(1) != 1 { return 2 }
+    if get(2) != 99 { return 3 }
+    return 0
+}

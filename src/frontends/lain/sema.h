@@ -187,8 +187,13 @@ static bool union_else_covers_payload(Expr *value, StmtMatchCase *cases) {
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
     Decl *U = find_union_enum(t);
     if (!U) return false;
-    for (Variant *v = U->as.enum_decl.variants; v; v = v->next) {
-        if (v->fields || !v->name) continue;         // skip the payload variant
+    // ★ THE PAYLOAD IS VARIANT 0, and only it is skipped. Every variant with fields was skipped
+    // here as "the payload variant", and a payload MARKER (`ParseErr(line i32)`, F3.4) has fields
+    // too: `case r { NotFound: ... else: return r }` narrowed the `else` past an unmatched
+    // ParseErr, the C returned the union where its value was expected (gcc refused it) and
+    // --interpret returned 0 for it.
+    for (Variant *v = U->as.enum_decl.variants ? U->as.enum_decl.variants->next : NULL; v; v = v->next) {
+        if (!v->name) continue;
         bool covered = false;
         for (StmtMatchCase *c = cases; c && !covered; c = c->next) {
             if (!c->patterns) continue;              // the `else` arm itself doesn't cover markers
@@ -1690,9 +1695,9 @@ static bool nn_is_single_marker_var(Expr *e) {
     while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
     Decl *U = find_union_enum(t);
     if (U) {
-        int markers = 0;
-        for (Variant *v = U->as.enum_decl.variants; v; v = v->next)
-            if (!v->fields) markers++;
+        int markers = 0;                   // every variant after the payload (variant 0) is a marker,
+        for (Variant *v = U->as.enum_decl.variants ? U->as.enum_decl.variants->next : NULL; v; v = v->next)
+            markers++;                     // one with fields (`Err(x i32)`) as much as one without
         return markers == 1;
     }
     return false;
