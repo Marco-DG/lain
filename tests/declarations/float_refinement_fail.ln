@@ -1,0 +1,11 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 7, Col 24: a refinement bounds an integer, and this bound is a float
+// I.155: a refinement on a float parameter, written to guard a float division, was refused as
+// "Expected number or identifier after comparison operator", which reads as a typo. The range
+// analysis carries no fact about a float (I.157), so it would be parsed and never enforced, and
+// the guard is not owed: a float division needs no proof of a non-zero divisor.
+func f(a f64, b f64 != 0.0) f64 {
+    return a / b
+}
+
+func main() i32 { return 0 }

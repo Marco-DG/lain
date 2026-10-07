@@ -589,6 +589,10 @@ DeclList* parse_type_fields(Arena *arena, struct Parser *parser, bool *is_enum, 
                             rhs = expr_member(arena, rhs, mid);
                             rhs->line = r_line; rhs->col = r_col;
                         }
+                    } else if (parser_match(TOKEN_FLOAT_LITERAL)) {
+                        // a float bound (I.155): see the parameter's note below
+                        parser_error("a refinement bounds an integer, and this bound is a float: a float "
+                                     "carries no refinement (a float division owes no proof of a non-zero divisor)");
                     } else {
                         parser_error("Expected number or identifier after comparison operator");
                     }
@@ -1226,6 +1230,14 @@ Decl *parse_func_decl_impl(Arena* arena, Parser* parser) {
                                 rhs = expr_member(arena, rhs, member);
                                 rhs->line = r_line; rhs->col = r_col;
                             }
+                        } else if (parser_match(TOKEN_FLOAT_LITERAL)) {
+                            // ★ A FLOAT BOUND (I.155). `b f64 != 0.0` was refused as "Expected
+                            // number or identifier", which reads as a typo. The range analysis
+                            // carries no fact about a float (I.157), so a float refinement would be
+                            // parsed and never enforced; and the guard it was written for is not
+                            // owed, since a float division needs no proof of a non-zero divisor.
+                            parser_error("a refinement bounds an integer, and this bound is a float: a float "
+                                         "carries no refinement (a float division owes no proof of a non-zero divisor)");
                         } else {
                             parser_error("Expected number or identifier after comparison operator");
                         }
