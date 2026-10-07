@@ -3137,6 +3137,17 @@ static void walk_stmt(Stmt *s) {
             break;
         case STMT_RETURN:
             sema_infer_expr(s->as.return_stmt.value);
+            // ★ A FUNCTION THAT RETURNS NOTHING RETURNS NOTHING (I.151). `func f(x i32) { return x }`
+            // was accepted, and its C, `return v0;` in a `void` function, is a constraint violation
+            // (C11 6.8.6.4) that gcc only warns about.
+            if (s->as.return_stmt.value && !current_return_type && current_function_decl &&
+                current_function_decl->kind == DECL_FUNCTION && current_function_decl->as.function_decl.name) {
+                Id *fn = current_function_decl->as.function_decl.name;
+                fprintf(stderr, "[E012] Error Ln %li, Col %li: function '%.*s' returns no value, and this "
+                        "`return` gives one.\n", (long)s->line, (long)s->col, (int)fn->length, fn->name);
+                diagnostic_show_line(s->line, s->col);
+                exit(1);
+            }
             sema_union_coerce(&s->as.return_stmt.value, current_return_type);  // `T | markers` construction
             // Q-002 Phase 5: overflow-at-boundary check (return).
             if (sema_ranges && s->as.return_stmt.value && current_return_type) {
@@ -3962,6 +3973,12 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         if (!d || decl_is_generic_template(d)) continue;
         if (d->kind == DECL_FUNCTION) {
             mono_resolve_signature(d);
+            // ★ A WRITTEN `void` IS NO RETURN TYPE (I.151). It was a return type like any other, so
+            // `func f(x i32) void { var y = x }` was E018 "can reach the end without returning a
+            // value", while the same function with nothing written compiled.
+            { Type *rt = d->as.function_decl.return_type;
+              if (rt && rt->kind == TYPE_SIMPLE && rt->base_type && rt->base_type->length == 4 &&
+                  memcmp(rt->base_type->name, "void", 4) == 0) d->as.function_decl.return_type = NULL; }
             // ★ THE ENTRY POINT TAKES NOTHING, OR C's TWO (I.153). Its parameters were never
             // looked at: `func main(argc i32, argv **u8) i32` was accepted and emitted
             // `int main(void) { return v0; }`, which gcc refuses, and `func main(x f64) i32` was

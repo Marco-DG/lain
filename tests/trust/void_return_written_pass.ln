@@ -1,0 +1,24 @@
+// I.151: a written `void` return type is no return type. `func f(x i32) void { ... }` was E018
+// "can reach the end without returning a value", while the same function with nothing written
+// compiled; and an arrow `*func(i32) void` matched neither spelling. Both spellings are one now,
+// on a declaration and in an arrow, with an early `return` and a call through the pointer.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func show(x i32) void effects io {
+    if x < 0 { return }
+    libc_printf("show %d\n", x)
+}
+
+func plain(x i32) effects io {
+    libc_printf("plain %d\n", x)
+}
+
+func main() i32 effects io {
+    show(-1)
+    show(7)
+    var p *func(i32) void effects io = plain
+    p(8)
+    var q *func(i32) effects io = show
+    q(9)
+    return 0
+}

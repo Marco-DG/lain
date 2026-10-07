@@ -1833,11 +1833,20 @@ static Type *fnptr_type_of_decl(Decl *d) {
 // do no more than the arrow admits. This subsumes the old two-point `func <: proc` subtyping
 // (∅ ⊆ ⊤ holds, ⊤ ⊆ ∅ does not) and extends it to every intermediate row, so an arrow can now
 // say "may print, but terminates" — a bound the boolean could not express.
+// A written `void` is no return type, in an arrow as on a declaration (I.151): `*func(i32) void`
+// did not match a function declared with nothing written after its parameters.
+static Type *fnptr_ret(Type *t) {
+    Type *r = t ? t->element_type : NULL;
+    if (r && r->kind == TYPE_SIMPLE && r->base_type && r->base_type->length == 4 &&
+        memcmp(r->base_type->name, "void", 4) == 0) return NULL;
+    return r;
+}
 static bool fnptr_types_assignable(Type *to, Type *from) {
     if (!to || !from || to->kind != TYPE_FUNC || from->kind != TYPE_FUNC) return false;
     if (from->func_effects & ~to->func_effects) return false;
-    if ((to->element_type == NULL) != (from->element_type == NULL)) return false;
-    if (to->element_type && !types_equal_exact(to->element_type, from->element_type)) return false;
+    Type *tr = fnptr_ret(to), *fr = fnptr_ret(from);
+    if ((tr == NULL) != (fr == NULL)) return false;
+    if (tr && !types_equal_exact(tr, fr)) return false;
     TypeList *a = to->func_params, *b = from->func_params;
     while (a && b) {
         if (!a->type || !b->type || !types_equal_exact(a->type, b->type)) return false;

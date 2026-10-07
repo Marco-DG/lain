@@ -2471,6 +2471,12 @@ out=0 1 7
 at=const 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/void_return_written_pass.ln
+rc=0
+out=show 7
+out=plain 8
+out=show 9
+ty=Slice_u8 scalar
 ### tests/trust/widening_arith_promotion_pass.ln
 rc=0
 out=3600000000

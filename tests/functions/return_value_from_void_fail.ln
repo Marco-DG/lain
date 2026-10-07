@@ -1,0 +1,12 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 6, Col 5: function 'f' returns no value, and this `return` gives one.
+// I.151: a function that returns nothing cannot return a value. It was accepted, and its C,
+// `return v0;` in a `void` function, is a constraint violation (C11 6.8.6.4) gcc only warns about.
+func f(x i32) {
+    return x
+}
+
+func main() i32 {
+    f(1)
+    return 0
+}
