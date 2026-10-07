@@ -70,30 +70,52 @@ np=$(echo "$phantom" | grep -c . || true)
 # .tex, never the document. So: build a clean copy, require zero errors and zero undefined or
 # duplicate references, and require the committed PDF to say what that build says (text
 # compared, date lines ignored; a different TeX Live may break lines differently).
+#
+# ★ A VERDICT ALREADY REACHED ON THESE EXACT BYTES IS NOT RECOMPUTED. The build is most of this
+# gate's minute, and a chain gated link by link rebuilt the same spec once per link. The key is the
+# sha256 of every file the build can read (the copy, after `make clean`, committed PDF included),
+# of this script, and of the TeX and pdftotext versions; only "holds" is stored, so a failure is
+# always rebuilt and printed in full. The entry is written to a temporary name and renamed into
+# place, so a gate running at the same moment sees a whole entry or none. ONLY THE BUILD is
+# cached: the examples below depend on ./lain, which is not in the key, and run every time
+# (pinned: a lain emitting another code for E016 failed this gate with the cache warm).
+# LAIN_GATE_NOCACHE=1 forces the build; LAIN_GATE_CACHE moves the store (default
+# ~/.cache/lain-gates).
 bs="SKIPPED (no latexmk/pdflatex)"; bfail=0
 if command -v latexmk >/dev/null 2>&1 || command -v pdflatex >/dev/null 2>&1; then
   STMP=$(mktemp -d); trap 'rm -rf "$STMP"' EXIT
-  cp -r spec "$STMP/spec"; make -s -C "$STMP/spec" clean >/dev/null 2>&1; rm -f "$STMP/spec/lain-spec.pdf"
-  make -C "$STMP/spec" > "$STMP/build.out" 2>&1; brc=$?
-  LOG="$STMP/spec/lain-spec.log"
-  nerr=$(grep -ac '^! ' "$LOG" 2>/dev/null); nerr=${nerr:-0}
-  nref=$(grep -aE "[Rr]eference .* undefined|Citation .* undefined|multiply.defined" "$LOG" 2>/dev/null | grep -vc 'There were'); nref=${nref:-0}
-  if [ "$brc" -ne 0 ] || [ "$nerr" -gt 0 ] || [ "$nref" -gt 0 ] || [ ! -f "$STMP/spec/lain-spec.pdf" ]; then
-    bfail=1; bs="FAILS (make rc=$brc, $nerr LaTeX errors, $nref undefined/duplicate references)"
-    grep -aE -A3 '^! ' "$LOG" 2>/dev/null | head -12 | sed 's/^/  /'
-    grep -aE "[Rr]eference .* undefined|multiply.defined" "$LOG" 2>/dev/null | grep -v 'There were' | head -6 | sed 's/^/  /'
-  elif command -v pdftotext >/dev/null 2>&1; then
-    D='^(January|February|March|April|May|June|July|August|September|October|November|December) [0-9]{1,2}, [0-9]{4}$'
-    pdftotext -q "$STMP/spec/lain-spec.pdf" - | grep -vE "$D" > "$STMP/built.txt"
-    pdftotext -q spec/lain-spec.pdf - 2>/dev/null | grep -vE "$D" > "$STMP/committed.txt"
-    if cmp -s "$STMP/built.txt" "$STMP/committed.txt"; then
-      bs="holds ($(grep -c . "$STMP/built.txt") text lines; the committed PDF is the build of these sources)"
-    else
-      bfail=1; bs="STALE — spec/lain-spec.pdf is not the build of the sources: run make -C spec"
-      diff "$STMP/committed.txt" "$STMP/built.txt" | head -8 | sed 's/^/  /'
-    fi
+  cp -r spec "$STMP/spec"; make -s -C "$STMP/spec" clean >/dev/null 2>&1
+  BCACHE="${LAIN_GATE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/lain-gates}/spec-build"
+  bkey=$( { (cd "$STMP/spec" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
+            sha256sum < "$ROOT/scripts/gates/spec_gate.sh"
+            latexmk -v 2>&1 | head -3; pdflatex --version 2>&1 | head -1; pdftotext -v 2>&1 | head -1
+          } | sha256sum | cut -c1-64)
+  if [ "${LAIN_GATE_NOCACHE:-0}" != 1 ] && [ -s "$BCACHE/$bkey" ]; then
+    bs="$(cat "$BCACHE/$bkey") [cached: these exact sources were built and compared before]"
   else
-    bs="builds clean (0 errors, 0 undefined references); PDF comparison SKIPPED (no pdftotext)"
+    rm -f "$STMP/spec/lain-spec.pdf"
+    make -C "$STMP/spec" > "$STMP/build.out" 2>&1; brc=$?
+    LOG="$STMP/spec/lain-spec.log"
+    nerr=$(grep -ac '^! ' "$LOG" 2>/dev/null); nerr=${nerr:-0}
+    nref=$(grep -aE "[Rr]eference .* undefined|Citation .* undefined|multiply.defined" "$LOG" 2>/dev/null | grep -vc 'There were'); nref=${nref:-0}
+    if [ "$brc" -ne 0 ] || [ "$nerr" -gt 0 ] || [ "$nref" -gt 0 ] || [ ! -f "$STMP/spec/lain-spec.pdf" ]; then
+      bfail=1; bs="FAILS (make rc=$brc, $nerr LaTeX errors, $nref undefined/duplicate references)"
+      grep -aE -A3 '^! ' "$LOG" 2>/dev/null | head -12 | sed 's/^/  /'
+      grep -aE "[Rr]eference .* undefined|multiply.defined" "$LOG" 2>/dev/null | grep -v 'There were' | head -6 | sed 's/^/  /'
+    elif command -v pdftotext >/dev/null 2>&1; then
+      D='^(January|February|March|April|May|June|July|August|September|October|November|December) [0-9]{1,2}, [0-9]{4}$'
+      pdftotext -q "$STMP/spec/lain-spec.pdf" - | grep -vE "$D" > "$STMP/built.txt"
+      pdftotext -q spec/lain-spec.pdf - 2>/dev/null | grep -vE "$D" > "$STMP/committed.txt"
+      if cmp -s "$STMP/built.txt" "$STMP/committed.txt"; then
+        bs="holds ($(grep -c . "$STMP/built.txt") text lines; the committed PDF is the build of these sources)"
+        mkdir -p "$BCACHE" && printf '%s\n' "$bs" > "$BCACHE/$bkey.$$" && mv -f "$BCACHE/$bkey.$$" "$BCACHE/$bkey"
+      else
+        bfail=1; bs="STALE — spec/lain-spec.pdf is not the build of the sources: run make -C spec"
+        diff "$STMP/committed.txt" "$STMP/built.txt" | head -8 | sed 's/^/  /'
+      fi
+    else
+      bs="builds clean (0 errors, 0 undefined references); PDF comparison SKIPPED (no pdftotext)"
+    fi
   fi
 fi
 
