@@ -819,6 +819,11 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
                 // f64 while the old backend emits C `float`); recorded rather than silently
                 // picked, because the two give different results for a large value.
                 if (len==5 && strncmp(nm,"float",5)==0) return ir_type_float(c->a,32);
+                // `void` is the unit type, which has no value. Lowered as an unknown name it became
+                // an unnamed struct, which the emitter prints as `void*`, so `*void` was `void**`:
+                // `extern func free(p mov *void)` declared `void free(void**)` and gcc warned that it
+                // conflicts with the builtin (I.150, Documentation, measuring spec 07's C mapping).
+                if (len==4 && strncmp(nm,"void",4)==0) return ir_type_new(c->a, IRT_UNIT);
                 int b; bool s;
                 if (t->int_width_cache>0) return ir_type_int(c->a, t->int_width_cache, t->int_signed_cache);
                 if (ir_name_int(nm,len,&b,&s)) return ir_type_int(c->a, b, s);
