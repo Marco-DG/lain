@@ -62,7 +62,7 @@ gcc out.c -o my_program -Dlibc_printf=printf -Dlibc_puts=puts -w
 
 **Run the test suite:**
 ```bash
-./run_tests.sh
+make test                          # or: bash scripts/gates/run_tests.sh
 ```
 
 ---
@@ -3479,32 +3479,38 @@ When compiling the generated `out.c`:
 
 ### 13.5 Test Framework
 
-Tests are organized under `tests/` and run via `run_tests.sh`:
+Tests live under `tests/`, one directory per topic (`ownership/`, `borrow/`, `vra/`, `types/`,
+`match/`, `effects/`, …), and `scripts/gates/run_tests.sh` runs them, four at a time
+(`LAIN_GATE_JOBS` sets how many). A test's file name says what it must do:
 
-- **Positive tests** (`*.ln`): Must compile and run successfully.
-- **Negative tests** (`*_fail.ln`): Must **fail** compilation (testing error detection).
+- **`*_fail.ln`** must be **refused**. A `// EXPECT: [E010]` line requires that code in the output,
+  a `// EXPECT-TEXT: …` line requires that text, and the first error must say where it is.
+- **`*_pass.ln`** must **compile**, and gcc must accept the C it emits.
+- **Any other `.ln`** must compile.
+
+Beside a test that is not `_fail`, two more files may say what its program does:
+
+- a **`.expected`** file holds the program's output: the program is built and run, for at most 30
+  seconds, and what it prints must match;
+- a **`.grep`** file lists lines the emitted C must contain (blank lines and `//` lines are
+  skipped).
+
+A `.expected` or `.grep` with no `.ln` beside it fails the suite, since nothing would run it. A
+**`.sh`** file under `tests/` is run as a script, and passes when it exits 0.
 
 ```bash
-# Run all tests
-./run_tests.sh
+# The whole suite
+make test
 
-# Run a single test
-./run_tests.sh tests/core/functions.ln
-
-# Negative tests are auto-detected by the _fail suffix
-./run_tests.sh tests/safety/bounds/bounds_fail.ln
+# Only these tests, in this order (a path is read from the directory you run it in;
+# a missing file, or one outside the repository, exits 2)
+bash scripts/gates/run_tests.sh tests/borrow/ref_binding_linear_read_pass.ln tests/borrow/escape_call_field_read_fail.ln
 ```
 
-**Test categories:**
-| Directory | Tests | Purpose |
-|:----------|:------|:--------|
-| `tests/core/` | 26 | Basic language features (functions, loops, math, bitwise, compound assignments, shadowing, two-phase borrows, match borrow, option, result) |
-| `tests/types/` | 17 | Type system (ADTs, enums, arrays, structs, strings, bool, casts, integers, chars, floats, match borrow) |
-| `tests/safety/bounds/` | 14 | Static bounds checking & type constraints |
-| `tests/safety/ownership/` | 42 | Ownership, borrowing, move semantics, block scoping, two-phase borrows |
-| `tests/safety/purity/` | 6 | Purity enforcement, bounded while termination |
-| `tests/safety/` (root) | 4 | Unsafe blocks, linear struct fields |
-| `tests/stdlib/` | 6 | Module system, extern, stdlib |
+The programs in `tests/trust/` are compiled here like any other test, and run by
+`scripts/gates/run_trust.sh`, built with AddressSanitizer and UndefinedBehaviorSanitizer and given
+adversarial inputs: a sanitizer report there means the compiler accepted a program it should have
+refused.
 
 ---
 

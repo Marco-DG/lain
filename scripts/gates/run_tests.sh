@@ -219,32 +219,6 @@ run_test() {
 }
 
 
-# Build the program and diff its stdout against the oracle. Returns 0 when a `.grep` should
-# ALSO be applied, 1 when this was the whole test.
-run_output_oracle() {
-    local file="$1" exp="$2"
-    local base; base="$(basename "${file%.ln}")"
-    local key; key="$(printf '%s' "$file" | md5sum | cut -c1-16)"
-    local c="$RUN_DIR/oracle_$key.c" bin="$RUN_DIR/oracle_$key"
-    if ! "$LAIN" $(lain_flags_for "$file") "$file" -o "$c" >/dev/null 2>&1; then
-        FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("$file (oracle: compilation failed)")
-        rm -f "$c"; return 1
-    fi
-    if ! gcc -o "$bin" "$c" -Dlibc_printf=printf -Dlibc_puts=puts -w 2>/dev/null; then
-        FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("$file (oracle: emitted C rejected by gcc)")
-        rm -f "$c" "$bin"; return 1
-    fi
-    local got; got="$("$bin" 2>/dev/null)"
-    rm -f "$c" "$bin"
-    if ! diff -q <(printf '%s\n' "$got") "$exp" >/dev/null 2>&1; then
-        FAIL_COUNT=$((FAIL_COUNT + 1))
-        FAILED_TESTS+=("$file (oracle: output differs from $(basename "$exp"))")
-        return 1
-    fi
-    PASS_COUNT=$((PASS_COUNT + 1))
-    return 1
-}
-
 # ── AN OUTPUT ORACLE BEATS A TEXT GREP, AND IT IS BACKEND-NEUTRAL ────────────────────────
 # A `.grep` sidecar asserts that the emitted C CONTAINS some text, which pins an IMPLEMENTATION.
 # The project now has two backends, and they are two implementations of one semantics: every
@@ -257,45 +231,41 @@ run_output_oracle() {
 # strictly stronger than a grep, because it catches a wrong ANSWER where a grep only catches a
 # renamed temporary. It is the same mechanism `run_trust.sh` already uses for its oracles.
 #
-# A test may carry either. `.expected` is preferred when present; `.grep` remains for the few
-# assertions that are genuinely about the emitted INTERFACE rather than the behaviour.
-run_emit_snapshot() {
+# ★ BOTH ARE CHECKED, AFTER THE TEST'S OWN VERDICT (I.175). This runner used to look for a
+# `.expected` only beside a `.grep`, and the commit that replaced 22 greps with oracles deleted the
+# greps: from then on 22 oracles ran nowhere, among them payload_marker_try's `line=99`, which HEAD
+# printed as `line=0` for days (I.120). Where both existed, the oracle ended the test and the grep
+# was never read. Now every program gets the verdict and gcc check of run_test, then its oracle,
+# then its grep, all on the one C that run_test emitted. tests/trust/ is the exception for the
+# oracle: run_trust.sh executes those programs under ASan and UBSan.
+run_sidecars() {
     local file="$1"
-    local grepfile="${file%.ln}.grep"
-    local expfile="${file%.ln}.expected"
-    if [[ -f "$expfile" ]]; then
-        run_output_oracle "$file" "$expfile" || return 0
-        [[ -f "$grepfile" ]] || return 0
-    fi
-    if [[ ! -f "$grepfile" ]]; then
-        return 0
-    fi
-    local out_c="$RUN_DIR/emit_$(printf '%s' "$file" | md5sum | cut -c1-16).c"
-    # ★ The file's own LAINFLAGS apply HERE too. This path ran the compiler bare, so a test
-    # pinned to an engine was snapshotted under a different one — and a test pinned because the
-    # DEFAULT cannot compile it failed as "compilation failed" with nothing saying why.
-    "$LAIN" $(lain_flags_for "$file") "$file" -o "$out_c" > /dev/null 2>&1
-    local rc=$?
-    if [[ $rc -ne 0 ]]; then
-        FAIL_COUNT=$((FAIL_COUNT + 1))
-        FAILED_TESTS+=("$file (emit snapshot: compilation failed)")
-        rm -f "$out_c"
-        return
-    fi
-    local missing=""
-    while IFS= read -r pattern; do
-        # skip blank and comment lines
-        [[ -z "$pattern" || "$pattern" =~ ^// ]] && continue
-        if ! grep -qF -- "$pattern" "$out_c"; then
-            missing="$missing [$pattern]"
+    local exp="${file%.ln}.expected" grepfile="${file%.ln}.grep"
+    local out_c="$RUN_DIR/$(printf '%s' "$file" | md5sum | cut -c1-16).c"
+    local why=""
+    if [[ -f "$exp" && "$file" != tests/trust/* ]]; then
+        local bin="${out_c%.c}.bin"
+        if ! gcc -o "$bin" "$out_c" -Dlibc_printf=printf -Dlibc_puts=puts -w 2>/dev/null; then
+            why="oracle: emitted C rejected by gcc"
+        else
+            # a program that does not finish in 30 s fails its oracle instead of stalling the suite
+            local got; got="$(timeout 30 "$bin" 2>/dev/null)"
+            diff -q <(printf '%s\n' "$got") "$exp" >/dev/null 2>&1 \
+                || why="oracle: output differs from $(basename "$exp")"
         fi
-    done < "$grepfile"
-    rm -f "$out_c"
-    if [[ -n "$missing" ]]; then
-        FAIL_COUNT=$((FAIL_COUNT + 1))
-        FAILED_TESTS+=("$file (emit snapshot missing:$missing)")
-    else
-        PASS_COUNT=$((PASS_COUNT + 1))
+        rm -f "$bin"
+    fi
+    if [[ -z "$why" && -f "$grepfile" ]]; then
+        local missing="" pattern
+        while IFS= read -r pattern; do
+            # skip blank and comment lines
+            [[ -z "$pattern" || "$pattern" =~ ^// ]] && continue
+            grep -qF -- "$pattern" "$out_c" || missing="$missing [$pattern]"
+        done < "$grepfile"
+        [[ -n "$missing" ]] && why="emit snapshot missing:$missing"
+    fi
+    if [[ -n "$why" ]]; then
+        PASS_COUNT=0; FAIL_COUNT=1; FAILED_TESTS=("$file ($why)")
     fi
 }
 
@@ -309,11 +279,9 @@ one_test() {
     if [[ "$file" == *.sh ]]; then
         if bash "$file" >/dev/null 2>&1; then PASS_COUNT=1
         else FAIL_COUNT=1; FAILED_TESTS+=("$file (shell helper exited non-zero)"); fi
-    elif [[ -f "${file%.ln}.grep" ]]; then
-        # any test with a .grep sidecar is an emit snapshot, wherever it lives
-        run_emit_snapshot "$file"
     else
         run_test "$file"
+        (( FAIL_COUNT == 0 )) && [[ "$file" != *_fail.ln ]] && run_sidecars "$file"
         # its C is in the shared tmpfs; one run of the suite would otherwise hold all of it
         rm -f "$RUN_DIR/$(printf '%s' "$file" | md5sum | cut -c1-16).c"
     fi
@@ -321,7 +289,7 @@ one_test() {
     for (( i = 0; i < PASS_COUNT; i++ )); do printf '%06d\tP\n' "$idx"; done
     for t in "${FAILED_TESTS[@]}"; do printf '%06d\tF\t%s\n' "$idx" "$t"; done
 }
-export -f one_test run_test run_emit_snapshot run_output_oracle gcc_check_ok lain_flags_for
+export -f one_test run_test run_sidecars gcc_check_ok lain_flags_for
 export LAIN LAIN_GCC_CHECK GCC_BIN RUN_DIR GCC_CACHE GCC_FLAGS GCC_FLAGS_KEY
 # The default width is 4: on a 6-core machine shared with other sessions, 4 jobs cut the wall time
 # about 3x and cost about 20% more CPU than one (the cores slow each other); more jobs buy a few
@@ -342,6 +310,14 @@ PASS_COUNT=$(awk -F'\t' '$2 == "P"' "$RESULTS.sorted" | wc -l)
 FAIL_COUNT=$(awk -F'\t' '$2 == "F"' "$RESULTS.sorted" | wc -l)
 FAILED_TESTS=()
 while IFS= read -r t; do FAILED_TESTS+=("$t"); done < <(awk -F'\t' '$2 == "F" { sub(/^[^\t]*\tF\t/, ""); print }' "$RESULTS.sorted")
+# A sidecar without its program is a test that runs nothing (I.175: payload_marker_try's oracle
+# stayed in tests/errors when the program moved to tests/trust). Checked on a whole-suite run.
+if (( ${#ARGS[@]} == 0 )); then
+    while IFS= read -r t; do
+        [[ -f "${t%.*}.ln" ]] && continue
+        FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("$t (a sidecar without its program: nothing runs it)")
+    done < <(find tests \( -name '*.expected' -o -name '*.grep' \) -type f | sort)
+fi
 
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo ""
