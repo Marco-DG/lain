@@ -172,9 +172,10 @@ constant-declaration  ::= identifier [ type ] "=" expression     % compile-time 
 module-assertion      ::= "assert" expression             % checked at compile time
 
 attribute             ::= "[" attribute-name [ "(" [ argument-list ] ")" ] "]" { end }
-attribute-name        ::= "private" | "packed" | "ordered" | "fast_math"
+attribute-name        ::= "private" | "packed" | "ordered"
                         | "cold" | "hot" | "allocator" | "noreturn"
-                          % identifiers; any other name is E103
+                          % identifiers; any other name is E103 (`fast_math`
+                          % included: floating point is never contracted)
 \end{grammar}
 
 % =========================================================================

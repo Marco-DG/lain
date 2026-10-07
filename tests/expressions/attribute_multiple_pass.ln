@@ -1,6 +1,6 @@
 // Sprint 8 — Q-017: multiple stacked attributes parse correctly
 
-[fast_math]
+[cold]
 [private]
 func internal_dot(a i32, b i32) i32 {
     return a *% b

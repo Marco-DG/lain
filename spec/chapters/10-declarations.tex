@@ -22,7 +22,7 @@ comma-separated list of expressions.  Several attributes on one declaration may 
 a line or take one each.
 
 \begin{laincode}
-[fast_math]
+[hot]
 func dot(a f64[], b f64[a.len]) f64 {
     var s f64 = 0.0
     for i in 0..a.len { s = s + a[i] * b[i] }
@@ -32,9 +32,9 @@ func dot(a f64[], b f64[a.len]) f64 {
 [private]
 func internal_helper() int { return 0 }
 
-[fast_math]
+[cold]
 [private]
-func hot_path() f64 { return 1.0 }
+func rarely_called() f64 { return 1.0 }
 \end{laincode}
 
 \pnum
@@ -52,7 +52,6 @@ Recognized attribute names (closed set, version 1.1):
 \endhead
 \bottomrule
 \endlastfoot
-\tok{[fast\_math]} & any function & Enable FMA fusion (P4 opt-out, local). \\
 \tok{[private]}    & any declaration         & Module-private visibility. \\
 \tok{[packed]}     & a struct                & Lay the fields out bit-exactly inside one integer (\S\,\ref{sec:types.packed-future}). \\
 \tok{[ordered]}    & a struct, or a sum whose variants carry payloads & Store the fields, or each payload's fields, in declaration order (\S\,\ref{sec:types.struct}). \\

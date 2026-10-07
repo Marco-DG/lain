@@ -310,13 +310,10 @@ out=
 at=nonnull 2
 at=pure 2
 at=vector_size 2
-### tests/expressions/attribute_fast_math_pass.ln
-rc=12
-out=
-at=const 2
 ### tests/expressions/attribute_multiple_pass.ln
 rc=6
 out=
+at=cold 2
 at=const 2
 ### tests/expressions/bitwise_pass.ln
 rc=0

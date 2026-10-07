@@ -94,7 +94,6 @@ static void parse_in_refinement(Arena *arena, Parser *parser, Expr *subject, Exp
 // position (`@os`, `@load`, `@splat`) — because a sigil that means one thing before a
 // declaration and another inside an expression is two mechanisms sharing a character.
 static bool is_known_attribute(const char *name, isize len) {
-    if (len == 9 && strncmp(name, "fast_math", 9) == 0) return true;
     if (len == 7 && strncmp(name, "private",   7) == 0) return true;
     if (len == 6 && strncmp(name, "packed",    6) == 0) return true;
     if (len == 4 && strncmp(name, "cold",      4) == 0) return true;
@@ -131,11 +130,22 @@ static Attr *parse_attributes(Arena *arena, Parser *parser, bool *out_is_private
         }
 
         Id *name = id(arena, parser->token.length, parser->token.start);
+        long name_line = parser->line, name_col = parser->column;
         parser_advance(); // consume identifier
+
+        // ★ `[fast_math]` IS REFUSED (I.133). It was accepted and did nothing: no pragma, no flag.
+        // Floating point is never contracted now (ir_emit_module_c), and a function that opts out
+        // can be designed when something needs it.
+        if (name->length == 9 && strncmp(name->name, "fast_math", 9) == 0) {
+            fprintf(stderr, "[E103] Error Ln %li, Col %li: `[fast_math]` is not supported: floating "
+                    "point is never contracted (spec 12), and no function opts out of it. Remove the "
+                    "attribute.\n", name_line, name_col);
+            exit(1);
+        }
 
         // Validate against whitelist
         if (!is_known_attribute(name->name, name->length)) {
-            fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: private, packed, ordered, fast_math, cold, hot, allocator, noreturn)\n",
+            fprintf(stderr, "[E103] Error Ln %li, Col %li: unknown attribute '%.*s' (known: private, packed, ordered, cold, hot, allocator, noreturn)\n",
                     parser->line, parser->column, (int)name->length, name->name);
             exit(1);
         }

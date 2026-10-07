@@ -1,0 +1,13 @@
+// EXPECT: [E103]
+// EXPECT-TEXT: Error Ln 6, Col 2: `[fast_math]` is not supported: floating point is never contracted (spec 12), and no function opts out of it. Remove the attribute.
+// I.133: `[fast_math]` was accepted and did nothing (no pragma, no flag). Floating point is never
+// contracted, and no function opts out of it; the attribute is refused until one needs to.
+
+[fast_math]
+func dot(a f64, b f64) f64 {
+    return a * b
+}
+
+func main() i32 {
+    return 0
+}

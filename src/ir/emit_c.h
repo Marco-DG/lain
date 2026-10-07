@@ -1679,6 +1679,24 @@ static void ir_emit_sa_expr(IrSAExpr *x, FILE *o) {
 
 void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
     fputs("#include <stdint.h>\n#include <stddef.h>\n\n", o);
+    // ★ FLOATING POINT IS NOT CONTRACTED (spec 12, I.133). `a * b + c` gave a different double
+    // under `gcc -O2 -mfma` (GNU C's default is -ffp-contract=fast, so the multiply and the add
+    // fuse, across statements too) than under `gcc -O2`, `-std=c99` or `-O0`: one program, two
+    // answers by build flags, where the spec promised the same bits. Nothing emitted pinned it.
+    // GCC ignores `#pragma STDC FP_CONTRACT` and honours its own optimize pragma; clang honours
+    // the standard one. Only a module that computes in floating point gets the lines, so every
+    // other module's C is unchanged.
+    { bool uses_float = false;
+      for (IrFunc *f=funcs; f && !uses_float; f=f->next)
+        for (IrBlock *b=f->blocks; b && !uses_float; b=b->next)
+          for (IrInstr *i=b->instrs; i; i=i->next)
+            if (i->result && i->result->type &&
+                (i->result->type->kind == IRT_FLOAT ||
+                 (i->result->type->kind == IRT_VECTOR && i->result->type->elem &&
+                  i->result->type->elem->kind == IRT_FLOAT))) { uses_float = true; break; }
+      if (uses_float)
+          fputs("#if defined(__clang__)\n#pragma STDC FP_CONTRACT OFF\n"
+                "#elif defined(__GNUC__)\n#pragma GCC optimize (\"fp-contract=off\")\n#endif\n\n", o); }
     ir_emit_type_decls(funcs, o, a);
     // DECIDE-O: after every type is complete, so `sizeof` measures the real layout. The message
     // carries the diagnostic code Lain would have printed had it known the number.

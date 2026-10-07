@@ -376,11 +376,6 @@ A function declaration may be prefixed with one or more attributes
 functions in version~1.0 are:
 
 \begin{itemize}
-  \item \tok{[fast\_math]} --- enable fast floating-point optimizations
-        (FMA fusion, contraction) for the body of this function.  This
-        is an opt-out from the determinism guarantee (P4) and applies
-        only locally; functions without \tok{[fast\_math]} remain
-        bit-deterministic within their target platform.
   \item \tok{[private]} --- module-private visibility
         (\S\,\ref{sec:mod.visibility}).
   \item \tok{[cold]}, \tok{[hot]} --- a hint to the C compiler that the function runs
@@ -390,11 +385,29 @@ functions in version~1.0 are:
 \end{itemize}
 Table~\ref{tab:attributes} lists every attribute and where it applies.
 
+\pnum
+Floating-point operations are never contracted.  In \lain{a * b + c} the product is rounded
+before it is added, as two IEEE~754 operations, in every function, so a result does not depend on
+whether the target has a fused multiply-add.
+
+\begin{constraint}
+  No function opts out of this.  The attribute \tok{[fast\_math]} is
+  \illformed{}~(\diagcode{E103}).
+\end{constraint}
+
+\begin{laincode}
+[fast_math]                     // ERROR [E103]: floating point is never contracted
+func square(a f64) f64 {
+    return a * a
+}
+\end{laincode}
+
 \begin{note}
-  The reference implementation translates \tok{[fast\_math]} on a
-  function~$f$ to a pair of pragmas surrounding the body of $f$ in the
-  emitted C source, enabling \texttt{fp-contract=fast} for $f$ only.
-  The default (i.e., absence of \tok{[fast\_math]}) emits
-  \texttt{-ffp-contract=off} flags, providing deterministic floating
-  point within a single target platform and C compiler.
+  The reference implementation emits, after the includes of a module that computes in floating
+  point, \texttt{\#pragma GCC optimize ("fp-contract=off")} for GCC and
+  \texttt{\#pragma STDC FP\_CONTRACT OFF} for clang; a module with no floating point gets
+  neither.  Without them, GNU C's default \texttt{-ffp-contract=fast} fuses a multiply and an add
+  across statements under \texttt{-mfma} or \texttt{-march=native}.  One case is outside the
+  guarantee: clang given an explicit \texttt{-ffp-contract=fast} disregards the pragma, by its
+  design.
 \end{note}
