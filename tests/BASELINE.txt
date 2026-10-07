@@ -1674,6 +1674,10 @@ out=inf -inf 1 0.250000 2.750000
 at=const 6
 at=vector_size 1
 ty=Slice_u8 scalar
+### tests/trust/float_exponent_without_fraction_pass.ln
+rc=0
+out=1000000000.000 0.0050 200.0 1000000.0 485
+ty=Slice_u8 scalar
 ### tests/trust/float_literal_forms_pass.ln
 rc=0
 out=

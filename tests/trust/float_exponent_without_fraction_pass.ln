@@ -1,0 +1,15 @@
+// I.156: a float literal with an exponent and no fraction, `1e9`, as in C and Rust. Only `2.5e3` was
+// scanned, so `1e9` lexed as the integer 1 and an identifier `e9`, and the parser reported a missing
+// ')' or ';' further on. A digit must follow the e and its sign: `2e` is still 2 then `e`. A hex
+// literal is untouched: 0x1e5 is 485.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func main() i32 effects io {
+    a = 1e9
+    b f64 = 5E-3
+    c f32 = 2e+2
+    d = 1_000e3
+    e = 0x1e5
+    libc_printf("%.3f %.4f %.1f %.1f %d\n", a, b, c as f64, d, e)
+    return 0
+}

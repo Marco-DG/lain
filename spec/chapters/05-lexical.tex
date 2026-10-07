@@ -274,12 +274,25 @@ var g = 5000000000  // i64: too large for an i32
 
 \pnum
 A floating-point literal consists of a decimal integer part, a decimal
-point, and a fractional part.  An optional exponent part
-\texttt{e}\textit{N} or \texttt{E}\textit{N} may follow (grammar:
-\gramref{float-literal}).
+point, and a fractional part, optionally followed by an exponent part
+\texttt{e}\textit{N} or \texttt{E}\textit{N}; or of a decimal integer part followed by an
+exponent part, with no point (\lain{1e9}, \lain{5E-3}, \lain{2e+2}).  The exponent's sign is
+optional and it has at least one digit, so \lain{2e} is the integer \lain{2} followed by the
+identifier \lain{e} (grammar: \gramref{float-literal}).
 
 \pnum
 The default type of a floating-point literal is \lain{f64}.
+
+\begin{laincode}
+// VERIFY: exit 0
+func main() i32 {
+    big f64 = 1e9
+    small f64 = 5E-3
+    if big != 1000000000.0 { return 1 }
+    if small != 0.005 { return 2 }
+    return 0
+}
+\end{laincode}
 
 \begin{example}
 \begin{laincode}

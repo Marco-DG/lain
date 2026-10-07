@@ -176,6 +176,22 @@ Token lexer_next(Lexer* lexer) {
                         }
                         RETURN_TOKEN(TOKEN_FLOAT_LITERAL);
                     }
+                    case 'e': case 'E': {
+                        // ★ AN EXPONENT WITHOUT A FRACTION (I.156): `1e9`, `5E-3`, a float as in C and
+                        // Rust. Only `2.5e3` was scanned, so `1e9` lexed as `1` and an identifier
+                        // `e9`, and the parser reported "Expected ')'" somewhere after it. Taken
+                        // only when a digit follows the e and its optional sign: `2e` is still `2`
+                        // then `e`. (A hex literal returned above, so `0x1e5` never gets here.)
+                        const char *q = lexer->current;
+                        if (*q == '+' || *q == '-') q++;
+                        if (*q >= '0' && *q <= '9') {
+                            while ((*q >= '0' && *q <= '9') || *q == '_') q++;
+                            lexer->current = (char *)q;
+                            RETURN_TOKEN(TOKEN_FLOAT_LITERAL);
+                        }
+                        lexer->current--;
+                        RETURN_TOKEN(TOKEN_NUMBER);
+                    }
                     default:            lexer->current--;
                                         RETURN_TOKEN(TOKEN_NUMBER);
                 }
