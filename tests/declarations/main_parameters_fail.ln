@@ -1,0 +1,8 @@
+// EXPECT: [E100]
+// EXPECT-TEXT: Error Ln 6, Col 6: `main` takes no parameters, or exactly C's two: `func main(argc i32, argv **u8) i32`.
+// I.153: the entry point takes no parameters, or C's two (tests/trust/main_argc_argv_pass.ln). Any
+// other list was accepted and emitted as `int main(void)`, whatever the parameters were: here the
+// C read an undeclared `v0`, which gcc refuses.
+func main(x f64) i32 {
+    return x as| i32
+}

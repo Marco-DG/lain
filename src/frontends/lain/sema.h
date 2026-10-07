@@ -3962,6 +3962,37 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         if (!d || decl_is_generic_template(d)) continue;
         if (d->kind == DECL_FUNCTION) {
             mono_resolve_signature(d);
+            // ★ THE ENTRY POINT TAKES NOTHING, OR C's TWO (I.153). Its parameters were never
+            // looked at: `func main(argc i32, argv **u8) i32` was accepted and emitted
+            // `int main(void) { return v0; }`, which gcc refuses, and `func main(x f64) i32` was
+            // accepted the same way. A Lain program could not read its command line.
+            Id *nm = d->as.function_decl.name;
+            if (nm && nm->length == 4 && memcmp(nm->name, "main", 4) == 0) {
+                int np = 0; bool ok = true;
+                for (DeclList *pa = d->as.function_decl.params; pa; pa = pa->next, np++) {
+                    Type *pt = (pa->decl && pa->decl->kind == DECL_VARIABLE) ? resolve_type_alias(pa->decl->as.variable_decl.type) : NULL;
+                    int bits = 0; bool sgn = false;
+                    if (np == 0) ok = ok && pt && ((parse_iN_uN(pt, &bits, &sgn) && bits == 32 && sgn) ||
+                                                   (pt->kind == TYPE_SIMPLE && pt->base_type && pt->base_type->length == 3 &&
+                                                    memcmp(pt->base_type->name, "int", 3) == 0));
+                    else if (np == 1) {
+                        Type *q = pt && pt->kind == TYPE_POINTER ? pt->element_type : NULL;
+                        Type *c = q && q->kind == TYPE_POINTER ? q->element_type : NULL;
+                        ok = ok && c && parse_iN_uN(c, &bits, &sgn) && bits == 8 && !sgn;
+                    }
+                    // by value: a `var` or `mov` parameter is a reference or a linear value, and C
+                    // passes main neither
+                    if (pa->decl && pa->decl->kind == DECL_VARIABLE &&
+                        (pa->decl->as.variable_decl.is_mutable ||
+                         (pa->decl->as.variable_decl.type && pa->decl->as.variable_decl.type->mode != MODE_SHARED))) ok = false;
+                }
+                if (np != 0 && (np != 2 || !ok)) {
+                    fprintf(stderr, "[E100] Error Ln %li, Col %li: `main` takes no parameters, or exactly C's two: "
+                            "`func main(argc i32, argv **u8) i32`.\n", (long)d->line, (long)d->col);
+                    diagnostic_show_line(d->line, d->col);
+                    exit(1);
+                }
+            }
         } else if (d->kind == DECL_STRUCT) {   // lower `T | markers` / Vec(i32) field types
             for (DeclList *f = d->as.struct_decl.fields; f; f = f->next)
                 if (f->decl && f->decl->kind == DECL_VARIABLE)

@@ -3023,6 +3023,28 @@ Ownership annotations (`mov`) can be applied to extern parameters and return typ
 `malloc` returns `mov *void` (the caller owns the allocation).
 `free` takes `mov *void` (it consumes the pointer).
 
+**The command line.** `main` takes no parameters, or exactly C's two: `func main(argc i32, argv
+**u8) i32` (`argc` may be spelled `int`). Any other parameter list is `[E100]`. `argv` is a raw
+pointer, so reading it is done inside `unsafe`:
+
+```lain
+// VERIFY: exit 1
+func main(argc i32, argv **u8) i32 {
+    if argc >= 2 {
+        var c u8 = 0
+        unsafe {
+            first = *(argv + 1)       // argv[1], a NUL-terminated C string
+            c = *first                // its first byte
+        }
+        return c as i32
+    }
+    return 1                          // run with no arguments, argc is 1
+}
+```
+
+Write the binding `first = *(argv + 1)` without a type: `first *u8 = *(argv + 1)` reads as a
+multiplication.
+
 ### 10.3 Extern Types (Opaque)
 
 See §2.9. Opaque types allow wrapping C handles safely:

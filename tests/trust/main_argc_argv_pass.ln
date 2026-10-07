@@ -1,0 +1,19 @@
+// I.153: `main` may take C's two parameters, `argc i32` and `argv **u8`, and is then C's
+// `int main(int, char **)`. It was accepted and emitted `int main(void) { return v0; }`, which gcc
+// refuses, so a Lain program could not read its command line. Reading argv is a raw-pointer
+// read, inside `unsafe`. Run with no arguments, argc is 1 (the interpreter models the same) and
+// argv[1] is null.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func main(argc i32, argv **u8) i32 effects io {
+    var shown i32 = 0
+    if argc >= 2 {
+        unsafe {
+            first = *(argv + 1)
+            libc_printf("first=%s\n", first)
+        }
+        shown = 1
+    }
+    libc_printf("args=%d shown=%d\n", argc, shown)
+    return 0
+}

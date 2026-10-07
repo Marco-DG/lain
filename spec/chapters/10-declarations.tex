@@ -279,6 +279,36 @@ The entry point of every Lain program shall be declared as:
 func main() int { return 0 }     // with `effects io` if it performs any
 \end{laincode}
 
+\noindent or, to read its command line, with C's two parameters, \lain{argc} (\lain{i32}, or
+\lain{int}) and \lain{argv} (\lain{**u8}).  Reading \lain{argv} reads through a raw pointer, so
+it is done inside \lain{unsafe} (\S\,\ref{sec:18-unsafe}):
+
+\begin{laincode}
+// VERIFY: exit 1
+func main(argc i32, argv **u8) i32 {
+    if argc >= 2 {
+        var c u8 = 0
+        unsafe {
+            first = *(argv + 1)       // argv[1], a NUL-terminated C string
+            c = *first                // its first byte
+        }
+        return c as i32
+    }
+    return 1                          // run with no arguments, argc is 1
+}
+\end{laincode}
+
+\begin{constraint}
+  \lain{main} takes no parameters, or exactly those two, in that order, neither \lain{var}
+  nor \lain{mov}.  Any other parameter list is \illformed{}~(\diagcode{E100}).
+\end{constraint}
+
+\begin{laincode}
+func main(n i32) i32 {      // ERROR [E100]: not C's two parameters
+    return 0
+}
+\end{laincode}
+
 \begin{constraint}
   A complete \emph{program} shall define exactly one \lain{main} returning \lain{int} as
   its entry point.  An individual module (translation unit) compiled on its own

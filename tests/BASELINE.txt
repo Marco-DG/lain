@@ -1804,6 +1804,10 @@ out=
 at=const 8
 at=nonnull 2
 at=pure 2
+### tests/trust/main_argc_argv_pass.ln
+rc=0
+out=args=1 shown=0
+ty=Slice_u8 scalar
 ### tests/trust/mask_symbolic_len_pass.ln
 rc=0
 out=1340

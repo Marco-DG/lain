@@ -1135,7 +1135,21 @@ static int ir_interpret_module(IrFunc *mod, const char *file) {
     if (!m) { fprintf(stderr, "lain --interpret: no `main`\n"); return 98; }
     if (setjmp(s.stop)) { fflush(stdout); ist = NULL; return s.status; }
     IVal ret; memset(&ret, 0, sizeof ret);
-    ii_call(m, NULL, 0, &ret, NULL);
+    // `main(argc i32, argv **u8)` (I.153) runs as a program started with no arguments: argc 1,
+    // argv[0] the source's path, argv[1] null.
+    IVal args[2]; memset(args, 0, sizeof args); int nargs = 0;
+    if (m->params && m->params->next) {
+        const char *nm = file ? file : "lain"; int len = (int)strlen(nm);
+        IObj *s0 = ii_new_obj(NULL, len + 1, "argv[0]"), *vec = ii_new_obj(NULL, 2, "argv");
+        for (int k = 0; k <= len; k++) iv_int(&s0->root.e[k], k < len ? (unsigned char)nm[k] : 0);
+        s0->ro = true;
+        vec->root.e[0].k = IV_PTR; vec->root.e[0].p = ip_of(s0, 0);
+        vec->root.e[1].k = IV_PTR; memset(&vec->root.e[1].p, 0, sizeof vec->root.e[1].p);
+        iv_int(&args[0], 1);
+        args[1].k = IV_PTR; args[1].p = ip_of(vec, 0);
+        nargs = 2;
+    }
+    ii_call(m, nargs ? args : NULL, nargs, &ret, NULL);
     fflush(stdout);
     int status = 0;
     if (ret.k == IV_INT) status = (int)(ret.i & 0xff);

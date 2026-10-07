@@ -894,7 +894,10 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
     ir_pk_build(f, a);
     bool is_main = f->name->length==4 && strncmp(f->name->name,"main",4)==0;
     // signature
-    if (is_main) fputs("int main(void)", o);
+    // `main(argc i32, argv **u8)` is C's `int main(int, char **)` (I.153): the platform's types,
+    // converted into the IR's two parameter values at the top of the body.
+    if (is_main && f->params && f->params->next) fputs("int main(int __lain_argc, char **__lain_argv)", o);
+    else if (is_main) fputs("int main(void)", o);
     else {
         IrCAnnot an = ir_c_annot(f, mod);
         if (an.const_attr)     fputs("__attribute__((const)) ", o);
@@ -928,6 +931,11 @@ static void ir_emit_func_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
         fputc(')', o);
     }
     fputs(" {\n", o);
+    if (is_main && f->params && f->params->next) {
+        IrValue *pc = f->params->value, *pv = f->params->next->value;
+        fputs("  ", o); ir_ctype(pc->type, o); fprintf(o, " v%d = (", pc->id); ir_ctype(pc->type, o); fputs(")__lain_argc;\n", o);
+        fputs("  ", o); ir_ctype(pv->type, o); fprintf(o, " v%d = (", pv->id); ir_ctype(pv->type, o); fputs(")__lain_argv;\n", o);
+    }
     // declare all non-param values at the top, plus a backing slot for each alloca
     int nval = f->next_value_id > 0 ? f->next_value_id : 1;   // see ir_emit_type_decls
     IrValTab vt = { arena_push_many_aligned(a, IrValue*, nval), f->next_value_id };
