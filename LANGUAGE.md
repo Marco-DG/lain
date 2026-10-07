@@ -3885,9 +3885,11 @@ func bounded(a i32, b i32) i32 {
 > [!WARNING]
 > An **unbounded accumulator is a real overflow** and is rejected: `while i < n { s = s + i }`
 > can exceed `s`'s type for a large enough `n`. A total's bound is `start + trips × step`, a
-> product, so bound one of the three factors: the trip count (a length with a refinement), the
-> **element**, or the total (a wider accumulator, widening the addend too) — or use `+%` if
-> wrapping is what you mean.
+> product, so bound one of the three factors: the trip count (a length with a refinement, or a
+> counter that falls by a fixed step: `while d > 365 { d = d - 365 }` runs at most `d / 365`
+> times), the **element**, or the total (a wider accumulator, widening the addend too) — or use
+> `+%` if wrapping is what you mean. When the loop itself is not shown to end (`[E011]`), a total
+> it leaves unbounded is reported as a note under that error, not as an `[E086]` of its own.
 >
 
 Bounding the element needs no special syntax, because a refinement **alias is an element type**:

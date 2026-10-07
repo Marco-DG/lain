@@ -1,0 +1,29 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: note: the running total at Ln 19, Col 17 has no bound only because this loop has none
+// I.159: Zune 30's ConvertDays (31 Dec 2008), in the driver's types: on day 366 of a leap year
+// neither branch moves `days`, and the loop never ends. That is the E011 at the `while`. The two
+// `year = year + 1` have no bound only because the loop has no trip count, and they were reported
+// FIRST, as two E086, though in the real hang `year` never moves. They are notes under the E011
+// now. (The fix, `else { break }`, compiles: tests/trust/falling_measure_trips_pass.ln.)
+func is_leap(y i32 >= 0) bool {
+    return (y % 4 == 0 and y % 100 != 0) or y % 400 == 0
+}
+
+func year_of(days0 u32) i32 {
+    var days u32 = days0
+    var year i32 = 1980
+    while days > 365 {
+        if is_leap(year) {
+            if days > 366 {
+                days = days - 366
+                year = year + 1
+            }
+        } else {
+            days = days - 365
+            year = year + 1
+        }
+    }
+    return year
+}
+
+func main() i32 { return 0 }

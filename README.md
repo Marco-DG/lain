@@ -1051,7 +1051,8 @@ ordinary work rather than a redesign.
   Until 2026-09-17 that compiled, and `up8(200)` printed **188** instead of 19900. A total's
   bound is `start + trips × step`, which is a PRODUCT — not something a relational domain can
   hold — so the engine asks you to bound one of the three: the count (a length with a
-  refinement, `f(a i32[n], n usize < 4096)`), the element (a narrower type, or a refinement on
+  refinement, `f(a i32[n], n usize < 4096)`, or a counter that falls by a fixed step, which
+  runs at most its start divided by the step), the element (a narrower type, or a refinement on
   it), or the total (a wider accumulator, widening the addend too). Or say which arithmetic you
   meant: `+%` wraps, `+|` saturates. The diagnostic names all four.
 

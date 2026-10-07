@@ -118,9 +118,21 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     borrow_free(B);
 
     if (!numeric) return n;   // NOT judged: the numeric obligations were never reported
+    // ★ A CONSEQUENCE IS NOT A SECOND ERROR (I.159). A running total in a loop that may not end has
+    // no bound because the loop has no trip count, so Zune 30's ConvertDays, which hangs on the
+    // last day of a leap year, was reported as two E086 on `year = year + 1` and then the E011
+    // at the `while`: the reader met the consequence first, and in the real hang `year` never
+    // moves. Such an E086 is printed as a note under its loop's E011 or E082.
+    char *noterm = calloc((size_t)(V->f->next_block_id > 0 ? V->f->next_block_id : 1) + 1, 1);
+    for (int i = 0; noterm && i < V->nchecks; i++) {
+        VraCheck *c = &V->checks[i];
+        if (c->kind == VRA_TERMINATION && !c->ok && !c->recursion && c->loop1 > 0) noterm[c->loop1] = 1;
+    }
     for (int i = 0; i < V->nchecks; i++) {
         VraCheck *c = &V->checks[i];
         if (c->ok) continue;                       // proved check-free: nothing to say
+        if (c->kind == VRA_OVERFLOW && c->accum && c->accum_T < 0 && c->loop1 > 0 && noterm && noterm[c->loop1])
+            continue;                              // reported under its loop's E011 below
         switch (c->kind) {
             case VRA_BOUNDS:
                 ir_diag(file, c->line, c->col, "E085",
@@ -284,10 +296,25 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                               ? "the `decreasing` measure is not provably well-founded here"
                               : "this loop is not provably terminating, and no measure could "
                                 "be inferred");
+                    // in source order: the next note is the least position after the last one
+                    for (int64_t pl = -1, pc = -1; c->loop1 > 0; ) {
+                        VraCheck *nx = NULL;
+                        for (int j = 0; j < V->nchecks; j++) {
+                            VraCheck *a = &V->checks[j];
+                            if (!(a->kind == VRA_OVERFLOW && !a->ok && a->accum && a->accum_T < 0 && a->loop1 == c->loop1)) continue;
+                            if (a->line < pl || (a->line == pl && a->col <= pc)) continue;
+                            if (!nx || a->line < nx->line || (a->line == nx->line && a->col < nx->col)) nx = a;
+                        }
+                        if (!nx) break;
+                        fprintf(stderr, "       note: the running total at Ln %lld, Col %lld has no bound only "
+                                "because this loop has none\n", (long long)nx->line, (long long)nx->col);
+                        pl = nx->line; pc = nx->col;
+                    }
                 }
                 n++; break;
         }
     }
+    free(noterm);
     vra_free(V);
     f->judged = true;
     return n;

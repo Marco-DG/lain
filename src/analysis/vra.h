@@ -119,6 +119,10 @@ typedef struct {
     // quality of the refusal IS the user experience.
     bool     accum;                       // the numbers below are meaningful
     int64_t  accum_T, accum_dlo, accum_dhi, accum_s0lo, accum_s0hi;
+    // The loop an accumulator's bound or a loop's termination is about: its header's block id + 1
+    // (0: none). A running total with no bound only because its loop has no trip count is a
+    // consequence of that loop's E011, and is reported under it (I.159).
+    int      loop1;
     // A VRA_TERMINATION check about a RECURSION rather than a loop. The two are one
     // obligation — "this does not run forever" — proved by two different arguments (a loop
     // measure, a well-founded ranking over the self-call's arguments), and a user needs to be
@@ -4869,6 +4873,7 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
         c->accum = true; c->accum_dlo = dlo; c->accum_dhi = dhi;
         c->accum_s0lo = s0lo; c->accum_s0hi = s0hi;
         c->accum_T = haveT ? T : -1;                 // -1 = the trip count is not bounded
+        c->loop1 = H->id + 1;
     }
     if (!haveT) return false;
     int64_t alo, ahi;
@@ -5772,7 +5777,7 @@ static Vra *vra_analyze(IrFunc *f) {
         // sharing a keyword with the ones that genuinely hang. The exemption is now stated by
         // the function that wants it rather than inherited from how it prints.
         if (f->may_diverge && !b->has_measure) continue;
-        VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION;
+        VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_TERMINATION; c.loop1 = b->id + 1;
         c.ok = V->checking ? vra_check_termination(V, b) : vra_loop_terminates(V,b);
         if (V->certifying) vra_cert_measure(V, CERT_M_LOOP, b->id, c.ok);
         c.had_measure = b->has_measure;

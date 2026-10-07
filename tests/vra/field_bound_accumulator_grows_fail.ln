@@ -1,5 +1,8 @@
-// EXPECT: [E086]
+// EXPECT: [E011]
+// EXPECT-TEXT: note: the running total at Ln 17, Col 9 has no bound only because this loop has none
 // ...and a bound a call can grow gives no trip count, so the u8 accumulator is not bounded by one.
+// The loop is not shown to end either (E011), and since I.159 the unbounded total is reported as a
+// note under that error rather than as an E086 of its own.
 type B {
     len usize
     cap usize
