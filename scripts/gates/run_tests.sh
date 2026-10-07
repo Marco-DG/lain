@@ -6,11 +6,24 @@
 #   other .ln  → treated as passing by default
 # If a _fail.ln file contains "// EXPECT: [EXXX]" in its contents,
 # stderr must contain that code.
+#
+#   bash scripts/gates/run_tests.sh                     the whole suite
+#   bash scripts/gates/run_tests.sh tests/a.ln ...      only these tests (.ln or .sh), in this order
 
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LAIN="$ROOT/lain"
+
+# A test named on the command line is resolved from the caller's directory, then run by its path
+# from the tree root like every other test (see below).
+ARGS=()
+for a in "$@"; do
+    [[ -f "$a" ]] || { echo "run_tests: no such test file: $a" >&2; exit 2; }
+    rel="$(realpath --relative-to="$ROOT" "$a")"
+    [[ "$rel" != ../* ]] || { echo "run_tests: not inside the tree: $a" >&2; exit 2; }
+    ARGS+=("$rel")
+done
 
 # Test files are compiled by RELATIVE path from the tree root. Given an absolute path, lain changes
 # to the file's directory, so `import std.io` looks for std/io.ln there and is refused (E106).
@@ -28,6 +41,14 @@ if [[ ! -x "$LAIN" ]]; then
 fi
 
 TESTS_DIR="$ROOT/tests"
+# Every temporary of this run lives here (I.173): parallel jobs, and a concurrent run in another
+# tree, cannot meet on one name. The gcc verdict cache is shared, keyed by content.
+RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lain_run_tests.XXXXXX")"; trap 'rm -rf "$RUN_DIR"' EXIT
+GCC_CACHE="${LAIN_GATE_CACHE:-$HOME/.cache/lain-gates}/gcc"; mkdir -p "$GCC_CACHE" 2>/dev/null
+# One emission of the corpus is about 650 entries (2.6 MB); an entry no run has used for 14 days
+# is deleted, so the store stays near the size of the emissions in current use.
+find "$GCC_CACHE" -type f -mtime +14 -delete 2>/dev/null
+
 PASS_COUNT=0
 FAIL_COUNT=0
 FAILED_TESTS=()
@@ -39,6 +60,11 @@ FAILED_TESTS=()
 # to skip (e.g. if no C compiler is available).
 LAIN_GCC_CHECK="${LAIN_GCC_CHECK:-1}"
 GCC_BIN="${CC:-gcc}"
+# The flags gcc_check_ok compiles with, ONCE: the cached verdict's key is built from this same text
+# and gcc's version, so a change to either is a different key, never a stale hit. (Each flag is one
+# word; see gcc_check_ok's note for why each is there.)
+GCC_FLAGS="-std=c99 -c -Wno-discarded-qualifiers -Wno-format-security -Werror=int-conversion -Werror=implicit-int -Werror=incompatible-pointer-types -Werror=return-type -Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_putchar=putchar -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_realloc=realloc"
+GCC_FLAGS_KEY="$("$GCC_BIN" --version 2>/dev/null | head -1) | $GCC_FLAGS"
 GCC_ERR=""
 # Emitted C that gcc must reject-list. EMPTY — every _pass test's emitted C now
 # compiles with gcc. (Keep it empty: a new entry means a real codegen/interop bug
@@ -57,7 +83,7 @@ lain_flags_for() {
 }
 
 gcc_check_ok() {
-    local file="$1" base="$2"
+    local file="$1" base="$2" out_c="$3"
     GCC_ERR=""
     [[ "$LAIN_GCC_CHECK" == "1" ]] || return 0
     [[ "$base" == *_pass ]] || return 0
@@ -65,9 +91,21 @@ gcc_check_ok() {
     for s in "${GCC_CHECK_SKIP[@]}"; do
         [[ "$base" == "$s" ]] && return 0
     done
-    local out_c="/tmp/lain_gcc_$$_${RANDOM}.c" out_o="/tmp/lain_gcc_$$_${RANDOM}.o"
-    if ! "$LAIN" $(lain_flags_for "$file") "$file" -o "$out_c" >/dev/null 2>&1; then
-        rm -f "$out_c"; return 0   # Lain-level failure is handled by the caller
+    [[ -f "$out_c" ]] || return 0             # Lain-level failure is handled by the caller
+    local out_o="${out_c%.c}.o"
+    # ★ THE VERDICT IS CACHED BY CONTENT (I.173). gcc's answer is a function of the C, the flags and
+    # gcc itself, and most of a chain's links change few programs' C: the same C was recompiled on
+    # every link. The key is all three; a stored entry is written to a temporary name and renamed,
+    # so a concurrent run reads a whole entry or misses. LAIN_GATE_NOCACHE=1 compiles every time.
+    local key="" entry=""
+    if [[ "${LAIN_GATE_NOCACHE:-0}" != "1" ]]; then
+        key="$( { cat "$out_c"; echo "$GCC_FLAGS_KEY"; } | sha256sum | cut -c1-40)"
+        entry="$GCC_CACHE/$key"
+        # A hit refreshes the entry's age (the store keeps 14 days of use, below). An entry that
+        # vanished between the test and the read, or reads as neither verdict, is compiled again.
+        local verdict; verdict="$(cat "$entry" 2>/dev/null)"
+        if [[ "$verdict" == "ok" ]]; then touch -c "$entry" 2>/dev/null; return 0; fi
+        if [[ "$verdict" == "err "* ]]; then touch -c "$entry" 2>/dev/null; GCC_ERR="${verdict#err }"; return 1; fi
     fi
     local gerr
     # `-w` silences warnings, and gcc classifies some C CONSTRAINT VIOLATIONS as warnings —
@@ -93,18 +131,15 @@ gcc_check_ok() {
     #
     # Measured over all emitted C: discarded-qualifiers 15, format-security 4,
     # incompatible-pointer-types 1. None is int-conversion or implicit-int any more.
-    gerr="$("$GCC_BIN" -std=c99 -c -o "$out_o" "$out_c" \
-        -Wno-discarded-qualifiers -Wno-format-security \
-        -Werror=int-conversion -Werror=implicit-int \
-        -Werror=incompatible-pointer-types -Werror=return-type \
-        -Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_putchar=putchar \
-        -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_realloc=realloc 2>&1)"
+    gerr="$("$GCC_BIN" $GCC_FLAGS -o "$out_o" "$out_c" 2>&1)"
     local grc=$?
-    rm -f "$out_c" "$out_o"
+    rm -f "$out_o"
     if [[ $grc -ne 0 ]]; then
         GCC_ERR="$(echo "$gerr" | grep -oE 'error:.*' | head -1)"
+        [[ -n "$entry" ]] && { printf 'err %s' "$GCC_ERR" > "$entry.$$" && mv -f "$entry.$$" "$entry"; }
         return 1
     fi
+    [[ -n "$entry" ]] && { printf 'ok' > "$entry.$$" && mv -f "$entry.$$" "$entry"; }
     return 0
 }
 
@@ -119,7 +154,11 @@ run_test() {
 
     local out
     local rc
-    out="$("$LAIN" $(lain_flags_for "$file") "$file" 2>&1)"
+    # ★ ONE RUN GIVES THE VERDICT AND THE C (I.173). The verdict ran without `-o` (so every test
+    # wrote the shared out.c at the tree root, which two parallel jobs would race on), and a _pass
+    # test was then compiled a second time to get its C for gcc.
+    local out_c="$RUN_DIR/$(printf '%s' "$file" | md5sum | cut -c1-16).c"
+    out="$("$LAIN" $(lain_flags_for "$file") "$file" -o "$out_c" 2>&1)"
     rc=$?
 
     if [[ $is_fail -eq 1 ]]; then
@@ -170,7 +209,7 @@ run_test() {
             return
         fi
         # The emitted C must also compile with a real C compiler.
-        if ! gcc_check_ok "$file" "$base"; then
+        if ! gcc_check_ok "$file" "$base" "$out_c"; then
             FAIL_COUNT=$((FAIL_COUNT + 1))
             FAILED_TESTS+=("$file (emitted C rejected by gcc: $GCC_ERR)")
             return
@@ -185,7 +224,8 @@ run_test() {
 run_output_oracle() {
     local file="$1" exp="$2"
     local base; base="$(basename "${file%.ln}")"
-    local c="/tmp/lain_oracle_$$.c" bin="/tmp/lain_oracle_$$"
+    local key; key="$(printf '%s' "$file" | md5sum | cut -c1-16)"
+    local c="$RUN_DIR/oracle_$key.c" bin="$RUN_DIR/oracle_$key"
     if ! "$LAIN" $(lain_flags_for "$file") "$file" -o "$c" >/dev/null 2>&1; then
         FAIL_COUNT=$((FAIL_COUNT + 1)); FAILED_TESTS+=("$file (oracle: compilation failed)")
         rm -f "$c"; return 1
@@ -230,7 +270,7 @@ run_emit_snapshot() {
     if [[ ! -f "$grepfile" ]]; then
         return 0
     fi
-    local out_c="/tmp/lain_emit_$$.c"
+    local out_c="$RUN_DIR/emit_$(printf '%s' "$file" | md5sum | cut -c1-16).c"
     # ★ The file's own LAINFLAGS apply HERE too. This path ran the compiler bare, so a test
     # pinned to an engine was snapshotted under a different one — and a test pinned because the
     # DEFAULT cannot compile it failed as "compilation failed" with nothing saying why.
@@ -259,26 +299,49 @@ run_emit_snapshot() {
     fi
 }
 
-# Run all .ln files in tests/ (relative paths)
-while IFS= read -r file; do
-    # emit/ tests are snapshot checks, not pass/fail compilation tests
-    if [[ -f "${file%.ln}.grep" ]]; then
+# ── THE TESTS RUN IN PARALLEL (I.173) ─────────────────────────────────────────────────────
+# Each test is one job that prints ONE line: its index in the old order, P or F, and for a failure
+# the exact text the serial loop appended. The lines are sorted back into that order, so the counts
+# and the failure list read as they always did. LAIN_GATE_JOBS sets the width.
+one_test() {
+    local idx="$1" file="$2"
+    PASS_COUNT=0; FAIL_COUNT=0; FAILED_TESTS=()
+    if [[ "$file" == *.sh ]]; then
+        if bash "$file" >/dev/null 2>&1; then PASS_COUNT=1
+        else FAIL_COUNT=1; FAILED_TESTS+=("$file (shell helper exited non-zero)"); fi
+    elif [[ -f "${file%.ln}.grep" ]]; then
         # any test with a .grep sidecar is an emit snapshot, wherever it lives
         run_emit_snapshot "$file"
     else
         run_test "$file"
+        # its C is in the shared tmpfs; one run of the suite would otherwise hold all of it
+        rm -f "$RUN_DIR/$(printf '%s' "$file" | md5sum | cut -c1-16).c"
     fi
-done < <(find tests -name '*.ln' -type f | sort)
-
-# Run shell-based helper tests (exit code = pass/fail).
-while IFS= read -r shfile; do
-    if bash "$shfile" >/dev/null 2>&1; then
-        PASS_COUNT=$((PASS_COUNT + 1))
-    else
-        FAIL_COUNT=$((FAIL_COUNT + 1))
-        FAILED_TESTS+=("$shfile (shell helper exited non-zero)")
-    fi
-done < <(find tests -name '*.sh' -type f | sort)
+    local i
+    for (( i = 0; i < PASS_COUNT; i++ )); do printf '%06d\tP\n' "$idx"; done
+    for t in "${FAILED_TESTS[@]}"; do printf '%06d\tF\t%s\n' "$idx" "$t"; done
+}
+export -f one_test run_test run_emit_snapshot run_output_oracle gcc_check_ok lain_flags_for
+export LAIN LAIN_GCC_CHECK GCC_BIN RUN_DIR GCC_CACHE GCC_FLAGS GCC_FLAGS_KEY
+# The default width is 4: on a 6-core machine shared with other sessions, 4 jobs cut the wall time
+# about 3x and cost about 20% more CPU than one (the cores slow each other); more jobs buy a few
+# seconds for much more CPU.
+JOBS="${LAIN_GATE_JOBS:-4}"
+RESULTS="$RUN_DIR/results.txt"
+# Each test keeps its index in the serial order (.ln files, then the shell helpers, each sorted;
+# or the order of the arguments), but the shell helpers START first: a few take 5-9 s and would
+# otherwise be the last jobs running.
+if (( ${#ARGS[@]} > 0 )); then printf '%s\n' "${ARGS[@]}"
+else find tests -name '*.ln' -type f | sort; find tests -name '*.sh' -type f | sort; fi \
+    | awk '{ line = sprintf("%d\t%s", NR, $0); if ($0 ~ /\.sh$/) print line; else ln[++n] = line }
+           END { for (i = 1; i <= n; i++) print ln[i] }' \
+    | xargs -P "$JOBS" -d '\n' -n 1 bash -c 'IFS=$(printf "\t") read -r i f <<< "$1"; one_test "$i" "$f"' _ \
+    > "$RESULTS"
+sort -s -n -k1,1 "$RESULTS" > "$RESULTS.sorted"
+PASS_COUNT=$(awk -F'\t' '$2 == "P"' "$RESULTS.sorted" | wc -l)
+FAIL_COUNT=$(awk -F'\t' '$2 == "F"' "$RESULTS.sorted" | wc -l)
+FAILED_TESTS=()
+while IFS= read -r t; do FAILED_TESTS+=("$t"); done < <(awk -F'\t' '$2 == "F" { sub(/^[^\t]*\tF\t/, ""); print }' "$RESULTS.sorted")
 
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo ""
