@@ -1600,6 +1600,16 @@ static IrBlock *vra_block_of(Vra *V, IrInstr *ins) {
 }
 
 static void vra_refine_guard(Vra *V, Octagon *W, IrValue *cond, bool then_dir);  // fwd (I.164)
+// May an operand of an UNSIGNED division or remainder be negative here? A widened signed
+// intermediate can be (I.174); a value of an unsigned type cannot.
+static bool vra_divrem_sign_unknown(Vra *V, Octagon *W, IrInstr *ins) {
+    if (ins->n_operands < 2) return true;
+    oct_close(W);
+    int64_t alo, ahi, blo, bhi;
+    vra_range(V, W, ins->operands[0], &alo, &ahi);
+    vra_range(V, W, ins->operands[1], &blo, &bhi);
+    return alo < 0 || blo < 0;
+}
 // ── THE SAME ELEMENT, READ TWICE (I.164) ─────────────────────────────────────────────────
 // `if days <= tab[month] { break }` then `days = days - tab[month]` reads tab[month] through two
 // loads, and month through two more, so the guard's fact `days > L1` said nothing of `L2`: the
@@ -2106,6 +2116,16 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         }
         case IR_UDIV: {  // x / b  — in any defined exec (b > 0, x ≥ 0)
             if (r<0) break;
+            // ★ ...BUT THE OPERANDS MAY BE SIGNED (I.174). The lowering names the operator from the
+            // LEFT operand's source type, a u8, and Path-F widens the operands to i64: in
+            // `(x + y) % (0 - 4)` the divisor is the i64 -4 and the C is a SIGNED `%` (7 % -4 = 3).
+            // "b > 0" then stated `r < b = -5` beside `r >= 0`: an EMPTY state, the rest of the
+            // function unreachable to the analysis, and `a[i + 9]` after it read out of bounds under
+            // a proof (fuzz_interp found it: "bb1 runs, but the analysis found it unreachable";
+            // the Secondary Compiler Worker reduced it). The quotient `(x + y) / (0 - 4)` is -1, not
+            // ">= 0". Where a sign can be negative, the signed rules decide, and they hold for any
+            // sign; where neither can, these rules are exact as before.
+            if (vra_divrem_sign_unknown(V, W, ins)) goto sdiv_rule;
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             oct_close(W);                                  // the dividend's interval, relationally
             int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
@@ -2127,7 +2147,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (Blo >= 2 && hl && alo >= 1) vra_add_diff_le(V,W, r, a, -1);   // r ≤ x − 1
             break;
         }
-        case IR_SDIV: {  // signed x / c — for x ≥ 0 and c > 0 (the common index idiom
+        case IR_SDIV: sdiv_rule: {  // signed x / c — for x ≥ 0 and c > 0 (the common index idiom
             if (r<0) break;                                 // `i / 2`) it is exactly udiv.
             int a=ins->operands[0]->id, b=ins->operands[1]->id;
             oct_close(W);
@@ -2170,6 +2190,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
         }
         case IR_UREM: {  // x % b  (unsigned)  ⇒  0 ≤ r < b   (b > 0 in any defined exec;
             if (r<0) break;                                 // b = 0 is a separate div-by-zero)
+            if (vra_divrem_sign_unknown(V, W, ins)) goto srem_rule;   // a signed operand (I.174, above)
             int b=ins->operands[1]->id; oct_forget(W, r);
             oct_add_lb(W, r, 0);
             if (V->cknown[b] && V->cval[b]>0) oct_add_ub(W, r, V->cval[b]-1);  // absolute ≤ c−1
@@ -2179,7 +2200,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             vra_add_diff_le(V,W, r, ins->operands[0]->id, 0);
             break;
         }
-        case IR_SREM: {  // signed a % c  ⇒  −(c−1) ≤ r ≤ c−1 (tighter to [0,c−1] if a≥0)
+        case IR_SREM: srem_rule: {  // signed a % c  ⇒  −(c−1) ≤ r ≤ c−1 (tighter to [0,c−1] if a≥0)
             if (r<0) break;
             int a=ins->operands[0]->id, b=ins->operands[1]->id; oct_forget(W, r);
             int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);

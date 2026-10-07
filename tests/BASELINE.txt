@@ -1595,6 +1595,11 @@ at=const 2
 rc=0
 out=
 at=const 2
+### tests/trust/divrem_widened_negative_divisor_pass.ln
+rc=0
+out=3 3 -1 -63
+at=const 6
+ty=Slice_u8 scalar
 ### tests/trust/div_safe_pass.ln
 rc=0
 out=25

@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 8, Col 5: arithmetic is not provably free of overflow
+// I.174, the division twin of unsigned_rem_negative_divisor_fail.ln: the operator is UDIV by the
+// source type, the operands are the widened i64 7 and -4, and the C computes -1. The analysis read
+// "x / b >= 0", proved the narrowing into a u8, and the program printed 255 (the interpreter:
+// "-1 lands in a u8, which cannot hold it (proven to fit)").
+func run(x u8 <= 100, y u8 <= 100) u8 {
+    var q u8 = (x + y) / (0 - 4)
+    return q
+}
+
+func main() i32 {
+    return run(3, 4) as i32
+}

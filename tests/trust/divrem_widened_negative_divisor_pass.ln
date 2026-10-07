@@ -1,0 +1,24 @@
+// I.174, the allowed side: a remainder or a quotient by a widened negative constant is the C's
+// truncating one, and its range follows from the signed rules: (x + y) % -4 is in [0, 3] for a
+// non-negative dividend and lands in a u8; (x + y) / -4 is in [-127, 0] and lands in an i32.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func rem(x u8, y u8) u8 {
+    var i u8 = (x + y) % (0 - 4)
+    return i
+}
+
+func rem2(x u8, y u8) u8 {
+    var i u8 = (x + y) % (7 - 11)
+    return i
+}
+
+func quo(x u8, y u8) i32 {
+    q i32 = (x + y) / (0 - 4)
+    return q
+}
+
+func main() i32 effects io {
+    libc_printf("%d %d %d %d\n", rem(3, 4) as i32, rem2(250, 5) as i32, quo(3, 4), quo(200, 55))
+    return 0
+}

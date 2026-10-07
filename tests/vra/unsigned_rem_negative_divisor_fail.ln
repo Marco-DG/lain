@@ -1,0 +1,21 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 14, Col 16: index is not provably within bounds
+// I.174: the remainder's operator is named from the LEFT operand's source type (a u8, so UREM), and
+// Path-F widens the operands to i64: the divisor `0 - 4` is the i64 -4, and the C is a signed `%`
+// (7 % -4 = 3). The analysis read UREM as "b > 0" and stated r < b = -5 beside r >= 0: an EMPTY
+// state, so the rest of the function was unreachable to it and the read below was proven, an
+// out-of-bounds read under ASan. fuzz_interp found it ("bb1 runs, but the analysis found it
+// unreachable"); the Secondary Compiler Worker reduced it. Now: r is in [0, 3], and a[i + 9] can be
+// a[12] of ten elements.
+func run(x u8, y u8) i32 {
+    var a = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    var i u8 = ((x + y) % (0 - 4))
+    if i < 200 {
+        return a[i + 9]
+    }
+    return 0
+}
+
+func main() i32 {
+    return run(3, 4)
+}
