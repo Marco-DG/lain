@@ -21,9 +21,11 @@ UNITS="src/frontends/lain/main.c src/tools/vra_driver.c src/tools/linearity_driv
        src/tools/test_vra.c src/tools/test_linearity.c src/tools/test_borrow.c
        src/tools/test_definite_init.c src/tools/test_place.c src/tools/test_ir.c
        src/tools/test_octagon.c"
-bad=0
-for u in $UNITS; do
-    [ -f "$u" ] || continue
+# The units compile in parallel (I.173), LAIN_GATE_JOBS at a time (default 4); each writes its
+# report to its own file, and the reports are read back in the order above.
+T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
+check_unit() {
+    local n="$1" u="$2" all rc out
     # -O2, as the Makefile builds: -Wmaybe-uninitialized needs the optimiser's dataflow, so
     # checking at -O0 checked a build nobody runs and saw fewer of the bugs it exists for.
     all=$(gcc -std=c99 -O2 -Wall -Wextra $FATAL -c -o /dev/null "$u" -I src 2>&1)
@@ -32,8 +34,8 @@ for u in $UNITS; do
     # errors INVISIBLE — a unit that does not build reports "no warnings", which is the
     # same silent-skip flaw this script exists to prevent elsewhere.
     if [ $rc -ne 0 ]; then
-        echo "── $u  DOES NOT COMPILE"; echo "$all" | grep -E "error" | head -4
-        bad=$((bad+1)); continue
+        { echo "── $u  DOES NOT COMPILE"; echo "$all" | grep -E "error" | head -4; } > "$T/$n.out"
+        echo 1 > "$T/$n.bad"; return
     fi
     # ...and the warnings that ARE undefined behaviour in the compiler itself (I.171): a format
     # string with an unknown conversion (E133 printed "`as%`" through fprintf), a constant
@@ -43,9 +45,20 @@ for u in $UNITS; do
     # defined behaviour, and its sites are judged one by one (I.172).
     out=$(echo "$all" | grep -E "\[-W(return-type|uninitialized|maybe-uninitialized|implicit-function-declaration|int-conversion|incompatible-pointer-types|format=|format-extra-args|format-security|overflow|shift-count-overflow|shift-count-negative|shift-overflow=?[0-9]*|shift-negative-value|div-by-zero)\]")
     if [ -n "$out" ]; then
-        echo "── $u"; echo "$out" | head -8
-        bad=$((bad + $(echo "$out" | wc -l)))
+        { echo "── $u"; echo "$out" | head -8; } > "$T/$n.out"
+        echo "$out" | wc -l > "$T/$n.bad"
     fi
+}
+export -f check_unit; export FATAL T
+n=0
+for u in $UNITS; do
+    n=$((n + 1))
+    [ -f "$u" ] && printf '%d\t%s\n' "$n" "$u"
+done | xargs -P "${LAIN_GATE_JOBS:-4}" -d '\n' -n 1 bash -c 'IFS=$(printf "\t") read -r n u <<< "$1"; check_unit "$n" "$u"' _
+bad=0
+for (( i = 1; i <= $(echo $UNITS | wc -w); i++ )); do
+    [ -f "$T/$i.out" ] && cat "$T/$i.out"
+    [ -f "$T/$i.bad" ] && bad=$((bad + $(cat "$T/$i.bad")))
 done
 # ── A REMOVED KEYWORD IN DIAGNOSTIC PROSE ────────────────────────────────────────────────
 # Diagnostic text is the documentation a user reads when stuck, and no other gate reads it:
