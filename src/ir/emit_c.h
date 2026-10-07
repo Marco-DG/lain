@@ -1756,7 +1756,16 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
       if (pc) {
         // Declared, not #included: pulling in <stdio.h> makes the emitted extern for
         // `libc_printf` collide with the real printf once the harness maps one to the other.
+        // ★ THE MESSAGE IS WRITTEN (I.132). Spec 12: `panic: <message>` on the standard error
+        // stream, then abort; the helper discarded it. It writes by the message's LENGTH (a NUL
+        // in it is written, an empty one is `panic: `), through `write` declared under a C name
+        // no program's own `extern` can collide with (std/c.ln declares `fputs` its own way),
+        // bound to the real symbol by an asm label.
         fputs("extern void abort(void);\n", o);
+        fputs("#ifndef __USER_LABEL_PREFIX__\n#define __USER_LABEL_PREFIX__\n#endif\n"
+              "#define LAIN_RT_STR2(x) #x\n#define LAIN_RT_STR(x) LAIN_RT_STR2(x)\n"
+              "extern long lain_rt_write(int, const void *, unsigned long) "
+              "__asm__(LAIN_RT_STR(__USER_LABEL_PREFIX__) \"write\");\n", o);
         ir_ctype(pc->result ? pc->result->type : NULL, o);
         fputs(" panic(", o);
         // ★ The runtime helper obeys the SAME convention as every other function. It is
@@ -1766,10 +1775,12 @@ void ir_emit_module_c(IrFunc *funcs, FILE *o, Arena *a) {
         IrType *mt = (pc->n_operands >= 1 && pc->operands[0]) ? pc->operands[0]->type : NULL;
         if (mt && ir_c_slice_split(mt)) {
             fputs("size_t __len_m, ", o); ir_ctype(mt->elem, o); fputs("* __ptr_m", o);
-            fputs(") { (void)__len_m; (void)__ptr_m; abort(); }\n\n", o);
+            fputs(") {\n    lain_rt_write(2, \"panic: \", 7);\n"
+                  "    lain_rt_write(2, (const void *)__ptr_m, (unsigned long)__len_m);\n"
+                  "    lain_rt_write(2, \"\\n\", 1);\n    abort();\n}\n\n", o);
         } else {
             if (mt) ir_ctype(mt, o); else fputs("void", o);
-            fputs(" m) { (void)m; abort(); }\n\n", o);
+            fputs(" m) { (void)m; lain_rt_write(2, \"panic\\n\", 6); abort(); }\n\n", o);
         }
       } }
     for (IrFunc *f=funcs; f; f=f->next) ir_emit_proto_c(f, funcs, o);

@@ -996,7 +996,24 @@ static void ii_exec(IrInstr *ins) {
                     ii_land(&args[k], ii_ty(ins->operands[a0 + k]), pp->value ? pp->value->type : NULL, ins);
             }
             if (!g) {
-                if (ins->aux.callee && ii_name_is(ins->aux.callee, "panic")) { fflush(stdout); ii_stop(134); }
+                if (ins->aux.callee && ii_name_is(ins->aux.callee, "panic")) {
+                    // Spec 12, as the emitted C does it (I.132): `panic: <message>` on stderr, by the
+                    // message's length, then the abort status.
+                    fflush(stdout);
+                    if (!ii_quiet) {
+                        fputs("panic: ", stderr);
+                        if (na >= 1 && args[0].k == IV_SLICE) {
+                            IPtr p = args[0].p;
+                            for (int64_t k = 0; k < args[0].len; k++) {
+                                __int128 ch = iv_get(ip_cell(&p, ins), NULL, ins);
+                                fputc((int)(ch & 0xff), stderr);
+                                p.p[p.d - 1]++;
+                            }
+                        }
+                        fputc('\n', stderr); fflush(stderr);
+                    }
+                    ii_stop(134);
+                }
                 II_UNSUP(ins, "a call to %.*s, which the module does not define", ins->aux.callee ? (int)ins->aux.callee->length : 1, ins->aux.callee ? ins->aux.callee->name : "?");
             }
             IVal ret; memset(&ret, 0, sizeof ret); ret.k = IV_UNIT;
