@@ -2691,7 +2691,17 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 // computed in i64, where that case is an ordinary 0, and narrowed back — exact,
                 // since |a % b| < |b|. At 64 bits there is no wider type and the op keeps the
                 // obligation (vra_check_divzero).
-                if (op == IR_SREM && wrap == IR_WRAP_CHECK && ty && ty->kind==IRT_INT &&
+                //
+                // ★ ...but only where the divisor MAY be -1 (I.166). A literal divisor that is not
+                // -1 (`y % 4`, `y % 400`) cannot meet the case, and the widening cost a 64-bit
+                // magic multiply where C's own `y % 4` gets a 32-bit one (Documentation, timing the
+                // Zune driver: the main reason its 105 instructions against C's 93).
+                Expr *dv = R;
+                bool dneg = false;
+                while (dv && dv->kind == EXPR_UNARY && dv->as.unary_expr.op == TOKEN_MINUS) { dneg = !dneg; dv = dv->as.unary_expr.right; }
+                bool lit_not_m1 = dv && dv->kind == EXPR_LITERAL && !dv->as.literal_expr.is_bool &&
+                                  !(dneg && dv->as.literal_expr.value == 1) && dv->as.literal_expr.value != 0;
+                if (op == IR_SREM && wrap == IR_WRAP_CHECK && ty && ty->kind==IRT_INT && !lit_not_m1 &&
                     ty->is_signed && ty->bits < 64 && x && y && x->type && y->type &&
                     x->type->kind==IRT_INT && y->type->kind==IRT_INT) {
                     IrType *w64 = ir_type_int(c->a, 64, true);
