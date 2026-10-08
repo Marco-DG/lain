@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// The edge of I.178's rule for `v + k` on u64 under a u64 partner: it needs v <= x - k. Under
+// `v <= x` alone, v = x = 2^64 - 1 makes `v + 1` overflow, so the add stays unproven.
+func next(x u64, v u64) u64 {
+    if v <= x { return v + 1 }
+    return 0
+}
+func main() i32 { return 0 }

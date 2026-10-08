@@ -3182,6 +3182,13 @@ static void vra_range(Vra *V, Octagon *W, IrValue *v, int64_t *lo, int64_t *hi) 
             if (c >= OCT_INF) continue;
             int64_t ylo, yhi;
             if (!irtype_int_range(V->val[y]->type, &ylo, &yhi)) continue;
+            // ★ A u64's INT64_MAX is the domain's clamp, not its top (I.178). The partner's true
+            // maximum is 2^64 − 1, and `v ≤ INT64_MAX + c` read as a real bound made every u64 → i64
+            // narrowing of v "fit": `if v < x { return v as i64 }` returned −2 for v = 2^64 − 2. The
+            // one consumer that needs a bound against a u64 partner, `i + k` under `i < n`, asks
+            // vra_u64_sum_fits instead, which reasons in the true range.
+            const IrType *yt = V->val[y]->type;
+            if (yt->kind == IRT_INT && !yt->is_signed && yt->bits >= 64 && yhi == INT64_MAX) continue;
             if (c > 0 && yhi > INT64_MAX - c) continue;           // no wrap in the checker
             int64_t cand = yhi + c;
             if (cand < thi) thi = cand;
@@ -3307,6 +3314,21 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     vra_add_check(V, c);
 }
 
+// x + k fits a u64 when x − y ≤ c for some u64 value y and c + max(k) ≤ 0 (see I.178 in
+// vra_check_overflow). y's true top is 2^64 − 1, whatever the domain's clamp says.
+static bool vra_u64_sum_fits(Vra *V, Octagon *W, IrValue *x, IrValue *k) {
+    if (!x || !k || x->id < 0 || x->id >= V->nvar) return false;
+    int64_t klo, khi; vra_range(V, W, k, &klo, &khi);
+    if (klo < 0 || khi >= INT64_MAX / 4) return false;
+    for (int y = 0; y < V->nvar; y++) {
+        if (y == x->id || !V->val[y] || !V->val[y]->type) continue;
+        const IrType *yt = V->val[y]->type;
+        if (yt->kind != IRT_INT || yt->is_signed || yt->bits < 64) continue;
+        int64_t c = vra_diff_ub(V, W, x->id, y);                   // x − y ≤ c
+        if (c < OCT_INF && (__int128)c + khi <= 0) return true;
+    }
+    return false;
+}
 // Overflow obligation: a CHECK-mode +,−,× on two same-typed integers must land
 // back inside that type. The octagon reasons in ℤ; here we compare the ℤ result
 // range against the operand type's interval (design §2.6).
@@ -3338,6 +3360,14 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
     }
     VraCheck c; memset(&c,0,sizeof c); c.kind=VRA_OVERFLOW; c.at=ins; c.line=ins->line; c.col=ins->col;
     c.ok = (rlo >= (__int128)tlo) && (rhi <= (__int128)thi);
+    // ★ `x + k` ON u64 UNDER `x < y`, IN THE TRUE RANGE (I.178). The relational refinement in
+    // vra_range no longer borrows a u64 partner's clamped INT64_MAX as a real top, and this is the
+    // case that used it: `while i < n { i = i + 1 }` over usize. y ≤ 2^64 − 1 (its type, not the
+    // domain's clamp) and x − y ≤ c give x + k ≤ 2^64 − 1 + c + k, which fits whenever c + k ≤ 0.
+    // The lower half is the operands' own (both non-negative here).
+    if (!c.ok && ins->op == IR_ADD && rlo >= (__int128)tlo && tt && tt->kind == IRT_INT &&
+        !tt->is_signed && tt->bits >= 64 && thi == INT64_MAX)
+        c.ok = vra_u64_sum_fits(V, W, a, b) || vra_u64_sum_fits(V, W, b, a);
     // ★ THE MIDPOINT IDENTITY, applied HERE rather than read off the octagon. `a + (b − a)/D`
     // with D >= 1 and `a <= b` lies in [a, b], because the quotient is non-negative and no
     // greater than `b − a`. Both operands are values of this type, so the result is too and the

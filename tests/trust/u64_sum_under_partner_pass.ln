@@ -1,0 +1,21 @@
+// The allowed side of I.178: under `v < x` on u64, `v + 1` fits a u64 whatever x is, because x
+// is at most 2^64 - 1 in truth, and the add is proven in the true range rather than through the
+// domain's clamp. A u64 with a REAL bound (`v < 100`) still narrows to i64. Exercised at the top.
+func next(x u64, v u64) u64 {
+    if v < x { return v + 1 }
+    return 0
+}
+func small(v u64) i64 {
+    if v < 100 { return v as i64 }
+    return -1
+}
+func main() i32 {
+    var big u64 = 0
+    big = big -% 1
+    var v u64 = big -% 1
+    if next(big, v) != big { return 1 }
+    if next(5, 4) != 5 { return 2 }
+    if small(99) != 99 { return 3 }
+    if small(big) != -1 { return 4 }
+    return 0
+}
