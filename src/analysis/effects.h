@@ -156,6 +156,24 @@ static IrEffect ir_effects(IrFunc *f, IrFunc *mod) {
     return e;
 }
 
+// --dump-effects (I.143): one function's row as the IR computes it, the row that decides gcc's
+// `pure`/`const` (annot.h) and what static evaluation may run. The front end printed its own
+// inference instead, and called every `while A and B` loop {Diverge} that this analysis proves
+// ends. An extern prints the row it declares, or every bit when it declares none (E.5).
+static void ir_dump_effects_row(IrFunc *f, IrFunc *mod) {
+    IrEffect e = ir_effects(f, mod);
+    const IrName *n = f->src_name ? f->src_name : f->name;
+    fprintf(stderr, "[effects] %s %.*s : {", f->is_extern ? "extern func" : "func",
+            n ? (int)n->length : 1, n ? n->name : "?");
+    const char *sep = "";
+    if (e & IR_EFFECT_UNMODELLED_WRITE) { fprintf(stderr, "%sWrite",   sep); sep = ", "; }
+    if (e & IR_EFFECT_DIVERGE)          { fprintf(stderr, "%sDiverge", sep); sep = ", "; }
+    if (e & IR_EFFECT_RAISES)           { fprintf(stderr, "%sRaises",  sep); sep = ", "; }
+    if (e & IR_EFFECT_IO)               { fprintf(stderr, "%sIO",      sep); sep = ", "; }
+    if (e & IR_EFFECT_ALLOC)            { fprintf(stderr, "%sAlloc",   sep); sep = ", "; }
+    fprintf(stderr, "}%s\n", e == 0 ? "  (pure & total)" : "");
+}
+
 // Compute effects for every function in the module (drives the fixpoint from each root).
 static void ir_effects_module(IrFunc *mod) {
     for (IrFunc *f=mod; f; f=f->next) if (!f->is_extern) ir_effects(f, mod);

@@ -113,7 +113,7 @@ alone — check stderr, which is empty on success.
 | `--interpret` | Run the accepted program on the IR's own semantics (`src/ir/interp.h`) instead of emitting C. Every discharged proof is checked as it is used, and the process exits with the value `main` returns. |
 | `--check-invariants` | Implies `--interpret`. The range analysis's state at each block must contain the running program's, so a proof that does not describe the real execution is caught. |
 | `--dump-ast` | Print the parsed syntax tree. |
-| `--dump-effects` | Print each function's inferred effect row. |
+| `--dump-effects` | Print the effect row the compiler uses for each function, the row that decides gcc's `pure` and `const` attributes and what is evaluated at compile time, one line each: `[effects] func say : {IO}`. It covers the functions defined in the file named on the command line, not those of the modules it imports, and the instances made from generics, under their instance names; a generic template has no row of its own and is not printed. An `extern` prints as `extern func NAME` with the row it declares, or every effect when it declares none. The rows come from the analyses, so a program they refuse still prints them, and one refused before them prints none. |
 | `--dump-niche` | Print the niche-packing decision for each sum type. |
 | `--dump-octagon` | Print the converged octagon state per basic block. A value that came from a named local prints as `%2:i`; the rest are temporaries. |
 | `--dump-measures` | Print the measure behind each termination proof, in the program's own names, one line per loop or recursion — and `no measure found` for a loop that is about to be refused. |

@@ -1,7 +1,9 @@
 // F3.3 effect row (E1): direct-effect inference. Each function's effect set is
-// computed (--dump-effects surfaces it): pure_add {} pure&total, with_panic
-// {Raises}, mutates {Write}, does_io {IO}, diverges {Diverge}. This test locks
-// that the effect pass does not break compilation of the effect-bearing forms.
+// computed (--dump-effects prints the IR's, I.143): pure_add {} pure&total, with_panic
+// {Raises}, mutates {} (a write through a `var` parameter is its interface, not an
+// effect), does_io {IO}, diverges {} (`effects diverge` allows it to loop for ever, and
+// under `i < n` the `+%` cannot wrap, so it does not). This test locks that the effect
+// pass does not break compilation of the effect-bearing forms.
 // D-40: an extern takes a pointer and a length, not a slice — a slice has no C type, so the
 // declaration could not describe the callee (E131). std/ already declares its externs this way.
 extern func print(s *u8, n usize) effects io

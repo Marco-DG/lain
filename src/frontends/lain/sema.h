@@ -123,7 +123,6 @@ RangeTable *sema_ranges = NULL;
 bool sema_in_unsafe_block = false;
 bool sema_walk_phase = false;
 bool sema_addr_of_context = false; // set by EXPR_ADDR to relax &arr[len] in bounds check
-bool sema_dump_effects = false;    // set by main from args.dump_effects (F3.3 effect row)
 
 /*─────────────────────────────────────────────────────────────────╗
 │ Union (`T | markers`) construction coercion                      │
@@ -3463,21 +3462,6 @@ static EffectSet effect_full(Decl *d) {
     return result;
 }
 
-// F3.3 --dump-effects: print a function's inferred effect row.
-static void sema_print_effects(Decl *d) {
-    Id *n = d->as.function_decl.name;
-    const char *kind = (d->kind == DECL_FUNCTION) ? "func" : "extern func";
-    EffectSet e = d->as.function_decl.effects;
-    fprintf(stderr, "[effects] %s %.*s : {", kind, n ? (int)n->length : 1, n ? n->name : "?");
-    const char *sep = "";
-    if (e & EFFECT_UNMODELLED_WRITE)   { fprintf(stderr, "%sWrite",   sep); sep = ", "; }
-    if (e & EFFECT_DIVERGE) { fprintf(stderr, "%sDiverge", sep); sep = ", "; }
-    if (e & EFFECT_RAISES)  { fprintf(stderr, "%sRaises",  sep); sep = ", "; }
-    if (e & EFFECT_IO)      { fprintf(stderr, "%sIO",      sep); sep = ", "; }
-    if (e & EFFECT_ALLOC)   { fprintf(stderr, "%sAlloc",   sep); sep = ", "; }
-    fprintf(stderr, "}%s\n", e == 0 ? "  (pure & total)" : "");
-}
-
 // ── Return-path completeness ─────────────────────────────────────────────────
 // A non-void function must not fall off the end without returning a value (that
 // is C undefined behavior). "Always exits" = every path leaves via `return` or a
@@ -4664,7 +4648,6 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
         if (!dl->decl) continue;
         if (dl->decl->kind == DECL_FUNCTION) {
             EffectSet ef = effect_full(dl->decl);   // transitive; memoized + stored
-            if (sema_dump_effects) sema_print_effects(dl->decl);
             // F3: a DECLARED effect bound is an upper bound the body must respect. Same rule
             // as F1's `in` clause — believed on an extern (there is nothing to infer from,
             // which is what `extern` means), CHECKED here, because an annotation the compiler

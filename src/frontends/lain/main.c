@@ -107,7 +107,6 @@ int main(int argc, char **argv) {
 
     // Initialize target config (host auto-detect unless --target= specified).
     target_init_for(args.target_triple);
-    sema_dump_effects = args.dump_effects;
 
     // A relative path that CLIMBS (`../m.ln`, `sub/../m.ln`) cannot name a module: the name is
     // the path with `/` turned into `.`, so `../m.ln` became the module `...m`, whose file is
@@ -283,6 +282,15 @@ int main(int argc, char **argv) {
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
         ir_diag_excerpt = NULL;
+        // --dump-effects: the IR's row (I.143), for what this file defines and the instances it
+        // made of generic functions defined elsewhere, after the analyses that decide DIVERGE.
+        if (args.dump_effects)
+            for (IrFunc *f = mod; f; f = f->next) {
+                Decl *sd = (Decl *)f->src_decl;
+                bool here = !sd || !sd->defining_module || strcmp(sd->defining_module, modname) == 0;
+                for (MonoInst *mi = g_mono_insts; !here && mi; mi = mi->next) if (mi->inst == sd) here = true;
+                if (here) ir_dump_effects_row(f, mod);
+            }
         if (found) { sema_destroy(); return 1; }
         if (ir_require_verdicts(mod)) { sema_destroy(); return 70; }
         if (args.interpret) {             // run it instead of emitting it; the status is the program's
