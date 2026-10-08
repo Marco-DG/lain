@@ -3035,11 +3035,16 @@ static void vra_check_elem(Vra *V, Octagon *W, IrInstr *ins) {
         // The canonical length var is whatever named the length first — often a slice_len
         // read, not the `na + nb` that produced it. Anything the domain proves EQUAL to it
         // will do, which is the same move vra_same_value exists for.
-        if (!lnd || lnd->op != IR_ADD)
+        // ★ The identity len = sl + ol is read off the ADD's definition, so that definition must
+        // dominate this access (I.176, see vra_def_dominates): elsewhere the ADD's value may be an
+        // earlier iteration's while its operands hold this one's.
+        int at = ins->result ? ins->result->id : -1;
+        if (lnd && (lnd->op != IR_ADD || !vra_def_dominates(V, lenvar, at))) lnd = NULL;
+        if (!lnd)
             for (int y=0; y<V->nvar; y++) {
                 IrInstr *yd = V->def[y];
                 if (!yd || yd->op != IR_ADD || yd->n_operands < 2 || y == lenvar) continue;
-                if (vra_same_value(V, W, lenvar, y)) { lnd = yd; break; }
+                if (vra_same_value(V, W, lenvar, y) && vra_def_dominates(V, y, at)) { lnd = yd; break; }
             }
         if (ixd && ixd->op==IR_ADD && ixd->n_operands>=2 && vra_zexact(V, ixd) &&
             lnd && lnd->op==IR_ADD && lnd->n_operands>=2 && vra_zexact(V, lnd)) {
