@@ -1395,6 +1395,10 @@ at=const 8
 rc=0
 out=
 at=const 4
+### tests/trust/accum_counter_every_trip_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/accum_one_update_per_trip_pass.ln
 rc=0
 out=7 240 65200

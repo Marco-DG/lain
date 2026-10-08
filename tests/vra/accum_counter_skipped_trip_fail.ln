@@ -1,0 +1,19 @@
+// EXPECT: [E085]
+// I.177: a running total's trip count read from a counter that does NOT rise on every trip.
+// `i` rises only when `c` holds, so `i < 2` bounds the trips that raise i, not the trips taken;
+// the loop ends by its other test, `j < 4`, after four trips, and s reaches 4. The trip count was
+// 2, s was bounded at 2, and `a[s]` on three elements compiled and read a[4] (ASan: a stack
+// buffer overflow). The allowed side is tests/trust/accum_counter_every_trip_pass.ln.
+func f(c bool) i32 {
+    var a i32[3] = [1, 2, 3]
+    var i usize = 0
+    var j usize = 0
+    var s usize = 0
+    while i < 2 and j < 4 {
+        if c { i = i + 1 }
+        j = j + 1
+        s = s + 1
+    }
+    return a[s]
+}
+func main() i32 { return f(false) }

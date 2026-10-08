@@ -1,0 +1,20 @@
+// The allowed side of I.177: the counter rises on EVERY trip, so `i < 2` bounds the trips, s is
+// at most 2, and `a[s]` on three elements is in bounds. With either value of `c` the loop runs
+// twice; `j` is only a second exit test.
+func f(c bool) i32 {
+    var a i32[3] = [1, 2, 3]
+    var i usize = 0
+    var j usize = 0
+    var s usize = 0
+    while i < 2 and j < 4 {
+        if c { j = j + 1 }
+        i = i + 1
+        s = s + 1
+    }
+    return a[s]
+}
+func main() i32 {
+    if f(false) != 3 { return 1 }
+    if f(true) != 3 { return 2 }
+    return 0
+}

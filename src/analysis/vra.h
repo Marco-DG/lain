@@ -4813,6 +4813,8 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
     }
     if (!any_start || ilo <= INT64_MIN/4) { free(body); return false; }
     int64_t step = 0; int nupd = 0;
+    char *inc = calloc((size_t)nbb, 1), *latch = calloc((size_t)nbb, 1);
+    if (!inc || !latch) { free(inc); free(latch); free(body); return false; }
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         if (!(b->id>=0 && b->id<nbb && body[b->id])) continue;
         for (IrInstr *st=b->instrs; st; st=st->next) {
@@ -4821,15 +4823,34 @@ static bool vra_loop_trips(Vra *V, Octagon *W, IrBlock *H, int64_t *T) {
             if (vd && vd->op==IR_ADD && vd->n_operands>=2 && vra_zexact(V, vd)) {
                 IrInstr *ld=V->def[vd->operands[0]->id]; int k=vd->operands[1]->id;
                 if (ld && ld->op==IR_LOAD && ld->operands[0]->id==cell &&
-                    k>=0 && k<V->nvar && V->cknown[k] && V->cval[k] > 0) { step=V->cval[k]; nupd++; }
+                    k>=0 && k<V->nvar && V->cknown[k] && V->cval[k] > 0) { step=V->cval[k]; nupd++; inc[b->id] = 1; }
                 else nupd += 2;                        // an update we cannot read: give up
             } else nupd += 2;
         }
     }
     bool opaque = vra_cell_opaque_write(V, cell, nbb, body);
+    // ★ EVERY TRIP PASSES THE INCREMENT (I.177), as the falling count requires of its decrement.
+    // A trip that skips it leaves the counter where it was, so the counter's distance to its limit
+    // bounds the trips that RAISE it, not the trips taken: `while i < 2 and j < 4 { if c { i = i +
+    // 1 } j = j + 1; s = s + 1 }` was given 2 trips, s was bounded at 2 while it reached 4, and
+    // `a[s]` on three elements compiled and read a[4]. The loop's other exit test (j < 4) is what
+    // ended it. No path from the header back to it may avoid the increment's block.
+    bool every = true;
+    if (!opaque && nupd == 1 && !inc[H->id]) {
+        for (IrBlock *b = V->f->blocks; every && b; b = b->next) {
+            if (b->id < 0 || b->id >= nbb || !body[b->id]) continue;
+            IrBlock *su[64]; int ns = vra_succs_all(b, su, 64);
+            if (ns < 0) { every = false; break; }
+            for (int q = 0; q < ns; q++) if (su[q] == H) latch[b->id] = 1;
+        }
+        if (every && latch[H->id]) every = false;        // the header loops to itself, not raised
+        for (int i = 0; every && i < nbb; i++) if (inc[i]) latch[i] = 0;
+        if (every && vra_reach(V, H, H, nbb, body, inc, latch) != 0) every = false;
+    }
+    free(inc); free(latch);
     free(body);
     if (opaque) return false;          // a call may reset the counter: T is not a trip count
-    if (nupd != 1 || step <= 0) return false;
+    if (nupd != 1 || step <= 0 || !every) return false;
     if (bhi < ilo) { *T = 0; return true; }
     if (bhi - ilo > INT64_MAX/2) return false;         // no trip count worth the name
     *T = (bhi - ilo + step - 1) / step;                // ceil((limit − start) / step)
