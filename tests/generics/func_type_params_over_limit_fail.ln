@@ -1,0 +1,14 @@
+// EXPECT: [E124]
+// EXPECT-TEXT: Error Ln 7, Col 6: 'pick' has more than 8 type parameters
+// A generic FUNCTION kept at most 8 type parameters and dropped the rest without a word: the ninth,
+// `I`, became a value parameter of type `type`, `x I` lowered to `void*`, and this program
+// compiled, gcc warned of int-to-pointer conversions, and it crashed (exit 139). Refused at the
+// declaration now, as a generic type is (Documentation, on 0bb01bd). Accepted on the parent.
+func pick(A type, B type, C type, D type, E type, F type, G type, H type, I type, x I) I {
+    return x
+}
+func main() i32 {
+    a i64 = pick(u8, u8, u8, u8, u8, u8, u8, u8, 300)
+    if a != 300 { return 1 }
+    return 0
+}

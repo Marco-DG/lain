@@ -122,8 +122,17 @@ Module import depth                            & 32          & \S\,\ref{sec:16-m
 Struct fields                                  & 256         & \S\,\ref{sec:07-types} \\
 Enum variants                                  & 256         & \S\,\ref{sec:07-types} \\
 Comptime evaluation depth                      & 256         & \S\,\ref{sec:14-generics} \\
+Type parameters of a generic type or function  & 8           & \S\,\ref{sec:gen.type-params} \\
 Scope nesting depth                            & 64          & \S\,\ref{sec:06-basics} \\
 \end{longtable}
+
+\begin{note}
+  The reference implementation accepts at most 64 value parameters in a \emph{generic}
+  function, fewer than the minimum for function parameters above, which it meets for a function
+  that is not generic.  It refuses a generic function with more at the declaration
+  (\diagcode{E124}), as it does a declaration with more than eight type parameters; both are known
+  limitations.
+\end{note}
 
 \section{Safe and unsafe fragments}
 \label{sec:conformance.safe-unsafe}

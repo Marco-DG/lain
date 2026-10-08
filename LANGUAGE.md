@@ -4139,6 +4139,10 @@ func main() i32 {
 }
 ```
 
+A generic type or function takes at most 8 type parameters, and a generic function at most 64
+value parameters. A declaration with more is refused where it is declared (`[E124]`), a limitation
+of this implementation.
+
 ### 20.2 Generic Types
 
 A type declaration takes parameters the same way:

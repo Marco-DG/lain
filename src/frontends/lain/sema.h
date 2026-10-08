@@ -3968,6 +3968,7 @@ static void sema_resolve_module(DeclList *decls, const char *module_path,
     // I.127: every written type names a type. Before the signatures are lowered, so a union is
     // judged as written (`Nope | none` at the function), not as the enum it becomes.
     sema_check_declared_types(decls);
+    mono_check_param_limits(decls);      // the instantiation paths keep 8 type and 64 value parameters
     sema_fold_field_lengths(decls);
 
     // Q-008: enforce `mov` on every linear field of every struct/enum.

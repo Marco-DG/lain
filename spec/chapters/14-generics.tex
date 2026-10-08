@@ -61,6 +61,19 @@ no runtime code.
   write \lain{func f(T type)} instead.
 \end{constraint}
 
+\pnum
+The number of type parameters is a translation limit (\S\,\ref{sec:conformance.limits}).  The
+reference implementation accepts at most eight in a generic type or function, and at most 64 value
+parameters in a generic function, and refuses a declaration with more where it is declared
+(\diagcode{E124}), before any instance is made.
+
+\begin{laincode}
+// ERROR [E124]: nine type parameters
+func nine(A type, B type, C type, D type, E type, F type, G type, H type, I type, x I) I {
+    return x
+}
+\end{laincode}
+
 \section{Compile-time value parameters}
 \label{sec:gen.comptime-params}
 \index{comptime parameter}

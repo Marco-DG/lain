@@ -1,0 +1,10 @@
+// EXPECT: [E124]
+// EXPECT-TEXT: Error Ln 5, Col 6: 'nine' has more than 8 type parameters
+// The limit is judged where a generic is DECLARED, called or not: a function with nine type
+// parameters that nothing calls compiled silently. Accepted on the parent.
+func nine(A type, B type, C type, D type, E type, F type, G type, H type, I type, x A) A {
+    return x
+}
+func main() i32 {
+    return 0
+}

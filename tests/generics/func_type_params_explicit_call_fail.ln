@@ -1,0 +1,13 @@
+// EXPECT: [E124]
+// EXPECT-TEXT: Error Ln 6, Col 6: 'pick' has more than 8 type parameters
+// Nine type arguments written out were refused, but by a count that had already lost one: "wrong
+// number of arguments to generic 'pick' (expected 1 value arguments, with 8 type argument(s))".
+// The declaration is refused now, with the limit it hits. The parent's E124 had the wrong text.
+func pick(A type, B type, C type, D type, E type, F type, G type, H type, I type, x I) I {
+    return x
+}
+func main() i32 {
+    a i64 = pick(u8, u8, u8, u8, u8, u8, u8, u8, i64, 300)
+    if a != 300 { return 1 }
+    return 0
+}

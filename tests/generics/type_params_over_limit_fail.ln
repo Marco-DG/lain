@@ -1,7 +1,7 @@
 // EXPECT: [E124]
 // A generic keeps at most 8 type parameters (MONO_MAX_TPARAMS). The ninth was dropped without a
 // word: it was not part of the instance's name, so two instantiations differing only in it were
-// one. Chain 4 made it a refusal (I.172) with no test; this pins it.
+// one. Chain 4 refused it where the type was used; it is refused where the type is declared now.
 type Nine(A type, B type, C type, D type, E type, F type, G type, H type, I type) {
     a A
     i I

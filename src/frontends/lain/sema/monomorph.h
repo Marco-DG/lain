@@ -419,6 +419,42 @@ static bool mono_args_same(Type **a, int na, Type **b, int nb) {
 // Where the type being resolved is written (mono_resolve_type_apps_at), or the call that
 // instantiates; every refusal below names it.
 static isize mono_at_line = 0, mono_at_col = 0;
+// ★ THE LIMITS ARE JUDGED AT THE DECLARATION. The instantiation paths keep at most
+// MONO_MAX_TPARAMS type parameters and 64 value parameters, and a generic FUNCTION's path dropped
+// the rest without a word (`if (ntp < MONO_MAX_TPARAMS) tp_names[ntp++] = …`): with nine, the
+// ninth was a value parameter of type `type`, its uses lowered to `void*`, and `pick(u8 ×8, 300)`
+// compiled and crashed (Documentation, on 0bb01bd). Only a generic TYPE was refused, and only where
+// it was used. Every struct, enum and function is now measured where it is declared.
+static Type **mono_param_type_slot(Decl *d);
+static void mono_check_param_limits(DeclList *decls) {
+    for (DeclList *d = decls; d; d = d->next) {
+        Decl *x = d->decl; if (!x) continue;
+        Id *nm = NULL; int ntp = 0, nvp = 0;
+        if (x->kind == DECL_STRUCT || x->kind == DECL_ENUM) {
+            nm = x->kind == DECL_STRUCT ? x->as.struct_decl.name : x->as.enum_decl.type_name;
+            for (DeclList *tp = x->kind == DECL_STRUCT ? x->as.struct_decl.type_params : x->as.enum_decl.type_params;
+                 tp; tp = tp->next) ntp++;
+        } else if (x->kind == DECL_FUNCTION) {
+            nm = x->as.function_decl.name;
+            for (DeclList *p = x->as.function_decl.params; p; p = p->next) {
+                Type **slot = mono_param_type_slot(p->decl);
+                if (!slot) continue;
+                if (*slot && (*slot)->kind == TYPE_META && p->decl->kind == DECL_VARIABLE) ntp++; else nvp++;
+            }
+        } else continue;
+        bool tp_over = ntp > MONO_MAX_TPARAMS, vp_over = ntp > 0 && nvp > 64;
+        if (!tp_over && !vp_over) continue;
+        int nl = nm ? (int)nm->length : 1; const char *ns = nm ? nm->name : "?";
+        if (tp_over)
+            fprintf(stderr, "[E124] Error Ln %li, Col %li: '%.*s' has more than %d type parameters; this is a "
+                    "known limitation (I.172).\n", (long)x->line, (long)x->col, nl, ns, MONO_MAX_TPARAMS);
+        else
+            fprintf(stderr, "[E124] Error Ln %li, Col %li: the generic function '%.*s' has more than 64 value "
+                    "parameters; this is a known limitation (I.172).\n", (long)x->line, (long)x->col, nl, ns);
+        diagnostic_show_line(x->line, x->col);
+        exit(1);
+    }
+}
 // The arguments bound in `ctx`, in the template's type-parameter order (inference binds them in
 // the order the fields name them). A template with more parameters than are kept is refused.
 static int mono_ordered_args(DeclList *tparams, SubstCtx *ctx, Type **out, const char *what) {
