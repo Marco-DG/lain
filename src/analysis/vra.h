@@ -171,6 +171,7 @@ typedef struct {
     IrInstr **def;      // def[val id] = producing instruction (NULL for params)
     IrValue **val;      // val[val id] = the value itself (for its TYPE — see vra_range)
     int     *defblk;    // defblk[val id] = id of the block defining it (-1 = param)
+    int     *ipos;      // ipos[val id] = position of its defining instruction in that block
     int64_t *cval; bool *cknown;   // constant values (from IR_CONST)
     bool    *modwrap;  // a MODULAR +,−,× that MAY wrap: its ℤ reading is false (vra_zexact)
     int     *slicelen;  // slice value id → its canonical length var (−1 = none)
@@ -232,6 +233,10 @@ typedef struct {
     // C.3a: this analysis CHECKS a certificate instead of searching. The header states and the
     // side facts come from `checking`; every other state is rebuilt from them in one pass.
     const CertFunc *checking;
+    // Immediate dominators by block id (vra_dom_build), built on first use; dom_ok is false when
+    // they could not be built, and then no rule that needs them applies.
+    int      *idom, *dom_po;
+    bool      dom_tried, dom_ok;
 } Vra;
 
 // ★ DOES THIS OPERATION'S RESULT EQUAL ITS VALUE OVER ℤ? Every structural rule in this file —
@@ -795,13 +800,15 @@ static void vra_prepass(Vra *V) {
     // (the escape flag is set after the prepass has classified them — see below)
     for (int i=0;i<V->nvar;i++){ V->def[i]=NULL; V->defblk[i]=-1; V->cknown[i]=false; V->slicelen[i]=-1; V->subslice_gep[i]=false; }
     // first: def sites + constants (needed to classify slice cells below)
-    for (IrBlock *b=V->f->blocks; b; b=b->next)
-        for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
+    for (IrBlock *b=V->f->blocks; b; b=b->next) {
+        int pos = 0;
+        for (IrInstr *ins=b->instrs; ins; ins=ins->next, pos++) {
             if (ins->result){ V->def[ins->result->id]=ins; V->defblk[ins->result->id]=b->id;
-                              V->val[ins->result->id]=ins->result; }
+                              V->ipos[ins->result->id]=pos; V->val[ins->result->id]=ins->result; }
             // A float constant is not an integer one: aux.imm would read its BIT PATTERN (I.157).
             if (ins->op==IR_CONST && ins->result && !vra_is_float(ins->result)){ V->cknown[ins->result->id]=true; V->cval[ins->result->id]=ins->aux.imm; }
         }
+    }
     // A NEGATED CONSTANT is a constant. A negative literal is `-` applied to a positive one, and
     // left as an octagon interval it was exact only while it fit the octagon's usable range
     // (about 2^60: OCT_INF is INT64_MAX/4 and bounds are stored doubled) — so
@@ -1381,23 +1388,102 @@ static void vra_div_facts(Vra *V, Octagon *W, int r, int a, int64_t D, int64_t a
 //
 // The octagon already KNOWS the two loads are equal (both copy the same cell). Asking it is
 // both the fix and the general form — anything the domain proves equal to `a` will do.
+// ── DOMINANCE (I.144) ──────────────────────────────────────────────────────────────────────
+// An identity read off a definition, `d = B − a′`, holds between the CURRENT values of d, B and
+// a′ only where d's definition dominates: there every path has executed it after the last
+// definition of B and of a′ (each dominates d, being its operand). Elsewhere, in a loop, d may
+// still hold the previous iteration's value while a′ already holds this one. Lowering happens to
+// define an operand right before its use, which kept the rules below honest without this; it is
+// now a condition rather than a habit. Immediate dominators are computed once per function
+// (Cooper, Harvey and Kennedy: iterate over reverse postorder, intersecting along idom).
+static int vra_succs_all(IrBlock *b, IrBlock **out, int cap);                                   // fwd
+static void vra_dom_build(Vra *V) {
+    V->dom_tried = true; V->dom_ok = false;
+    int nb = V->f->next_block_id > 0 ? V->f->next_block_id : 1;
+    IrBlock *e = V->f->blocks;                                   // the entry is first
+    V->idom = malloc((size_t)nb * sizeof(int)); V->dom_po = malloc((size_t)nb * sizeof(int));
+    IrBlock **po = malloc((size_t)nb * sizeof(IrBlock*)), **stk = malloc((size_t)nb * sizeof(IrBlock*));
+    int *nexti = calloc((size_t)nb, sizeof(int)); char *seen = calloc((size_t)nb, 1);
+    if (!e || e->id < 0 || e->id >= nb || !V->idom || !V->dom_po || !po || !stk || !nexti || !seen) goto out;
+    for (int i = 0; i < nb; i++) { V->idom[i] = -1; V->dom_po[i] = -1; }
+    int npo = 0, sp = 0;
+    seen[e->id] = 1; stk[sp++] = e;
+    while (sp > 0) {                                             // iterative DFS, postorder
+        IrBlock *u = stk[sp - 1], *sv[64];
+        int ns = vra_succs_all(u, sv, 64);
+        if (ns < 0) goto out;                                    // a switch too wide to walk: no rule
+        int k = nexti[u->id];
+        while (k < ns && (!sv[k] || sv[k]->id < 0 || sv[k]->id >= nb || seen[sv[k]->id])) k++;
+        if (k < ns) { nexti[u->id] = k + 1; seen[sv[k]->id] = 1; stk[sp++] = sv[k]; }
+        else        { V->dom_po[u->id] = npo; po[npo++] = u; sp--; }
+    }
+    V->idom[e->id] = e->id;
+    for (bool changed = true; changed; ) {
+        changed = false;
+        for (int k = npo - 2; k >= 0; k--) {                     // reverse postorder, entry excluded
+            IrBlock *b = po[k]; int nd = -1;
+            for (IrEdge *pe = b->preds; pe; pe = pe->next) {
+                IrBlock *p = pe->block;
+                if (!p || p->id < 0 || p->id >= nb || V->idom[p->id] < 0) continue;
+                if (nd < 0) { nd = p->id; continue; }
+                int x = p->id, y = nd;
+                while (x != y) {
+                    while (V->dom_po[x] < V->dom_po[y]) x = V->idom[x];
+                    while (V->dom_po[y] < V->dom_po[x]) y = V->idom[y];
+                }
+                nd = x;
+            }
+            if (nd >= 0 && V->idom[b->id] != nd) { V->idom[b->id] = nd; changed = true; }
+        }
+    }
+    V->dom_ok = true;
+out:
+    free(po); free(stk); free(nexti); free(seen);
+}
+// Does the definition of value v dominate the definition of value w (an instruction's result)?
+// Within one block, by position (ipos): a walk down the list made each query linear in the block.
+static bool vra_def_dominates(Vra *V, int v, int w) {
+    if (v < 0 || v >= V->nvar || w < 0 || w >= V->nvar) return false;
+    int db = V->defblk[v], atblk = V->defblk[w];
+    if (db < 0) return V->def[v] == NULL;                        // a parameter: before everything
+    if (!V->dom_tried) vra_dom_build(V);
+    if (!V->dom_ok || atblk < 0 || atblk >= (V->f->next_block_id > 0 ? V->f->next_block_id : 1)) return false;
+    if (db == atblk) return V->ipos[v] < V->ipos[w];
+    for (int b = atblk; ; ) {
+        int up = V->idom[b];
+        if (up < 0 || up == b) return false;                     // unreached, or past the entry
+        if (up == db) return true;
+        b = up;
+    }
+}
+
 static bool vra_same_value(Vra *V, const Octagon *W, int x, int y) {
     if (x == y) return true;
     if (x<0 || y<0 || x>=V->nvar || y>=V->nvar) return false;
     return vra_diff_ub(V,W,x,y) <= 0 && vra_diff_ub(V,W,y,x) <= 0;
 }
+//
+// ★ a NEED NOT BE a′, ONLY BOUNDED BY IT (I.144). The textbook substring search is
+//     while i <= hay.len - needle.len { ... while j < needle.len and hay[i + j] == needle[j] ...
+// and `hay[i + j]` needs i + j < hay.len: i ≤ d with d = hay.len − needle.len, and j ≤ needle.len − 1,
+// so neither operand IS the subtrahend. Over the integers r − B = (a − a′) + (q − d) exactly, so
+// each bound on the right is a bound on the left: r − B ≤ ub(a − a′) + ub(q − d), and
+// B − r ≤ ub(a′ − a) + ub(d − q). With a′ = a both first terms are 0 and this is the rule above.
 static void vra_add_via_diff(Vra *V, Octagon *W, int r, int a, int q) {
     for (int d=0; d<V->nvar; d++) {
         IrInstr *dd = V->def[d];
         if (!dd || dd->op != IR_SUB || dd->n_operands < 2 || !vra_zexact(V, dd)) continue;
         if (!dd->operands[0] || !dd->operands[1]) continue;
-        if (!vra_same_value(V, W, dd->operands[1]->id, a)) continue;   // d = B − a′ with a′ = a
+        int ap = dd->operands[1]->id;                                    // d = B − a′
+        int64_t ca_up = vra_diff_ub(V, W, a, ap), ca_dn = vra_diff_ub(V, W, ap, a);
+        if (ca_up >= OCT_INF && ca_dn >= OCT_INF) continue;              // a and a′ unrelated
         int B = dd->operands[0]->id;
         if (B == r || B < 0 || B >= V->nvar) continue;
-        int64_t c = vra_diff_ub(V, W, q, d); // q − d ≤ c   ⇒   r − B ≤ c
-        if (c < OCT_INF) vra_add_diff_le(V,W, r, B, c);
-        int64_t c2 = vra_diff_ub(V, W, d, q); // d − q ≤ c2  ⇒   B − r ≤ c2
-        if (c2 < OCT_INF) vra_add_diff_le(V,W, B, r, c2);
+        if (!vra_def_dominates(V, d, r)) continue;                   // d, B, a′ of one time
+        int64_t c = vra_diff_ub(V, W, q, d); // q − d ≤ c   ⇒   r − B ≤ (a − a′) + c
+        if (c < OCT_INF && ca_up < OCT_INF) vra_add_diff_le(V,W, r, B, vra_clamp_ub((__int128)ca_up + c));
+        int64_t c2 = vra_diff_ub(V, W, d, q); // d − q ≤ c2  ⇒   B − r ≤ (a′ − a) + c2
+        if (c2 < OCT_INF && ca_dn < OCT_INF) vra_add_diff_le(V,W, B, r, vra_clamp_ub((__int128)ca_dn + c2));
     }
 }
 
@@ -3280,6 +3366,37 @@ static void vra_check_overflow(Vra *V, Octagon *W, IrInstr *ins) {
             int64_t llo, lhi2; vra_range(V, W, lv, &llo, &lhi2); (void)lhi2;
             if (llo >= tlo && hhi <= thi) c.ok = true;                 // a <= r <= b, both fit
         }
+    }
+    // ★ A SUM BOUNDED THROUGH A DIFFERENCE (I.144), the same identity vra_add_via_diff records
+    // for the result, decided here from the OPERANDS for the reason the midpoint gives above. With
+    // d = B − a′ an exact subtraction, x + y = B + (x − a′) + (y − d) over the integers, so
+    //     x + y ≤ hi(B) + ub(x − a′) + ub(y − d)      x + y ≥ lo(B) − ub(a′ − x) − ub(d − y).
+    // The substring search's `i + j` under `i <= hay.len - needle.len` and `j < needle.len` is at
+    // most hay.len − 1, a valid u64; the operand intervals see two unbounded usize.
+    if (!c.ok && ins->op == IR_ADD && ins->result && ins->result->id >= 0 && ins->result->id < V->nvar &&
+        a->id >= 0 && a->id < V->nvar && b->id >= 0 && b->id < V->nvar) {
+        __int128 hi_best = rhi, lo_best = rlo;
+        for (int d = 0; d < V->nvar; d++) {
+            IrInstr *dd = V->def[d];
+            if (!dd || dd->op != IR_SUB || dd->n_operands < 2 || !vra_zexact(V, dd)) continue;
+            if (!dd->operands[0] || !dd->operands[1]) continue;
+            int ap = dd->operands[1]->id; IrValue *Bv = dd->operands[0];
+            if (ap < 0 || ap >= V->nvar || Bv->id < 0 || Bv->id >= V->nvar) continue;
+            if (!vra_def_dominates(V, d, ins->result->id)) continue;
+            int64_t Blo, Bhi; vra_range(V, W, Bv, &Blo, &Bhi);
+            for (int side = 0; side < 2; side++) {
+                int x = side ? b->id : a->id, y = side ? a->id : b->id;
+                int64_t u1 = vra_diff_ub(V, W, x, ap), u2 = vra_diff_ub(V, W, y, d);   // x − a′, y − d
+                if (u1 < OCT_INF && u2 < OCT_INF) {
+                    __int128 h = (__int128)Bhi + u1 + u2; if (h < hi_best) hi_best = h;
+                }
+                int64_t l1 = vra_diff_ub(V, W, ap, x), l2 = vra_diff_ub(V, W, d, y);   // a′ − x, d − y
+                if (l1 < OCT_INF && l2 < OCT_INF) {
+                    __int128 l = (__int128)Blo - l1 - l2; if (l > lo_best) lo_best = l;
+                }
+            }
+        }
+        c.ok = (lo_best >= (__int128)tlo) && (hi_best <= (__int128)thi);
     }
     // S2: the intermediate arithmetic of a shaped access cannot overflow, because the region
     // LENGTH bounds it and the length is itself a valid value of the index type:
@@ -5579,7 +5696,7 @@ static Vra *vra_analyze(IrFunc *f) {
     oct_map = V->odim;
     int nb=f->next_block_id;
     V->in=calloc(nb,sizeof(int64_t*)); V->reached=calloc(nb,sizeof(bool)); V->inclosed=calloc(nb,sizeof(bool));
-    V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int));
+    V->def=calloc(V->nvar,sizeof(IrInstr*)); V->defblk=calloc(V->nvar,sizeof(int)); V->ipos=calloc(V->nvar,sizeof(int));
     V->val=calloc(V->nvar,sizeof(IrValue*));
     V->cval=calloc(V->nvar,sizeof(int64_t)); V->cknown=calloc(V->nvar,sizeof(bool));
     V->modwrap=calloc(V->nvar,sizeof(bool));
@@ -7160,7 +7277,7 @@ static void vra_dump_state(Vra *V, FILE *o) {
 static void vra_free(Vra *V){
     if(!V) return;
     for(int i=0;i<V->f->next_block_id;i++) free(V->in[i]);
-    free(V->in); free(V->reached); free(V->inclosed); free(V->def); free(V->defblk); free(V->cval); free(V->cknown); free(V->modwrap);
+    free(V->in); free(V->reached); free(V->inclosed); free(V->def); free(V->defblk); free(V->ipos); free(V->idom); free(V->dom_po); free(V->cval); free(V->cknown); free(V->modwrap);
     free(V->slicelen); free(V->cellcanon); free(V->val); free(V->subslice_gep); free(V->escaped); free(V->persist); free(V->shape_rank); free(V->shape_ext); free(V->elem_lo); free(V->elem_hi); free(V->elem_known); free(V->cret_lo); free(V->cret_hi); free(V->cret_state); free(V->accum_cell); free(V->uniq_store); free(V->strict_esc); free(V->odim); free(V->checks); cert_free(V->cert); free(V);
 }
 

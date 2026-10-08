@@ -1089,11 +1089,39 @@ ordinary work rather than a redesign.
   instantiated rather than where it is defined.
 
 - **A fact relating three quantities at once is outside the octagon by construction.** The
-  domain holds `x ± y <= c` with a constant on the right, so an allocator's `pos + size <= cap`,
-  or a window read as `h[pos + i]` with `i < n` and `pos + n <= h.len`, cannot be proven. The way
-  around it is to describe a window by its two ends instead of a start and a length: walk an
-  index `k` from `pos` up to `end`, or take `h[pos..end]` once `end <= h.len` and `pos <= end`
-  are known. Every fact then relates two variables again.
+  domain holds `x ± y <= c` with a constant on the right, so a window checked as
+  `pos + n <= h.len`, or an allocator's `pos + size <= cap`, cannot be proven, and the sum is
+  refused before that, since it can overflow:
+
+  ```lain
+  func window_first(h u8[], pos usize, n usize) u8 {
+      if n == 0 { return 0 }
+      if pos + n > h.len { return 0 }      // ERROR [E086]: the sum can overflow
+      return h[pos]
+  }
+  ```
+
+  Two other spellings are within reach. Bound the length by a difference once the start is
+  known to be in range: after `pos <= h.len`, the check `n <= h.len - pos` is a subtraction
+  that cannot underflow, and `h[pos + i]` with `i < n` is then proven, the add `pos + i`
+  included, because the analysis knows that subtraction exactly and bounds the sum through it.
+  An allocator checks `size <= cap - pos` the same way. Or describe the window by its two ends:
+  walk an index `k` from `pos` up to `end`, or take `h[pos..end]` once `end <= h.len` and
+  `pos <= end` are known, and every fact relates two variables again.
+
+  ```lain
+  func window_sum(h u8[], pos usize, n usize) u32 {
+      if pos > h.len { return 0 }
+      if n > h.len - pos { return 0 }      // the length, bounded by a difference
+      var s u32 = 0
+      var i usize = 0
+      while i < n {
+          s = s +% h[pos + i]              // proven in bounds, and pos + i cannot overflow
+          i = i + 1
+      }
+      return s
+  }
+  ```
 
 - **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
   by brute force, but there is no mechanised soundness proof. That is future work, and not

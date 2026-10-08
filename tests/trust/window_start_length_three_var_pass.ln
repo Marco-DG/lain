@@ -1,0 +1,26 @@
+// A window described by a START and a LENGTH: `pos + i < h.len` from `i < n` and
+// `n <= h.len - pos`, three quantities at once. This was a documented LIMIT (an octagon relates
+// two) until I.144: `pos + i` = h.len + (pos − pos) + (i − d) with d = h.len − pos an exact
+// subtraction, and i − d < 0 because i < n <= d. The same window by its two ends proves too
+// (tests/vra/bounds/window_two_ends_pass.ln). The bound must be written as a difference: `pos + n <= h.len` can
+// itself overflow.
+func f(h u8[], pos usize, n usize) u32 {
+    if pos > h.len { return 0 }
+    if n > h.len - pos { return 0 }
+    var s u32 = 0
+    var i usize = 0
+    while i < n {
+        s = s +% (h[pos + i] as u32)
+        i = i + 1
+    }
+    return s
+}
+// The window at the very end (pos + n == h.len), the whole slice, an empty one, and one refused.
+func main() i32 {
+    var h u8[6] = [1, 2, 3, 4, 5, 6]
+    if f(h, 2, 4) != 18 { return 1 }
+    if f(h, 0, 6) != 21 { return 2 }
+    if f(h, 6, 0) != 0 { return 3 }
+    if f(h, 3, 4) != 0 { return 4 }
+    return 0
+}

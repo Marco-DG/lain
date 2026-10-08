@@ -2388,6 +2388,13 @@ rc=0
 out=20 40
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/substring_search_pass.ln
+rc=0
+out=
+at=access 4
+at=nonnull 2
+at=pure 2
+ty=Slice_u8 scalar
 ### tests/trust/sum_array_payload_pass.ln
 rc=0
 out=
@@ -2593,6 +2600,13 @@ ty=Slice_u8 scalar
 rc=0
 out=3600000000
 out=900000000
+ty=Slice_u8 scalar
+### tests/trust/window_start_length_three_var_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
+at=pure 2
 ty=Slice_u8 scalar
 ### tests/trust/wrapping_arithmetic_widths_pass.ln
 rc=0

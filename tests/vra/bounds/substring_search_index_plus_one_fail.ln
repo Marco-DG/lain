@@ -1,0 +1,29 @@
+// EXPECT: [E085]
+// The allowed side is tests/trust/substring_search_pass.ln (I.144). hay[i + j + 1] reads one
+// past the window: at the last start and the last j it is hay[hay.len].
+func find(n usize < 1099511627776, hay u8[n], m usize < 1099511627776, needle u8[m]) usize {
+    if needle.len > hay.len { return hay.len }
+    var i usize = 0
+    while i <= hay.len - needle.len {
+        var j usize = 0
+        while j < needle.len and hay[i + j + 1] == needle[j] {
+            j = j + 1
+        }
+        if j == needle.len { return i }
+        i = i + 1
+    }
+    return hay.len
+}
+
+func main() i32 {
+    var a u8[8] = [104, 97, 121, 115, 116, 97, 99, 107]
+    var b u8[3] = [115, 116, 97]
+    if find(8, a, 3, b) != 3 { return 1 }
+    var c u8[2] = [107, 120]
+    if find(8, a, 2, c) != 8 { return 2 }
+    var e u8[1] = [107]
+    if find(8, a, 1, e) != 7 { return 3 }
+    var h u8[8] = [104, 97, 121, 115, 116, 97, 99, 107]
+    if find(8, a, 8, h) != 0 { return 4 }
+    return 0
+}

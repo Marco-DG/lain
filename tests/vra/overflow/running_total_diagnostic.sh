@@ -3,7 +3,9 @@
 # or the total") is for a RUNNING TOTAL: a value stored back into the cell it read, `s = s + d`.
 # It was printed for any loop-carried `x + d` whose check failed — here the index `i + w - 1` of a
 # sliding window, whose missing fact is a relation between i, w and a.len, not a bound on a sum —
-# sending the reader to change the wrong thing (O-5 in the Octagon session's ISSUES.md).
+# sending the reader to change the wrong thing (O-5 in the Octagon session's ISSUES.md). The
+# window walks `i < a.len`: under `i <= a.len - w` it is proven since I.144, and `i + w` here can
+# leave u64 (two lengths' worth), so the add still fails and the wording is still asked.
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 LAIN="$ROOT/lain"
@@ -14,7 +16,7 @@ func f(a i32[], w usize) i32 {
     if w == 0 or w > a.len { return 0 }
     var s i32 = 0
     var i usize = 0
-    while i <= a.len - w {
+    while i < a.len {
         s = s +% (a[i + w - 1] -% a[i])
         i = i + 1
     }

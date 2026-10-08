@@ -1,0 +1,32 @@
+// The textbook substring search (I.144): try every start i, compare the needle byte by byte.
+// `hay[i + j]` needs i + j < hay.len, from i <= hay.len - needle.len and j < needle.len: a fact
+// over four values, and the octagon relates two. It holds because i + j = hay.len + (j - needle.len)
+// + (i - d) with d = hay.len - needle.len exact, and both brackets have a bound. The lengths are
+// bounded only so that `i = i + 1` fits (I.147: a slice's length is unbounded). The last two calls
+// match at the very end (i + j = n - 1) and at i = 0 with the whole haystack as the needle.
+func find(n usize < 1099511627776, hay u8[n], m usize < 1099511627776, needle u8[m]) usize {
+    if needle.len > hay.len { return hay.len }
+    var i usize = 0
+    while i <= hay.len - needle.len {
+        var j usize = 0
+        while j < needle.len and hay[i + j] == needle[j] {
+            j = j + 1
+        }
+        if j == needle.len { return i }
+        i = i + 1
+    }
+    return hay.len
+}
+
+func main() i32 {
+    var a u8[8] = [104, 97, 121, 115, 116, 97, 99, 107]
+    var b u8[3] = [115, 116, 97]
+    if find(8, a, 3, b) != 3 { return 1 }
+    var c u8[2] = [107, 120]
+    if find(8, a, 2, c) != 8 { return 2 }
+    var e u8[1] = [107]
+    if find(8, a, 1, e) != 7 { return 3 }
+    var h u8[8] = [104, 97, 121, 115, 116, 97, 99, 107]
+    if find(8, a, 8, h) != 0 { return 4 }
+    return 0
+}
