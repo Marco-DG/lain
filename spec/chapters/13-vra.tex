@@ -228,10 +228,23 @@ When the callee has no declared return constraint, the call expression has
 an unknown range.
 
 \begin{note}
-  Interprocedural VRA is conservative: only declared constraints are used,
-  not body analysis.  This preserves decidability and ensures that changing
-  a function's body cannot silently affect its callers' safety proofs.
+  The intent of this rule is that only declared constraints cross a call, so that changing a
+  function's body cannot silently affect its callers' safety proofs.  The reference
+  implementation does not yet conform to it.  It also derives a call's range from the callee's
+  body, and re-analyses a small callee at constant arguments, so it accepts programs this clause
+  does not guarantee, and a caller's verdict can change when only a callee's body changes.  The
+  declared constraint is the contract a program can rely on with any conforming implementation.
 \end{note}
+
+\begin{example}
+\begin{laincode}
+func five() i32 { return 5 }
+
+func divide(a i32) i32 {
+    return a / five()    // accepted by the reference implementation, which reads five's
+}                        // body; with `return 0` there, the same division is refused
+\end{laincode}
+\end{example}
 
 \section{Limits and known gaps}
 \label{sec:vra.limits}
