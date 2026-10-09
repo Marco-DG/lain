@@ -1,0 +1,19 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 13, Col 9: this value is not provably within [1, 2147483647], the refinement of the type it lands in
+// I.188: a call through a function pointer lands each argument in the POINTER type's parameter
+// type, as a direct call lands it in the callee's. `inv` assumes `b >= 1` at its entry, licensed
+// by that landing; the indirect call used to check nothing, and apply(inv, 0) divided by zero
+// (SIGFPE natively, a false proof under --interpret).
+type Small = i32 >= 1
+
+func inv(b Small) i32 { return 100 / b }
+
+func apply(f *func(Small) i32, v i32) i32 {
+    var r i32 = 0
+    r = f(v)
+    return r
+}
+
+func main() i32 {
+    return apply(inv, 0)
+}

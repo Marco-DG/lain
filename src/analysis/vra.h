@@ -6129,15 +6129,35 @@ static Vra *vra_analyze(IrFunc *f) {
                 case IR_CALL: {
                     // the callee's PARAMETER type, by position. An indirect call names no
                     // function and an extern's declaration is believed, as everywhere else.
+                    //
+                    // ★ AN INDIRECT CALL lands its arguments in the POINTER type's parameters
+                    // (I.188). It names no function, and this site used to stop there: with
+                    // `type Small = i32 >= 1`, `f(v)` through a `*func(Small) i32` passed 0 to
+                    // a callee that assumes its parameter at entry, and `100 / b` divided by
+                    // zero. The pointer's type states the parameter types; operand 0 is the
+                    // pointer and the arguments follow it.
                     IrFunc *cal = ins->aux.callee ? vra_find_func(ins->aux.callee) : NULL;
-                    if (!cal) break;
-                    IrParam *pp = cal->params; int k = 0;
-                    for (; pp && k < ins->n_operands; pp = pp->next, k++) {
-                        IrValue *arg = ins->operands[k];
-                        IrType  *pt  = pp->value ? pp->value->type : NULL;
-                        if (!arg || !vra_type_may_lose(arg->type, pt)) continue;
-                        oct_close(&W);
-                        vra_check_narrow(V,&W, arg, pt, ins, ins->line, ins->col);
+                    if (cal) {
+                        IrParam *pp = cal->params; int k = 0;
+                        for (; pp && k < ins->n_operands; pp = pp->next, k++) {
+                            IrValue *arg = ins->operands[k];
+                            IrType  *pt  = pp->value ? pp->value->type : NULL;
+                            if (!arg || !vra_type_may_lose(arg->type, pt)) continue;
+                            oct_close(&W);
+                            vra_check_narrow(V,&W, arg, pt, ins, ins->line, ins->col);
+                        }
+                    } else if (!ins->aux.callee && ins->n_operands >= 1 && ins->operands[0]
+                               && ins->operands[0]->type) {
+                        IrType *ft = ins->operands[0]->type;
+                        if (ft->kind == IRT_PTR && ft->elem) ft = ft->elem;
+                        if (ft->kind != IRT_FUNC) break;
+                        for (int k = 1; k < ins->n_operands && k - 1 < ft->n_fields; k++) {
+                            IrValue *arg = ins->operands[k];
+                            IrType  *pt  = ft->fields[k - 1];
+                            if (!arg || !vra_type_may_lose(arg->type, pt)) continue;
+                            oct_close(&W);
+                            vra_check_narrow(V,&W, arg, pt, ins, ins->line, ins->col);
+                        }
                     }
                     break;
                 }

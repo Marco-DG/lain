@@ -196,6 +196,25 @@ return type declares an invariant that the VRA shall enforce:
   a parameter constraint is \illformed{}~(\diagcode{E012}).
 \end{constraint}
 
+\pnum
+A call through a function pointer lands each argument in the pointer type's parameter type, which
+is checked as every landing is~(\diagcode{E086}).  A refined type there is proven at the call, as
+it is at a direct call.
+
+\begin{laincode}
+type Small = i32 >= 1
+
+func inv(b Small) i32 { return 100 / b }
+
+func apply(f *func(Small) i32, v i32) i32 {
+    return f(v)    // ERROR [E086]
+}
+
+func main() i32 {
+    return apply(inv, 4)
+}
+\end{laincode}
+
 \begin{constraint}
   A \lain{return} expression whose range cannot be proven to satisfy the
   declared return constraint is \illformed{}~(\diagcode{E086}) --- the same

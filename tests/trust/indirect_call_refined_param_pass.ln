@@ -1,0 +1,25 @@
+// The allowed side of tests/functions/indirect_call_refined_param_fail.ln (I.188): an argument
+// that is proven to satisfy the pointer type's refined parameter passes, through a parameter, a
+// local and a struct field, and the callee's assumption holds at run time.
+type Small = i32 >= 1
+
+func inv(b Small) i32 { return 100 / b }
+
+func apply(f *func(Small) i32, v i32) i32 {
+    if v < 1 { return 0 }
+    return f(v)
+}
+
+type Op {
+    run *func(Small) i32
+}
+
+func main() i32 {
+    if apply(inv, 4) != 25 { return 1 }
+    if apply(inv, 0) != 0 { return 2 }
+    var g *func(Small) i32 = inv
+    if g(50) != 2 { return 3 }
+    o = Op(inv)
+    if o.run(100) != 1 { return 4 }
+    return 0
+}
