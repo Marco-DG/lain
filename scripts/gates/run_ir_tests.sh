@@ -5,8 +5,9 @@
 # covers the no-over-rejection direction over the real corpus.
 #
 # It also holds the proof engine's judge (src/judge/): the include rules between the trusted judge
-# and the untrusted solver and finder (judge_includes.py), and the unit test of the judge's text
-# form (test_judge_format).
+# and the untrusted solver and finder (judge_includes.py), and the unit tests of the judge's text
+# form (test_judge_format) and of its VC generator over a hand-built IR (test_judge_gen). The
+# generator's corpus check, every hypothesis true at run time, is judge_gate.sh.
 #
 #   bash run_ir_tests.sh          # exit 0 = all IR analysis unit tests pass
 set -u
@@ -17,7 +18,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail=0
 echo "── judge include rules ──"
 python3 scripts/gates/judge_includes.py . || fail=1
-for t in test_octagon test_vra test_place test_linearity test_borrow test_definite_init test_ir test_judge_format; do
+for t in test_octagon test_vra test_place test_linearity test_borrow test_definite_init test_ir test_judge_format test_judge_gen; do
     src="src/tools/$t.c"
     if [ ! -f "$src" ]; then echo "MISSING: $t"; fail=1; continue; fi
     # test_octagon enumerates a 13^3 box 40,000 times against gamma. Unoptimised that

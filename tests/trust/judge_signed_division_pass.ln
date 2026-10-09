@@ -1,0 +1,24 @@
+// The proof engine's judge states `x = c*q + m` for a signed division by a constant, with m's
+// sign following x's (C truncates toward zero): judge_gate.sh evaluates those facts each time an
+// obligation here is reached. No other corpus program reaches one with a NEGATIVE dividend, so a
+// generator that gave a negative dividend a non-negative remainder went unseen. Each quotient and
+// remainder indexes a table, so its definition is in the index's VC; the values are read natively
+// and with --interpret.
+func pick(x i32) i32 {
+    var t u8[16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    if x >= -20 and x <= 20 {
+        q = x / 8
+        r = x % 8
+        s = x / -4
+        return (t[q + 2] as i32) * 100 + (t[r + 7] as i32) * 10 + (t[s + 5] as i32)
+    }
+    return 0
+}
+
+func main() i32 {
+    if pick(-19) != 0 * 100 + 4 * 10 + 9 { return 1 }
+    if pick(-5) != 2 * 100 + 2 * 10 + 6 { return 2 }
+    if pick(13) != 3 * 100 + 12 * 10 + 2 { return 3 }
+    if pick(-8) != 1 * 100 + 7 * 10 + 7 { return 4 }
+    return 0
+}
