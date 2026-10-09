@@ -12,6 +12,7 @@ compiler.
 |:---|:---|:---|
 | `test_*.c` | vra, linearity, borrow, octagon, definite_init, place, ir | unit tests over a HAND-BUILT IR, so they reach the detection direction the corpus cannot — the front end rejects those programs before the analyses would run |
 | `test_judge_format.c` | | the proof engine judge's text form (`src/judge/text.h`): canonical round trips, refusals with their reasons, one-edit mutants, a full region |
+| `solve_vc.c` | | the proof engine's untrusted solver (`src/solver/lia.h`) on VC texts: a certificate, a model or a refusal per VC, each answer round-tripped through the judge's parser; `scripts/gates/solver_harness.py` checks the answers with its own kernel and brute force |
 | `*_driver.c` | vra, linearity, effects, incomplete, lower | drive one analysis over real source and print what it concluded; the surveys and several fuzzers are built on them |
 | `fuzz_vra.c` | | the in-process VRA fuzzer |
 

@@ -29,6 +29,12 @@ for t in test_octagon test_vra test_place test_linearity test_borrow test_defini
     echo "── $t ──"
     if ! "$TMP/$t"; then echo "  ^^ $t FAILED"; fail=1; fi
 done
+# The proof engine's UNTRUSTED solver (src/solver/lia.h), checked from outside: an independent
+# kernel and a brute-force oracle written in Python, which share nothing with the C.
+if gcc -std=c99 -O2 -o "$TMP/solve_vc" src/tools/solve_vc.c -I src 2>/dev/null; then
+    echo "── solver ──"
+    python3 scripts/gates/solver_harness.py "$TMP/solve_vc" || { echo "  ^^ solver FAILED"; fail=1; }
+else echo "BUILD FAILED: solve_vc"; fail=1; fi
 echo "=================================================================="
 [ $fail -eq 0 ] && echo "IR analysis unit tests: ALL PASSED" || echo "IR analysis unit tests: FAILURES"
 exit $fail
