@@ -1,0 +1,6 @@
+// INTERFACE assertion (I.192): what the C compiler is TOLD about a size the proofs use. Each
+// fixed size is a _Static_assert on the exact expression the program computes; a layout that
+// drifted from the C compiler's would fail the C build instead of carrying a wrong fact.
+_Static_assert(1 * sizeof(uint32_t) == 4,
+_Static_assert(1 * sizeof(uint16_t) == 2,
+_Static_assert(3 * sizeof(uint16_t) == 6,

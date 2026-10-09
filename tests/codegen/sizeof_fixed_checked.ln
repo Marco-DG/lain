@@ -1,0 +1,23 @@
+// I.192: where the analyses take @sizeof AS a number (ir_fixed_size: an integer, an enumeration,
+// a [packed] struct, a vector, an array of those), the emitted C asks the C compiler to confirm
+// it. The program uses each size; its sibling .grep checks that the C states the assertions.
+[packed]
+type Bits {
+    lo u4
+    hi u4
+}
+type Kind { A, B, C }
+
+func main() i32 {
+    a = @sizeof(u32)
+    b = @sizeof(u12)
+    c = @sizeof(Bits)
+    d = @sizeof(Kind)
+    e = @sizeof(u16[3])
+    if a != 4 { return 1 }
+    if b != 2 { return 2 }
+    if c != 1 { return 3 }
+    if d != 1 { return 4 }
+    if e != 6 { return 5 }
+    return 0
+}

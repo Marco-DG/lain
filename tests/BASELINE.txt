@@ -41,6 +41,11 @@ out=
 at=access 14
 at=nonnull 6
 ty=Slice_i32 scalar
+### tests/codegen/sizeof_fixed_checked.ln
+rc=0
+out=
+ty=Bits scalar
+ty=Kind scalar
 ### tests/codegen/str_eq_literal_pass.ln
 rc=1
 out=

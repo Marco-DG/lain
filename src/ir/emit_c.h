@@ -506,6 +506,17 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             IrType *qt = i->aux.alloca_ty;
             int64_t n = 1;
             while (qt && qt->kind == IRT_ARRAY) { n *= (qt->array_len > 0 ? qt->array_len : 0); qt = qt->elem; }
+            // ★ CHECK THE NUMBER THE PROOFS USE (I.192). Where the type's C spelling has an exact
+            // size (ir_fixed_size), the range analysis and the judge state @sizeof AS that number,
+            // and the C compiler computes sizeof() on its own. The two agree by construction (the
+            // C type comes from the same layout decision, and C fixes an exact-width type's size),
+            // so the compiler is told to check it: a layout that drifted is a build error here,
+            // never a proof about a size the program does not have.
+            int64_t fx = i->op == IR_SIZEOF ? ir_fixed_size(i->aux.alloca_ty) : 0;
+            if (fx > 0) {
+                fprintf(o, "  _Static_assert(%lld * sizeof(", (long long)n); ir_ctype(qt, o);
+                fprintf(o, ") == %lld, \"@sizeof: the size the analyses use is the C compiler's\");\n", (long long)fx);
+            }
             fprintf(o, "  v%d = (uint64_t)", i->result->id);
             if (i->op == IR_SIZEOF) fprintf(o, "%lld * ", (long long)n);
             fputs(i->op == IR_SIZEOF ? "sizeof(" : "_Alignof(", o);
