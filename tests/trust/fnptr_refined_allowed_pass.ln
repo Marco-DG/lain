@@ -1,0 +1,59 @@
+// I.187, the allowed side: a function converts to a `*func` type whose refinements it meets. A
+// parameter is contravariant (the pointer may state MORE than the function assumes), a return is
+// covariant (the function may guarantee MORE than the pointer promises), an excluded value is
+// excluded by an interval that misses it, a pointer converts to a pointer under the same rules,
+// and a function with a refined parameter is still called directly, or through a wrapper whose
+// parameter is unrefined. Each value is read, natively and with --interpret.
+type Pos = i32 >= 1 and <= 9
+type Low = i32 >= 1 and <= 5
+type NZ = i32 != 0
+type Small = i32 >= 0 and <= 3
+
+func safe_div(a i32, b i32 > 0) i32 {
+    return a / b
+}
+
+func inv(s Pos) i32 {
+    return 100 / s
+}
+
+func inv_nz(s NZ) i32 {
+    return 60 / s
+}
+
+func one() Small {
+    return 1
+}
+
+func two() i32 >= 0 and <= 3 {
+    return 2
+}
+
+func div_or_zero(a i32, b i32) i32 {
+    if b > 0 { return safe_div(a, b) }
+    return 0
+}
+
+func main() i32 {
+    var a u8[4] = [10, 20, 30, 40]
+    var p *func(Low) i32 = inv
+    var q *func(Pos) i32 = inv_nz
+    var r *func() Small = one
+    var s *func() Small = two
+    var t *func() i32 = two
+    var u *func(i32, i32) i32 = div_or_zero
+    var w *func(Low) i32 = p
+    var x *func() i32 = r
+    if p(4) != 25 { return 1 }
+    if q(3) != 20 { return 2 }
+    if a[r()] != 20 { return 3 }
+    if a[s()] != 30 { return 4 }
+    if t() != 2 { return 5 }
+    if u(10, 2) != 5 { return 6 }
+    if u(10, 0) != 0 { return 7 }
+    if w(5) != 20 { return 8 }
+    if x() != 1 { return 9 }
+    if safe_div(9, 3) != 3 { return 10 }
+    if inv(2) != 50 { return 11 }
+    return 0
+}

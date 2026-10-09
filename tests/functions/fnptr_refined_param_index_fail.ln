@@ -1,0 +1,14 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 10,
+// `pick(a u8[8], i usize < 8)` reads `a[i]` on its assumed precondition. Through a pointer, with
+// i = 1000, nothing checks it. The parent compiled it: UBSan reached the hint's unreachable point
+// (an out-of-bounds read without it), and --interpret exits 99. I.187
+func pick(a u8[8], i usize < 8) u8 {
+    return a[i]
+}
+func main() i32 {
+    var g *func(u8[8], usize) u8 = pick
+    var a u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    var k usize = 1000
+    return g(a, k) as i32
+}

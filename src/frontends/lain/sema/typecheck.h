@@ -1856,6 +1856,138 @@ static Type *fnptr_ret(Type *t) {
         memcmp(r->base_type->name, "void", 4) == 0) return NULL;
     return r;
 }
+// ★ A FUNCTION-POINTER TYPE CARRIES ITS REFINEMENTS, WITH VARIANCE (I.187). The structural match
+// below compares types by their base (types_equal_exact reads `Pos` as i32), so the refinements
+// fell away at the conversion while both sides went on believing them:
+//   - a PARAMETER: `func inv(s Pos) i32` into `*func(i32) i32`, then `g(0)`. The callee assumes
+//     s in [1, 9] at its entry, and nothing at a call through the pointer can check it: SIGFPE;
+//   - a RETURN: `func zero() i32` into `*func() Pos`, then `100 / g()`. The call's result is
+//     typed by the pointer, so `g() != 0` was "proven": a division by zero.
+// So a parameter is CONTRAVARIANT: the pointer's parameter must state at least what the function
+// assumes. A return is COVARIANT: the function must guarantee at least what the pointer promises,
+// by its own refined return type or its literal return constraints (`from_ret`), which its
+// code-86 ASSERT proves. Only an INTEGER parameter or return needs this: a parameter or return
+// that is itself a function type matches only the identical type, since types_equal_exact has no
+// structural case for TYPE_FUNC (a callback taking `Pos` and one taking `i32` do not convert
+// either way). A structural rule there would have to bring this variance with it, exchanging
+// the two sides for a parameter. The refinement is read as lowering reads it into the IrType
+// that VRA checks against (fnptr_refine_of), so the two cannot disagree.
+typedef struct { int64_t lo, hi; bool has_ne; int64_t ne; } FnRefine;
+static bool fnptr_refine_of(Type *t, ExprList *extra, FnRefine *r) {
+    extern Symbol *sema_lookup(const char *name);
+    // the alias chain, outermost first; lowering refines the innermost first
+    // (ir_resolve_alias_base, then ir_refine_int_type), and a later `!=` replaces an earlier one
+    Decl *chain[16]; int n = 0;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    while (n < 16 && t && t->kind == TYPE_SIMPLE && t->base_type && t->base_type->length < 128) {
+        char buf[128];
+        memcpy(buf, t->base_type->name, (size_t)t->base_type->length); buf[t->base_type->length] = '\0';
+        Symbol *sym = sema_lookup(buf);
+        if (!sym || !sym->decl || sym->decl->kind != DECL_TYPE_ALIAS || !sym->type || sym->type == t) break;
+        chain[n++] = sym->decl; t = sym->type;
+    }
+    long long lo, hi;
+    if (!type_integer_range(t, &lo, &hi)) return false;
+    r->lo = lo; r->hi = hi; r->has_ne = false; r->ne = 0;
+    for (int i = n - 1; i >= 0; i--)
+        refine_apply_clauses(chain[i]->as.type_alias_decl.constraints, &r->lo, &r->hi, &r->has_ne, &r->ne);
+    if (extra) refine_apply_clauses(extra, &r->lo, &r->hi, &r->has_ne, &r->ne);
+    return true;
+}
+// Does every value `strong` admits lie in `weak`: inside its interval, and not its excluded value?
+static bool fnptr_refine_within(const FnRefine *strong, const FnRefine *weak) {
+    if (strong->lo < weak->lo || strong->hi > weak->hi) return false;
+    if (weak->has_ne && !(strong->has_ne && strong->ne == weak->ne) &&
+        strong->lo <= weak->ne && weak->ne <= strong->hi) return false;
+    return true;
+}
+static void fnptr_refine_text(const FnRefine *r, char *buf, size_t cap) {
+    int o = snprintf(buf, cap, "[%lld, %lld]", (long long)r->lo, (long long)r->hi);
+    if (r->has_ne && o > 0 && (size_t)o < cap) snprintf(buf + o, cap - (size_t)o, " except %lld", (long long)r->ne);
+}
+// Can a value of function-pointer type `from` stand where `to` is expected, refinements included?
+// The structure (arity, base types, row) is fnptr_types_assignable's; this reads only what it
+// cannot see. On failure, `why` says which parameter or return, and what each side states.
+static bool fnptr_refines_ok(Type *to, Type *from, ExprList *from_ret, char *why, size_t cap) {
+    char ts[96], fs[96], d1[64], d2[64];   // a refinement's text is at most 56 bytes
+    TypeList *a = to->func_params, *b = from->func_params;
+    for (int k = 1; a && b; a = a->next, b = b->next, k++) {
+        FnRefine rt, rf;
+        if (!fnptr_refine_of(a->type, NULL, &rt) || !fnptr_refine_of(b->type, NULL, &rf)) continue;
+        if (fnptr_refine_within(&rt, &rf)) continue;
+        type_describe(b->type, fs, sizeof fs); type_describe(a->type, ts, sizeof ts);
+        fnptr_refine_text(&rf, d1, sizeof d1); fnptr_refine_text(&rt, d2, sizeof d2);
+        snprintf(why, cap, "its parameter %d (`%s`) assumes %s, and the pointer's `%s` states only %s, "
+                 "so a call through the pointer would not establish it", k, fs, d1, ts, d2);
+        return false;
+    }
+    Type *tr = fnptr_ret(to), *fr = fnptr_ret(from);
+    FnRefine rt, rf;
+    if (tr && fr && fnptr_refine_of(tr, NULL, &rt) && fnptr_refine_of(fr, from_ret, &rf) &&
+        !fnptr_refine_within(&rf, &rt)) {
+        type_describe(tr, ts, sizeof ts); type_describe(fr, fs, sizeof fs);
+        fnptr_refine_text(&rt, d1, sizeof d1); fnptr_refine_text(&rf, d2, sizeof d2);
+        snprintf(why, cap, "the pointer's return (`%s`) promises %s, and the function's (`%s`) "
+                 "guarantees only %s", ts, d1, fs, d2);
+        return false;
+    }
+    return true;
+}
+
+// ★ A PRECONDITION A POINTER TYPE CANNOT STATE (I.187). A parameter refined where it is declared
+// (`b i32 > 0`, `i usize < a.len`) or a slice whose length is (`a u8[>= 4]`) is ASSUMED at the
+// callee's entry, and only a DIRECT call asserts it (ir_lower_call_requires,
+// ir_lower_call_slice_len_requires). A pointer type has no syntax for either (`*func(i32 > 0)` is
+// E100), so a call through one checks nothing: `safe_div` through `*func(i32, i32) i32` divided
+// by zero, and `last(a u8[>= 4])` read past a 2-element slice. Such a function never becomes a
+// value; a function with an unrefined parameter that checks and then calls it can. Called where
+// a function's NAME becomes a value (resolve.h), the one point every route passes: a `var`
+// initialiser written or inferred, an argument, a module constant, an array, a field, a later
+// assignment.
+static void fnptr_clause_text(Expr *rhs, int op, char *buf, size_t cap) {
+    const char *os = op == TOKEN_ANGLE_BRACKET_LEFT ? "<" : op == TOKEN_ANGLE_BRACKET_LEFT_EQUAL ? "<="
+                   : op == TOKEN_ANGLE_BRACKET_RIGHT ? ">" : op == TOKEN_ANGLE_BRACKET_RIGHT_EQUAL ? ">="
+                   : op == TOKEN_EQUAL_EQUAL ? "==" : op == TOKEN_BANG_EQUAL ? "!=" : "?";
+    if (rhs && rhs->kind == EXPR_LITERAL)
+        snprintf(buf, cap, "%s %lld", os, (long long)rhs->as.literal_expr.value);
+    else if (rhs && rhs->kind == EXPR_IDENTIFIER && rhs->as.identifier_expr.id)
+        snprintf(buf, cap, "%s %.*s", os, (int)rhs->as.identifier_expr.id->length, rhs->as.identifier_expr.id->name);
+    else snprintf(buf, cap, "%s ...", os);
+}
+static void fnptr_refuse_unstatable(Decl *d, Expr *at) {
+    if (!d || !at || (d->kind != DECL_FUNCTION && d->kind != DECL_EXTERN_FUNCTION)) return;
+    for (DeclList *p = d->as.function_decl.params; p; p = p->next) {
+        if (!p->decl || p->decl->kind != DECL_VARIABLE) continue;
+        Type *pt = p->decl->as.variable_decl.type;
+        ExprList *cs = p->decl->as.variable_decl.constraints;
+        bool slice_len = pt && pt->kind == TYPE_ARRAY && pt->array_len < 0 && pt->size_expr;
+        if (!cs && !slice_len) continue;
+        // an identifier is at most 224 bytes (the lexer's limit) and a type's text 96, so these
+        // hold any parameter whole: a diagnostic is never cut
+        char tb[96], cl[1024] = "", one[256];
+        Id *pn = p->decl->as.variable_decl.name, *fn = d->as.function_decl.name;
+        if (slice_len) {
+            Type *et = pt->element_type; type_describe(et, tb, sizeof tb);
+            fnptr_clause_text(pt->size_expr, pt->size_relop, one, sizeof one);
+            snprintf(cl, sizeof cl, "%.*s %s[%s]", (int)pn->length, pn->name, tb, one);
+        } else {
+            type_describe(pt, tb, sizeof tb);
+            int o = snprintf(cl, sizeof cl, "%.*s %s", (int)pn->length, pn->name, tb);
+            for (ExprList *c = cs; c && o > 0 && (size_t)o < sizeof cl; c = c->next) {
+                if (!c->expr || c->expr->kind != EXPR_BINARY) continue;
+                fnptr_clause_text(c->expr->as.binary_expr.right, c->expr->as.binary_expr.op, one, sizeof one);
+                o += snprintf(cl + o, sizeof cl - (size_t)o, "%s%s", c == cs ? " " : " and ", one);
+            }
+        }
+        fprintf(stderr, "[E122] Error Ln %li, Col %li: function '%.*s' cannot become a `*func` value: "
+                "its parameter `%s` is a precondition a function pointer cannot state, and a call "
+                "through the pointer would not check it. A function whose parameter is unrefined can "
+                "check the value and then call '%.*s'.\n",
+                (long)at->line, (long)at->col, (int)fn->length, fn->name, cl, (int)fn->length, fn->name);
+        diagnostic_show_line(at->line, at->col); exit(1);
+    }
+}
+
 static bool fnptr_types_assignable(Type *to, Type *from) {
     if (!to || !from || to->kind != TYPE_FUNC || from->kind != TYPE_FUNC) return false;
     if (from->func_effects & ~to->func_effects) return false;
@@ -1886,6 +2018,17 @@ static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col) {
                 "type — arity, parameter/return types, or the effect row differ (the function may "
                 "do more than the arrow admits).\n",
                 (long)line, (long)col);
+        diagnostic_show_line(line, col); exit(1);
+    }
+    // a function NAMED here guarantees its literal return constraints too (I.187); its name
+    // already has its `*func` type (resolve.h, I.137), so the expression's kind decides
+    bool named = rhs->kind == EXPR_IDENTIFIER && rhs->decl &&
+                 (rhs->decl->kind == DECL_FUNCTION || rhs->decl->kind == DECL_EXTERN_FUNCTION);
+    char why[1024];
+    if (!fnptr_refines_ok(target, from, named ? rhs->decl->as.function_decl.return_constraints : NULL,
+                          why, sizeof why)) {
+        fprintf(stderr, "[E122] Error Ln %li, Col %li: function does not match the function-pointer "
+                "type's refinements: %s.\n", (long)line, (long)col, why);
         diagnostic_show_line(line, col); exit(1);
     }
 }

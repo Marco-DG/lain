@@ -1,0 +1,14 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 12,
+// A parameter is CONTRAVARIANT: the pointer's parameter must state at least what the function
+// assumes. `*func(Nat) i32` (Nat = [0, 9]) admits 0, which `inv(s Pos)` (Pos = [1, 9]) divides by.
+// The parent compiled the conversion. I.187
+type Pos = i32 >= 1 and <= 9
+type Nat = i32 >= 0 and <= 9
+func inv(s Pos) i32 {
+    return 100 / s
+}
+func main() i32 {
+    var g *func(Nat) i32 = inv
+    return g(0)
+}

@@ -1,0 +1,14 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 11,
+// A function whose parameter is refined (`b i32 > 0`) becomes a `*func` value, and a pointer type
+// cannot state the refinement. The callee assumes b > 0 at its entry; only a direct call asserts
+// it, so `g(10, 0)` through the pointer divided by zero. The parent compiled it: SIGFPE natively,
+// and --interpret exits 99 ("an assumption the compiler established is false"). I.187
+func safe_div(a i32, b i32 > 0) i32 {
+    return a / b
+}
+func main() i32 {
+    var g *func(i32, i32) i32 = safe_div
+    var z i32 = 0
+    return g(10, z)
+}

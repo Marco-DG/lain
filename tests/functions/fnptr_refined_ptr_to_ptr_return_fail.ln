@@ -1,0 +1,13 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 11,
+// A function-POINTER value converting to another pointer type takes the same variance: `g`, a
+// `*func() i32` holding `zero`, into `*func() Pos`. The parent compiled `100 / h()`. I.187
+type Pos = i32 >= 1 and <= 9
+func zero() i32 {
+    return 0
+}
+func main() i32 {
+    var g *func() i32 = zero
+    var h *func() Pos = g
+    return 100 / h()
+}

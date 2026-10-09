@@ -77,6 +77,7 @@ void sema_infer_expr(Expr *e);
 // Defined in typecheck.h (included after this file); checks a fn-ptr initialiser.
 static void fnptr_assign_check(Type *target, Expr *rhs, isize line, isize col);
 static Type *fnptr_type_of_decl(Decl *d);
+static void fnptr_refuse_unstatable(Decl *d, Expr *at);   // typecheck.h (I.187)
 // I.137: set while a call's CALLEE identifier is resolved. A function's symbol type is its RETURN
 // type, which is what a direct call reads as the call's type; anywhere else a function's name is a
 // VALUE, a function pointer, and is typed as one (see the identifier case below).
@@ -1738,6 +1739,9 @@ void sema_resolve_expr(Expr *e) {
       if (!sema_resolving_callee && sym->decl &&
           (sym->decl->kind == DECL_FUNCTION || sym->decl->kind == DECL_EXTERN_FUNCTION) &&
           !decl_is_generic_template(sym->decl)) {
+          // ...and a function whose parameter carries a precondition no pointer type can state
+          // never becomes one (I.187)
+          fnptr_refuse_unstatable(sym->decl, e);
           Type *ft = fnptr_type_of_decl(sym->decl);
           if (ft) e->type = ft;
       }

@@ -1732,6 +1732,10 @@ at=const 4
 rc=0
 out=
 at=const 4
+### tests/trust/fnptr_refined_allowed_pass.ln
+rc=0
+out=
+at=const 12
 ### tests/trust/fnptr_row_subsumption_pass.ln
 rc=0
 out=io ok

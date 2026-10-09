@@ -1,0 +1,13 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 12,
+// The same refined function passed as an ARGUMENT to a `*func` parameter: `apply(safe_div, 10, 0)`
+// divided by zero inside `safe_div`. The parent compiled it: SIGFPE natively, --interpret 99. I.187
+func safe_div(a i32, b i32 > 0) i32 {
+    return a / b
+}
+func apply(f *func(i32, i32) i32, x i32, y i32) i32 {
+    return f(x, y)
+}
+func main() i32 {
+    return apply(safe_div, 10, 0)
+}

@@ -1,0 +1,13 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 10,
+// An INFERRED `var g = safe_div` makes a function value with no target type, so a check at the
+// conversion boundary would never see it; the check sits where a function's name becomes a value.
+// The parent compiled it: SIGFPE natively, --interpret 99. I.187
+func safe_div(a i32, b i32 > 0) i32 {
+    return a / b
+}
+func main() i32 {
+    var g = safe_div
+    var z i32 = 0
+    return g(10, z)
+}

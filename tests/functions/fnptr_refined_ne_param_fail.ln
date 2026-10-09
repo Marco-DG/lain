@@ -1,0 +1,12 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 10,
+// An EXCLUDED value is a refinement too: `inv(s NZ)` with NZ = `i32 != 0` into `*func(i32) i32`,
+// whose parameter admits 0. The parent compiled the conversion. I.187
+type NZ = i32 != 0
+func inv(s NZ) i32 {
+    return 100 / s
+}
+func main() i32 {
+    var g *func(i32) i32 = inv
+    return g(0)
+}

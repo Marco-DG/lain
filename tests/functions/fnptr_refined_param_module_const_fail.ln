@@ -1,0 +1,12 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 8,
+// A module constant `F = safe_div` is a function value made at module level, with no target type.
+// The parent compiled `F(10, z)` with z = 0: SIGFPE natively, --interpret 99. I.187
+func safe_div(a i32, b i32 > 0) i32 {
+    return a / b
+}
+F = safe_div
+func main() i32 {
+    var z i32 = 0
+    return F(10, z)
+}

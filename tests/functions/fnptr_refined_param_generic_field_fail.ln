@@ -1,0 +1,19 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 17,
+// A refined function stored in a GENERIC container's field, `Box(safe_div)` as a
+// `Box(*func(i32, i32) i32)`, then called with 0 by a function that receives the box. (A generic
+// function itself cannot become a pointer: E122 already.) The parent compiled it: SIGFPE natively,
+// --interpret 99. I.187
+type Box(T type) {
+    v T
+}
+func safe_div(a i32, b i32 > 0) i32 {
+    return a / b
+}
+func run(b Box(*func(i32, i32) i32), y i32) i32 {
+    return b.v(10, y)
+}
+func main() i32 {
+    var b Box(*func(i32, i32) i32) = Box(safe_div)
+    return run(b, 0)
+}

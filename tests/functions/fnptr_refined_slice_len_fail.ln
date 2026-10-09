@@ -1,0 +1,13 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 10,
+// A slice whose LENGTH is refined (`a u8[>= 4]`) is a precondition too, and a pointer type cannot
+// state it. `last` read a[3] of a 2-element slice through the pointer. The parent compiled it:
+// ASan stack-buffer-overflow natively, --interpret 99. I.187
+func last(a u8[>= 4]) u8 {
+    return a[3]
+}
+func main() i32 {
+    var g *func(u8[]) u8 = last
+    var a u8[2] = [1, 2]
+    return g(a[0..2]) as i32
+}

@@ -1,0 +1,14 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 12,
+// The return side as an index: `big()` returns 1000 as `*func() Small` (Small = [0, 3]), so
+// `a[g()]` on a u8[4] was "proven" in bounds. The parent compiled it; --interpret 99 ("index
+// 1000 outside [0, 4) (proven in bounds)"). I.187
+type Small = i32 >= 0 and <= 3
+func big() i32 {
+    return 1000
+}
+func main() i32 {
+    var a u8[4] = [1, 2, 3, 4]
+    var g *func() Small = big
+    return a[g()] as i32
+}

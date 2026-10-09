@@ -325,6 +325,114 @@ there.
 \end{note}
 
 
+\section{Function pointers}
+\label{sec:fn.pointer}
+\index{function pointer}
+
+\pnum
+A function used as a value has a function-pointer type, \lain{*func(P) R} with the function's
+effect row (\S\,\ref{sec:fn.distinction}).  It converts to a function-pointer type wherever a
+value converts: an initializer, an assignment, an argument, a return value, a struct field or a
+sum payload.  The function shall have as many parameters as the pointer type, the same parameter
+and return types apart from their refinements, and an effect row contained in the pointer type's,
+so that it does no more than the pointer admits; otherwise the program is
+\illformed{}~(\diagcode{E122}).
+
+\pnum
+The function assumes its parameters' constraints on entry, and a call through the pointer relies on
+the pointer type's return type.  So the function converts only if every argument a call through
+the pointer can pass is one the function admits, and every result the function can return is one
+the pointer type admits; otherwise the program is \illformed{}~(\diagcode{E122}).  In particular:
+\begin{itemize}
+  \item A constraint written on a parameter itself, a value constraint such as \lain{b i32 > 0}
+        (\S\,\ref{sec:vra.constraints}) or a length constraint such as \lain{a u8[>= 4]}
+        (\S\,\ref{sec:types.sized-slice}), cannot be stated by a function-pointer type, so a
+        function with one never converts.
+  \item A parameter of a refined type alias (\S\,\ref{sec:types.alias-refinement}) is admitted when
+        the pointer type's parameter admits no value the alias excludes.  With
+        \lain{type Small = i32 >= 1}, a function taking \lain{Small} converts to
+        \lain{*func(Small) i32}, and to \lain{*func(Pos) i32} with
+        \lain{type Pos = i32 >= 1 and <= 9}, but not to \lain{*func(i32) i32}.
+  \item A refined return type in the pointer type shall be guaranteed by the function's return
+        type or return constraint: \lain{func two() i32 >= 1} converts to \lain{*func() Small},
+        and a function returning a plain \lain{i32} does not.  A pointer type whose return type is
+        not refined accepts any function, and a call through it gets that type's range.
+  \item A function-pointer value converting to another function-pointer type obeys the same
+        rules.  A function with a parameter or return that is itself a function pointer does not
+        convert to a function-pointer type.
+\end{itemize}
+
+\begin{note}
+  The last rule is stricter than it needs to be.  Two function-pointer types are not yet compared
+  by their shape, so no pointer type can name a callback parameter's type as the same type, and a
+  function that takes or returns a callback cannot become a value.  A later revision may admit a
+  callback whose type is the same, with its refinements compared exactly.
+\end{note}
+
+\begin{laincode}
+func safe_div(a i32, b i32 > 0) i32 { return a / b }
+
+func main() i32 {
+    var f *func(i32, i32) i32 = safe_div    // ERROR [E122]
+    return f(10, 2)
+}
+\end{laincode}
+
+\begin{laincode}
+type Small = i32 >= 1
+
+func inv(b Small) i32 { return 100 / b }
+
+func main() i32 {
+    var g *func(i32) i32 = inv    // ERROR [E122]
+    return g(4)
+}
+\end{laincode}
+
+\begin{laincode}
+type Pos = i32 >= 1 and <= 9
+
+func zero() i32 { return 0 }
+
+func main() i32 {
+    var g *func() Pos = zero    // ERROR [E122]
+    return 100 / g()
+}
+\end{laincode}
+
+\pnum
+To call a function with a constrained parameter through a pointer, wrap it in a function whose
+parameters are not constrained, which tests the condition and calls it directly.  The example
+also converts a return constraint and an alias parameter, both of which the pointer types state:
+
+\begin{laincode}
+// VERIFY: exit 30
+type Small = i32 >= 1
+type Pos = i32 >= 1 and <= 9
+
+func safe_div(a i32, b i32 > 0) i32 { return a / b }
+
+func div_or_zero(a i32, b i32) i32 {
+    if b > 0 { return safe_div(a, b) }
+    return 0
+}
+
+func inv(b Small) i32 { return 100 / b }
+
+func two() i32 >= 1 { return 2 }
+
+func main() i32 {
+    var f *func(i32, i32) i32 = div_or_zero
+    var g *func() Small = two
+    var h *func(Pos) i32 = inv
+    q = f(10, g())
+    r = h(4)
+    if q != 5 { return 1 }
+    if r != 25 { return 2 }
+    return 30
+}
+\end{laincode}
+
 \section{The \texttt{panic} builtin}
 \label{sec:fn.panic}
 \index{panic}

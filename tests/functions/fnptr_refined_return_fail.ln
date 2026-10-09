@@ -1,0 +1,14 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 12,
+// A return is COVARIANT: a pointer whose return type is refined promises its callers that range,
+// and the call's result is typed by the pointer. `zero()` returns 0 as `*func() Pos`, so
+// `100 / g()` was "proven" nonzero. The parent compiled it: a division by zero natively,
+// --interpret 99 ("division by zero (proven nonzero)"). I.187
+type Pos = i32 >= 1 and <= 9
+func zero() i32 {
+    return 0
+}
+func main() i32 {
+    var g *func() Pos = zero
+    return 100 / g()
+}
