@@ -2360,9 +2360,36 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r<0) break;
             int a=ins->operands[0]->id; oct_forget(W,r);
             int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
+            // ★ BY A CONSTANT IT IS A DIVISION (I.179). `x >> k` of a non-negative x is exactly
+            // ⌊x / 2^k⌋, so it gets division's facts: `BITS[c >> 6]` on a u8 was E085 (c >> 6 read
+            // as 0..255) while `BITS[c / 64]` proved, one index and two verdicts. An amount outside
+            // the type is the shift's own obligation (vra_check_shift), so only 0..62 is read here.
+            int kb = ins->n_operands >= 2 && ins->operands[1] ? ins->operands[1]->id : -1;
+            if (hl && alo >= 0 && kb >= 0 && kb < V->nvar && V->cknown[kb] && V->cval[kb] >= 0 && V->cval[kb] <= 62) {
+                vra_div_facts(V, W, r, a, (int64_t)1 << V->cval[kb], alo, hl, ahi, hh);
+                break;
+            }
             if (hl&&alo>=0){ oct_add_lb(W,r,0); if(hh) oct_add_ub(W,r,ahi);    // 0 ≤ r ≤ a — and
                              vra_add_diff_le(V,W, r, a, 0); }                   // as a RELATION, so
             break;                                                // `n - (n >> 1)` needs no bound on n
+        }
+        case IR_ASHR: {  // x >> k (arithmetic) by a constant FLOORS: ⌊x / 2^k⌋ (I.179)
+            // The interpreter and the emitted C (`>>` on a signed type under gcc) both floor, so
+            // -7 >> 1 is -4, not division's -3. A non-negative x gets division's facts, as for the
+            // logical shift; otherwise the bounds are floored. A truncating reading would put
+            // (x >> 1) + 3 at -3 + 3 = 0 for x = -7, where the program computes -1.
+            if (r<0) break;
+            int a=ins->operands[0]->id; oct_forget(W,r);
+            int kb = ins->n_operands >= 2 && ins->operands[1] ? ins->operands[1]->id : -1;
+            if (kb < 0 || kb >= V->nvar || !V->cknown[kb] || V->cval[kb] < 0 || V->cval[kb] > 62) break;
+            int64_t D = (int64_t)1 << V->cval[kb];
+            int64_t alo,ahi; bool hl,hh; vra_interval(V, W,a,&alo,&hl,&ahi,&hh);
+            if (hl && alo >= 0) { vra_div_facts(V, W, r, a, D, alo, hl, ahi, hh); break; }
+            #define VRA_FLOORDIV(x) ((x) / D - (((x) % D != 0) && ((x) < 0)))
+            if (hl) oct_add_lb(W, r, VRA_FLOORDIV(alo));
+            if (hh) oct_add_ub(W, r, VRA_FLOORDIV(ahi));
+            #undef VRA_FLOORDIV
+            break;
         }
         case IR_SLICE_LEN: {
             if (r<0) break;

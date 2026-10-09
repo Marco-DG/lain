@@ -2247,6 +2247,23 @@ func main() i32 {
 }
 ```
 
+**A right shift rounds down.** `a >> n` is ⌊a / 2ⁿ⌋ for every integer type. On a negative signed
+value the sign bit is copied in, so `-7 >> 1` is `-4`, while `-7 / 2` is `-3`, because division
+truncates toward zero. A right shift cannot overflow, so only its shift amount is checked.
+
+```lain
+// VERIFY: exit 0
+func half_down(x i32) i32 {
+    return x >> 1
+}
+
+func main() i32 {
+    if half_down(-7) != -4 { return 1 }    // rounds down
+    if -7 / 2 != -3 { return 2 }           // division rounds toward zero
+    return 0
+}
+```
+
 ### 7.5 Compound Assignment
 
 All compound assignment operators are syntactic sugar:

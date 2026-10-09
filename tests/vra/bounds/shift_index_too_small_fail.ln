@@ -1,0 +1,9 @@
+// EXPECT: [E085]
+// The refusal side of I.179: `c >> 5` of a u8 is 0..7, and the table has four words, so
+// c = 255 reads BITS[7]. Reading the shift as a division must not round the bound down.
+BITS u64[4] = [0x03ff000000000000, 0x07fffffe87fffffe, 0, 0]
+func bad(c u8) bool { return (BITS[c >> 5] >> ((c & 31) as u64)) & 1 == 1 }
+func main() i32 {
+    if bad(255) { return 1 }
+    return 0
+}

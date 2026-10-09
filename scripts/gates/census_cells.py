@@ -1610,8 +1610,7 @@ for label, decls, body, exp in (
 # which is what Lain's C and its interpreter both compute today, while spec 08 does not yet say so. The
 # last pair is the teeth for that: with x in -7..7, (x >> 1) + 3 reaches -1, so it must be refused, and a
 # template that truncated (-7 / 2 = -3) would wrongly prove it.
-_I179 = ("I.179: a right shift by a constant is not read as division by 2^k, so `T[c >> 6]` is refused "
-         "while `T[c / 64]` proves")
+# Closed by I.179: a right shift by a constant k is division by 2^k, flooring for a signed operand.
 def _sh(decls, fn, calls, fmt):
     return (decls + fn + 'func main() i32 effects io {\n    libc_printf("%s\\n", %s)\n    return 0\n}\n'
             % (fmt, calls))
@@ -1644,7 +1643,7 @@ for label, decls, fn, calls, fmt, exp, hole in (
         ("a signed >> 1 floors: (x >> 1) + 3 for x in -7..7 reaches -1", _T8,
          'func pick(x i32) u8 {\n    if x >= -7 and x <= 7 {\n        return T[(x >> 1) + 3]\n    }\n    return 0\n}\n',
          'pick(-7) as i32', '%d', "__ILLFORMED__", False)):
-    add("shift-by-constant", label, _sh(decls, fn, calls, fmt), exp, plan=_I179 if hole else None)
+    add("shift-by-constant", label, _sh(decls, fn, calls, fmt), exp, plan=None)
 
 
 if __name__ == "__main__":

@@ -194,6 +194,34 @@ value, as a constant sum is: the literal and the shift take the narrowest of its
 \end{constraint}
 
 \pnum
+\lain{x >> k} is \(\lfloor x / 2^k \rfloor\), rounded toward negative infinity, for every integer
+type.  On an unsigned operand the bits shifted out are discarded; on a signed operand the sign bit
+is copied in, so \lain{-7 >> 1} is \(-4\), where \lain{-7 / 2} is \(-3\) because division truncates
+toward zero.  A right shift cannot overflow, and owes nothing beyond its shift amount.
+
+\begin{example}
+\begin{laincode}
+// VERIFY: exit 0
+func half_down(x i32) i32 {
+    return x >> 1
+}
+
+func main() i32 {
+    if half_down(-7) != -4 { return 1 }    // rounds down
+    if half_down(7) != 3 { return 2 }
+    if -7 / 2 != -3 { return 3 }           // division rounds toward zero
+    return 0
+}
+\end{laincode}
+\end{example}
+
+\begin{note}
+  ISO C leaves the right shift of a negative value implementation-defined, in C11 and still in
+  C23.  The reference implementation emits C's \texttt{>>} on the signed type and relies on GCC's
+  documented behaviour for it, an arithmetic shift, which Clang shares.
+\end{note}
+
+\pnum
 The \emph{wrapping} left shift \lain{x <<\% k} discards the bits shifted out, as \lain{+\%},
 \lain{-\%} and \lain{*\%} wrap: its result is \(x \cdot 2^k\) modulo \(2^N\), read in the left
 operand's type.  The shift amount obeys the same constraint as for \lain{<<}; an amount outside

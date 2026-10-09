@@ -1,0 +1,24 @@
+// I.179: a right shift by a constant is a division by 2^k. The bitset classifier indexes its
+// table with `c >> 6`, 0..3 for a u8, and was E085 while the same index spelled `c / 64` proved.
+// Both spellings are exercised at the table's ends: '_' (95) and '7' (55) are set, ' ' (32) and
+// 255 are not. A SIGNED right shift floors (-7 >> 1 is -4, where -7 / 2 is -3), and `T8[(x >> 1)
+// + 4]` for x in -7..7 is indexed at both ends. The refusal sides are
+// tests/vra/bounds/shift_index_too_small_fail.ln and the census cell `(x >> 1) + 3`, which reaches -1.
+BITS u64[4] = [0x03ff000000000000, 0x07fffffe87fffffe, 0, 0]
+func by_shift(c u8) bool { return (BITS[c >> 6] >> ((c & 63) as u64)) & 1 == 1 }
+func by_div(c u8) bool { return (BITS[c / 64] >> ((c & 63) as u64)) & 1 == 1 }
+T8 u8[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+func half_index(x i32) u8 {
+    if x >= -7 and x <= 7 {
+        return T8[(x >> 1) + 4]
+    }
+    return 255
+}
+func main() i32 {
+    if by_shift(95) == false or by_shift(55) == false { return 1 }
+    if by_shift(32) or by_shift(255) { return 2 }
+    if by_div(95) == false or by_div(255) { return 3 }
+    if half_index(-7) != 0 or half_index(-8) != 255 { return 4 }
+    if half_index(7) != 7 or half_index(-1) != 3 { return 5 }
+    return 0
+}
