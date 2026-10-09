@@ -600,8 +600,17 @@ static void jb_divmod(JB *B, int32_t xv, int32_t qv, int32_t mv, __int128 c, boo
         u[0].var = mv; u[0].c = 1;  jb_cons(B, u, 1, J_LE, d == 0 ? ac - 1 : 0, &h->dis[d].c[2]);
     }
 }
+// A constant operand: a CONST read by its type, or a signed NEG of one under CHECK (`x / -4`
+// lowers its divisor as `neg 4`), which is -c wherever its own obligation held, as NEG's row says.
 static bool jg_const_of(JG *g, IrValue *v, __int128 *c) {
     IrInstr *d = v && v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
+    if (d && d->op == IR_NEG && d->wrap == IR_WRAP_CHECK && !d->unchecked && d->n_operands >= 1 && d->result &&
+        d->result->type && d->result->type->kind == IRT_INT && d->result->type->is_signed) {
+        IrValue *o = d->operands[0];
+        IrInstr *e = o && o->id >= 0 && o->id < g->nv ? g->def[o->id] : NULL;
+        if (!e || e->op != IR_CONST || !jg_is_int(e->result->type)) return false;
+        *c = -jg_const(e); return true;
+    }
     if (!d || d->op != IR_CONST || !jg_is_int(d->result->type)) return false;
     *c = jg_const(d); return true;
 }

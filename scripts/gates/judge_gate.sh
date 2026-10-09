@@ -18,7 +18,9 @@
 # PRECISION, the other half: a hypothesis check cannot see a generator that stops stating a TRUE
 # fact. So every program's VCs are also solved by the untrusted solver (solve_vc), and the gate
 # reports how many are implied, failing below a floor. These are phase 1a's numbers; no kernel
-# checks the certificates yet (scripts/gates/solver_harness.py checks the solver itself).
+# checks the certificates yet (scripts/gates/solver_harness.py checks the solver itself). A floor
+# over the corpus has slack, so the judge's OWN programs, tests/trust/judge_*_pass.ln, each written
+# for one rule, must have EVERY VC implied: one that is not is a rule that stopped working.
 #
 #   bash scripts/gates/judge_gate.sh
 set -u
@@ -43,6 +45,7 @@ one() {
 export -f one; export T
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'one "{}"' < "$T/files.txt"
 judged=0; nosum=0; refused=0; falsec=0; reached=0; checked=0; solverr=0; implied=0; notimp=0; outbudget=0
+mustfail=0
 while read -r f; do
     o=$(echo "$f" | tr '/' '_')
     s=$(grep -m1 '^SUMMARY ' "$T/$o.err")
@@ -59,6 +62,10 @@ while read -r f; do
         if [ "$(cat "$T/$o.src")" != 0 ]; then solverr=$((solverr+1)); echo "  SOLVER FAILED (rc $(cat "$T/$o.src")): $f"; tail -2 "$T/$o.ans" | sed 's/^/      /'; fi
         implied=$((implied + $(grep -c '^cert ' "$T/$o.ans"))); notimp=$((notimp + $(grep -c '^model ' "$T/$o.ans")))
         outbudget=$((outbudget + $(grep -cE '^(budget|capacity) ' "$T/$o.ans")))
+        case "$f" in tests/trust/judge_*_pass.ln)
+            n=$(grep -cE '^(model|budget|capacity) ' "$T/$o.ans")
+            if [ "$n" -gt 0 ] || [ ! -s "$T/$o.ans" ]; then mustfail=$((mustfail+1)); echo "  MUST-PROVE, $n NOT IMPLIED: $f"; grep -m2 -E '^(model|budget|capacity) ' "$T/$o.ans" | sed 's/^/      /'; fi;;
+        esac
     fi
     r=$(echo "$s" | sed -nE 's/.* reached=([0-9]+) .*/\1/p'); c=$(echo "$s" | sed -nE 's/.* hyps-checked=([0-9]+) .*/\1/p')
     reached=$((reached + ${r:-0})); checked=$((checked + ${c:-0}))
@@ -67,7 +74,8 @@ echo "=================================================================="
 echo "programs declared $declared, judged $judged, no summary $nosum"
 echo "obligation events $reached, hypotheses checked at run time $checked, false $falsec, generator refusals $refused"
 echo "VCs implied $implied, not implied $notimp, budget or capacity $outbudget, solver failures $solverr (floor $IMPLIED_FLOOR)"
-if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ]; then
+echo "the judge's own programs (tests/trust/judge_*_pass.ln) with a VC not implied: $mustfail"
+if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$mustfail" -gt 0 ]; then
     echo "judge_gate: FAIL"; exit 1
 fi
 if [ "$reached" -lt "$REACHED_FLOOR" ]; then
