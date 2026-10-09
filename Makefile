@@ -41,6 +41,7 @@ gates: $(BIN)
 	bash scripts/gates/cmin_gate.sh
 	bash scripts/gates/check_build_warnings.sh
 	bash scripts/gates/baseline_gate.sh
+	bash scripts/gates/hint_gate.sh
 	bash scripts/gates/interp_gate.sh
 	bash scripts/gates/census_gate.sh
 	bash scripts/gates/certificate_gate.sh
