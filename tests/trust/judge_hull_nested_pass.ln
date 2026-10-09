@@ -1,0 +1,26 @@
+// The proof engine's judge needs the RANGE JOIN at a join nested inside an arm: `x` is clamped to
+// [0, 63] inside the `p` arm and set to 0 in the other, so `a[x]` after the outer join is in
+// bounds only through the hull at the inner joins (a claim per join, owed on every edge into it:
+// the hull row). judge_gate.sh requires every VC of this program implied, and checks each claim
+// on every edge the program takes: the inputs reach both clamps' bounds and a value between, so a
+// claim tighter than the hull is false at run time. The sum is read natively and with --interpret.
+func pick(p bool, x0 i32) i32 {
+    var a u8[64] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+    var x i32 = x0
+    if p {
+        if x > 63 { x = 63 }
+        if x < 0 { x = 0 }
+    } else {
+        x = 0
+    }
+    return a[x] as i32
+}
+
+func main() i32 {
+    var s i32 = pick(true, 70)
+    s = s + pick(true, -5)
+    s = s + pick(true, 30)
+    s = s + pick(false, 12)
+    if s != 93 { return 1 }
+    return 0
+}

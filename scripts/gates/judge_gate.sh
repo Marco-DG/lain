@@ -15,6 +15,14 @@
 # A rule no program exercises is not seen here; src/tools/test_judge_gen.c pins those over a
 # hand-built IR (run_ir_tests.sh).
 #
+# CLAIMS. The driver proposes a hull claim at each forward join (untrusted: the solver's
+# lia_maximize over each incoming path's VC), and the generator states it after the join and owes
+# it on every edge in (`hull` VCs). So the gate also FAILS on a `hull` VC that is not implied (a
+# claim stated without its proof), and below a floor of claims checked at run time (a claim never
+# evaluated is not a hold): each time the program takes an edge a claim is owed on, the driver
+# evaluates the claim there, with its obligation's hypotheses, and where the claim is used after
+# its join, as any hypothesis.
+#
 # PRECISION, the other half: a hypothesis check cannot see a generator that stops stating a TRUE
 # fact. So every program's VCs are also solved by the untrusted solver (solve_vc), and the gate
 # reports how many are implied, failing below a floor. These are phase 1a's numbers; no kernel
@@ -26,7 +34,8 @@
 set -u
 cd "$(dirname "$0")/../.."
 REACHED_FLOOR=100000         # obligation events; 287,380 when the gate was written (19473f7)
-IMPLIED_FLOOR=6980       # VCs implied over the corpus; 6,991 of 7,181 when the floor was set (15d4edf). Lower it only with the reason
+IMPLIED_FLOOR=7120       # obligations' VCs implied over the corpus; 7,133 of 7,321 when the floor was set (ccdd5d0 and the hull claims). Lower it only with the reason
+CLAIM_FLOOR=5000         # claims checked at run time, on their edges and where used; 17,074 when the floor was set
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
 if ! gcc -std=c99 -O2 -w -o "$T/jvc" src/tools/judge_vc_driver.c -I src 2> "$T/build.err" ||
    ! gcc -std=c99 -O2 -w -o "$T/solve_vc" src/tools/solve_vc.c -I src 2>> "$T/build.err"; then
@@ -45,7 +54,7 @@ one() {
 export -f one; export T
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'one "{}"' < "$T/files.txt"
 judged=0; nosum=0; refused=0; falsec=0; reached=0; checked=0; solverr=0; implied=0; notimp=0; outbudget=0
-mustfail=0
+claims=0; hullok=0; hullbad=0; edges=0; claimchk=0; claimgoals=0; mustfail=0
 while read -r f; do
     o=$(echo "$f" | tr '/' '_')
     s=$(grep -m1 '^SUMMARY ' "$T/$o.err")
@@ -60,8 +69,12 @@ while read -r f; do
     if [ "$n" -gt 0 ]; then falsec=$((falsec+n)); echo "  FALSE HYPOTHESES ($n): $f"; grep -m3 '^FALSE ' "$T/$o.err" | sed 's/^/      /'; fi
     if [ -f "$T/$o.src" ]; then
         if [ "$(cat "$T/$o.src")" != 0 ]; then solverr=$((solverr+1)); echo "  SOLVER FAILED (rc $(cat "$T/$o.src")): $f"; tail -2 "$T/$o.ans" | sed 's/^/      /'; fi
-        implied=$((implied + $(grep -c '^cert ' "$T/$o.ans"))); notimp=$((notimp + $(grep -c '^model ' "$T/$o.ans")))
-        outbudget=$((outbudget + $(grep -cE '^(budget|capacity) ' "$T/$o.ans")))
+        # an answer line names its VC: `cert FN IRHASH POINT KIND ORDINAL`; a claim's kind is `hull`
+        h=$(grep -cE '^cert [^ ]+ [^ ]+ [^ ]+ hull ' "$T/$o.ans"); hullok=$((hullok + h))
+        implied=$((implied + $(grep -c '^cert ' "$T/$o.ans") - h)); notimp=$((notimp + $(grep -cE '^model [^ ]+ [^ ]+ [^ ]+ [^h]' "$T/$o.ans")))
+        outbudget=$((outbudget + $(grep -cE '^(budget|capacity) [^ ]+ [^ ]+ [^ ]+ [^h]' "$T/$o.ans")))
+        n=$(grep -cE '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ hull ' "$T/$o.ans")
+        if [ "$n" -gt 0 ]; then hullbad=$((hullbad+n)); echo "  CLAIM NOT IMPLIED ($n): $f"; grep -m2 -E '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ hull ' "$T/$o.ans" | sed 's/^/      /'; fi
         case "$f" in tests/trust/judge_*_pass.ln)
             n=$(grep -cE '^(model|budget|capacity) ' "$T/$o.ans")
             if [ "$n" -gt 0 ] || [ ! -s "$T/$o.ans" ]; then mustfail=$((mustfail+1)); echo "  MUST-PROVE, $n NOT IMPLIED: $f"; grep -m2 -E '^(model|budget|capacity) ' "$T/$o.ans" | sed 's/^/      /'; fi;;
@@ -69,17 +82,25 @@ while read -r f; do
     fi
     r=$(echo "$s" | sed -nE 's/.* reached=([0-9]+) .*/\1/p'); c=$(echo "$s" | sed -nE 's/.* hyps-checked=([0-9]+) .*/\1/p')
     reached=$((reached + ${r:-0})); checked=$((checked + ${c:-0}))
+    r=$(echo "$s" | sed -nE 's/.* claims=([0-9]+) .*/\1/p'); c=$(echo "$s" | sed -nE 's/.* edges=([0-9]+) .*/\1/p')
+    claims=$((claims + ${r:-0})); edges=$((edges + ${c:-0}))
+    c=$(echo "$s" | sed -nE 's/.* claim-hyps-checked=([0-9]+) .*/\1/p'); claimchk=$((claimchk + ${c:-0}))
+    c=$(echo "$s" | sed -nE 's/.* claim-goals-checked=([0-9]+).*/\1/p'); claimgoals=$((claimgoals + ${c:-0}))
 done < "$T/files.txt"
 echo "=================================================================="
 echo "programs declared $declared, judged $judged, no summary $nosum"
 echo "obligation events $reached, hypotheses checked at run time $checked, false $falsec, generator refusals $refused"
 echo "VCs implied $implied, not implied $notimp, budget or capacity $outbudget, solver failures $solverr (floor $IMPLIED_FLOOR)"
+echo "claims $claims: hull VCs implied $hullok, not implied $hullbad; at run time, claims checked on $claimgoals edges taken and $claimchk times where used (floor $CLAIM_FLOOR)"
 echo "the judge's own programs (tests/trust/judge_*_pass.ln) with a VC not implied: $mustfail"
-if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$mustfail" -gt 0 ]; then
+if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ]; then
     echo "judge_gate: FAIL"; exit 1
 fi
 if [ "$reached" -lt "$REACHED_FLOOR" ]; then
     echo "judge_gate: FAIL — $reached obligation events is below the floor of $REACHED_FLOOR: a run that judged almost nothing is not a hold"; exit 1
+fi
+if [ $((claimgoals + claimchk)) -lt "$CLAIM_FLOOR" ]; then
+    echo "judge_gate: FAIL — $((claimgoals + claimchk)) claims checked at run time is below the floor of $CLAIM_FLOOR: claims are stated where no run evaluates them"; exit 1
 fi
 if [ "$implied" -lt "$IMPLIED_FLOOR" ]; then
     echo "judge_gate: FAIL — $implied VCs implied is below the floor of $IMPLIED_FLOOR: the generator stopped stating a fact it stated"; exit 1

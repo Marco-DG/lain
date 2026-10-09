@@ -5,6 +5,8 @@
 // unsigned comparison with a signed operand, and an ASSUME stated before the point it follows
 // holds at that point in every accepted program. Each rule here is pinned by the IR that makes
 // it matter, and every VC is checked to be in the canonical text form (it parses and prints back).
+// Claims at forward joins (the hull row) are pinned the same way: where the claim is stated, the
+// obligation it owes on each edge, and the claims the generator refuses.
 //
 // Build & run (run_ir_tests.sh does this):
 //   gcc -std=c99 -o /tmp/test_judge_gen src/tools/test_judge_gen.c -I src && /tmp/test_judge_gen
@@ -26,13 +28,16 @@ static IrName *nm(const char *s) { return ir_intern(&A, s, (isize)strlen(s)); }
 static IrType *u64t, *i64t, *i32t, *u8t, *u32t, *boolt;
 static IrType *slice_of(IrType *e) { IrType *t = ir_type_new(&A, IRT_SLICE); t->elem = e; return t; }
 
-// Every VC of `f` as text, each followed by its own round trip's verdict; NULL when the
-// generator refuses the function.
-static char *gen_text(IrFunc *f) {
-    ir_finalize_cfg(f);
+// Every VC of `f` as text, each checked to round-trip; NULL when the generator refuses the
+// function (its reason in `why` when given, else printed). `f`'s CFG must be finalized (once:
+// ir_finalize_cfg adds the edges again on each call).
+static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, &o, &n, err, sizeof err)) { printf("  generator refused: %s\n", err); return NULL; }
+    if (!jgen_func(&m, f, cl, ncl, only, &o, &n, err, sizeof err)) {
+        if (why) strcpy(why, err); else printf("  generator refused: %s\n", err);
+        return NULL;
+    }
     FILE *t = tmpfile();
     for (int32_t i = 0; i < n; i++) {
         if (o[i].outside) { fprintf(t, "outside %s\n", o[i].outside); continue; }
@@ -55,6 +60,14 @@ static char *gen_text(IrFunc *f) {
     long len = ftell(t); rewind(t);
     char *s = malloc((size_t)len + 1); size_t got = fread(s, 1, (size_t)len, t); s[got] = 0; fclose(t);
     return s;
+}
+static char *gen_text(IrFunc *f) { ir_finalize_cfg(f); return gen_with(f, NULL, 0, JGEN_ALL, NULL); }
+static int nins(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
+static int count(const char *all, const char *key) { int n = 0; for (const char *p = all; (p = strstr(p, key)); p++) n++; return n; }
+static JClaim claim1(IrBlock *b, IrValue *cell, int coef, long long rhs) {
+    JClaim c; memset(&c, 0, sizeof c);
+    c.blk = b->id; c.nt = 1; c.key[0] = cell->id; c.coef[0] = coef; c.rhs = rhs;
+    return c;
 }
 // The text of the first VC whose header line contains `key` (e.g. "bounds.hi"), or "".
 static const char *vc_of(const char *all, const char *key) {
@@ -249,6 +262,139 @@ int main(void) {
         CHECK(!strstr(dz, want), "x = i is not a hypothesis of its own (on the other path x is stale):\n%s", dz);
         free(t);
         printf("  a join's path-local value is stated inside its disjunct only\n");
+    }
+    // 11. a claim at a forward join: a hypothesis wherever its version is named after the join, and
+    // owed on each edge in, at the predecessor's end, the edge's condition a fact whichever arm of
+    // the branch the edge is (y < 10 on the true arm of `y < 10`, and on the false arm of `y >= 10`)
+    for (int k = 0; k < 2; k++) {
+        IrFunc *f = ir_func_new(&A, nm(k ? "g14" : "g13"), u32t, IR_FUNC_PURE);
+        IrValue *y = ir_add_param(f, u32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, s, y);
+        IrValue *ten = ir_const_int(f, b0, 10, u32t);
+        if (k == 0) ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, y, ten), b2, b1);
+        else        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_UGE, y, ten), b1, b2);
+        ir_store(f, b1, s, ir_const_int(f, b1, 5, u32t)); ir_set_br(b1, b2);
+        ir_set_ret(b2, ir_binop(f, b2, IR_UDIV, ir_const_int(f, b2, 100, u32t), ir_load(f, b2, s, u32t), u32t));
+        ir_finalize_cfg(f);
+        JClaim c = claim1(b2, s, 1, 9);
+        char *t = gen_with(f, &c, 1, JGEN_ALL, NULL);
+        char want[128], key[32];
+        const char *dz = t ? vc_of(t, "divzero") : "";
+        snprintf(want, sizeof want, "claim bb%d #0 : 1*%%s%d@join.bb%d <= 9", b2->id, s->id, b2->id);
+        CHECK(strstr(dz, want), "the claim is a hypothesis after its join:\n%s", dz);
+        CHECK(t && count(t, " hull 0\n") == 2, "the claim is owed once on each of the 2 edges into its join:\n%s", t ? t : "");
+        snprintf(key, sizeof key, "bb%d.%d hull", b0->id, nins(b0));
+        const char *e0 = t ? vc_of(t, key) : "";
+        snprintf(want, sizeof want, "edge bb%d->bb%d : 1*%%v%d + -1*%%v%d <= -1", b0->id, b2->id, y->id, ten->id);
+        CHECK(strstr(e0, want), "on the branch's edge, y < 10 is a fact:\n%s", e0);
+        snprintf(want, sizeof want, "goal 1*%%s%d@bb%d.1 <= 9", s->id, b0->id);
+        CHECK(strstr(e0, want), "the goal is the claim about the version the edge brings:\n%s", e0);
+        snprintf(key, sizeof key, "bb%d.%d hull", b1->id, nins(b1));
+        const char *e1 = t ? vc_of(t, key) : "";
+        snprintf(want, sizeof want, "goal 1*%%s%d@bb%d.1 <= 9", s->id, b1->id);
+        CHECK(strstr(e1, want) && !strstr(e1, "edge "), "the other edge, an unconditional branch, owes it with no edge fact:\n%s", e1);
+        free(t);
+    }
+    printf("  a claim at a join: stated after it, owed on each edge in with the edge's condition\n");
+    // 12. a claim about a version made on ONE path into an outer join is stated inside that path's
+    // disjunct only: where the other path was taken, the version is stale (as test 10's value)
+    {   IrFunc *f = ir_func_new(&A, nm("g15"), u32t, IR_FUNC_PURE);
+        IrValue *p = ir_add_param(f, boolt, nm("p")), *y = ir_add_param(f, u32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrBlock *b4 = ir_new_block(f), *b5 = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, s, y);
+        ir_set_br_cond(b0, p, b1, b4);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, y, ir_const_int(f, b1, 10, u32t)), b3, b2);
+        ir_store(f, b2, s, ir_const_int(f, b2, 3, u32t)); ir_set_br(b2, b3);
+        ir_set_br(b3, b5);
+        ir_store(f, b4, s, ir_const_int(f, b4, 4, u32t)); ir_set_br(b4, b5);
+        ir_set_ret(b5, ir_binop(f, b5, IR_UDIV, ir_const_int(f, b5, 100, u32t), ir_load(f, b5, s, u32t), u32t));
+        ir_finalize_cfg(f);
+        JClaim c = claim1(b3, s, 1, 9);
+        char *t = gen_with(f, &c, 1, JGEN_ALL, NULL);
+        const char *dz = t ? vc_of(t, "divzero") : "";
+        char want[96], jl[32]; snprintf(jl, sizeof jl, " join bb%d : or {", b5->id);
+        snprintf(want, sizeof want, "1*%%s%d@join.bb%d <= 9", s->id, b3->id);
+        const char *j = strstr(dz, jl), *eol = j ? strchr(j, '\n') : NULL, *in = j ? strstr(j, want) : NULL;
+        CHECK(in && eol && in < eol, "the inner join's claim is inside the outer join's disjunct:\n%s", dz);
+        snprintf(want, sizeof want, "claim bb%d #0", b3->id);
+        CHECK(!strstr(dz, want), "and is not a hypothesis of its own:\n%s", dz);
+        free(t);
+        // the slots a proposer may claim about: both joins' fresh versions, the inner one first
+        JMem m = jmem_over(region, sizeof region);
+        JSlot *sl; int32_t ns; char err[200];
+        bool ok = jgen_slots(&m, f, &sl, &ns, err, sizeof err);
+        CHECK(ok && ns == 2 && sl[0].blk == b3->id && sl[1].blk == b5->id && sl[0].key == s->id,
+              "the slots are the two joins' versions of s, in reverse post-order (%d)", ok ? ns : -1);
+        // what a caller asks for: the claims' obligations only, or one block's
+        t = gen_with(f, &c, 1, JGEN_CLAIMS, NULL);
+        CHECK(t && count(t, "vc ") == 2 && count(t, " hull ") == 2, "JGEN_CLAIMS gives the claims' VCs only:\n%s", t ? t : "");
+        free(t);
+        t = gen_with(f, &c, 1, b5->id, NULL);
+        CHECK(t && t[0] == 0, "a block with no claim gives no VC:\n%s", t ? t : "");
+        free(t);
+        printf("  a path-local claim is stated in its disjunct; the slots; the claims-only modes\n");
+    }
+    // 13. claims are untrusted input: one the generator cannot state and owe is refused, never
+    // dropped (a claim stated without its obligations would be a false proof)
+    {   IrFunc *f = ir_func_new(&A, nm("g16"), u32t, IR_FUNC_PURE);
+        IrValue *y = ir_add_param(f, u32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, u32t), *u = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, s, y); ir_store(f, b0, u, y);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, y, ir_const_int(f, b0, 10, u32t)), b2, b1);
+        ir_store(f, b1, s, ir_const_int(f, b1, 5, u32t)); ir_set_br(b1, b2);
+        // b2 joins (s afresh; u the same on both paths), then a loop headed by b3
+        ir_set_br(b2, b3);
+        IrValue *ls = ir_load(f, b3, s, u32t);
+        IrBlock *b5 = ir_new_block(f);
+        ir_set_br_cond(b3, ir_icmp(f, b3, IR_CMP_ULT, ls, ir_const_int(f, b3, 100, u32t)), b4, b5);
+        ir_store(f, b4, s, ir_binop(f, b4, IR_ADD, ls, ir_const_int(f, b4, 1, u32t), u32t));
+        ir_set_br(b4, b3);
+        ir_set_ret(b5, ls);
+        ir_finalize_cfg(f);
+        struct { JClaim c; const char *why; } bad[5];
+        bad[0].c = claim1(b0, s, 1, 9); bad[0].why = "not at a forward join";
+        bad[1].c = claim1(b2, u, 1, 9); bad[1].why = "does not version afresh";
+        bad[2].c = claim1(b3, s, 1, 9); bad[2].why = "not at a forward join";
+        bad[3].c = claim1(b2, s, 1, 9); bad[3].c.nt = 2; bad[3].c.key[1] = u->id; bad[3].c.coef[1] = 1; bad[3].why = "other than one term";
+        bad[4].c = claim1(b2, y, 1, 9); bad[4].why = "not a cell";
+        for (int k = 0; k < 5; k++) {
+            char why[200] = "";
+            char *t = gen_with(f, &bad[k].c, 1, JGEN_ALL, why);
+            CHECK(!t && strstr(why, bad[k].why), "claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
+            free(t);
+        }
+        JClaim good = claim1(b2, s, 1, 9);
+        char *t = gen_with(f, &good, 1, JGEN_ALL, NULL);
+        CHECK(t != NULL, "the claim about s at the join is accepted");
+        free(t);
+        printf("  a claim not at a forward join, about an unversioned cell, of two terms, or not a cell is refused\n");
+    }
+    // 14. a predecessor that reaches the join by BOTH arms of its branch owes the claim once (two
+    // VCs with one id otherwise), with no edge fact: the condition holds on one arm only
+    {   IrFunc *f = ir_func_new(&A, nm("g17"), u32t, IR_FUNC_PURE);
+        IrValue *y = ir_add_param(f, u32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, s, y);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, y, ir_const_int(f, b0, 10, u32t)), b1, b2);
+        ir_store(f, b1, s, ir_const_int(f, b1, 1, u32t));
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, y, ir_const_int(f, b1, 5, u32t)), b3, b3);
+        ir_store(f, b2, s, ir_const_int(f, b2, 2, u32t)); ir_set_br(b2, b3);
+        ir_set_ret(b3, ir_load(f, b3, s, u32t));
+        ir_finalize_cfg(f);
+        JClaim c = claim1(b3, s, 1, 2);
+        char *t = gen_with(f, &c, 1, JGEN_CLAIMS, NULL);
+        char key[32]; snprintf(key, sizeof key, "bb%d.%d hull", b1->id, nins(b1));
+        CHECK(t && count(t, key) == 1 && count(t, " hull 0\n") == 2, "the branch owes the claim once, and b2 once:\n%s", t ? t : "");
+        const char *e1 = t ? vc_of(t, key) : "";
+        CHECK(e1[0] && !strstr(e1, "edge "), "with no edge fact:\n%s", e1);
+        free(t);
+        printf("  a branch whose both arms enter the join owes its claim once, with no edge fact\n");
     }
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;

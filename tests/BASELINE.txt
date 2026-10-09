@@ -1876,6 +1876,10 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/judge_hull_nested_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/judge_join_stale_pass.ln
 rc=0
 out=

@@ -19,7 +19,12 @@
 //   - the branch conditions and ASSUMEs that dominate the point, as facts about the SSA values
 //     they tested (an edge counts when its target has that one predecessor);
 //   - at a join that dominates the point, one disjunct per predecessor (R7): the edge conditions
-//     on its path, and the version each cell ends that path with.
+//     on its path, and the version each cell ends that path with;
+//   - a CLAIM about a forward join's fresh version (P3.5's hull row: `lo <= x@join`), wherever
+//     that version is named. Claims are UNTRUSTED input, so each is also OWED, as an obligation
+//     `hull` on every edge into its join: at the end of the predecessor, with the edge's condition
+//     a fact, about the version the predecessor ends with (the cell's content as the join is
+//     entered).
 // Why these hold. An SSA value's definition holds wherever the definition dominates: if an
 // operand's definition ran again after the value's and before the point, there would be a path
 // from the entry to the point that avoids the value's definition. The same argument covers a
@@ -29,6 +34,11 @@
 // the conclusion of an obligation at an EARLIER event (the settling of the value, or the landing
 // of the stored value), so at the first event whose obligation fails, every hypothesis of that
 // obligation was already established; hence a value's own range is never its own hypothesis.
+// Claims are the same argument: a version names the cell's content at its join's LATEST entry,
+// and the claim is the conclusion of the obligation on the edge taken then, an earlier event. A
+// claim's obligation sits at its predecessor's end, before the join makes the versions it is
+// about, so it never assumes itself. A claim is sound only with its obligations: whoever proposes
+// claims must have every `hull` VC implied, or drop the claim and generate again.
 //
 // Not stated yet, each costing precision only: cells whose address escapes (their loads are fresh
 // variables); struct field and element cells; loop invariants; landings at stores, arguments and
@@ -52,9 +62,16 @@
 // about (the remainder of x / c is x - c*q).
 typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; } JRecipe;
 
-// An obligation: its instruction, its position, and its VC; or `outside` with the reason.
+// A claim at a cut point, `sum(coef * term) <= rhs`, each term the version a cell (key: its
+// ALLOCA's value id) has as block `blk` is entered. Phase 1a takes one term at a forward join
+// (jg_claims_ok); a loop header's (`inv`) is a later step.
+typedef struct { int32_t blk, nt; int32_t key[2]; __int128 coef[2]; __int128 rhs; } JClaim;
+
+// An obligation: its instruction, its position, and its VC; or `outside` with the reason. A
+// claim's obligation has no instruction: it is owed at the end of block `blk`, on its edge to `to`.
 typedef struct {
     IrInstr *at; IrBlock *blk; int32_t idx;
+    IrBlock *to; int32_t claim;               // a claim's obligation: the edge's target, the claim
     JVc vc;
     const char *outside;
     // per VC variable, what it is (for a harness that evaluates the VC at run time): kind 0 an SSA
@@ -129,6 +146,7 @@ typedef struct {
     uint8_t *inloop;               // by header id * nb: block in the header's natural loop
     uint8_t *writes;               // by header id * ncells: the loop stores the cell
     uint32_t hash;
+    const JClaim *cl; int32_t ncl; // claims (untrusted input: each is owed on every edge into its block)
 } JG;
 
 // The value with id `id`: an instruction's result or a parameter.
@@ -392,6 +410,8 @@ typedef struct {
     // dominate the join is LOCAL to a path: on another path it is stale, so its facts may only be
     // stated inside this disjunct, never as hypotheses of their own.
     int32_t jS; JCons *sink; int32_t nsink, csink; int32_t *dsc; int32_t dgen;
+    int32_t to;                              // a claim's obligation: the edge's target block; else -1
+    int32_t *cst;                            // per claim: -2 unstated, -1 VC-wide, else its disjunct
     bool fail;
 } JB;
 
@@ -616,6 +636,27 @@ static bool jg_const_of(JG *g, IrValue *v, __int128 *c) {
 }
 static bool jg_uns(const IrType *t) { return t && (t->kind == IRT_BOOL || (t->kind == IRT_INT && !t->is_signed)); }
 
+// The claims about a join's version, stated where the version is: VC-wide, or inside the current
+// disjunct when the version is local to its path. Each once per place (a claim of two terms is
+// reached from either).
+static void jb_claims(JB *B, const JVer *v) {
+    JG *g = B->g;
+    int32_t at = B->jS >= 0 ? B->dgen : -1;
+    for (int32_t ci = 0; ci < g->ncl && !B->fail; ci++) {
+        const JClaim *c = &g->cl[ci];
+        if (c->blk != v->blk || B->cst[ci] == at) continue;
+        bool about = false;
+        for (int k = 0; k < c->nt; k++) if (g->cell[c->key[k]] == v->cell) about = true;
+        if (!about) continue;
+        B->cst[ci] = at;
+        JLT t[2];
+        for (int k = 0; k < c->nt; k++) {
+            t[k].var = jb_ver(B, g->instate[(size_t)c->blk * (size_t)g->ncells + (size_t)g->cell[c->key[k]]]);
+            t[k].c = c->coef[k];
+        }
+        jb_atom(B, jb_str(B, "claim bb%lld #%lld", c->blk, ci, 0), t, c->nt, J_LE, c->rhs);
+    }
+}
 // The facts of one variable: its definition and its range.
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
@@ -628,6 +669,7 @@ static void jb_state(JB *B, int32_t x) {
             JLT t[1]; t[0].var = jb_val(B, v->stored); t[0].c = 1;
             jb_def(B, x, t, 1, jb_str(B, "store %%s%lld@bb%lld.%lld", g->cellv[v->cell]->id, v->blk, v->idx));
         }
+        if (v->kind == JV_JOIN) jb_claims(B, v);
         return;
     }
     if (B->kind[x] == 2) {                                     // a slice's length
@@ -957,6 +999,20 @@ static void jb_facts(JB *B) {
         }
         if (g->idom[s] == s) break;
     }
+    // a claim's obligation is owed on ONE edge out of its block: that edge's condition holds
+    if (B->to >= 0) {
+        IrBlock *P = g->blk[B->blk];
+        if (P->term.kind == IR_TERM_BR_COND && P->term.a != P->term.b && P->term.cond &&
+            P->term.cond->id >= 0 && P->term.cond->id < g->nv) {
+            IrInstr *ic = g->def[P->term.cond->id];
+            if (ic && ic->op == IR_ICMP) {
+                if (nf == cf) { JFact *n2 = JG_NEW(g, JFact, cf * 2); if (!n2) { B->fail = true; return; } memcpy(n2, F, sizeof *F * (size_t)nf); F = n2; cf *= 2; }
+                F[nf].ic = ic; F[nf].truth = P->term.a->id == B->to; F[nf].used = false;
+                F[nf].origin = jb_str(B, "edge bb%lld->bb%lld", P->id, B->to, 0);
+                nf++;
+            }
+        }
+    }
     for (bool more = true; more && !B->fail; ) {
         more = false;
         jb_drain(B);
@@ -979,11 +1035,13 @@ static void jb_facts(JB *B) {
 
 static JB jb_begin(JG *g, int32_t blk, int32_t idx, int32_t self) {
     JB B; memset(&B, 0, sizeof B);
-    B.g = g; B.blk = blk; B.idx = idx; B.self = self; B.jS = -1;
+    B.g = g; B.blk = blk; B.idx = idx; B.self = self; B.jS = -1; B.to = -1;
     B.vval = JG_NEW(g, int32_t, g->nv); B.vlen = JG_NEW(g, int32_t, g->nv); B.vver = JG_NEW(g, int32_t, g->nver ? g->nver : 1);
-    if (!B.vval || !B.vlen || !B.vver) { B.fail = true; return B; }
+    B.cst = JG_NEW(g, int32_t, g->ncl ? g->ncl : 1);
+    if (!B.vval || !B.vlen || !B.vver || !B.cst) { B.fail = true; return B; }
     for (int32_t i = 0; i < g->nv; i++) B.vval[i] = B.vlen[i] = -1;
     for (int32_t i = 0; i < g->nver; i++) B.vver[i] = -1;
+    for (int32_t i = 0; i < g->ncl; i++) B.cst[i] = -2;
     return B;
 }
 static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *goal, JObl *o) {
@@ -1192,17 +1250,112 @@ static bool jg_obligations(JG *g, JObls *L) {
     return true;
 }
 
-// The obligations of `f`, their VCs in `m`. False with `err` on an IR the generator does not read
-// (a phi) or a region that is full.
-static bool jgen_func(JMem *m, IrFunc *f, JObl **out, int32_t *nout, char *err, size_t errcap) {
+// ── claims (P3.5's hull row) ────────────────────────────────────────────────────────────────
+// A FORWARD join: two or more predecessors, every reachable one earlier in the RPO. No retreating
+// edge enters it, so it heads no loop (a header's back edge comes from later in the RPO), and it
+// is not the entry, which is entered with no edge. Its every entry is an edge a claim is owed on.
+static bool jg_forward_join(JG *g, int32_t b) {
+    if (b < 0 || b >= g->nb || !g->blk[b] || g->rpoix[b] < 0 || g->npred[b] < 2) return false;
+    for (IrEdge *e = g->blk[b]->preds; e; e = e->next)
+        if (g->rpoix[e->block->id] >= g->rpoix[b]) return false;
+    return true;
+}
+// Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
+static bool jg_claims_ok(JG *g) {
+    const __int128 big = (__int128)1 << 66;
+    for (int32_t ci = 0; ci < g->ncl; ci++) {
+        const JClaim *c = &g->cl[ci];
+        if (!jg_forward_join(g, c->blk)) return jg_fail(g, "a claim not at a forward join");
+        if (c->nt != 1) return jg_fail(g, "a claim of other than one term (a loop's `inv` is a later step)");
+        if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
+        for (int k = 0; k < c->nt; k++) {
+            int32_t key = c->key[k];
+            if (key < 0 || key >= g->nv || g->cell[key] < 0) return jg_fail(g, "a claim's term is not a cell");
+            if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
+            int32_t jv = g->instate[(size_t)c->blk * (size_t)g->ncells + (size_t)g->cell[key]];
+            if (jv < 0 || g->ver[jv].kind != JV_JOIN || g->ver[jv].blk != c->blk || !jg_is_int(g->ver[jv].slot))
+                return jg_fail(g, "a claim about a cell its join does not version afresh as an integer");
+        }
+    }
+    return true;
+}
+// Each claim's obligations, like P3.5's `inv.entry`: on every edge P -> H into its join, at the end
+// of P, the edge's condition a fact, the claim about the versions P ends with. A predecessor that
+// reaches H by both arms of its branch owes it once, with no edge condition.
+static bool jg_claim_obligations(JG *g, JObls *L, int32_t only_blk) {
+    for (int32_t ci = 0; ci < g->ncl; ci++) {
+        const JClaim *c = &g->cl[ci];
+        if (only_blk >= 0 && c->blk != only_blk) continue;
+        IrBlock *H = g->blk[c->blk];
+        for (IrEdge *e = H->preds; e; e = e->next) {
+            IrBlock *P = e->block;
+            if (g->rpoix[P->id] < 0) continue;
+            bool again = false;
+            for (IrEdge *e2 = H->preds; e2 != e; e2 = e2->next) if (e2->block == P) again = true;
+            if (again) continue;
+            int32_t n = 0;
+            for (IrInstr *i = P->instrs; i; i = i->next) n++;
+            JB B = jb_begin(g, P->id, n, -1);
+            B.to = H->id;
+            JLT t[2]; JCons goal;
+            for (int k = 0; k < c->nt; k++) {
+                t[k].var = jb_ver(&B, g->outstate[(size_t)P->id * (size_t)g->ncells + (size_t)g->cell[c->key[k]]]);
+                t[k].c = c->coef[k];
+            }
+            if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
+            JObl *o = jg_push(g, L);
+            if (!o || !jb_finish(&B, NULL, "hull", ci, &goal, o)) return jg_fail(g, "out of memory building a VC");
+            o->to = H; o->claim = ci;
+        }
+    }
+    return true;
+}
+
+// The obligations of `f`, their VCs in `m`: with `only` JGEN_ALL, every obligation and every
+// claim's; JGEN_CLAIMS, the claims' only; a block id, the claims' at that block only. `cl` are
+// claims at cut points (untrusted: see the header). False with `err` on an IR the generator does
+// not read (a phi), a claim it cannot state and owe, or a region that is full.
+enum { JGEN_ALL = -1, JGEN_CLAIMS = -2 };
+static bool jgen_func(JMem *m, IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
+                      JObl **out, int32_t *nout, char *err, size_t errcap) {
+    JG g; memset(&g, 0, sizeof g);
+    g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
+    g.cl = cl; g.ncl = cl ? ncl : 0;
+    *out = NULL; *nout = 0;
+    if (!f || !f->entry || f->is_extern) return g.ncl == 0 || jg_fail(&g, "a claim on a function without a body");
+    if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
+    JObls L; memset(&L, 0, sizeof L);
+    if (only == JGEN_ALL && !jg_obligations(&g, &L)) return false;
+    if (!jg_claim_obligations(&g, &L, only >= 0 ? only : -1)) return false;
+    *out = L.o; *nout = L.n;
+    return true;
+}
+
+// The versions a claim can be about, for whoever proposes claims: every forward join's fresh
+// version of an integer cell, in reverse post-order, so a join's predecessors come before it.
+typedef struct { int32_t blk, key; const IrType *type; } JSlot;
+static bool jgen_slots(JMem *m, IrFunc *f, JSlot **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
     *out = NULL; *nout = 0;
     if (!f || !f->entry || f->is_extern) return true;
     if (!jg_structure(&g) || !jg_cells(&g)) return false;
-    JObls L; memset(&L, 0, sizeof L);
-    if (!jg_obligations(&g, &L)) return false;
-    *out = L.o; *nout = L.n;
+    JSlot *S = NULL;
+    for (int pass = 0; pass < 2; pass++) {                   // count, then fill
+        int32_t n = 0;
+        for (int32_t r = 0; r < g.nrpo; r++) {
+            int32_t b = g.rpo[r];
+            if (!jg_forward_join(&g, b)) continue;
+            for (int32_t c = 0; c < g.ncells; c++) {
+                int32_t jv = g.instate[(size_t)b * (size_t)g.ncells + (size_t)c];
+                if (jv < 0 || g.ver[jv].kind != JV_JOIN || g.ver[jv].blk != b || !jg_is_int(g.ver[jv].slot)) continue;
+                if (S) { S[n].blk = b; S[n].key = g.cellv[c]->id; S[n].type = g.ver[jv].slot; }
+                n++;
+            }
+        }
+        if (S) { *out = S; *nout = n; break; }
+        if (!(S = JG_NEW(&g, JSlot, n ? n : 1))) return jg_fail(&g, "out of memory");
+    }
     return true;
 }
 
