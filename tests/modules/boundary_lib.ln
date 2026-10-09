@@ -1,0 +1,7 @@
+// A library for the module-boundary tests (I.181). `k` declares only i32; `k_declared` declares its
+// range; `id` is re-analysed at constant arguments within its own module; `pick` is a generic,
+// whose instances belong to this module wherever they are made.
+func k() i32 { return 5 }
+func k_declared() i32 >= 1 { return 5 }
+func id(x i32) i32 { return x }
+func pick(T type, a T, b T) T { return b }

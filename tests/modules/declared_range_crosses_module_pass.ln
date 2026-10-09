@@ -1,0 +1,5 @@
+// The allowed side of the module boundary: `k_declared` states its range in its signature
+// (`i32 >= 1`), and a declared contract is exactly what crosses a module boundary.
+import tests.modules.boundary_lib.{k_declared}
+func divide(a i32) i32 { return a / k_declared() }
+func main() i32 { return divide(10) - 2 }

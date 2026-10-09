@@ -906,6 +906,10 @@ out=
 ### tests/memory/uninit_pass.ln
 rc=0
 out=
+### tests/modules/declared_range_crosses_module_pass.ln
+rc=0
+out=
+at=const 8
 ### tests/modules/import_through_loaded_module_pass.ln
 rc=0
 out=ok

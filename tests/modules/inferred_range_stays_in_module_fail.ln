@@ -1,0 +1,9 @@
+// EXPECT: [E015]
+// The module boundary: a call to a function defined in ANOTHER module contributes only its declared
+// contract. `k` returns 5, but it declares only i32, so `a / k()` may divide by zero as far as this
+// module is concerned. Before the rule, the compiler read k's body across the boundary and accepted
+// this, so an edit inside boundary_lib (returning 0) would have flipped this caller's verdict.
+// The allowed side is declared_range_crosses_module_pass.ln.
+import tests.modules.boundary_lib.{k}
+func divide(a i32) i32 { return a / k() }
+func main() i32 { return divide(10) - 2 }

@@ -2603,8 +2603,16 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 // are read only when a query answered, which gcc cannot see once the query inlines.)
                 int64_t rlo = 0, rhi = 0;
                 IrFunc *cal2 = vra_find_func(ins->aux.callee);
-                bool got = vra_ret_range_at(V, W, cal2, ins, &rlo, &rhi);
-                if (!got) got = vra_ret_range(cal2, &rlo, &rhi);
+                // ★ THE MODULE BOUNDARY. A callee defined in ANOTHER module contributes only its
+                // declared contract (its return type with any refinement, bound above), never the
+                // range inferred from its body: an edit inside a library must not flip the verdict
+                // of a program that imports it. Within one module the inferred range is still used.
+                // `src_file` names the module a function was defined in (NULL: the main file); a
+                // generic instance carries its template's.
+                const char *cf = cal2 && cal2->src_file ? cal2->src_file : "", *ff = V->f->src_file ? V->f->src_file : "";
+                bool same_module = strcmp(cf, ff) == 0;
+                bool got = same_module && vra_ret_range_at(V, W, cal2, ins, &rlo, &rhi);
+                if (!got && same_module) got = vra_ret_range(cal2, &rlo, &rhi);
                 if (got && ins->result && ins->result->type) {
                     if (rlo > -OCT_INF/2) oct_add_lb(W, r, rlo);
                     if (rhi <  OCT_INF/2) oct_add_ub(W, r, rhi);

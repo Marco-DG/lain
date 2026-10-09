@@ -1,0 +1,7 @@
+// EXPECT: [E015]
+// The module boundary covers the constant-argument re-analysis too: within its own module,
+// `id(5)` is re-analysed at x = 5 and returns 5, but across the boundary only `id`'s declared i32
+// return crosses, so `a / id(5)` may divide by zero here. Before I.181 this compiled.
+import tests.modules.boundary_lib.{id}
+func divide(a i32) i32 { return a / id(5) }
+func main() i32 { return divide(10) - 2 }

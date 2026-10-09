@@ -10,7 +10,8 @@
 Each Lain source file defines one module.  Modules are the unit of code
 organization and compilation.  All names declared at the top level of a
 source file are in that module's scope and are accessible from other
-modules that import the module.
+modules that import the module.  A module is also the boundary for the value
+ranges that cross a call (\S\,\ref{sec:vra.interprocedural}).
 
 \section{Module identity}
 \label{sec:mod.declaration}

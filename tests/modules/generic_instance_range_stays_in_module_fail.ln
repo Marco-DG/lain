@@ -1,0 +1,7 @@
+// EXPECT: [E015]
+// A generic instance belongs to the module that defines the generic: `pick(i32, 0, 5)` is made
+// here but its body is boundary_lib's, so only its declared return type T = i32 crosses, and
+// `a / pick(i32, 0, 5)` may divide by zero as far as this module knows.
+import tests.modules.boundary_lib.{pick}
+func divide(a i32) i32 { return a / pick(i32, 0, 5) }
+func main() i32 { return divide(10) - 2 }
