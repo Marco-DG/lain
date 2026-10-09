@@ -152,6 +152,13 @@ typedef struct {
     // "arithmetic is not provably free of overflow" was printed for `C(7)`, which has no arithmetic.
     int      refine;
     int64_t  ref_lo, ref_hi, ref_ne;
+    // A VRA_OVERFLOW check on a narrowing that is NOT arithmetic (I.180): 1 = a source `as`,
+    // 2 = a value computed by no arithmetic (a parameter, constant, load or call result) landing
+    // in a narrower slot. The target is nar_bits wide, signed or not. `(l.pos - start) as u16`
+    // printed "arithmetic is not provably free of overflow"; the subtraction was proven.
+    int      narrow;
+    int      nar_bits;
+    bool     nar_signed;
     int      diag;           // VRA_PRECOND: the assert's diagnostic class (85/86/87; 0 = E012)
     int64_t  line, col;
 } VraCheck;
@@ -3345,6 +3352,15 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     if (!c.ok && !c.accum && !c.shift && (target->has_refine || target->has_ne)) {
         c.refine = (target->has_refine ? 1 : 0) | (target->has_ne ? 2 : 0);
         c.ref_lo = tlo; c.ref_hi = thi; c.ref_ne = target->refine_ne;
+    }
+    // ...and NAME THE NARROWING (I.180). The obligation is the target's range; "arithmetic" is
+    // right only when the value is an arithmetic result narrowed back to its declared type.
+    if (!c.ok && !c.accum && !c.shift && !c.refine) {
+        IrInstr *d = (val->id >= 0 && val->id < V->nvar) ? V->def[val->id] : NULL;
+        bool arith = d && ((d->op >= IR_ADD && d->op <= IR_NEG) || d->op == IR_SHL);
+        if (at && at->op == IR_CAST && at->source_as) c.narrow = 1;
+        else if (!arith)                              c.narrow = 2;
+        c.nar_bits = target->bits; c.nar_signed = target->is_signed;
     }
     vra_add_check(V, c);
 }

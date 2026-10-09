@@ -204,6 +204,27 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                                  (long long)c->ref_lo, (long long)c->ref_hi,
                                  c->refine == 3 ? " (and not the excluded value)" : "");
                     ir_diag(file, c->line, c->col, "E086", msg);
+                } else if (c->narrow) {
+                    // The target's range from its width: a u64's top is 2^64 - 1, which the
+                    // analysis's int64_t bounds cannot hold and must not print as INT64_MAX. No
+                    // type name: the IR's u64 may be the source's usize.
+                    char rng[64], msg[240];
+                    int nb = c->nar_bits < 1 ? 1 : c->nar_bits > 64 ? 64 : c->nar_bits;
+                    if (c->nar_signed)
+                        snprintf(rng, sizeof rng, "[%lld, %lld]",
+                                 nb == 64 ? (long long)INT64_MIN : -(1LL << (nb - 1)),
+                                 nb == 64 ? (long long)INT64_MAX : (1LL << (nb - 1)) - 1);
+                    else
+                        snprintf(rng, sizeof rng, "[0, %llu]",
+                                 nb == 64 ? (unsigned long long)UINT64_MAX : (1ULL << nb) - 1);
+                    if (c->narrow == 1)
+                        snprintf(msg, sizeof msg, "this `as` may lose the value: it is not provably "
+                                 "within %s, the range of its target type; `as%%` wraps, `as|` "
+                                 "clamps", rng);
+                    else
+                        snprintf(msg, sizeof msg, "this value is not provably within %s, the range "
+                                 "of the type it lands in", rng);
+                    ir_diag(file, c->line, c->col, "E086", msg);
                 } else {
                     ir_diag(file, c->line, c->col, "E086",
                             "arithmetic is not provably free of overflow");

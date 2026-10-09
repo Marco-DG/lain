@@ -1,5 +1,5 @@
 // EXPECT: [E086]
-// EXPECT-TEXT: Error Ln 6, Col 5: arithmetic is not provably free of overflow
+// EXPECT-TEXT: Error Ln 6, Col 5: this value is not provably within [-9223372036854775808, 9223372036854775807], the range of the type it lands in
 // I.119: a decimal literal above i64's range is a u64 (tests/trust/u64_literal_above_i64_pass.ln),
 // and an i64 does not hold it.
 func main() i32 {

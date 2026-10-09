@@ -3088,7 +3088,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             IrValue *x = ir_lower_expr(c, e->as.cast_expr.expr);
             IrType  *dt = ir_lower_type(c, e->as.cast_expr.target_type);
             IrInstr *ins = ir_instr(c->f, IR_CAST, dt, 1);
-            ins->operands[0]=x;
+            ins->operands[0]=x; ins->source_as = true;
             // ★ The cast KIND, from the types and the tier — every source-level `as` used to
             // be labelled BITCAST regardless.
             //

@@ -392,6 +392,9 @@ typedef struct IrInstr {
     } aux;
     IrPhiArg  *phi_args;    // IR_PHI
     bool       unchecked;   // ELEM_PTR / arithmetic inside an `unsafe` block
+    // IR_CAST: a source-level `as`, as opposed to a cast the lowering inserts, such as the
+    // narrowing back of a widened arithmetic result. Only E086's wording reads it (I.180).
+    bool       source_as;
     // IMMUTABLE STORAGE (E009). An immutable binding's initialisation is one SEAL: every
     // IR_ALLOCA, IR_STORE and IR_CALL its lowering emitted carries the same nonzero id. A slot
     // with a seal is immutable, and a write may reach it only from an instruction of the same

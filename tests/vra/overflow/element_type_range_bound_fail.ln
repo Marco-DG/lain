@@ -1,5 +1,5 @@
 // EXPECT: [E086]
-// EXPECT-TEXT: Error Ln 9, Col 12: arithmetic is not provably free of overflow
+// EXPECT-TEXT: Error Ln 9, Col 12: this value is not provably within [-2147483648, 2147483647], the range of the type it lands in
 // The refusing twin of tests/trust/element_type_range_through_local_pass.ln: the bound an array
 // element gets is its TYPE's range and no tighter. Two u16 elements multiplied reach 65535 * 65535,
 // past i32, so returning the product as an i32 must stay refused (the same with u8 elements proves).

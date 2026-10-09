@@ -1,5 +1,5 @@
 // EXPECT: [E086]
-// EXPECT-TEXT: Error Ln 8, Col 12: arithmetic is not provably free of overflow
+// EXPECT-TEXT: Error Ln 8, Col 12: this `as` may lose the value: it is not provably within [-2147483648, 2147483647]
 // The refusing twin of type_range_extern_call_pass: the bound a call's result gets is its TYPE's
 // range and no tighter, so a u32 that is not divided does not fit an i32.
 extern func get() u32

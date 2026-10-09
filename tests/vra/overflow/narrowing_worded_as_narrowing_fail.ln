@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 9, Col 12: this `as` may lose the value: it is not provably within [0, 65535], the range of its target type
+// I.180: a token's length narrowed to u16. The subtraction is proven (pos >= start); the narrowing
+// is not, since a 65,536-byte identifier is real. The refusal names the narrowing and its range.
+// It printed "arithmetic is not provably free of overflow", which sends the reader to the
+// subtraction.
+func span(pos usize, start usize) u16 {
+    if pos < start { return 0 }
+    return (pos - start) as u16
+}
+
+func main() i32 {
+    return span(10, 3) as i32
+}
