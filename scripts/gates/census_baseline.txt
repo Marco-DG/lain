@@ -430,3 +430,12 @@ wrapping-literal-boundary	an array element	OK
 wrapping-literal-boundary	a signed type, i8	OK
 wrapping-literal-boundary	a nested expression	OK
 wrapping-literal-boundary	a leaf that is no u8: 300 +% 10	ok-REFUSED [E086]
+shift-by-constant	u8 >> 6, as an index into 4 entries	REFUSED [E085]  # I.179: a right shift by a constant is not read as division by 2^k, so `T[c >> 6]` is refused while `T[c / 64]` proves
+shift-by-constant	u8 / 64, the same index: the control	OK
+shift-by-constant	u16 >> 12, as an index into 16 entries	REFUSED [E085]  # I.179: a right shift by a constant is not read as division by 2^k, so `T[c >> 6]` is refused while `T[c / 64]` proves
+shift-by-constant	u16 >> 8, narrowed to u8	REFUSED [E086]  # I.179: a right shift by a constant is not read as division by 2^k, so `T[c >> 6]` is refused while `T[c / 64]` proves
+shift-by-constant	<< 2 of an index below 4, into 16 entries	OK
+shift-by-constant	<< 1 of a u8 below 128	OK
+shift-by-constant	<< 1 of any u8, which can lose a bit	ok-REFUSED [E086]
+shift-by-constant	a signed >> 1 floors: (x >> 1) + 4 for x in -7..7, into 8 entries	REFUSED [E085]  # I.179: a right shift by a constant is not read as division by 2^k, so `T[c >> 6]` is refused while `T[c / 64]` proves
+shift-by-constant	a signed >> 1 floors: (x >> 1) + 3 for x in -7..7 reaches -1	ok-REFUSED [E085]

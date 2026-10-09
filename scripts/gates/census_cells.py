@@ -1600,6 +1600,53 @@ for label, decls, body, exp in (
     add("wrapping-literal-boundary", label, _wb(decls, body), exp)
 
 
+# ── axis: a shift by a CONSTANT, read as multiplication or division by 2^k (I.179) ────────────────
+# `x >> k` is x / 2^k and `x << k` is x * 2^k, and both are linear when k is a constant. The analysis
+# read the left shift but not the right one: `BITS[c >> 6]` with c a u8 was refused as out of bounds,
+# though c >> 6 is 0..3, while the same index written `BITS[c / 64]` proved. The cells cross the
+# direction, the operand's width and how the result is used (an index, a narrowing); the two left-shift
+# cells that run are the side that already worked. A left shift that can lose bits must stay refused (spec
+# 08: "No bit is silently shifted out"). A right shift of a negative signed value FLOORS: -7 >> 1 is -4,
+# which is what Lain's C and its interpreter both compute today, while spec 08 does not yet say so. The
+# last pair is the teeth for that: with x in -7..7, (x >> 1) + 3 reaches -1, so it must be refused, and a
+# template that truncated (-7 / 2 = -3) would wrongly prove it.
+_I179 = ("I.179: a right shift by a constant is not read as division by 2^k, so `T[c >> 6]` is refused "
+         "while `T[c / 64]` proves")
+def _sh(decls, fn, calls, fmt):
+    return (decls + fn + 'func main() i32 effects io {\n    libc_printf("%s\\n", %s)\n    return 0\n}\n'
+            % (fmt, calls))
+_T4 = 'T u8[4] = [10, 20, 30, 40]\n'
+_T8 = 'T u8[8] = [0, 1, 2, 3, 4, 5, 6, 7]\n'
+_T16 = 'T u8[16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]\n'
+# DERIVED, with Python's own operators (its >> floors, as Lain's does): 255 >> 6 = 3 and 64 >> 6 = 1,
+# so T4 gives 40 and 20; 65535 >> 12 = 15, 4096 >> 12 = 1; 0xabcd >> 8 = 171; 3 << 2 = 12; 100 << 1 =
+# 200; (-7 >> 1) + 4 = 0 and (7 >> 1) + 4 = 7; (-7 >> 1) + 3 = -1, out of bounds.
+assert (255 >> 6, 64 >> 6, 65535 >> 12, 4096 >> 12, 0xabcd >> 8, 3 << 2, 100 << 1) == (3, 1, 15, 1, 171, 12, 200)
+assert ((-7 >> 1) + 4, (7 >> 1) + 4, (-7 >> 1) + 3) == (0, 7, -1)
+for label, decls, fn, calls, fmt, exp, hole in (
+        ("u8 >> 6, as an index into 4 entries", _T4,
+         'func pick(c u8) u8 {\n    return T[c >> 6]\n}\n', 'pick(255) as i32, pick(64) as i32', '%d %d', "40 20\n", True),
+        ("u8 / 64, the same index: the control", _T4,
+         'func pick(c u8) u8 {\n    return T[c / 64]\n}\n', 'pick(255) as i32, pick(64) as i32', '%d %d', "40 20\n", False),
+        ("u16 >> 12, as an index into 16 entries", _T16,
+         'func pick(x u16) u8 {\n    return T[x >> 12]\n}\n', 'pick(65535) as i32, pick(4096) as i32', '%d %d', "15 1\n", True),
+        ("u16 >> 8, narrowed to u8", '',
+         'func high(x u16) u8 {\n    return (x >> 8) as u8\n}\n', 'high(43981) as i32', '%d', "171\n", True),
+        ("<< 2 of an index below 4, into 16 entries", _T16,
+         'func pick(i u8) u8 {\n    if i < 4 {\n        return T[i << 2]\n    }\n    return 0\n}\n', 'pick(3) as i32', '%d', "12\n", False),
+        ("<< 1 of a u8 below 128", '',
+         'func twice(x u8) u8 {\n    if x < 128 {\n        return x << 1\n    }\n    return 0\n}\n', 'twice(100) as i32', '%d', "200\n", False),
+        ("<< 1 of any u8, which can lose a bit", '',
+         'func twice(x u8) u8 {\n    return x << 1\n}\n', 'twice(100) as i32', '%d', "__ILLFORMED__", False),
+        ("a signed >> 1 floors: (x >> 1) + 4 for x in -7..7, into 8 entries", _T8,
+         'func pick(x i32) u8 {\n    if x >= -7 and x <= 7 {\n        return T[(x >> 1) + 4]\n    }\n    return 0\n}\n',
+         'pick(-7) as i32, pick(7) as i32', '%d %d', "0 7\n", True),
+        ("a signed >> 1 floors: (x >> 1) + 3 for x in -7..7 reaches -1", _T8,
+         'func pick(x i32) u8 {\n    if x >= -7 and x <= 7 {\n        return T[(x >> 1) + 3]\n    }\n    return 0\n}\n',
+         'pick(-7) as i32', '%d', "__ILLFORMED__", False)):
+    add("shift-by-constant", label, _sh(decls, fn, calls, fmt), exp, plan=_I179 if hole else None)
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps([{"axis": a, "cell": c, "prog": p, "want": w,
