@@ -1,0 +1,12 @@
+// EXPECT: [E011]
+// I.184: `n & (n - 1)` clears the lowest set bit, a strict fall only from n >= 1; under
+// `n > -1`, n == 0 gives 0 & -1 == 0 for ever. The unsigned `while mask != 0` form, where
+// mask >= 1 in the body, stays proven (the popcount loop, I.145).
+func f(x i32) i32 {
+    var n i32 = x
+    while n > -1 {
+        n = n & (n - 1)
+    }
+    return n
+}
+func main() i32 { return f(5) }

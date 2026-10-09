@@ -1,0 +1,14 @@
+// EXPECT: [E011]
+// I.184: `n / 2` falls strictly only from n >= 1, and `n > -1` admits n == 0, where 0 / 2 == 0
+// for ever. The rule recognised the halving shape and trusted a comment that the guard keeps the
+// cell positive: this loop was "proven" to terminate with measure `n - -1`, f was emitted
+// `__attribute__((const))`, and f(5) hangs natively and under --interpret. The allowed side,
+// with `n > 0`, is tests/functions/decreasing_halving_signed_pass.ln. (Found by Documentation.)
+func f(x i32) i32 {
+    var n i32 = x
+    while n > -1 {
+        n = n / 2
+    }
+    return n
+}
+func main() i32 { return f(5) }

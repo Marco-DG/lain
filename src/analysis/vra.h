@@ -4099,6 +4099,29 @@ static bool vra_step_decreases(Vra *V, int cell, IrInstr *vd) {
         default: return false;
     }
 }
+// ★ ...AND THE OLD VALUE IS AT LEAST 1 WHERE THE STEP HAPPENS (I.184). Every shape above falls
+// strictly only from a positive value: 0 / 2 = 0, 0 >> 1 = 0, signed -1 >> 1 = -1, 0 & -1 = 0,
+// and `a % b` is below b only for b >= 1. The comment above said the guard keeps the cell
+// positive and nothing checked it, so `while n > -1 { n = n / 2 }` (and `while n >= 0 { n = n >>
+// 1 }` on a u32) was proven to terminate, reported `n - -1` as its measure, and emitted the
+// function `__attribute__((const))`; at n == 0 it loops for ever. The value is read in the loop's
+// converged state replayed to the store, as the variable step's sign is.
+static bool vra_step_old_positive(Vra *V, IrBlock *b, IrInstr *st, IrInstr *vd) {
+    if (!vd || vd->n_operands < 2 || !V->in[b->id]) return false;
+    int ov = (vd->op == IR_UREM || vd->op == IR_SREM) ? vd->operands[1]->id : vd->operands[0]->id;
+    if (ov < 0 || ov >= V->nvar) return false;
+    int64_t *sc = malloc((size_t)V->dsz * 8);
+    if (!sc) return false;
+    memcpy(sc, V->in[b->id], (size_t)V->dsz * 8);
+    Octagon SW = { V->noct, 2 * V->noct, sc };
+    oct_close(&SW);
+    for (IrInstr *q = b->instrs; q && q != st; q = q->next) vra_transfer_instr(V, &SW, q);
+    oct_close(&SW);
+    int64_t lo, hi; bool hl, hh;
+    vra_interval(V, &SW, ov, &lo, &hl, &hi, &hh);
+    free(sc);
+    return hl && lo >= 1;
+}
 // ★ CAN ANYTHING THIS SCAN CANNOT SEE CHANGE `cell` WHILE THE LOOP RUNS?
 // Every rule below recovers a per-iteration fact by pattern-matching IR_STOREs — the counter's
 // step, the trip count, the accumulator's starting value. A call handed the cell's ADDRESS
@@ -4592,7 +4615,7 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
                             }
                         }
                     }
-                } else if (gt && vra_step_decreases(V, cell, vd)) {
+                } else if (gt && vra_step_decreases(V, cell, vd) && vra_step_old_positive(V, b, st, vd)) {
                     ok_step = true;      // a falling step the domain justifies (see above)
                 }
                 // A store of a CONSTANT that makes the guard false is progress too: that path

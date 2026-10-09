@@ -1,0 +1,14 @@
+// EXPECT: [E011]
+// I.184: `n >> 1` on a u32 falls strictly only from n >= 1, and `n >= 0` holds for every u32,
+// so at n == 0 the loop runs for ever. It was proven to terminate with measure `n - 0`.
+func f(x u32) u32 {
+    var n u32 = x
+    while n >= 0 {
+        n = n >> 1
+    }
+    return n
+}
+func main() i32 {
+    if f(5) == 0 { return 0 }
+    return 1
+}
