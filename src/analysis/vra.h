@@ -1305,6 +1305,24 @@ static bool vra_dump_measures_enabled = false;   // --dump-measures
 static void vra_print_measure(Vra *V, IrFunc *f, isize line, bool rec, bool ok);   // fwd
 static void vra_dump_state(Vra *V, FILE *o);   // fwd
 
+// ── THE CONVERGED LOOP-HEADER STATE, FOR A TOOL (PE.4) ───────────────────────────────────────
+// The proof engine's proposer reads VRA's header invariants as CANDIDATES: the judge checks each
+// one on the entry and back edges and drops what does not hold (Houdini), so nothing here is
+// believed and no proof rides on its precision. A TOOL installs the sink; the compiler never does.
+// For each loop header of each converged analysis, the sink receives the CLOSED entry state as
+// relations sa·x_a + sb·x_b <= c over value ids (b < 0: a unary bound), every finite unary bound
+// and the two-variable forms a − c, c − a, a + c and −a − c. For an ALLOCA's id, x is the cell's
+// contents at the header. A value defined INSIDE the loop is reported with what it held on the
+// previous trip, which is not a fact about the header: a consumer keeps only cells and values whose
+// definition dominates the header. A bound at or past the octagon's ±2^60 cap is a clamp, not a
+// fact, and is not reported. The analysis runs more than once per function in a compile, so one header can
+// be reported more than once, with the same state.
+typedef struct { int a, sa, b, sb; int64_t c; } VraRel;
+typedef void (*VraHeaderSink)(void *ctx, IrFunc *f, int bid, const VraRel *r, int n);
+static VraHeaderSink vra_header_sink = NULL;
+static void *vra_header_ctx = NULL;
+static void vra_emit_headers(Vra *V);   // fwd
+
 // --dump-octagon prints once per function per compile, not once per analysis run.
 static IrFunc *vra_dumped[512]; static int vra_dumped_n = 0;
 static bool vra_dumped_already(IrFunc *f) {
@@ -6232,6 +6250,7 @@ static Vra *vra_analyze(IrFunc *f) {
     // totality, report.h again for the numeric obligations under --engine=ir-full), and a
     // flag that prints the same converged state twice reads as two different states.
     if (vra_dump_enabled && !vra_dumped_already(f)) vra_dump_state(V, stderr);
+    if (vra_header_sink) vra_emit_headers(V);
     // one termination obligation per loop header — but ONLY for a `func` (totality is a
     // func requirement; a `proc` may loop forever, e.g. an event loop). Emitting it for
     // procs was spuriously marking terminating procs "partially proven".
@@ -7352,6 +7371,47 @@ static void vra_cert_finish(Vra *V) {
         cert_free(c); V->cert = NULL;
         V->certifying = false;   // finished: a later query must not record into a freed certificate
     }
+}
+
+// The DBM holds lit(j) − lit(i) <= m[i][j], where pos(x) is +x and neg(x) is −x (oct_get(W, i, j)).
+static void vra_emit_headers(Vra *V) {
+    const int64_t cap = (int64_t)1 << 60;
+    int dim = 2*V->noct, n = 0, ncap = 0;
+    int64_t *m = malloc((size_t)V->dsz*8);
+    VraRel *r = NULL;
+    if (!m) return;
+    #define VRA_REL(A, SA, B, SB, D) do {                                                   \
+        int64_t d_ = (D);                                                                     \
+        if (d_ < OCT_INF && d_ < cap && d_ > -cap) {                                          \
+            if (n == ncap) { ncap = ncap ? 2*ncap : 64;                                         \
+                             VraRel *nr = realloc(r, sizeof *r * (size_t)ncap);                 \
+                             if (!nr) { free(r); free(m); return; } r = nr; }                   \
+            r[n].a = (A); r[n].sa = (SA); r[n].b = (B); r[n].sb = (SB); r[n].c = d_; n++;       \
+        } } while (0)
+    for (IrBlock *b = V->f->blocks; b; b = b->next) {
+        if (!b->is_loop_header || !V->reached[b->id] || !V->in[b->id]) continue;
+        memcpy(m, V->in[b->id], (size_t)V->dsz*8);
+        Octagon W = { V->noct, dim, m };
+        oct_close(&W);
+        if (oct_is_bottom(&W)) continue;
+        n = 0;
+        for (int a = 0; a < V->nvar; a++) {
+            if (V->odim[a] < 0) continue;
+            int64_t up = oct_get(&W, oct_neg(a), oct_pos(a)), dn = oct_get(&W, oct_pos(a), oct_neg(a));
+            if (up < OCT_INF) VRA_REL(a, 1, -1, 0, up >= 0 ? up / 2 : -((-up + 1) / 2));      // 2a <= up
+            if (dn < OCT_INF) VRA_REL(a, -1, -1, 0, dn >= 0 ? dn / 2 : -((-dn + 1) / 2));     // −2a <= dn
+            for (int c = a + 1; c < V->nvar; c++) {
+                if (V->odim[c] < 0) continue;
+                VRA_REL(a,  1, c, -1, oct_get(&W, oct_pos(c), oct_pos(a)));   //  a − c
+                VRA_REL(a, -1, c,  1, oct_get(&W, oct_pos(a), oct_pos(c)));   //  c − a
+                VRA_REL(a,  1, c,  1, oct_get(&W, oct_neg(c), oct_pos(a)));   //  a + c
+                VRA_REL(a, -1, c, -1, oct_get(&W, oct_pos(c), oct_neg(a)));   // −a − c
+            }
+        }
+        vra_header_sink(vra_header_ctx, V->f, b->id, r, n);
+    }
+    #undef VRA_REL
+    free(r); free(m);
 }
 
 static void vra_dump_val(Vra *V, int id, FILE *o) {

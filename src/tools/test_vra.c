@@ -265,6 +265,46 @@ static bool nested_loop_proven(int N) {
     vra_free(V); return ok;
 }
 
+// PE.4: the header-state sink. `i = 0; s = 0; while i < 10 { i = i + 1; s = s + 1 }` must report,
+// at its header, i − s <= 0 and s − i <= 0 over the two CELLS, and 0 <= i <= 10; a tool reads these
+// as candidate invariants. And the sink is silent where no tool installed it.
+static int hdr_calls; static VraRel hdr_r[256]; static int hdr_n; static int hdr_bid;
+static void hdr_sink(void *ctx, IrFunc *f, int bid, const VraRel *r, int n) {
+    (void)ctx; (void)f;
+    if (hdr_calls++ == 0) { hdr_bid = bid; hdr_n = n < 256 ? n : 256; memcpy(hdr_r, r, sizeof *r * (size_t)hdr_n); }
+}
+static bool hdr_has(int a, int sa, int b, int sb, int64_t c) {
+    for (int k = 0; k < hdr_n; k++) {
+        const VraRel *x = &hdr_r[k];
+        if (x->a == a && x->sa == sa && x->b == b && x->sb == sb && x->c == c) return true;
+        if (b >= 0 && x->a == b && x->sa == sb && x->b == a && x->sb == sa && x->c == c) return true;
+    }
+    return false;
+}
+static bool header_sink_reports(void) {
+    IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrBlock *e=f->entry,*head=ir_new_block(f),*body=ir_new_block(f),*ex=ir_new_block(f);
+    IrValue *islot=ir_alloca(f,e,i32), *sslot=ir_alloca(f,e,i32);
+    ir_store(f,e,islot,ir_const_int(f,e,0,i32)); ir_store(f,e,sslot,ir_const_int(f,e,0,i32)); ir_set_br(e,head);
+    IrValue *iv=ir_load(f,head,islot,i32);
+    ir_set_br_cond(head, ir_icmp(f,head,IR_CMP_SLT,iv,ir_const_int(f,head,10,i32)), body, ex);
+    IrValue *i2=ir_load(f,body,islot,i32), *s2=ir_load(f,body,sslot,i32);
+    ir_store(f,body,islot,ir_binop(f,body,IR_ADD,i2,ir_const_int(f,body,1,i32),i32));
+    ir_store(f,body,sslot,ir_binop(f,body,IR_ADD,s2,ir_const_int(f,body,1,i32),i32));
+    ir_set_br(body,head); ir_set_ret(ex,ir_load(f,ex,sslot,i32)); ir_finalize_cfg(f);
+    hdr_calls = 0; hdr_n = 0;
+    Vra *V=vra_analyze(f); vra_free(V);                     // no sink installed: no call
+    if (hdr_calls != 0) return false;
+    vra_header_sink = hdr_sink; vra_header_ctx = NULL;
+    V=vra_analyze(f); vra_free(V);
+    vra_header_sink = NULL;
+    int ic = islot->id, sc = sslot->id;
+    return hdr_calls >= 1 && hdr_bid == head->id
+        && hdr_has(ic, 1, sc, -1, 0) && hdr_has(ic, -1, sc, 1, 0)        // i == s, as two relations
+        && hdr_has(ic, 1, -1, 0, 10) && hdr_has(ic, -1, -1, 0, 0);        // 0 <= i <= 10
+}
+
 // termination: `i=0; while i <cmp> B { i = i + step }`.
 static bool loop_terminates(int step, IrCmp cmp, int bound) {
     IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);  // termination is a func property
@@ -484,6 +524,7 @@ int main(void) {
     vra_expect("B1: a call may assign the ACCUMULATOR -> s0+T*d says nothing",
                accum_bounded(2), false);
     vra_expect("while x > 0 { x = x & (x-1) } terminates", mask_clear_loop(), true);
+    vra_expect("the header sink reports i == s and 0 <= i <= 10 (PE.4)", header_sink_reports(), true);
     vra_expect("counter cell never escapes -> terminates",
                call_resets_counter(false), true);
     vra_expect("a call is handed the counter's ADDRESS -> must NOT prove",
