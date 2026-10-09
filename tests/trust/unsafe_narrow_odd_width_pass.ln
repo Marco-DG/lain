@@ -1,0 +1,62 @@
+// I.185: inside `unsafe` a waived narrowing WRAPS, and it wraps at the TYPE's width. A u12 lives
+// in a uint16_t, and the C conversion (or store, return, argument, field) wrapped at 16 bits:
+// `x as u12` with x = 70000 held 4464, and safe code relying on u12's range read a[4464] of a
+// 4096-element array (found by Documentation's review of the judge's translation table). 70000 is
+// 368 modulo 2^12, and 3000 as an i12 is -1096 (sign-extended from bit 11). Every landing is
+// exercised: a cast, a store, a return, an argument, struct fields, and an odd-width subtraction.
+type S { a u12, b i12 }
+func as12(x u32) u12 {
+    var r u12 = 0
+    unsafe { r = x as u12 }
+    return r
+}
+func pick(a u8[4096], x u32) u8 {
+    r = as12(x)
+    return a[r]
+}
+func store12(x u32) u12 {
+    var r u12 = 0
+    unsafe { r = x }
+    return r
+}
+func ret12(x u32) u12 {
+    unsafe { return x }
+}
+func take(r u12) u32 { return r as u32 }
+func arg12(x u32) u32 {
+    var t u32 = 0
+    unsafe { t = take(x) }
+    return t
+}
+func field(x u32, y i32) S {
+    var s = S(0, 0)
+    unsafe { s = S(x, y) }
+    return s
+}
+func signed12(y i32) i12 {
+    var r i12 = 0
+    unsafe { r = y as i12 }
+    return r
+}
+func sub12(a u12, b u12) u12 {
+    var r u12 = 0
+    unsafe { r = a - b }
+    return r
+}
+func main() i32 {
+    var a u8[4096]
+    var i usize = 0
+    while i < 4096 {
+        a[i] = (i % 251) as u8
+        i = i + 1
+    }
+    if pick(a, 70000) != 117 { return 1 }
+    if store12(70000) != 368 { return 2 }
+    if ret12(70000) != 368 { return 3 }
+    if arg12(70000) != 368 { return 4 }
+    s = field(70000, 3000)
+    if s.a != 368 or s.b != -1096 { return 5 }
+    if signed12(3000) != -1096 { return 6 }
+    if sub12(1, 2) != 4095 { return 7 }
+    return 0
+}

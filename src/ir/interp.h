@@ -431,7 +431,7 @@ static __int128 ii_settle(__int128 x, bool ovf, IrType *rt, IrInstr *ins) {
     // Only an unsigned 64-bit product can overflow 128 bits, and it is positive.
     if (ins->wrap == IR_WRAP_SATURATE) return ovf ? it_max(rt) : it_clamp(x, rt);
     if (ovf || !it_fits(x, rt)) {
-        if (ins->unchecked && !it_signed(rt)) return it_wrap_bits(x, ir_int_storage_bits(it_bits(rt)), false);
+        if (ins->unchecked && !it_signed(rt)) return it_wrap(x, rt);   // at the TYPE's width (I.185)
         if (ins->unchecked) II_UB(ins, "signed arithmetic overflows its type");
         II_PROOF(ins, "arithmetic overflows its type (proven free of overflow)");
     }
@@ -466,10 +466,22 @@ static void ii_binop_scalar(IrInstr *ins, IVal *a, IVal *b, IrType *ta, IrType *
             if (y == 0 && ins->unchecked) II_UB(ins, "division by zero");
             if (y == 0) II_PROOF(ins, "division by zero (proven nonzero)");
             z = x / y; break;
-        case IR_SREM: case IR_UREM:
+        case IR_SREM: case IR_UREM: {
             if (y == 0 && ins->unchecked) II_UB(ins, "remainder by zero");
             if (y == 0) II_PROOF(ins, "remainder by zero (proven nonzero)");
+            // ★ C makes `a % b` undefined when `a / b` is not representable (C11 6.5.5p6): TYPE_MIN %
+            // -1 traps on x86 at an operation type of int or wider (I.185). In 128 bits it is 0, so
+            // the interpreter ran past what the native program dies on. Only where the operands'
+            // C type IS their type: a narrower or odd-width operand is computed in a wider C type.
+            IrType *ot = ii_ty(ins->operands[0]);
+            if (y == -1 && it_signed(ot) && it_bits(ot) >= 32 && it_bits(ot) == ir_int_storage_bits(it_bits(ot)) && x == it_min(ot)) {
+                // Worded as an overflow, as it is one (the quotient), and as every reader of a
+                // trap classifies them: fuzz_soundness files a trap by "overflows" or "outside".
+                if (ins->unchecked) II_UB(ins, "the remainder of the type's minimum by -1 overflows (its quotient does not fit)");
+                II_PROOF(ins, "the remainder of the type's minimum by -1 overflows (proven free of overflow)");
+            }
             z = x % y; break;
+        }
         case IR_AND: z = (__int128)((int64_t)x & (int64_t)y); if (!it_signed(rt)) z = it_wrap(z, rt); break;
         case IR_OR:  z = (__int128)((int64_t)x | (int64_t)y); if (!it_signed(rt)) z = it_wrap(z, rt); break;
         case IR_XOR: z = (__int128)((int64_t)x ^ (int64_t)y); if (!it_signed(rt)) z = it_wrap(z, rt); break;
@@ -584,7 +596,7 @@ static void ii_cast(IrInstr *ins, IVal *r) {
         if (ins->wrap == IR_WRAP_MODULAR) { iv_int(r, it_wrap(x, dt)); return; }
         if (ins->wrap == IR_WRAP_SATURATE) { iv_int(r, it_clamp(x, dt)); return; }
         if (!it_fits(x, dt)) {
-            if (ins->unchecked) { iv_int(r, it_wrap_bits(x, ir_int_storage_bits(it_bits(dt)), it_signed(dt))); return; }
+            if (ins->unchecked) { iv_int(r, it_wrap(x, dt)); return; }   // at the TYPE's width (I.185)
             II_PROOF(ins, "conversion of %lld to a type that cannot hold it (proven to fit)", (long long)x);
         }
         iv_int(r, x); return;

@@ -188,6 +188,29 @@ static const char *ir_arith_c(IrOp op) {
 // around), then bring the bits back — a plain conversion for a standard width (modular in every
 // compiler this targets: gcc and clang define it), a mask for an odd unsigned width (u4), and a
 // mask plus sign extension for an odd signed one (i7).
+// ★ INSIDE `unsafe` A WRAP LANDS AT THE TYPE'S WIDTH (I.185). An operation whose check `unsafe`
+// waived wraps, and the range analysis reads it so (vra_wraps); but at an ODD width the C type is
+// wider than the Lain type, and a plain C conversion or store wrapped at the STORAGE width: `x as
+// u12` with x = 70000 held 4464 in its uint16_t, and safe code that relied on u12's range indexed
+// a 4096-element array with it. A type's range is a fact the rest of the program is entitled to
+// assume (spec 18), so these spellings go through the modular path, masked and sign-extended.
+static bool ir_c_odd_int(const IrType *t) {
+    return t && t->kind == IRT_INT && t->bits > 0 && t->bits != 8 && t->bits != 16 && t->bits != 32 && t->bits != 64;
+}
+// A value landing in a slot of type `dst` (a field, a payload, a parameter): spelled as itself,
+// or, for an unchecked narrowing into an odd width, masked and sign-extended there (I.185).
+static void ir_emit_landed(const IrValue *v, const IrType *dst, bool unchecked, FILE *o) {
+    const IrType *vt = v ? v->type : NULL;
+    if (unchecked && ir_c_odd_int(dst) && vt && vt->kind == IRT_INT &&
+        (vt->bits != dst->bits || vt->is_signed != dst->is_signed)) {
+        unsigned long long mask = (1ULL << dst->bits) - 1, sbit = 1ULL << (dst->bits - 1);
+        fputc('(', o); ir_ctype((IrType *)dst, o); fputc(')', o);
+        if (!dst->is_signed) fprintf(o, "((uint64_t)v%d & 0x%llxULL)", v->id, mask);
+        else fprintf(o, "((((uint64_t)v%d & 0x%llxULL) ^ 0x%llxULL) - 0x%llxULL)", v->id, mask, sbit, sbit);
+        return;
+    }
+    fprintf(o, "v%d", v->id);
+}
 static void ir_emit_modular(IrInstr *i, FILE *o) {
     IrType *rt = i->result->type;
     int n = rt->bits > 0 ? rt->bits : 32;
@@ -219,7 +242,7 @@ static void ir_emit_cast_policy(IrInstr *i, FILE *o) {
     IrType *st = i->operands[0]->type, *dt = i->result->type;
     int sb = st->bits > 0 ? st->bits : 32, db = dt->bits > 0 ? dt->bits : 32;
     int v = i->operands[0]->id, r = i->result->id;
-    if (i->wrap == IR_WRAP_MODULAR) {
+    if (i->wrap == IR_WRAP_MODULAR || (i->wrap == IR_WRAP_CHECK && i->unchecked)) {
         bool std_w = (db == 8 || db == 16 || db == 32 || db == 64);
         unsigned long long mask = db >= 64 ? ~0ULL : ((1ULL << db) - 1), sbit = 1ULL << (db - 1);
         fprintf(o, "  v%d = (", r); ir_ctype(dt, o); fputs(")", o);
@@ -457,6 +480,17 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 // always spelled it this way — `(const uint8_t *)(uintptr_t)0LL` is how a
                 // niche-packed `none` is written — so this is the same idiom, not a new one.
                 if (needs) { fputc('(', o); ir_ctype(slot, o); fputs(")(uintptr_t)", o); }
+                // An unchecked narrowing into an odd-width slot wraps at the slot's width (I.185).
+                if (!needs && i->unchecked && ir_c_odd_int(slot) && val && val->kind == IRT_INT &&
+                    (val->bits != slot->bits || val->is_signed != slot->is_signed)) {
+                    int db = slot->bits;
+                    unsigned long long mask = (1ULL << db) - 1, sbit = 1ULL << (db - 1);
+                    fputc('(', o); ir_ctype(slot, o); fputc(')', o);
+                    if (!slot->is_signed) fprintf(o, "((uint64_t)v%d & 0x%llxULL);\n", i->operands[1]->id, mask);
+                    else fprintf(o, "((((uint64_t)v%d & 0x%llxULL) ^ 0x%llxULL) - 0x%llxULL);\n",
+                                 i->operands[1]->id, mask, sbit, sbit);
+                    break;
+                }
                 fprintf(o, "v%d;\n", i->operands[1]->id);
             }
             break;
@@ -558,7 +592,10 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                             fprintf(o, "(uintptr_t)%lldull;\n", L.sentinel[k]);
                         else fprintf(o, "%lldll;\n", L.sentinel[k]);
                     } else if (i->n_operands > 0) {
-                        fprintf(o, "v%d;\n", i->operands[0]->id);
+                        // the payload's own type, so an unchecked narrowing cannot reach the niche
+                        IrType *pv = (st && k < st->n_fields) ? st->fields[k] : NULL;
+                        IrType *p0 = (pv && pv->kind == IRT_STRUCT && pv->n_fields > 0) ? pv->fields[0] : pv;
+                        ir_emit_landed(i->operands[0], p0, i->unchecked, o); fputs(";\n", o);
                     } else {
                         fputs("0;\n", o);
                     }
@@ -577,7 +614,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                     if (fn) fprintf(o, ".%.*s = ", (int)fn->length, fn->name);
                     else    fprintf(o, ".f%d = ", j);
                     if (ft && ft->kind == IRT_ARRAY) fputs("{0}", o);
-                    else fprintf(o, "v%d", i->operands[j]->id);
+                    else ir_emit_landed(i->operands[j], ft, i->unchecked, o);
                 }
                 fputs(" }", o);
             }
@@ -663,7 +700,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                            ? sty->field_names[k] : NULL;
                 if (fn) fprintf(o, ".%.*s = ", (int)fn->length, fn->name);   // a VECTOR's lanes stay positional
                 if (ft && ft->kind==IRT_ARRAY) fputs("{0}", o);
-                else fprintf(o, "v%d", i->operands[k]->id);
+                else ir_emit_landed(i->operands[k], ft, i->unchecked, o);
             }
             fputs(" };\n", o);
             for (int k=0;k<i->n_operands;k++){
@@ -753,7 +790,8 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                             fputs(" : (", o); ir_ctype(dt, o); fprintf(o, ")v%d;\n", x);
                             break;
                         }
-                        if (i->wrap != IR_WRAP_CHECK && i->n_operands == 1 && i->operands[0]->type &&
+                        if ((i->wrap != IR_WRAP_CHECK || (i->unchecked && ir_c_odd_int(i->result->type))) &&
+                            i->n_operands == 1 && i->operands[0]->type &&
                             i->operands[0]->type->kind == IRT_INT && i->result->type &&
                             i->result->type->kind == IRT_INT) { ir_emit_cast_policy(i, o); break; }
                         fprintf(o, "  v%d = (", i->result->id); ir_ctype(i->result->type, o);
@@ -778,8 +816,20 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                         fprintf(o, "v%d.data", av->id);
                     else
                         fprintf(o, "v%d.len, v%d.data", av->id, av->id);
-                } else
-                    fprintf(o,"v%d",av->id);
+                } else {
+                    // the parameter's type: the callee's, or the function type's for an indirect call
+                    IrType *pt = NULL; int pi = k - a0;
+                    if (i->aux.callee) {
+                        IrFunc *cf = ir_emit_find(i->aux.callee); int q = 0;
+                        for (IrParam *pp = cf ? cf->params : NULL; pp; pp = pp->next, q++)
+                            if (q == pi) { pt = pp->value ? pp->value->type : NULL; break; }
+                    } else if (a0 && i->operands[0]->type) {
+                        IrType *ft = i->operands[0]->type;
+                        if (ft->kind == IRT_PTR && ft->elem) ft = ft->elem;
+                        if (ft->kind == IRT_FUNC && pi < ft->n_fields) pt = ft->fields[pi];
+                    }
+                    ir_emit_landed(av, pt, i->unchecked, o);
+                }
             }
             fputs(");\n", o);
             break;
@@ -808,7 +858,8 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             // is C99 6.5.7p4 UB (UBSan: "left shift of negative value"). Computed in unsigned
             // and converted back, the bits are -12 exactly, whatever the wrap mode.
             if (i->n_operands == 2 && i->result &&
-                ((i->wrap == IR_WRAP_MODULAR && (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL)) ||
+                (((i->wrap == IR_WRAP_MODULAR || (i->wrap == IR_WRAP_CHECK && i->unchecked && ir_c_odd_int(i->result->type)))
+                  && (i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL)) ||
                  (i->op == IR_SHL && i->result->type && i->result->type->is_signed)) &&
                 i->result->type && i->result->type->kind == IRT_INT) {
                 ir_emit_modular(i, o);
@@ -1135,8 +1186,20 @@ static void ir_emit_func_body_c(IrFunc *f, IrFunc *mod, FILE *o, Arena *a) {
                             b->term.cond->id, b->term.a->id, b->term.b->id);
                 else fputs("  /* malformed conditional */\n", o);
                 break;
-            case IR_TERM_RET:     if (b->term.cond) fprintf(o, "  return v%d;\n", b->term.cond->id);
-                                  else fputs(is_main ? "  return 0;\n" : "  return;\n", o); break;
+            case IR_TERM_RET: {
+                // An unchecked return narrowing into an odd-width type wraps at that width (I.185).
+                IrType *rt = f->ret_type, *vt = b->term.cond ? b->term.cond->type : NULL;
+                if (b->term.cond && b->term.unchecked && ir_c_odd_int(rt) && vt && vt->kind == IRT_INT &&
+                    (vt->bits != rt->bits || vt->is_signed != rt->is_signed)) {
+                    unsigned long long mask = (1ULL << rt->bits) - 1, sbit = 1ULL << (rt->bits - 1);
+                    fputs("  return (", o); ir_ctype(rt, o); fputc(')', o);
+                    if (!rt->is_signed) fprintf(o, "((uint64_t)v%d & 0x%llxULL);\n", b->term.cond->id, mask);
+                    else fprintf(o, "((((uint64_t)v%d & 0x%llxULL) ^ 0x%llxULL) - 0x%llxULL);\n",
+                                 b->term.cond->id, mask, sbit, sbit);
+                } else if (b->term.cond) fprintf(o, "  return v%d;\n", b->term.cond->id);
+                else fputs(is_main ? "  return 0;\n" : "  return;\n", o);
+                break;
+            }
             case IR_TERM_UNREACHABLE:
                 // A point the compiler proved unreachable (a `panic`, a [noreturn] call, a `case`
                 // that covers its scrutinee, a function's end past its returns) is STATED as such

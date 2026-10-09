@@ -54,9 +54,13 @@ Inside an \lain{unsafe} block, the following operations are permitted:
         narrowing fits~(\diagcode{E086}), that a divisor is not zero~(\diagcode{E015}), or that a
         shift amount is below the width. A narrowing that does not fit, whether an explicit
         \lain{as} or the implicit one where a value is stored, passed, returned or placed in a
-        constructor, yields the value modulo $2^N$ for an $N$-bit target, as C17's conversion
-        does, and the analysis of the code after the block reasons from that value: with
-        \lain{var y u16 = 260}, \lain{unsafe \{ x = y as u8 \}} leaves \lain{x} equal to 4.
+        constructor, yields the value of the target type congruent to it modulo $2^N$, where
+        $N$ is the width of the target type and not of its storage: for an unsigned target the
+        value modulo $2^N$, for a signed one that value read in two's complement.  For an
+        unsigned target of 8, 16, 32 or 64 bits this is C17's conversion; \lain{x as u12} keeps
+        12 bits, which no C type does.  The analysis of the code after the block reasons from
+        that value: with \lain{var y u16 = 260}, \lain{unsafe \{ x = y as u8 \}} leaves
+        \lain{x} equal to 4.
 \end{enumerate}
 
 \pnum
@@ -72,6 +76,24 @@ func main() i32 {
         x = y as u8
     }
     if a[x] != 5 { return 1 }    // a[4], and the index needed no bounds check
+    return 0
+}
+\end{laincode}
+
+\pnum
+The width is the type's, so the value never leaves the type: 70000 is 368 modulo $2^{12}$, and a
+\lain{u12} holds 368, which safe code after the block may use as an index into a 4096-element
+array.
+
+\begin{laincode}
+// VERIFY: exit 0
+func main() i32 {
+    var y u32 = 70000
+    var x u12 = 0
+    unsafe {
+        x = y as u12
+    }
+    if x != 368 { return 1 }
     return 0
 }
 \end{laincode}
@@ -168,7 +190,9 @@ incorrect}:
   \item Accessing an array element with an out-of-range index.
   \item Dividing or taking a remainder by zero, shifting by an amount outside $[0, N)$ for an
         $N$-bit operand, or a signed arithmetic result that does not fit its type (operands
-        narrower than 64 bits are computed wider, so only a 64-bit one can).
+        narrower than 64 bits are computed wider, so only a 64-bit one can).  That includes
+        a 64-bit remainder \lain{x \% -1} with \lain{x} the type's minimum: its result, 0,
+        fits, but the quotient it is computed with does not.
   \item Accessing a field of an ADT through a tag that does not match
         the active variant.
   \item Writing into an enumeration's storage a value that is none of its
