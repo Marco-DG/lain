@@ -1,0 +1,29 @@
+// I.191, the allowed side: a sequence whose elements are refined converts to one refined the SAME
+// way, by value (a `Pos[2]` argument) and by reference (a `var Pos[]` handed on as a `var Pos[]`,
+// written through and read back), and an array LITERAL still lands element by element in a
+// refined element type (`f([4, 5])`; `f([0, 5])` is E086 at the 0). Each value is read, natively
+// and with --interpret.
+type Pos = i32 >= 1 and <= 9
+
+func f(a Pos[2]) i32 {
+    return 100 / a[0]
+}
+
+func pass_on(p var Pos[]) i32 {
+    if p.len == 0 { return 0 }
+    p[0] = 4
+    return 100 / p[0]
+}
+
+func relay(p var Pos[]) i32 {
+    return pass_on(var p)
+}
+
+func main() i32 {
+    var a Pos[2] = [5, 2]
+    if f(a) != 20 { return 1 }
+    if f([4, 5]) != 25 { return 2 }
+    if relay(var a[0..2]) != 25 { return 3 }
+    if a[0] != 4 { return 4 }
+    return 0
+}

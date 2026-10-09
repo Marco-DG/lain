@@ -1,0 +1,13 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 12,
+// I.191: the same through a slice, `f(a Pos[])` given `z[0..2]` of an i32[2] holding zeros. The
+// parent compiled it: SIGFPE natively, --interpret 99.
+type Pos = i32 >= 1 and <= 9
+func f(a Pos[]) i32 {
+    if a.len == 0 { return 0 }
+    return 100 / a[0]
+}
+func main() i32 {
+    var z i32[2] = [0, 0]
+    return f(z[0..2])
+}

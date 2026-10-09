@@ -176,7 +176,9 @@ Diagnostic codes are divided into the following ranges:
     argument, a constructor field, a return, an operand, a \lain{case}
     scrutinee or pattern, \S\,\ref{sec:match.patterns}), when a value would
     have an opaque type or \lain{void}, when a refinement
-    at a call site cannot be proven, and when a pointer-to-pointer or
+    at a call site cannot be proven, when an array, slice or pointer would convert to one whose
+    element type is refined differently (\S\,\ref{sec:types.alias-refinement}), and when a
+    pointer-to-pointer or
     integer-to-pointer cast occurs outside an \lain{unsafe} block, and when a
     cast, inside \lain{unsafe} too, would view the bytes of a struct, or of a
     sum's payload, whose storage order the compiler chooses

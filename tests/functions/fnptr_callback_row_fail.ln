@@ -1,0 +1,22 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 20,
+// I.190: a callback's EFFECT ROW is part of its type, compared exactly like its refinements.
+// `apply` is pure and calls a pure callback; as a `*func(*func(i32) i32 effects io, i32) i32` it
+// would be handed `noisy` and do io through it (the I.53 class, one level down). The parent refuses
+// it too (it compared no two function types as equal); a structural case that ignored rows would
+// accept it, and this test fails then.
+extern func libc_puts(s *u8) i32 effects io
+
+func noisy(x i32) i32 effects io {
+    libc_puts("side effect")
+    return x
+}
+
+func apply(f *func(i32) i32, x i32) i32 {
+    return f(x)
+}
+
+func main() i32 effects io {
+    var g *func(*func(i32) i32 effects io, i32) i32 = apply
+    return g(noisy, 3)
+}

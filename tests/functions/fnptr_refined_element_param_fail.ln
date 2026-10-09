@@ -1,0 +1,14 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 11,
+// I.191 through a function pointer: `f(a Pos[2])` converted to `*func(i32[2]) i32`, called with
+// zeros. The parent compiled it: SIGFPE natively, --interpret 99. (I.187's variance reads integer
+// parameters; an aggregate parameter must be EQUAL, refinements included.)
+type Pos = i32 >= 1 and <= 9
+func f(a Pos[2]) i32 {
+    return 100 / a[0]
+}
+func main() i32 {
+    var g *func(i32[2]) i32 = f
+    var z i32[2] = [0, 0]
+    return g(z)
+}

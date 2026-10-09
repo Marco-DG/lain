@@ -1,0 +1,18 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 11,
+// I.191, the WRITE direction: a `var Pos[]` handed on as a `var i32[]`, which stores 0 into it;
+// the caller then reads p[0] as a Pos and divides by it. So behind a reference the refinement must
+// be equal, not merely checked one way. The parent compiled it: SIGFPE natively, --interpret 99.
+type Pos = i32 >= 1 and <= 9
+func zap(a var i32[]) {
+    if a.len > 0 { a[0] = 0 }
+}
+func g(p var Pos[]) i32 {
+    zap(var p)
+    if p.len == 0 { return 0 }
+    return 100 / p[0]
+}
+func main() i32 {
+    var arr Pos[2] = [3, 4]
+    return g(var arr[0..2])
+}

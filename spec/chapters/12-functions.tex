@@ -358,16 +358,9 @@ the pointer type admits; otherwise the program is \illformed{}~(\diagcode{E122})
         and a function returning a plain \lain{i32} does not.  A pointer type whose return type is
         not refined accepts any function, and a call through it gets that type's range.
   \item A function-pointer value converting to another function-pointer type obeys the same
-        rules.  A function with a parameter or return that is itself a function pointer does not
-        convert to a function-pointer type.
+        rules.  A parameter or return that is itself a function pointer shall have the same type
+        in both, its refinements and effect row included.
 \end{itemize}
-
-\begin{note}
-  The last rule is stricter than it needs to be.  Two function-pointer types are not yet compared
-  by their shape, so no pointer type can name a callback parameter's type as the same type, and a
-  function that takes or returns a callback cannot become a value.  A later revision may admit a
-  callback whose type is the same, with its refinements compared exactly.
-\end{note}
 
 \begin{laincode}
 func safe_div(a i32, b i32 > 0) i32 { return a / b }
@@ -430,6 +423,22 @@ func main() i32 {
     if q != 5 { return 1 }
     if r != 25 { return 2 }
     return 30
+}
+\end{laincode}
+
+\pnum
+A function that takes a callback converts when the two callback types are the same:
+
+\begin{laincode}
+// VERIFY: exit 6
+func inc(x i32) i32 { return x +% 1 }
+
+func apply(f *func(i32) i32, x i32) i32 { return f(x) }
+
+func main() i32 {
+    var g *func(*func(i32) i32, i32) i32 = apply
+    if g(inc, 5) != 6 { return 1 }
+    return 6
 }
 \end{laincode}
 

@@ -1,0 +1,19 @@
+// EXPECT: [E122]
+// EXPECT-TEXT: Error Ln 17,
+// I.190, the refusal its structural equality must keep: two function types are now compared by
+// their shape, and a parameter of function type is INVARIANT with its refinements, so
+// `apply(f *func(i32) i32, x i32)` does not become a `*func(*func(Pos) i32, i32) i32`; a caller
+// could pass `inv`, which assumes Pos, and apply would call it with 0. The parent refuses it too
+// (it compared no two function types as equal); a structural case that ignored refinements
+// would accept it, and this test fails then.
+type Pos = i32 >= 1 and <= 9
+func inv(s Pos) i32 {
+    return 100 / s
+}
+func apply(f *func(i32) i32, x i32) i32 {
+    return f(x)
+}
+func main() i32 {
+    var g *func(*func(Pos) i32, i32) i32 = apply
+    return g(inv, 0)
+}

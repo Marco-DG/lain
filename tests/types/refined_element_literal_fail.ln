@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: Error Ln 12,
+// I.191 keeps an array LITERAL landing in a refined element type element by element: a literal is
+// a fresh value, not shared storage, so `f([4, 5])` stays accepted (tests/trust/
+// refined_element_same_pass.ln) and `f([0, 5])` is refused at the 0, as on the parent. A named
+// i32[2] is refused whole (refined_element_array_arg_fail.ln), since its elements are not proved.
+type Pos = i32 >= 1 and <= 9
+func f(a Pos[2]) i32 {
+    return 100 / a[0]
+}
+func main() i32 {
+    return f([0, 5])
+}

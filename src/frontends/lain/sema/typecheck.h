@@ -723,6 +723,63 @@ static bool value_fits(Type *from, Range r, Type *to) {
 // is then a single call, not a bespoke block, and every precondition of the same
 // shape shares one proof path. Call sites keep their own diagnostics.
 
+// ★ THE REFINEMENT A TYPE STATES, read as lowering reads it into the IrType VRA checks against:
+// every alias layer's literal clauses (refine_apply_clauses, ast.h, the one reader), innermost
+// first, over the base integer type's range. `extra` adds a function's literal return
+// constraints. False for a type that is not an integer. Used by type equality (I.190, I.191) and
+// by a function's conversion to a pointer type (I.187).
+typedef struct { int64_t lo, hi; bool has_ne; int64_t ne; } SemaRefine;
+static bool sema_refine_of(Type *t, ExprList *extra, SemaRefine *r) {
+    extern Symbol *sema_lookup(const char *name);
+    // the alias chain, outermost first; lowering refines the innermost first
+    // (ir_resolve_alias_base, then ir_refine_int_type), and a later `!=` replaces an earlier one
+    Decl *chain[16]; int n = 0;
+    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
+    while (n < 16 && t && t->kind == TYPE_SIMPLE && t->base_type && t->base_type->length < 128) {
+        char buf[128];
+        memcpy(buf, t->base_type->name, (size_t)t->base_type->length); buf[t->base_type->length] = '\0';
+        Symbol *sym = sema_lookup(buf);
+        if (!sym || !sym->decl || sym->decl->kind != DECL_TYPE_ALIAS || !sym->type || sym->type == t) break;
+        chain[n++] = sym->decl; t = sym->type;
+    }
+    long long lo, hi;
+    if (!type_integer_range(t, &lo, &hi)) return false;
+    r->lo = lo; r->hi = hi; r->has_ne = false; r->ne = 0;
+    for (int i = n - 1; i >= 0; i--)
+        refine_apply_clauses(chain[i]->as.type_alias_decl.constraints, &r->lo, &r->hi, &r->has_ne, &r->ne);
+    if (extra) refine_apply_clauses(extra, &r->lo, &r->hi, &r->has_ne, &r->ne);
+    return true;
+}
+// Does every value `strong` admits lie in `weak`: inside its interval, and not its excluded value?
+static bool sema_refine_within(const SemaRefine *strong, const SemaRefine *weak) {
+    if (strong->lo < weak->lo || strong->hi > weak->hi) return false;
+    if (weak->has_ne && !(strong->has_ne && strong->ne == weak->ne) &&
+        strong->lo <= weak->ne && weak->ne <= strong->hi) return false;
+    return true;
+}
+static void sema_refine_text(const SemaRefine *r, char *buf, size_t cap) {
+    int o = snprintf(buf, cap, "[%lld, %lld]", (long long)r->lo, (long long)r->hi);
+    if (r->has_ne && o > 0 && (size_t)o < cap) snprintf(buf + o, cap - (size_t)o, " except %lld", (long long)r->ne);
+}
+
+static Type *fnptr_ret(Type *t);   // below
+static bool types_equal_exact(Type *a, Type *b);
+// ★ EQUAL, REFINEMENTS INCLUDED (I.191). types_equal_exact reads an alias as its base (`Pos` as
+// i32), which is right at the top of a conversion, where a scalar narrows by range. Behind a
+// pointer, a slice or an array it was wrong: the element is not narrowed anywhere, and every
+// reader of a `Pos` element assumes [1, 9] (I.59: a cell's load has its type's range). So
+// `f(z)` with `z i32[2] = [0, 0]` and `func f(a Pos[2])` divided by zero, and so did a `var Pos[]`
+// handed to a `var i32[]` that wrote 0 into it. A type that sits behind a reference, or inside a
+// function type, therefore matches only a type refined EXACTLY the same way: invariant, since a
+// write through the reference must keep what every reader assumes.
+static bool types_equal_refined(Type *a, Type *b) {
+    if (!types_equal_exact(a, b)) return false;
+    SemaRefine ra, rb;
+    bool ia = sema_refine_of(a, NULL, &ra), ib = sema_refine_of(b, NULL, &rb);
+    if (!ia || !ib) return ia == ib;
+    return ra.lo == rb.lo && ra.hi == rb.hi && ra.has_ne == rb.has_ne && (!ra.has_ne || ra.ne == rb.ne);
+}
+
 // Strict structural type equality (NO widening, NO decay). Used where variance
 // is unsound — the element types behind a pointer/slice/array must match
 // invariantly (so *i32 is NOT interchangeable with *u8).
@@ -744,12 +801,28 @@ static bool types_equal_exact(Type *a, Type *b) {
                            a->base_type->length) == 0;
         case TYPE_POINTER:
         case TYPE_SLICE:
-            return types_equal_exact(a->element_type, b->element_type);
+            return types_equal_refined(a->element_type, b->element_type);
         case TYPE_ARRAY:
-            if (!types_equal_exact(a->element_type, b->element_type)) return false;
+            if (!types_equal_refined(a->element_type, b->element_type)) return false;
             if (a->array_len >= 0 && b->array_len >= 0 &&
                 a->array_len != b->array_len) return false;
             return true;
+        // ★ TWO FUNCTION TYPES ARE EQUAL BY THEIR SHAPE (I.190). There was no case: two distinct
+        // `*func` types never compared equal, even written identically, and an alias cannot name
+        // one, so no function taking or returning a callback could become a value. The same
+        // arity, the same row, and each parameter and return equal WITH its refinement: a
+        // function type inside another is invariant, so `*func(Pos) i32` and `*func(i32) i32`
+        // stay apart and a callback that assumes Pos is never handed an i32 (I.187 one level down).
+        case TYPE_FUNC: {
+            if (a->func_effects != b->func_effects) return false;
+            Type *ra = fnptr_ret(a), *rb = fnptr_ret(b);
+            if ((ra == NULL) != (rb == NULL)) return false;
+            if (ra && !types_equal_refined(ra, rb)) return false;
+            TypeList *x = a->func_params, *y = b->func_params;
+            for (; x && y; x = x->next, y = y->next)
+                if (!x->type || !y->type || !types_equal_refined(x->type, y->type)) return false;
+            return x == NULL && y == NULL;
+        }
         default:
             return false;
     }
@@ -867,13 +940,13 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     bool t_ptr = (t->kind == TYPE_POINTER);
     bool ok = false;
     if (f_ptr && t_ptr) {
-        ok = types_equal_exact(f->element_type, t->element_type);        // same pointee
+        ok = types_equal_refined(f->element_type, t->element_type);      // same pointee (I.191)
     } else if (f_ptr || t_ptr) {
         Type *ptr   = f_ptr ? f : t;
         Type *other = f_ptr ? t : f;
         if (other->kind == TYPE_ARRAY || other->kind == TYPE_SLICE)
-            ok = types_equal_exact(other->element_type, ptr->element_type)  // T[] -> *T
-              || types_equal_exact(other, ptr->element_type);               // T[N] -> *T[N]
+            ok = types_equal_refined(other->element_type, ptr->element_type)  // T[] -> *T
+              || types_equal_refined(other, ptr->element_type);               // T[N] -> *T[N]
         if (!ok && t_ptr && is_zero_int_literal(src_expr)) ok = true;    // null idiom: 0 -> *T
     } else {
         // Neither is a pointer. Every boundary goes through here — argument, construction,
@@ -905,7 +978,7 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
             // checked against the element type where the literal is declared.
             bool lit = src_expr && (src_expr->kind == EXPR_ARRAY_LITERAL ||
                                     src_expr->kind == EXPR_ARRAY_COMPREHENSION);
-            ok = f_seq && t_seq && (lit || types_equal_exact(f->element_type, t->element_type));
+            ok = f_seq && t_seq && (lit || types_equal_refined(f->element_type, t->element_type));
         } else {
             if (!is_nominal_aggregate(f) && !is_nominal_aggregate(t)) return;
             ok = types_compatible(f, t);   // same struct/enum name (mode-agnostic) is fine
@@ -932,10 +1005,19 @@ static void reject_incompatible_conversion(Type *from, Type *to, Expr *src_expr,
     }
     type_describe(f, fb, sizeof fb);
     type_describe(t, tb, sizeof tb);
+    // the element types agree but for their refinement (I.191): say so, or `i32[2]` to `Pos[2]`
+    // reads as an arbitrary refusal
+    bool refine_only = f->element_type && t->element_type &&
+        (f->kind == TYPE_POINTER || f->kind == TYPE_ARRAY || f->kind == TYPE_SLICE) &&
+        (t->kind == TYPE_POINTER || t->kind == TYPE_ARRAY || t->kind == TYPE_SLICE) &&
+        types_equal_exact(resolve_type_alias(f->element_type), resolve_type_alias(t->element_type));
     fprintf(stderr,
         "[E012] Error Ln %li, Col %li: %s '%s' has incompatible type: cannot implicitly "
-        "convert '%s' to '%s'.\n",
-        (long)line, (long)col, ctx, label ? label : "", fb, tb);
+        "convert '%s' to '%s'%s.\n",
+        (long)line, (long)col, ctx, label ? label : "", fb, tb,
+        refine_only ? ": the elements are refined differently, and every reader of an element "
+                      "assumes its type's range, so they must be refined the same way (an array "
+                      "literal is checked element by element)" : "");
     diagnostic_show_line(line, col);
     exit(1);
 }
@@ -1867,44 +1949,10 @@ static Type *fnptr_ret(Type *t) {
 // assumes. A return is COVARIANT: the function must guarantee at least what the pointer promises,
 // by its own refined return type or its literal return constraints (`from_ret`), which its
 // code-86 ASSERT proves. Only an INTEGER parameter or return needs this: a parameter or return
-// that is itself a function type matches only the identical type, since types_equal_exact has no
-// structural case for TYPE_FUNC (a callback taking `Pos` and one taking `i32` do not convert
-// either way). A structural rule there would have to bring this variance with it, exchanging
-// the two sides for a parameter. The refinement is read as lowering reads it into the IrType
-// that VRA checks against (fnptr_refine_of), so the two cannot disagree.
-typedef struct { int64_t lo, hi; bool has_ne; int64_t ne; } FnRefine;
-static bool fnptr_refine_of(Type *t, ExprList *extra, FnRefine *r) {
-    extern Symbol *sema_lookup(const char *name);
-    // the alias chain, outermost first; lowering refines the innermost first
-    // (ir_resolve_alias_base, then ir_refine_int_type), and a later `!=` replaces an earlier one
-    Decl *chain[16]; int n = 0;
-    while (t && t->kind == TYPE_COMPTIME) t = t->element_type;
-    while (n < 16 && t && t->kind == TYPE_SIMPLE && t->base_type && t->base_type->length < 128) {
-        char buf[128];
-        memcpy(buf, t->base_type->name, (size_t)t->base_type->length); buf[t->base_type->length] = '\0';
-        Symbol *sym = sema_lookup(buf);
-        if (!sym || !sym->decl || sym->decl->kind != DECL_TYPE_ALIAS || !sym->type || sym->type == t) break;
-        chain[n++] = sym->decl; t = sym->type;
-    }
-    long long lo, hi;
-    if (!type_integer_range(t, &lo, &hi)) return false;
-    r->lo = lo; r->hi = hi; r->has_ne = false; r->ne = 0;
-    for (int i = n - 1; i >= 0; i--)
-        refine_apply_clauses(chain[i]->as.type_alias_decl.constraints, &r->lo, &r->hi, &r->has_ne, &r->ne);
-    if (extra) refine_apply_clauses(extra, &r->lo, &r->hi, &r->has_ne, &r->ne);
-    return true;
-}
-// Does every value `strong` admits lie in `weak`: inside its interval, and not its excluded value?
-static bool fnptr_refine_within(const FnRefine *strong, const FnRefine *weak) {
-    if (strong->lo < weak->lo || strong->hi > weak->hi) return false;
-    if (weak->has_ne && !(strong->has_ne && strong->ne == weak->ne) &&
-        strong->lo <= weak->ne && weak->ne <= strong->hi) return false;
-    return true;
-}
-static void fnptr_refine_text(const FnRefine *r, char *buf, size_t cap) {
-    int o = snprintf(buf, cap, "[%lld, %lld]", (long long)r->lo, (long long)r->hi);
-    if (r->has_ne && o > 0 && (size_t)o < cap) snprintf(buf + o, cap - (size_t)o, " except %lld", (long long)r->ne);
-}
+// that is itself a function type, or an aggregate, must already be EQUAL with its refinements
+// (types_equal_exact, I.190 and I.191), so a callback taking `Pos` and one taking `i32` do not
+// convert either way. The refinement is read as lowering reads it into the IrType that VRA checks
+// against (sema_refine_of), so the two cannot disagree.
 // Can a value of function-pointer type `from` stand where `to` is expected, refinements included?
 // The structure (arity, base types, row) is fnptr_types_assignable's; this reads only what it
 // cannot see. On failure, `why` says which parameter or return, and what each side states.
@@ -1912,21 +1960,21 @@ static bool fnptr_refines_ok(Type *to, Type *from, ExprList *from_ret, char *why
     char ts[96], fs[96], d1[64], d2[64];   // a refinement's text is at most 56 bytes
     TypeList *a = to->func_params, *b = from->func_params;
     for (int k = 1; a && b; a = a->next, b = b->next, k++) {
-        FnRefine rt, rf;
-        if (!fnptr_refine_of(a->type, NULL, &rt) || !fnptr_refine_of(b->type, NULL, &rf)) continue;
-        if (fnptr_refine_within(&rt, &rf)) continue;
+        SemaRefine rt, rf;
+        if (!sema_refine_of(a->type, NULL, &rt) || !sema_refine_of(b->type, NULL, &rf)) continue;
+        if (sema_refine_within(&rt, &rf)) continue;
         type_describe(b->type, fs, sizeof fs); type_describe(a->type, ts, sizeof ts);
-        fnptr_refine_text(&rf, d1, sizeof d1); fnptr_refine_text(&rt, d2, sizeof d2);
+        sema_refine_text(&rf, d1, sizeof d1); sema_refine_text(&rt, d2, sizeof d2);
         snprintf(why, cap, "its parameter %d (`%s`) assumes %s, and the pointer's `%s` states only %s, "
                  "so a call through the pointer would not establish it", k, fs, d1, ts, d2);
         return false;
     }
     Type *tr = fnptr_ret(to), *fr = fnptr_ret(from);
-    FnRefine rt, rf;
-    if (tr && fr && fnptr_refine_of(tr, NULL, &rt) && fnptr_refine_of(fr, from_ret, &rf) &&
-        !fnptr_refine_within(&rf, &rt)) {
+    SemaRefine rt, rf;
+    if (tr && fr && sema_refine_of(tr, NULL, &rt) && sema_refine_of(fr, from_ret, &rf) &&
+        !sema_refine_within(&rf, &rt)) {
         type_describe(tr, ts, sizeof ts); type_describe(fr, fs, sizeof fs);
-        fnptr_refine_text(&rt, d1, sizeof d1); fnptr_refine_text(&rf, d2, sizeof d2);
+        sema_refine_text(&rt, d1, sizeof d1); sema_refine_text(&rf, d2, sizeof d2);
         snprintf(why, cap, "the pointer's return (`%s`) promises %s, and the function's (`%s`) "
                  "guarantees only %s", ts, d1, fs, d2);
         return false;

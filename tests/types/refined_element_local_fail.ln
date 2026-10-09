@@ -1,0 +1,10 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 8,
+// I.191 in a declaration: `var p Pos[2] = z` with z an i32[2] holding zeros. The parent accepted
+// it, a `Pos[2]` holding values outside Pos; a declared refinement is a promise to every reader.
+type Pos = i32 >= 1 and <= 9
+func main() i32 {
+    var z i32[2] = [0, 0]
+    var p Pos[2] = z
+    return p[1] as i32
+}

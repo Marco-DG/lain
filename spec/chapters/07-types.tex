@@ -192,6 +192,38 @@ func main() int {
 \end{laincode}
 \end{example}
 
+\pnum
+A refinement on an element type is part of the type.  An array, a slice or a pointer converts only
+to one whose element type is refined the same way~(\diagcode{E012}): every reader of an element
+assumes its type's range, and a write through a \lain{var} reference must keep it.  So an
+\lain{i32[2]} does not convert to a \lain{Pos[2]}, a \lain{*i32} does not convert to a
+\lain{*Pos}, and a \lain{var Pos[]} does not convert to a \lain{var i32[]}.  An array literal is a
+fresh value, so it lands element by element, and each element is checked against the
+refinement~(\diagcode{E086}).
+
+\begin{laincode}
+type Pos = i32 >= 1 and <= 9
+
+func f(a Pos[2]) i32 { return 100 / a[0] }
+
+func main() i32 {
+    var z i32[2] = [0, 0]
+    return f(z)    // ERROR [E012]
+}
+\end{laincode}
+
+\begin{laincode}
+// VERIFY: exit 25
+type Pos = i32 >= 1 and <= 9
+
+func f(a Pos[2]) i32 { return 100 / a[0] }
+
+func main() i32 {
+    if f([4, 5]) != 25 { return 1 }
+    return 25
+}
+\end{laincode}
+
 \subsection{Packed structs}
 \label{sec:types.packed-future}
 \index{packed struct}

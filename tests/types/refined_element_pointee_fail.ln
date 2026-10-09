@@ -1,0 +1,15 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 14,
+// I.191 behind a pointer: a `*i32` to a zero passed as a `*Pos`, whose load the callee reads at
+// [1, 9]. The parent compiled it: SIGFPE natively, --interpret 99.
+type Pos = i32 >= 1 and <= 9
+func f(p *Pos) i32 {
+    var v i32 = 0
+    unsafe { v = *p }
+    return 100 / v
+}
+func main() i32 {
+    var x i32 = 0
+    var q *i32 = &x
+    return f(q)
+}

@@ -1,0 +1,16 @@
+// EXPECT: [E012]
+// EXPECT-TEXT: Error Ln 15,
+// I.191: a refinement on an ELEMENT type was part of no boundary. `f(a Pos[2])` reads a[0] at
+// Pos's range [1, 9] (a cell's load has its type's range, I.59), and `f(z)` with
+// `z i32[2] = [0, 0]` compiled: the conversion compared the elements as their base, i32. The
+// parent divided by zero natively (SIGFPE), and --interpret exits 99 ("division by zero (proven
+// nonzero)"). An array LITERAL is still accepted, each element checked: see
+// tests/trust/refined_element_same_pass.ln.
+type Pos = i32 >= 1 and <= 9
+func f(a Pos[2]) i32 {
+    return 100 / a[0]
+}
+func main() i32 {
+    var z i32[2] = [0, 0]
+    return f(z)
+}

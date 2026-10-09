@@ -1724,6 +1724,10 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/fnptr_callback_conversion_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/trust/fnptr_from_call_pass.ln
 rc=0
 out=
@@ -2208,6 +2212,13 @@ ty=D struct
 ty=P struct
 ty=Slice_u8 scalar
 ty=W struct
+### tests/trust/refined_element_same_pass.ln
+rc=0
+out=
+at=access 4
+at=nonnull 6
+at=pure 2
+ty=Slice_i32 scalar
 ### tests/trust/remainder_below_dividend_pass.ln
 rc=0
 out=

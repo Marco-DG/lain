@@ -1,0 +1,26 @@
+// I.190: two function types are equal by their shape. There was no such case, so two `*func`
+// types never compared equal, even written identically, and a function taking or returning a
+// callback could not become a value (E122 on the parent): here `apply`, whose parameter is a
+// `*func(i32) i32`, and `pick`, which returns one. Its refinements must match exactly; see
+// tests/functions/fnptr_callback_refined_param_fail.ln. (`apply` takes two parameters: with one,
+// the call `f(x)` could reach `apply` itself through the pointer, a cycle the termination analysis
+// cannot rank, E011, since it tells an indirect call's targets apart by arity.)
+func inc(x i32) i32 {
+    return x +% 1
+}
+
+func apply(f *func(i32) i32, x i32) i32 {
+    return f(x)
+}
+
+func pick() *func(i32) i32 {
+    return inc
+}
+
+func main() i32 {
+    var g *func(*func(i32) i32, i32) i32 = apply
+    var h *func() *func(i32) i32 = pick
+    if g(inc, 5) != 6 { return 1 }
+    if g(h(), 6) != 7 { return 2 }
+    return 0
+}
