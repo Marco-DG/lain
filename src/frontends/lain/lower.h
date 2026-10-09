@@ -4057,7 +4057,14 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
                 ir_set_br(c->cur, head); c->cur = head;
                 IrValue *iv = ir_load(c->f, head, icell, ity);
                 IrValue *hi = hi_e ? ir_lower_expr(c, hi_e) : ir_const_int(c->f,head,0,ity);
-                IrValue *cond = ir_icmp(c->f, head, it->as.range_expr.inclusive?IR_CMP_ULE:IR_CMP_ULT, iv, hi);
+                // ★ THE COUNTER'S SIGNEDNESS PICKS THE PREDICATE. This was ULT/ULE for every counter,
+                // and a counter takes the bounds' type (i32 for literals). The interpreter, the IR's
+                // meaning, compares a ULT as uint64, so `for i in -3..2` never ran there, and the
+                // analysis agreed: `a[i]` in the body was proven in bounds. The C compared signed and
+                // ran it from -3 (a[-3] read, ASan stack-buffer-overflow).
+                bool sgn = ity->kind == IRT_INT && ity->is_signed;
+                IrCmp lt = it->as.range_expr.inclusive ? (sgn ? IR_CMP_SLE : IR_CMP_ULE) : (sgn ? IR_CMP_SLT : IR_CMP_ULT);
+                IrValue *cond = ir_icmp(c->f, head, lt, iv, hi);
                 ir_set_br_cond(head, cond, body, exit);
                 IrBlock *oh=c->loop_head, *oe=c->loop_exit; int om=c->loop_defer_mark;
                 IrValue *osc=c->loop_step_cell; IrType *ost=c->loop_step_ty; IrBlock *olt=c->loop_latch;

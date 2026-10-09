@@ -699,6 +699,24 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
             } else if (rt2 && rt2->kind==IRT_VECTOR && lt && lt->kind!=IRT_VECTOR) {
                 fputc('(', o); ir_ctype(rt2->elem, o);
                 fprintf(o, ")v%d %s v%d);\n", i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id);
+            } else if (i->aux.cmp < IR_CMP_ULT && i->aux.cmp >= IR_CMP_SLT && lt && rt2 &&
+                       lt->kind==IRT_INT && rt2->kind==IRT_INT && lt->is_signed != rt2->is_signed) {
+                // A SIGNED predicate compares the mathematical values (interp.h, ii_cmp_scalar). With
+                // one unsigned operand C would convert the signed one to unsigned, so it is spelled
+                // out: the signed side's sign first, then both as uint64, exact at every width.
+                int sa = lt->is_signed ? i->operands[0]->id : i->operands[1]->id;
+                bool s_left = lt->is_signed, lessish = (i->aux.cmp == IR_CMP_SLT || i->aux.cmp == IR_CMP_SLE);
+                // a negative signed side is below every unsigned value
+                bool neg_makes_true = (s_left == lessish);
+                fprintf(o, "(v%d %s 0) %s ((uint64_t)v%d %s (uint64_t)v%d));\n", sa, neg_makes_true ? "<" : ">=",
+                        neg_makes_true ? "||" : "&&", i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id);
+            } else if (i->aux.cmp >= IR_CMP_ULT && lt && rt2 && lt->kind==IRT_INT && rt2->kind==IRT_INT &&
+                       (lt->is_signed || rt2->is_signed)) {   // two unsigned operands compare unsigned in C already
+                // ★ AN UNSIGNED PREDICATE COMPARES AS uint64, as the interpreter does (interp.h,
+                // ii_cmp_scalar). C's own conversions decided before, so a signed operand under a
+                // U predicate compared signed in C and unsigned in the IR's meaning: the two
+                // disagreed on `for i in -3..2`, and the analysis sided with the IR.
+                fprintf(o, "(uint64_t)v%d %s (uint64_t)v%d);\n", i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id);
             } else {
                 fprintf(o, "v%d %s v%d);\n", i->operands[0]->id, ir_cmp_c(i->aux.cmp), i->operands[1]->id);
             }

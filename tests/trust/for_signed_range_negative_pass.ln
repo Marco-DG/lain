@@ -1,0 +1,29 @@
+// I.182: a `for` range with a signed counter runs from a negative start. The head compare was
+// lowered as UNSIGNED for every counter, and a counter takes its bounds' type (i32 here). The
+// interpreter, the IR's meaning, compared it as uint64, so these loops never ran there, and the
+// analysis agreed; the emitted C compared signed and ran them. Each loop's trips and sum are read,
+// natively and with --interpret (the parent's --interpret returns 1).
+func main() i32 {
+    var a i32[5] = [1, 2, 3, 4, 5]
+    var s i32 = 0
+    var c i32 = 0
+    for i in -3..2 {
+        s = s +% a[i + 3]
+        c = c +% 1
+    }
+    if c != 5 { return 1 }
+    if s != 15 { return 2 }
+    var t i64 = 0
+    for j in -4..=-1 {
+        t = t +% (j as i64)
+    }
+    if t != -10 { return 3 }
+    var lo i32 = -2
+    var hi i32 = 1
+    var n i32 = 0
+    for k in lo..hi {
+        n = n +% 1
+    }
+    if n != 3 { return 4 }
+    return 0
+}

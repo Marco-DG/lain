@@ -1738,6 +1738,9 @@ out=io ok
 at=const 2
 ty=S struct
 ty=Slice_u8 scalar
+### tests/trust/for_signed_range_negative_pass.ln
+rc=0
+out=
 ### tests/trust/function_value_positions_pass.ln
 rc=0
 out=5 10 9 8

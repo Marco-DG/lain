@@ -1,0 +1,14 @@
+// EXPECT: [E085]
+// EXPECT-TEXT: Error Ln 11, Col 18: index is not provably within bounds
+// I.182: the counter of `for i in -3..2` is negative on its first three trips, so `a[i]` reads
+// before the array. The head compare was UNSIGNED, the analysis read `i <u 2` as `0 <= i < 2`, and
+// this compiled; the C ran it from -3 and read a[-3] (ASan: stack-buffer-overflow). Accepted on
+// the parent.
+func main() i32 {
+    var a i32[5] = [1, 2, 3, 4, 5]
+    var s i32 = 0
+    for i in -3..2 {
+        s = s +% a[i]
+    }
+    return s
+}
