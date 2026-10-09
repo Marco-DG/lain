@@ -11,6 +11,7 @@ compiler.
 | kind | files | what they are for |
 |:---|:---|:---|
 | `test_*.c` | vra, linearity, borrow, octagon, definite_init, place, ir | unit tests over a HAND-BUILT IR, so they reach the detection direction the corpus cannot — the front end rejects those programs before the analyses would run |
+| `test_judge_format.c` | | the proof engine judge's text form (`src/judge/text.h`): canonical round trips, refusals with their reasons, one-edit mutants, a full region |
 | `*_driver.c` | vra, linearity, effects, incomplete, lower | drive one analysis over real source and print what it concluded; the surveys and several fuzzers are built on them |
 | `fuzz_vra.c` | | the in-process VRA fuzzer |
 

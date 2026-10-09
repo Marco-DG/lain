@@ -4,6 +4,10 @@
 # fail-tests before the new passes could run). Companion to phase3_differential.sh, which
 # covers the no-over-rejection direction over the real corpus.
 #
+# It also holds the proof engine's judge (src/judge/): the include rules between the trusted judge
+# and the untrusted solver and finder (judge_includes.py), and the unit test of the judge's text
+# form (test_judge_format).
+#
 #   bash run_ir_tests.sh          # exit 0 = all IR analysis unit tests pass
 set -u
 cd "$(dirname "$0")/../.."
@@ -11,7 +15,9 @@ cd "$(dirname "$0")/../.."
 # build test_octagon and run the OTHER's: its 24 s run is a wide window (see fuzz_vra.sh).
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail=0
-for t in test_octagon test_vra test_place test_linearity test_borrow test_definite_init test_ir; do
+echo "── judge include rules ──"
+python3 scripts/gates/judge_includes.py . || fail=1
+for t in test_octagon test_vra test_place test_linearity test_borrow test_definite_init test_ir test_judge_format; do
     src="src/tools/$t.c"
     if [ ! -f "$src" ]; then echo "MISSING: $t"; fail=1; continue; fi
     # test_octagon enumerates a 13^3 box 40,000 times against gamma. Unoptimised that
