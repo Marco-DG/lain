@@ -1880,6 +1880,19 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 2
+### tests/trust/judge_inv_finder_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
+### tests/trust/judge_inv_loops_pass.ln
+rc=0
+out=
+at=access 2
+at=const 4
+at=nonnull 4
+at=pure 2
+ty=Slice_i32 scalar
 ### tests/trust/judge_join_stale_pass.ln
 rc=0
 out=

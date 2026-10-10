@@ -20,11 +20,12 @@
 //     they tested (an edge counts when its target has that one predecessor);
 //   - at a join that dominates the point, one disjunct per predecessor (R7): the edge conditions
 //     on its path, and the version each cell ends that path with;
-//   - a CLAIM about a forward join's fresh version (P3.5's hull row: `lo <= x@join`), wherever
-//     that version is named. Claims are UNTRUSTED input, so each is also OWED, as an obligation
-//     `hull` on every edge into its join: at the end of the predecessor, with the edge's condition
-//     a fact, about the version the predecessor ends with (the cell's content as the join is
-//     entered).
+//   - a CLAIM at a forward join (P3.5's hull row: `lo <= x@join`) or a loop header (its `inv`:
+//     `j - i <= 0` at the header), about the versions the block makes, wherever such a version is
+//     named. Claims are UNTRUSTED input, so each is also OWED on every edge into its block: `hull`
+//     into a join, `inv.entry` and `inv.keep` into a header, at the end of the predecessor, with the
+//     edge's condition a fact, about the versions the predecessor ends with (the cells' contents as
+//     the block is entered).
 // Why these hold. An SSA value's definition holds wherever the definition dominates: if an
 // operand's definition ran again after the value's and before the point, there would be a path
 // from the entry to the point that avoids the value's definition. The same argument covers a
@@ -34,17 +35,21 @@
 // the conclusion of an obligation at an EARLIER event (the settling of the value, or the landing
 // of the stored value), so at the first event whose obligation fails, every hypothesis of that
 // obligation was already established; hence a value's own range is never its own hypothesis.
-// Claims are the same argument: a version names the cell's content at its join's LATEST entry,
+// Claims are the same argument: a version names the cell's content at its block's LATEST entry,
 // and the claim is the conclusion of the obligation on the edge taken then, an earlier event. A
-// claim's obligation sits at its predecessor's end, before the join makes the versions it is
-// about, so it never assumes itself. A claim is sound only with its obligations: whoever proposes
-// claims must have every `hull` VC implied, or drop the claim and generate again.
+// claim's obligation sits at its predecessor's end, before the block makes the versions it is
+// about, so it never assumes itself; on a back edge it assumes the claim at the header's PREVIOUS
+// entry, which is induction over the trips. A claim's other terms are a cell's version current at
+// the block, or an SSA value defined in a block that strictly dominates it: neither changes after
+// the block's entry anywhere its version is named. A claim is sound only with its obligations:
+// whoever proposes claims must have every claim's VCs implied, or drop the claim and generate again.
 //
 // Not stated yet, each costing precision only: cells whose address escapes (their loads are fresh
-// variables); struct field and element cells; loop invariants; landings at stores, arguments and
-// returns; callees' contracts; an ABI layout's size; a product of two variables (`outside`). The obligations
-// mirror VRA's final pass for bounds, division, overflow, integer casts, shifts and bit counts, so
-// the two can be compared obligation by obligation.
+// variables); struct field and element cells; a loop invariant no claim proposes, or of three
+// terms or more; landings at stores, arguments and returns; callees' contracts; an ABI layout's
+// size; a product of two variables (`outside`). The obligations mirror VRA's final pass for
+// bounds, division, overflow, integer casts, shifts and bit counts, so the two can be compared
+// obligation by obligation.
 //
 // Checked: scripts/gates/judge_gate.sh evaluates every hypothesis at run time over every accepted
 // program; src/tools/test_judge_gen.c pins the rules no program exercises.
@@ -62,9 +67,11 @@
 // about (the remainder of x / c is x - c*q).
 typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; } JRecipe;
 
-// A claim at a cut point, `sum(coef * term) <= rhs`, each term the version a cell (key: its
-// ALLOCA's value id) has as block `blk` is entered. Phase 1a takes one term at a forward join
-// (jg_claims_ok); a loop header's (`inv`) is a later step.
+// A claim at a cut point, `sum(coef * term) <= rhs`, over one or two terms by value id: a cell's
+// ALLOCA id is the version the cell has as block `blk` is entered, any other id that integer value.
+// One term at least is a version the block makes afresh, so it is a join or a loop header, and it
+// is not the function's entry, the one block entered with no edge to owe the claim on
+// (jg_claims_ok).
 typedef struct { int32_t blk, nt; int32_t key[2]; __int128 coef[2]; __int128 rhs; } JClaim;
 
 // An obligation: its instruction, its position, and its VC; or `outside` with the reason. A
@@ -636,9 +643,16 @@ static bool jg_const_of(JG *g, IrValue *v, __int128 *c) {
 }
 static bool jg_uns(const IrType *t) { return t && (t->kind == IRT_BOOL || (t->kind == IRT_INT && !t->is_signed)); }
 
-// The claims about a join's version, stated where the version is: VC-wide, or inside the current
-// disjunct when the version is local to its path. Each once per place (a claim of two terms is
-// reached from either).
+// A claim's term as a VC variable: a cell is its version in `row` (a block's entry state, or the
+// exit state of the predecessor an obligation is owed at), any other id that SSA value.
+static int32_t jb_term(JB *B, int32_t key, const int32_t *row) {
+    JG *g = B->g;
+    if (g->cell[key] >= 0) return jb_ver(B, row[g->cell[key]]);
+    return jb_val(B, jg_value(g, key));
+}
+// The claims about a version a join or a header makes, stated where the version is: VC-wide, or
+// inside the current disjunct when the version is local to its path. Each once per place (a claim
+// of two terms is reached from either).
 static void jb_claims(JB *B, const JVer *v) {
     JG *g = B->g;
     int32_t at = B->jS >= 0 ? B->dgen : -1;
@@ -651,7 +665,7 @@ static void jb_claims(JB *B, const JVer *v) {
         B->cst[ci] = at;
         JLT t[2];
         for (int k = 0; k < c->nt; k++) {
-            t[k].var = jb_ver(B, g->instate[(size_t)c->blk * (size_t)g->ncells + (size_t)g->cell[c->key[k]]]);
+            t[k].var = jb_term(B, c->key[k], g->instate + (size_t)c->blk * (size_t)g->ncells);
             t[k].c = c->coef[k];
         }
         jb_atom(B, jb_str(B, "claim bb%lld #%lld", c->blk, ci, 0), t, c->nt, J_LE, c->rhs);
@@ -669,7 +683,7 @@ static void jb_state(JB *B, int32_t x) {
             JLT t[1]; t[0].var = jb_val(B, v->stored); t[0].c = 1;
             jb_def(B, x, t, 1, jb_str(B, "store %%s%lld@bb%lld.%lld", g->cellv[v->cell]->id, v->blk, v->idx));
         }
-        if (v->kind == JV_JOIN) jb_claims(B, v);
+        if (v->kind == JV_JOIN || v->kind == JV_HEAD) jb_claims(B, v);
         return;
     }
     if (B->kind[x] == 2) {                                     // a slice's length
@@ -1250,7 +1264,7 @@ static bool jg_obligations(JG *g, JObls *L) {
     return true;
 }
 
-// ── claims (P3.5's hull row) ────────────────────────────────────────────────────────────────
+// ── claims (P3.5: the hull row, and `inv` at a header) ─────────────────────────────────────────
 // A FORWARD join: two or more predecessors, every reachable one earlier in the RPO. No retreating
 // edge enters it, so it heads no loop (a header's back edge comes from later in the RPO), and it
 // is not the entry, which is entered with no edge. Its every entry is an edge a claim is owed on.
@@ -1260,28 +1274,52 @@ static bool jg_forward_join(JG *g, int32_t b) {
         if (g->rpoix[e->block->id] >= g->rpoix[b]) return false;
     return true;
 }
+// A loop header, for the proposer's listing: a natural loop's head (a slot there is `head`).
+static bool jg_loop_header(JG *g, int32_t b) {
+    return b >= 0 && b < g->nb && g->blk[b] && g->rpoix[b] >= 0 && g->inloop[(size_t)b * (size_t)g->nb + (size_t)b];
+}
+// A claim's term at block b: an integer cell (its version at b), an integer parameter, or an
+// integer value defined in a block that strictly dominates b.
+static bool jg_term_ok(JG *g, int32_t b, int32_t key) {
+    if (key < 0 || key >= g->nv) return false;
+    if (g->cell[key] >= 0) return jg_is_int(g->def[key]->aux.alloca_ty);
+    IrValue *v = jg_value(g, key);
+    if (!v || !jg_is_int(v->type)) return false;
+    if (!g->def[key]) return true;                                // a parameter
+    int32_t d = g->defblk[key];
+    return d >= 0 && d != b && jg_dominates(g, d, b);
+}
 // Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
 static bool jg_claims_ok(JG *g) {
     const __int128 big = (__int128)1 << 66;
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
-        if (!jg_forward_join(g, c->blk)) return jg_fail(g, "a claim not at a forward join");
-        if (c->nt != 1) return jg_fail(g, "a claim of other than one term (a loop's `inv` is a later step)");
+        // a claim is owed on every edge into its block, so any reached block will do but the
+        // function's entry, which is entered with no edge; one with a fresh version is a join or
+        // a header (the `made` rule below)
+        if (c->blk < 0 || c->blk >= g->nb || !g->blk[c->blk] || g->rpoix[c->blk] < 0 || c->blk == g->f->entry->id)
+            return jg_fail(g, "a claim not at a block entered by edges only");
+        if (c->nt < 1 || c->nt > 2) return jg_fail(g, "a claim of other than one or two terms");
+        if (c->nt == 2 && c->key[0] == c->key[1]) return jg_fail(g, "a claim naming one term twice");
         if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
+        bool made = false;
         for (int k = 0; k < c->nt; k++) {
             int32_t key = c->key[k];
-            if (key < 0 || key >= g->nv || g->cell[key] < 0) return jg_fail(g, "a claim's term is not a cell");
+            if (!jg_term_ok(g, c->blk, key)) return jg_fail(g, "a claim's term is not a cell or a value fixed at its block");
             if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
+            if (g->cell[key] < 0) continue;
             int32_t jv = g->instate[(size_t)c->blk * (size_t)g->ncells + (size_t)g->cell[key]];
-            if (jv < 0 || g->ver[jv].kind != JV_JOIN || g->ver[jv].blk != c->blk || !jg_is_int(g->ver[jv].slot))
-                return jg_fail(g, "a claim about a cell its join does not version afresh as an integer");
+            if (jv >= 0 && (g->ver[jv].kind == JV_JOIN || g->ver[jv].kind == JV_HEAD) && g->ver[jv].blk == c->blk) made = true;
         }
+        if (!made) return jg_fail(g, "a claim about no version its block makes afresh");
     }
     return true;
 }
-// Each claim's obligations, like P3.5's `inv.entry`: on every edge P -> H into its join, at the end
-// of P, the edge's condition a fact, the claim about the versions P ends with. A predecessor that
-// reaches H by both arms of its branch owes it once, with no edge condition.
+// Each claim's obligations (P3.5): on every edge P -> H into its block, at the end of P, the edge's
+// condition a fact, the claim about the versions P ends with: `hull` into a join, `inv.entry` into
+// a header from before its loop, `inv.keep` along a back edge (where H's own claims about its
+// previous entry are hypotheses: the induction step). A predecessor that reaches H by both arms
+// of its branch owes it once, with no edge condition.
 static bool jg_claim_obligations(JG *g, JObls *L, int32_t only_blk) {
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
@@ -1299,12 +1337,13 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only_blk) {
             B.to = H->id;
             JLT t[2]; JCons goal;
             for (int k = 0; k < c->nt; k++) {
-                t[k].var = jb_ver(&B, g->outstate[(size_t)P->id * (size_t)g->ncells + (size_t)g->cell[c->key[k]]]);
+                t[k].var = jb_term(&B, c->key[k], g->outstate + (size_t)P->id * (size_t)g->ncells);
                 t[k].c = c->coef[k];
             }
             if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
+            const char *kind = jg_forward_join(g, H->id) ? "hull" : g->rpoix[P->id] < g->rpoix[H->id] ? "inv.entry" : "inv.keep";
             JObl *o = jg_push(g, L);
-            if (!o || !jb_finish(&B, NULL, "hull", ci, &goal, o)) return jg_fail(g, "out of memory building a VC");
+            if (!o || !jb_finish(&B, NULL, kind, ci, &goal, o)) return jg_fail(g, "out of memory building a VC");
             o->to = H; o->claim = ci;
         }
     }
@@ -1331,9 +1370,10 @@ static bool jgen_func(JMem *m, IrFunc *f, const JClaim *cl, int32_t ncl, int32_t
     return true;
 }
 
-// The versions a claim can be about, for whoever proposes claims: every forward join's fresh
-// version of an integer cell, in reverse post-order, so a join's predecessors come before it.
-typedef struct { int32_t blk, key; const IrType *type; } JSlot;
+// For whoever proposes claims (nothing here is trusted: every claim is checked and owed). The
+// versions a claim can be about: every forward join's fresh version of an integer cell, and every
+// loop header's (`head`), in reverse post-order, so a block's forward predecessors come first.
+typedef struct { int32_t blk, key; const IrType *type; bool head; } JSlot;
 static bool jgen_slots(JMem *m, IrFunc *f, JSlot **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
@@ -1345,16 +1385,76 @@ static bool jgen_slots(JMem *m, IrFunc *f, JSlot **out, int32_t *nout, char *err
         int32_t n = 0;
         for (int32_t r = 0; r < g.nrpo; r++) {
             int32_t b = g.rpo[r];
-            if (!jg_forward_join(&g, b)) continue;
+            bool head = jg_loop_header(&g, b);
+            if (!head && !jg_forward_join(&g, b)) continue;
             for (int32_t c = 0; c < g.ncells; c++) {
                 int32_t jv = g.instate[(size_t)b * (size_t)g.ncells + (size_t)c];
-                if (jv < 0 || g.ver[jv].kind != JV_JOIN || g.ver[jv].blk != b || !jg_is_int(g.ver[jv].slot)) continue;
-                if (S) { S[n].blk = b; S[n].key = g.cellv[c]->id; S[n].type = g.ver[jv].slot; }
+                if (jv < 0 || g.ver[jv].blk != b || !jg_is_int(g.ver[jv].slot)) continue;
+                if (g.ver[jv].kind != (head ? JV_HEAD : JV_JOIN)) continue;
+                if (S) { S[n].blk = b; S[n].key = g.cellv[c]->id; S[n].type = g.ver[jv].slot; S[n].head = head; }
                 n++;
             }
         }
         if (S) { *out = S; *nout = n; break; }
         if (!(S = JG_NEW(&g, JSlot, n ? n : 1))) return jg_fail(&g, "out of memory");
+    }
+    return true;
+}
+// The other terms a claim at block `blk` may relate a version to (as slots: key and type): every
+// integer cell, and every integer value a comparison inside blk's loop (or in blk, at a join) tests
+// that is fixed at blk. A constant is a bound's business, not a term's.
+static bool jgen_terms(JMem *m, IrFunc *f, int32_t blk, JSlot **out, int32_t *nout, char *err, size_t errcap) {
+    JG g; memset(&g, 0, sizeof g);
+    g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
+    *out = NULL; *nout = 0;
+    if (!f || !f->entry || f->is_extern) return true;
+    if (!jg_structure(&g) || !jg_cells(&g)) return false;
+    if (blk < 0 || blk >= g.nb || !g.blk[blk]) return jg_fail(&g, "no such block");
+    JSlot *K = JG_NEW(&g, JSlot, g.nv ? g.nv : 1); int32_t n = 0;
+    uint8_t *seen = JG_NEW(&g, uint8_t, g.nv ? g.nv : 1);
+    if (!K || !seen) return jg_fail(&g, "out of memory");
+    memset(seen, 0, (size_t)g.nv);
+    for (int32_t c = 0; c < g.ncells; c++) {
+        int32_t id = g.cellv[c]->id;
+        if (!jg_term_ok(&g, blk, id)) continue;
+        K[n].blk = blk; K[n].key = id; K[n].type = g.def[id]->aux.alloca_ty; K[n].head = false; n++; seen[id] = 1;
+    }
+    const uint8_t *L = g.inloop + (size_t)blk * (size_t)g.nb;
+    for (int32_t x = 0; x < g.nb; x++) {
+        if (!g.blk[x] || !(L[blk] ? L[x] : x == blk)) continue;
+        for (IrInstr *i = g.blk[x]->instrs; i; i = i->next) {
+            if (i->op != IR_ICMP || i->n_operands < 2) continue;
+            for (int k = 0; k < 2; k++) {
+                IrValue *o = i->operands[k];
+                if (!o || o->id < 0 || o->id >= g.nv || seen[o->id]) continue;
+                if (g.def[o->id] && g.def[o->id]->op == IR_CONST) continue;
+                if (!jg_term_ok(&g, blk, o->id)) continue;
+                K[n].blk = blk; K[n].key = o->id; K[n].type = o->type; K[n].head = false; n++; seen[o->id] = 1;
+            }
+        }
+    }
+    *out = K; *nout = n;
+    return true;
+}
+
+// For whoever proposes claims: per key, 0 when a claim at `blk` may not name it, 1 when it may (a
+// cell's version, or a value fixed at blk), 2 when it is moreover a version blk makes afresh (a
+// claim must name one). A candidate from elsewhere (VRA's header states) is filtered by it, since
+// a claim the generator cannot state is refused with the whole function.
+static bool jgen_term_kinds(JMem *m, IrFunc *f, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
+                            char *err, size_t errcap) {
+    JG g; memset(&g, 0, sizeof g);
+    g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
+    for (int32_t i = 0; i < n; i++) kind[i] = 0;
+    if (!f || !f->entry || f->is_extern) return true;
+    if (!jg_structure(&g) || !jg_cells(&g)) return false;
+    if (blk < 0 || blk >= g.nb || !g.blk[blk]) return true;
+    for (int32_t i = 0; i < n; i++) {
+        if (!jg_term_ok(&g, blk, keys[i])) continue;
+        kind[i] = 1;
+        if (g.cell[keys[i]] < 0) continue;
+        int32_t jv = g.instate[(size_t)blk * (size_t)g.ncells + (size_t)g.cell[keys[i]]];
+        if (jv >= 0 && (g.ver[jv].kind == JV_JOIN || g.ver[jv].kind == JV_HEAD) && g.ver[jv].blk == blk) kind[i] = 2;
     }
     return true;
 }

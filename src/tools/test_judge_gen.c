@@ -356,23 +356,60 @@ int main(void) {
         ir_set_br(b4, b3);
         ir_set_ret(b5, ls);
         ir_finalize_cfg(f);
-        struct { JClaim c; const char *why; } bad[5];
-        bad[0].c = claim1(b0, s, 1, 9); bad[0].why = "not at a forward join";
-        bad[1].c = claim1(b2, u, 1, 9); bad[1].why = "does not version afresh";
-        bad[2].c = claim1(b3, s, 1, 9); bad[2].why = "not at a forward join";
-        bad[3].c = claim1(b2, s, 1, 9); bad[3].c.nt = 2; bad[3].c.key[1] = u->id; bad[3].c.coef[1] = 1; bad[3].why = "other than one term";
-        bad[4].c = claim1(b2, y, 1, 9); bad[4].why = "not a cell";
-        for (int k = 0; k < 5; k++) {
+        struct { JClaim c; const char *why; } bad[7];
+        bad[0].c = claim1(b0, s, 1, 9); bad[0].why = "not at a block entered by edges only";
+        bad[1].c = claim1(b2, u, 1, 9); bad[1].why = "about no version its block makes afresh";
+        bad[2].c = claim1(b2, s, 1, 9); bad[2].c.nt = 2; bad[2].c.key[1] = ls->id; bad[2].c.coef[1] = -1;
+        bad[2].why = "not a cell or a value fixed at its block";      // ls is made in the loop, after b2
+        bad[3].c = claim1(b2, s, 1, 9); bad[3].c.nt = 3; bad[3].why = "other than one or two terms";
+        bad[4].c = claim1(b2, s, 1, 9); bad[4].c.nt = 2; bad[4].c.key[1] = s->id; bad[4].c.coef[1] = 1;
+        bad[4].why = "naming one term twice";
+        bad[5].c = claim1(b2, y, 1, 9); bad[5].why = "about no version its block makes afresh";
+        bad[6].c = claim1(b3, s, 1, 9); bad[6].c.nt = 2; bad[6].c.key[1] = ls->id; bad[6].c.coef[1] = -1;
+        bad[6].why = "not a cell or a value fixed at its block";      // ls is made IN the header: not fixed at its entry
+        for (int k = 0; k < 7; k++) {
             char why[200] = "";
             char *t = gen_with(f, &bad[k].c, 1, JGEN_ALL, why);
             CHECK(!t && strstr(why, bad[k].why), "claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
             free(t);
         }
-        JClaim good = claim1(b2, s, 1, 9);
-        char *t = gen_with(f, &good, 1, JGEN_ALL, NULL);
-        CHECK(t != NULL, "the claim about s at the join is accepted");
-        free(t);
-        printf("  a claim not at a forward join, about an unversioned cell, of two terms, or not a cell is refused\n");
+        JClaim good[4];
+        good[0] = claim1(b2, s, 1, 9);                                // at the join
+        good[1] = claim1(b3, s, 1, 100);                              // at the loop header
+        good[2] = claim1(b2, s, 1, 0); good[2].nt = 2; good[2].key[1] = y->id; good[2].coef[1] = -1;   // s - y, y a parameter
+        good[3] = claim1(b3, s, 1, 0); good[3].nt = 2; good[3].key[1] = u->id; good[3].coef[1] = -1;  // s - u, u not written
+        for (int k = 0; k < 4; k++) {
+            char why[200] = "";
+            char *t = gen_with(f, &good[k], 1, JGEN_ALL, why);
+            CHECK(t != NULL, "claim %d is accepted: got \"%s\"", k, why);
+            free(t);
+        }
+        // what a proposer may name at the header: s made there, u and y fixed there, ls not
+        {   JMem m = jmem_over(region, sizeof region);
+            int32_t keys[4] = { s->id, u->id, y->id, ls->id }; uint8_t kind[4]; char err[200];
+            bool ok = jgen_term_kinds(&m, f, b3->id, keys, 4, kind, err, sizeof err);
+            CHECK(ok && kind[0] == 2 && kind[1] == 1 && kind[2] == 1 && kind[3] == 0,
+                  "term kinds at the header: s 2, u 1, y 1, ls 0 (got %d %d %d %d)", kind[0], kind[1], kind[2], kind[3]);
+        }
+        printf("  claims refused: at the entry, no fresh version, a term not fixed, three terms, one twice\n");
+        // 15. a claim at a loop header is owed on the entry edge (`inv.entry`) and on the back edge
+        // (`inv.keep`), where the header's own claim, about its previous entry, is a hypothesis
+        {   char *t = gen_with(f, &good[1], 1, JGEN_CLAIMS, NULL);
+            char key[32], want[96];
+            snprintf(key, sizeof key, "bb%d.%d inv.entry 0", b2->id, nins(b2));
+            const char *en = t ? vc_of(t, key) : "";
+            snprintf(want, sizeof want, "goal 1*%%s%d@join.bb%d <= 100", s->id, b2->id);
+            CHECK(strstr(en, want) && !strstr(en, "claim bb"), "the entry edge owes it about the join's version, assuming no claim:\n%s", en);
+            snprintf(key, sizeof key, "bb%d.%d inv.keep 0", b4->id, nins(b4));
+            const char *kp = t ? vc_of(t, key) : "";
+            snprintf(want, sizeof want, "claim bb%d #0 : 1*%%s%d@head.bb%d <= 100", b3->id, s->id, b3->id);
+            CHECK(strstr(kp, want), "the back edge assumes the claim at the header:\n%s", kp);
+            snprintf(want, sizeof want, "goal 1*%%s%d@bb%d.", s->id, b4->id);
+            CHECK(strstr(kp, want), "and owes it about the version the latch stores:\n%s", kp);
+            CHECK(t && count(t, "vc ") == 2, "two edges, two VCs:\n%s", t ? t : "");
+            free(t);
+            printf("  a header's claim: owed on the entry edge, and on the back edge assuming itself\n");
+        }
     }
     // 14. a predecessor that reaches the join by BOTH arms of its branch owes the claim once (two
     // VCs with one id otherwise), with no edge fact: the condition holds on one arm only

@@ -1,0 +1,72 @@
+// The proof engine's judge needs LOOP INVARIANTS here: claims at loop headers, each owed on the
+// entry edge and on the back edge, where it assumes itself (`inv.entry`, `inv.keep`). Insertion
+// sort's `a[j - 1]` needs `j <= i` at the inner header (j starts at i and only falls) beside the
+// outer guard `i < n`; `t[s]` after the second loop needs `s = i` and `i <= 2`, the guard's bound
+// a step on; `b[k]` needs `k >= 0`; `t[x]`, after a join nested in an arm that takes x from a loop's
+// exit, needs that loop's invariant under the inner join's hull, a bound computed in a later round
+// than the invariant it rests on. judge_gate requires every VC of this program implied, from the
+// judge's OWN candidates (its paths' hulls and the header's guards: `--no-finder`) as well as with
+// VRA's header states, and checks each claim on every edge the program takes: the loops run to
+// their bounds. The results are read natively and with --interpret.
+func isort(var a i32[n], n usize) {
+    var i usize = 1
+    while i < n decreasing n - i {
+        var j usize = i
+        while j > 0 decreasing j {
+            if a[j - 1] > a[j] {
+                var tmp i32 = a[j]
+                a[j] = a[j - 1]
+                a[j - 1] = tmp
+            }
+            j = j - 1
+        }
+        i = i + 1
+    }
+}
+
+func steps(c bool) i32 {
+    var t i32[3] = [10, 20, 30]
+    var i usize = 0
+    var j usize = 0
+    var s usize = 0
+    while i < 2 and j < 4 {
+        if c { j = j + 1 }
+        i = i + 1
+        s = s + 1
+    }
+    return t[s]
+}
+
+func low(b i32[10], n i32) i32 {
+    var s i32 = 0
+    for k in 0..n {
+        if k < 10 {
+            s = s +% b[k]
+        }
+    }
+    return s
+}
+
+func after(p bool, c bool) i32 {
+    var t i32[11] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var x i32 = 0
+    if p {
+        var i i32 = 0
+        while i < 10 { i = i + 1 }
+        if c { x = i } else { x = 0 }
+    } else {
+        x = 0
+    }
+    return t[x]
+}
+
+func main() i32 {
+    var a i32[5] = [4, 1, 5, 2, 3]
+    isort(var a, 5)
+    if a[0] != 1 or a[4] != 5 { return 1 }
+    if steps(false) != 30 or steps(true) != 30 { return 2 }
+    var b i32[10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    if low(b, 12) != 55 or low(b, 3) != 6 { return 3 }
+    if after(true, true) != 10 or after(true, false) != 0 or after(false, true) != 0 { return 4 }
+    return 0
+}
