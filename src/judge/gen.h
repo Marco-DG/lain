@@ -309,10 +309,12 @@ static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, 
 // A root's ESCAPE CLASS (P2.1) is read from every use of an address inside it: LOCAL when each is
 // an access (a LOAD's or a STORE's address) or forms another address inside it; BORROWED when some
 // are also call arguments; LEAKED otherwise (a store of the address as a value, a reference
-// binding's included, a return, a cast, a constructor). A call that returns a reference into its
-// argument needs no rule of its own: it was handed a mutable reference, so the fields are fresh
-// after it, and while the reference it returned lives the struct is neither read nor written by
-// name (E004), so no fact about it can outlive a write through that reference. What changes a cell
+// binding's included, a return, a cast, a constructor), or a call whose RESULT may carry a raw
+// pointer: `func get(var c C) *var u32 { return &c.val }` hands out an address that outlives the
+// borrow, and a store through it changes c.val with no reference in sight. A call that returns a
+// REFERENCE into its argument needs no rule of its own: it was handed a mutable reference, so the
+// fields are fresh after it, and while that reference lives the struct is neither read nor
+// written by name (E004), so no fact about it can outlive a write through it. What changes a cell
 // (P2.2's frame rule), each a fresh version unless a store's value is known:
 //   - a store to the cell, or to a whole struct around it (a constructor's field is its value);
 //   - a call handed a MUTABLE reference to it or to a struct around it (a read-only reference
@@ -482,7 +484,8 @@ static bool jg_cells(JG *g) {
                 int32_t r = g->aroot[o->id] >= 0 ? g->aroot[o->id] : g->iroot[o->id];
                 if (r < 0) continue;
                 if ((i->op == IR_LOAD || i->op == IR_STORE || i->op == IR_FIELD_PTR || i->op == IR_ELEM_PTR) && k == 0) continue;
-                if (i->op == IR_CALL && !(i->aux.callee == NULL && k == 0)) {
+                if (i->op == IR_CALL && !(i->aux.callee == NULL && k == 0) &&
+                    !(i->result && jg_carries_raw(i->result->type, 0))) {
                     if (g->rclass[r] < JR_BORROWED) g->rclass[r] = JR_BORROWED;
                     continue;
                 }

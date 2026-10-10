@@ -1,0 +1,17 @@
+// A call that returns a RAW pointer into its argument hands out an address that outlives the
+// borrow (Main Compiler Work's probe). After `p = get(var c)`, `c.val = 1` and then a store through
+// p change c.val with no reference in sight, so c's cells are fresh after that store. A generator
+// that kept c.val's version would state c.val = 1 at the index, false where it runs (c.val is 6).
+// VRA refuses the index (E085), so only judge_gate's run of refused programs sees it; the program
+// then reads t[6] and traps.
+type C { val u32 }
+func get(var c C) *var u32 { return &c.val }
+func main() i32 {
+    var c = C(1)
+    var t u32[2] = [10, 11]
+    p = get(var c)
+    c.val = 1
+    six u32 = 6
+    unsafe { *p = six }
+    return t[c.val] as i32
+}
