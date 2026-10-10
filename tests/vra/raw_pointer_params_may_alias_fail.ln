@@ -1,0 +1,23 @@
+// EXPECT: [E085]
+// I.194: two RAW pointer parameters may name the same storage. `var px = &x; two(px, &x)` passes
+// x twice, which E004 cannot see through a local, and a raw pointer promises no exclusivity. So
+// after `*q = six`, `*p` is unknown, and `t[v]` on a u32[2] is not provable. It was proven from
+// `*p = one`, and read t[6] (ASan: stack-buffer-overflow; --interpret: PROOF FAILED).
+func two(p *var u32, q *var u32) u32 {
+    var t u32[2] = [10, 11]
+    var v u32 = 0
+    one u32 = 1
+    six u32 = 6
+    unsafe {
+        *p = one
+        *q = six
+        v = *p
+    }
+    return t[v]
+}
+
+func main() i32 {
+    var x u32 = 0
+    var px = &x
+    return two(px, &x) as i32
+}

@@ -1,0 +1,35 @@
+// The allowed side of tests/vra/raw_pointer_params_may_alias_fail.ln (I.194): a value read through
+// a raw pointer that another raw pointer may have written is unknown, and a guard on it is what
+// makes the index safe. With the two pointers aliased, v is 6 and the guard takes the other arm.
+// A raw pointer may also name a `var` parameter's storage (`var py = &y; kept(var y, py)`), so a
+// raw store reaches the borrow: n reads back 6, never the 3 stored before it.
+func two(p *var u32, q *var u32) u32 {
+    var t u32[2] = [10, 11]
+    var v u32 = 0
+    one u32 = 1
+    six u32 = 6
+    unsafe {
+        *p = one
+        *q = six
+        v = *p
+    }
+    if v < 2 { return t[v] }
+    return 99
+}
+func kept(var n u32, q *var u32) u32 {
+    n = 3
+    six u32 = 6
+    unsafe { *q = six }
+    return n
+}
+func main() i32 {
+    var x u32 = 0
+    var px = &x
+    if two(px, &x) != 99 { return 1 }
+    var y u32 = 0
+    var py = &y
+    if kept(var y, py) != 6 { return 2 }
+    var z u32 = 0
+    if two(&y, &z) != 11 { return 3 }
+    return 0
+}

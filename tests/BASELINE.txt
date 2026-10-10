@@ -2216,6 +2216,9 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
+### tests/trust/raw_pointer_params_may_alias_pass.ln
+rc=0
+out=
 ### tests/trust/recursion_through_own_pointer_ranked_pass.ln
 rc=0
 out=2

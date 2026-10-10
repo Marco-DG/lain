@@ -324,10 +324,19 @@ static bool vra_is_float(const IrValue *v) { return v && v->type && v->type->kin
 // guarantee the backend already relies on when it emits these parameters `restrict`, and the
 // borrow checker is what enforces it. Treating it as a cell is reading that guarantee, not
 // assuming one; a call it is passed on to still havocs it, exactly like an escaped alloca.
+//
+// ★ ONLY A BORROW (I.194). A RAW pointer parameter (`p *var u32`) promises nothing: `var px = &x;
+// two(px, &x)` hands one callee two raw pointers to x, which E004 cannot see, and the pointee was
+// a cell all the same. `*p = 1; *q = 6; v = *p` then read v as 1, and `t[v]` on a u32[2] was
+// "proven" in bounds and read t[6]. A raw pointee is no cell: a load through it is unknown and a
+// store through it is unattributable, as through any other address.
+static bool vra_param_owned_ptr(const IrType *t) {
+    return t && t->kind == IRT_PTR && !t->is_raw;
+}
 static bool vra_is_param_cell(Vra *V, int id) {
     if (id<0 || id>=V->nvar || V->def[id]) return false;      // must be a parameter
     IrValue *pv = V->val[id];
-    return pv && pv->type && pv->type->kind==IRT_PTR && pv->type->ptr_mut
+    return pv && vra_param_owned_ptr(pv->type) && pv->type->ptr_mut
         && pv->type->elem && (pv->type->elem->kind==IRT_INT || pv->type->elem->kind==IRT_BOOL);
 }
 // Mark every CELL whose address is reachable from `v` as having escaped — and, when
@@ -382,7 +391,7 @@ static int vra_arg_cell(Vra *V, IrValue *v) {
             // field, so `l.pos = l.pos + 1` in a lexer taught the domain nothing and read as
             // an opaque writer to every loop rule. The memory is the caller's, reachable here
             // only through this parameter: a store rooted at it can write nothing else.
-            bool sparam = v->type && v->type->kind==IRT_PTR && v->type->elem &&
+            bool sparam = vra_param_owned_ptr(v->type) && v->type->elem &&
                           v->type->elem->kind==IRT_STRUCT;
             return (vra_is_param_cell(V, v->id) || sparam) ? v->id
                  : (v->type && (v->type->kind==IRT_PTR || v->type->kind==IRT_SLICE))
@@ -464,8 +473,8 @@ static int vra_field_cell_base(Vra *V, int v) {
     // (two mutable borrows of one value is E004, which is the same promise `restrict` carries
     // into the emitted C), and scripts/fuzz/fuzz_alias.sh is the harness that tests it.
     IrValue *bv = (base>=0 && base<V->nvar) ? V->val[base] : NULL;
-    if (!bv || !bv->type || bv->type->kind != IRT_PTR || !bv->type->elem ||
-        bv->type->elem->kind != IRT_STRUCT) return -1;
+    if (!bv || !vra_param_owned_ptr(bv->type) || !bv->type->elem ||
+        bv->type->elem->kind != IRT_STRUCT) return -1;               // a raw one is no base (I.194)
     return base;
 }
 
@@ -892,7 +901,7 @@ static void vra_prepass(Vra *V) {
     // the call. Same storage relationship as the scalar case, so the same treatment.
     for (IrParam *p=V->f->params; p; p=p->next)
         if (p->value && (vra_is_param_cell(V, p->value->id) ||
-                         (p->value->type && p->value->type->kind==IRT_PTR &&
+                         (vra_param_owned_ptr(p->value->type) &&
                           p->value->type->elem && p->value->type->elem->kind==IRT_STRUCT))) {
             V->escaped[p->value->id] = true;
             if (V->strict_esc) V->strict_esc[p->value->id] = true;
