@@ -29,7 +29,8 @@
 //                               return claim's, and the claim, as the program returns.
 //
 // VRA's verdict is read from its checks on the same instruction: `proved` when VRA discharged the
-// matching half, `refused` when it did not, `none` when VRA states no obligation there.
+// matching half, `refused` when it did not, `none` when VRA states no obligation there. A return's
+// landing has no instruction: VRA files it at the returned value's definition.
 // A driver, not the judge: it may include src/analysis/ (the include rules bind src/judge/).
 #include "utils/common/def.h"
 #include "utils/arena.h"
@@ -79,9 +80,14 @@ static char *drv_modname(Arena *a, const char *path) {
 // overflow check. A judge kind with no VRA counterpart at this instruction is `none`.
 static const char *vra_verdict(Vra *V, JObl *o) {
     const char *k = o->vc.id.kind ? o->vc.id.kind : "";
+    IrInstr *at = o->at;
+    if (!at && o->blk && o->blk->term.kind == IR_TERM_RET && o->blk->term.cond) {
+        IrValue *rv = o->blk->term.cond;                     // a return's landing: VRA's check sits at
+        at = rv->id >= 0 && rv->id < V->nvar ? V->def[rv->id] : NULL;   // the value's definition
+    }
     for (int i = 0; i < V->nchecks; i++) {
         VraCheck *c = &V->checks[i];
-        if (c->at != o->at) continue;
+        if (c->at != at) continue;
         if (!strcmp(k, "bounds.lo") && c->kind == VRA_BOUNDS) return c->lo_ok || c->ok ? "proved" : "refused";
         if (!strcmp(k, "bounds.hi") && c->kind == VRA_BOUNDS) return c->hi_ok || c->ok ? "proved" : "refused";
         if ((!strcmp(k, "divzero") || !strcmp(k, "divovf")) && c->kind == VRA_DIVZERO) return c->ok ? "proved" : "refused";
@@ -205,7 +211,8 @@ static void hk_check(JObl *o, IVal *v, int nv) {
     }
 }
 // A claim's obligations, by the block whose END they are owed at: each on one edge out of it, or a
-// return claim's (`post`, no edge) as the block returns.
+// return claim's (`post`, no edge) as the block returns. A return's landing (P2.3) is owed there
+// too, an obligation like any other (its `claim` is -1).
 typedef struct { IrBlock *from; JObl *o; } HE;
 static HE *he; static int64_t nhe; static long long edges, posts;
 static int he_cmp(const void *a, const void *b) {
@@ -252,9 +259,12 @@ static void hk_on_instr(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) {
     (void)f;
     if (!i) {                                        // the block's end: its edge is known next
         hk_last = b; hk_lastv = v;
-        if (b->term.kind == IR_TERM_RET)                 // a return claim, owed as b returns
-            for (HE *h = hk_from(b); h && h < he + nhe && h->from == b; h++)
-                if (!h->o->to) { posts++; hk_claim(h->o, v, nv, "at the return", &postgoals); }
+        if (b->term.kind == IR_TERM_RET)                 // owed as b returns
+            for (HE *h = hk_from(b); h && h < he + nhe && h->from == b; h++) {
+                if (h->o->to) continue;
+                if (h->o->claim >= 0) { posts++; hk_claim(h->o, v, nv, "at the return", &postgoals); }
+                else hk_check(h->o, v, nv);                  // the return's landing
+            }
         return;
     }
     if (!nhk) return;
@@ -757,7 +767,7 @@ int main(int argc, char **argv) {
                 continue;
             }
             if (o[i].to) printf("# claim on the edge bb%d->bb%d\n", o[i].blk->id, o[i].to->id);
-            else if (!o[i].at) printf("# claim at the return of bb%d\n", o[i].blk->id);
+            else if (!o[i].at && o[i].claim >= 0) printf("# claim at the return of bb%d\n", o[i].blk->id);
             else printf("# vra=%s\n", vv);
             if (smt) jvc_print_smtlib(&o[i].vc, stdout); else jvc_print(&o[i].vc, stdout);
         }

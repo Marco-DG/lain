@@ -629,6 +629,124 @@ int main(void) {
         free(t);
     }
     printf("  a return claim: owed at every return about the entry values, a contract at a same-module call\n");
+    // 18. LANDINGS (P2.3): a value meeting a slot of another integer type, or a refined one, owes
+    // the slot's range where the interpreter lands it (ii_land): a store, a struct field, a sum
+    // payload, a call argument (a direct callee's parameter, or the function pointer type's), the
+    // result. A waived landing owes nothing unless the slot is refined, and the obligation is what
+    // makes a store's version the value stored
+    {   IrType *r03 = ir_type_int(&A, 32, true); r03->has_refine = true; r03->refine_lo = 0; r03->refine_hi = 3;
+        IrType *nz = ir_type_int(&A, 32, true); nz->has_ne = true; nz->refine_ne = 0;
+        IrType *i33 = ir_type_int(&A, 33, true);
+        IrType *S = ir_type_new(&A, IRT_STRUCT);
+        S->n_fields = 2; S->fields = arena_push_many_aligned(&A, IrType*, 2); S->fields[0] = u8t; S->fields[1] = i32t;
+        IrType *Su = ir_type_new(&A, IRT_SUM);
+        Su->n_fields = 1; Su->fields = arena_push_many_aligned(&A, IrType*, 1); Su->fields[0] = u8t;
+        IrType *fnt = ir_type_new(&A, IRT_FUNC);
+        fnt->n_fields = 1; fnt->fields = arena_push_many_aligned(&A, IrType*, 1); fnt->fields[0] = u8t; fnt->elem = u8t;
+        IrFunc *take = ir_func_new(&A, nm("take8"), u8t, IR_FUNC_PURE), *f = ir_func_new(&A, nm("g23"), u8t, IR_FUNC_PURE);
+        IrFunc *two = ir_func_new(&A, nm("take2"), u8t, IR_FUNC_PURE);
+        IrValue *tp = ir_add_param(take, u8t, nm("x"));
+        ir_set_ret(take->entry, tp);
+        ir_add_param(two, i32t, nm("a")); IrValue *tb = ir_add_param(two, u8t, nm("b"));
+        ir_set_ret(two->entry, tb);
+        take->next = two; two->next = f; ir_finalize_cfg(take); ir_finalize_cfg(two);
+        IrValue *w = ir_add_param(f, i33, nm("w")), *y = ir_add_param(f, i32t, nm("y")), *b8 = ir_add_param(f, u8t, nm("b8"));
+        IrBlock *b0 = f->entry;
+        IrValue *s[6];
+        const IrType *sty[6] = { i32t, i32t, i32t, r03, nz, u32t };
+        IrValue *sv[6] = { w, y, w, y, y, b8 };
+        bool unc[6] = { false, false, true, true, false, true };
+        int at[6];
+        for (int q = 0; q < 6; q++) s[q] = ir_alloca(f, b0, (IrType *)sty[q]);
+        for (int q = 0; q < 6; q++) {
+            at[q] = nins(b0); ir_store(f, b0, s[q], sv[q]);
+            IrInstr *st = b0->instrs; while (st->next) st = st->next;
+            st->unchecked = unc[q];
+        }
+        IrValue *fv[2] = { y, w };
+        IrValue *sn = ir_struct_new(f, b0, S, fv, 2);
+        IrValue *pv[1] = { y };
+        IrValue *un = ir_sum_new(f, b0, Su, 0, pv, 1);
+        IrValue *c1 = mk_call(f, b0, "take8", y, u8t);
+        IrValue *c2 = mk_call(f, b0, "builtin_nobody", y, u8t);       // a builtin: lands nowhere
+        IrInstr *c3 = ir_instr(f, IR_CALL, u8t, 2);                    // take2(y, y): only b narrows
+        c3->aux.callee = nm("take2"); c3->operands[0] = y; c3->operands[1] = y; ir_emit(b0, c3);
+        IrValue *fp = ir_func_ref(f, b0, nm("take8"), fnt);
+        IrInstr *ic = ir_instr(f, IR_CALL, u8t, 2); ic->operands[0] = fp; ic->operands[1] = y; ir_emit(b0, ic);
+        // a constructor's field lands at the CONSTRUCTOR: waived there, the field's version is not
+        // the value even when the struct's store is checked
+        IrType *S1 = ir_type_new(&A, IRT_STRUCT);
+        S1->n_fields = 1; S1->fields = arena_push_many_aligned(&A, IrType*, 1); S1->fields[0] = i32t;
+        IrValue *sc[2], *fq[2];
+        for (int k = 0; k < 2; k++) {
+            sc[k] = ir_alloca(f, b0, S1);
+            IrValue *one[1] = { w };
+            IrValue *cv = ir_struct_new(f, b0, S1, one, 1);
+            IrInstr *cn = b0->instrs; while (cn->next) cn = cn->next;
+            cn->unchecked = k == 1;
+            ir_store(f, b0, sc[k], cv);
+        }
+        IrValue *q[6];
+        for (int k = 0; k < 6; k++) q[k] = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, u32t), ir_load(f, b0, s[k], (IrType *)sty[k]), u32t);
+        for (int k = 0; k < 2; k++) fq[k] = ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 100, i32t), ir_load(f, b0, ir_field_ptr(f, b0, sc[k], 0, i32t), i32t), i32t);
+        (void)sn; (void)un; (void)c2; (void)q;
+        ir_set_ret(b0, y);                                           // an i32 returned as a u8
+        ir_finalize_cfg(f);
+        jgen_module = take;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        jgen_module = NULL;
+        char key[48];
+        #define HAS(pt, kind, ord) (snprintf(key, sizeof key, " bb%d.%d " kind " %d\n", b0->id, (pt), (ord)), t && strstr(t, key))
+        CHECK(HAS(at[0], "narrow.lo", 0) && HAS(at[0], "narrow.hi", 0), "an i33 stored in an i32 owes both sides:\n%s", t ? t : "");
+        CHECK(!HAS(at[1], "narrow.lo", 0) && !HAS(at[1], "narrow.hi", 0), "a store of its own type owes nothing");
+        CHECK(!HAS(at[2], "narrow.lo", 0) && !HAS(at[2], "narrow.hi", 0), "a waived store into a plain slot owes nothing");
+        CHECK(HAS(at[3], "narrow.lo", 0) && HAS(at[3], "narrow.hi", 0), "a waived store into a refined slot owes its range (I.60)");
+        CHECK(!HAS(at[4], "narrow.lo", 0) && !HAS(at[4], "narrow.hi", 0) && HAS(at[4], "narrow.ne", 0), "a slot != 0 owes only the excluded value");
+        CHECK(!HAS(at[5], "narrow.lo", 0) && !HAS(at[5], "narrow.hi", 0), "a u8 into a u32 cannot lose it");
+        int isn = idx_of(b0, sn), iun = idx_of(b0, un), ic1 = idx_of(b0, c1), ic2 = idx_of(b0, c2), iic = idx_of(b0, ic->result);
+        CHECK(HAS(isn, "narrow.lo", 0) && HAS(isn, "narrow.hi", 0) && HAS(isn, "narrow.lo", 1) && HAS(isn, "narrow.hi", 1),
+              "a struct's fields each owe their type, by position:\n%s", t ? t : "");
+        CHECK(HAS(iun, "narrow.lo", 0) && HAS(iun, "narrow.hi", 0), "a sum's payload owes its type");
+        CHECK(HAS(ic1, "narrow.lo", 0) && HAS(ic1, "narrow.hi", 0), "a call's argument owes its parameter's type");
+        CHECK(!HAS(ic2, "narrow.lo", 0) && !HAS(ic2, "narrow.hi", 0), "a builtin's argument lands nowhere");
+        int ic3 = idx_of(b0, c3->result);
+        CHECK(!HAS(ic3, "narrow.lo", 0) && HAS(ic3, "narrow.lo", 1) && HAS(ic3, "narrow.hi", 1),
+              "each argument owes its own parameter, by position:\n%s", t ? t : "");
+        CHECK(HAS(iic, "narrow.lo", 0) && HAS(iic, "narrow.hi", 0), "an indirect call's argument owes the pointer type's parameter");
+        CHECK(HAS(nins(b0), "narrow.lo", 0) && HAS(nins(b0), "narrow.hi", 0), "the result owes the return type, at the block's end");
+        const char *ne = t ? vc_of(t, (snprintf(key, sizeof key, "bb%d.%d narrow.ne", b0->id, at[4]), key)) : "";
+        char want[96]; snprintf(want, sizeof want, "goal 1*%%v%d != 0", y->id);
+        CHECK(strstr(ne, want), "the excluded value is a `!=` goal:\n%s", ne);
+        // which versions are the value stored: the checked one, and the waived one into a refined
+        // slot (its obligation is owed); not the waived one into a plain slot (it may wrap)
+        bool exact[6] = { true, true, false, true, true, true };
+        for (int k = 0; k < 6; k++) {
+            snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, q[k]));
+            char vcbuf[1 << 12]; snprintf(vcbuf, sizeof vcbuf, "%s", t ? vc_of(t, key) : "");
+            snprintf(want, sizeof want, "store %%s%d@bb%d.%d :", s[k]->id, b0->id, at[k]);
+            CHECK(!!strstr(vcbuf, want) == exact[k], "store %d is %sthe value stored:\n%s", k, exact[k] ? "" : "not ", vcbuf);
+        }
+        for (int k = 0; k < 2; k++) {
+            snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, fq[k]));
+            char vcbuf[1 << 12]; snprintf(vcbuf, sizeof vcbuf, "%s", t ? vc_of(t, key) : "");
+            snprintf(want, sizeof want, "store %%s%d.0@bb%d.", sc[k]->id, b0->id);
+            CHECK(!!strstr(vcbuf, want) == (k == 0), "a field constructed %s is %sthe value:\n%s", k ? "waived" : "checked", k ? "not " : "", vcbuf);
+        }
+        #undef HAS
+        free(t);
+        // waived, the result owes nothing (it wraps); into a refined result type it is owed
+        b0->term.unchecked = true;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        snprintf(key, sizeof key, " bb%d.%d narrow.hi 0\n", b0->id, nins(b0));
+        CHECK(t && !strstr(t, key), "a waived return into a plain type owes nothing");
+        free(t);
+        IrType *r8 = ir_type_int(&A, 8, false); r8->has_refine = true; r8->refine_lo = 0; r8->refine_hi = 9;
+        f->ret_type = r8;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && strstr(t, key), "a waived return into a refined type owes its range");
+        free(t);
+    }
+    printf("  landings: a store, a field, a payload, an argument, the result; waived unless refined\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

@@ -35,9 +35,9 @@ func main() i32 {
     var l = Lexer(buf, 2)
     var s i32 = t[l.pos]
     c = peek(l)
-    s = s + t[l.pos + 1]
+    s = s +% t[l.pos + 1]
     skip(var l)
-    if l.pos < 8 { s = s + t[l.pos] }
+    if l.pos < 8 { s = s +% t[l.pos] }
     if c != 9 or l.pos != 3 or s != 38 { return 1 }
     l.pos = 4
     skip(var l)
@@ -45,7 +45,7 @@ func main() i32 {
     l.pos = 0
     var k i32 = 0
     while k < 3 {
-        if l.pos < 8 { s = s + t[l.pos] }
+        if l.pos < 8 { s = s +% t[l.pos] }
         skip(var l)
         k = k + 1
     }
