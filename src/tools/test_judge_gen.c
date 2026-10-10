@@ -64,6 +64,13 @@ static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, ch
 static char *gen_text(IrFunc *f) { ir_finalize_cfg(f); return gen_with(f, NULL, 0, JGEN_ALL, NULL); }
 static int nins(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
 static int count(const char *all, const char *key) { int n = 0; for (const char *p = all; (p = strstr(p, key)); p++) n++; return n; }
+static IrValue *mk_call(IrFunc *f, IrBlock *b, const char *callee, IrValue *arg, IrType *rt) {
+    IrInstr *c = ir_instr(f, IR_CALL, rt, 1);
+    c->aux.callee = nm(callee); c->operands[0] = arg;
+    ir_emit(b, c);
+    return c->result;
+}
+static int idx_of(IrBlock *b, IrValue *v) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next, n++) if (i->result == v) return n; return -1; }
 static JClaim claim1(IrBlock *b, IrValue *cell, int coef, long long rhs) {
     JClaim c; memset(&c, 0, sizeof c);
     c.blk = b->id; c.nt = 1; c.key[0] = cell->id; c.coef[0] = coef; c.rhs = rhs;
@@ -433,6 +440,58 @@ int main(void) {
         free(t);
         printf("  a branch whose both arms enter the join owes its claim once, with no edge fact\n");
     }
+    // 16. a struct's FIELDS are cells (P2.1), and P2.2's frame rule: a constructor's store gives each
+    // field its value; a call handed no reference to the struct, or a read-only one, keeps them; a
+    // call handed a mutable one makes them fresh, and so does a call to a callee the generator
+    // cannot see, once the struct has been handed to calls at all
+    for (int known = 1; known >= 0; known--) {
+        IrType *S = ir_type_new(&A, IRT_STRUCT);
+        IrType *ps = ir_type_new(&A, IRT_PTR); ps->elem = S;
+        IrType *pws = ir_type_new(&A, IRT_PTR); pws->elem = S; pws->ptr_mut = true;
+        IrFunc *rd = ir_func_new(&A, nm("rd"), u32t, IR_FUNC_PURE), *wr = ir_func_new(&A, nm("wr"), u32t, IR_FUNC_PURE);
+        IrFunc *nop = ir_func_new(&A, nm("nop"), u32t, IR_FUNC_PURE), *f = ir_func_new(&A, nm(known ? "g18" : "g19"), u32t, IR_FUNC_PURE);
+        ir_add_param(rd, ps, nm("p")); ir_add_param(wr, pws, nm("p")); ir_add_param(nop, u32t, nm("x"));
+        ir_set_ret(rd->entry, ir_const_int(rd, rd->entry, 0, u32t)); ir_set_ret(wr->entry, ir_const_int(wr, wr->entry, 0, u32t));
+        ir_set_ret(nop->entry, ir_const_int(nop, nop->entry, 0, u32t));
+        rd->next = wr; wr->next = nop; nop->next = f;
+        IrBlock *b0 = f->entry;
+        IrValue *s = ir_alloca(f, b0, S);
+        IrValue *fv[2] = { ir_const_int(f, b0, 5, u32t), ir_const_int(f, b0, 6, u32t) };
+        ir_store(f, b0, s, ir_struct_new(f, b0, S, fv, 2));
+        mk_call(f, b0, "nop", ir_const_int(f, b0, 1, u32t), u32t);
+        IrValue *q1 = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, u32t), ir_load(f, b0, ir_field_ptr(f, b0, s, 0, u32t), u32t), u32t);
+        mk_call(f, b0, "rd", s, u32t);
+        IrValue *q2 = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, u32t), ir_load(f, b0, ir_field_ptr(f, b0, s, 1, u32t), u32t), u32t);
+        mk_call(f, b0, "wr", s, u32t);
+        IrValue *q3 = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, u32t), ir_load(f, b0, ir_field_ptr(f, b0, s, 0, u32t), u32t), u32t);
+        IrInstr *a1 = ir_instr(f, IR_ADD, u32t, 2); a1->operands[0] = q1; a1->operands[1] = q2; a1->wrap = IR_WRAP_MODULAR; ir_emit(b0, a1);
+        IrInstr *a2 = ir_instr(f, IR_ADD, u32t, 2); a2->operands[0] = a1->result; a2->operands[1] = q3; a2->wrap = IR_WRAP_MODULAR; ir_emit(b0, a2);
+        ir_set_ret(b0, a2->result);
+        ir_finalize_cfg(f);
+        jgen_module = known ? rd : NULL;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        jgen_module = NULL;
+        // vc_of returns one buffer: each VC is copied out before the next is looked up
+        char key[48], want[64], v1[1 << 12], v2[1 << 12], v3[1 << 12];
+        IrValue *qs[3] = { q1, q2, q3 }; char *vs[3] = { v1, v2, v3 };
+        for (int k = 0; k < 3; k++) {
+            snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, qs[k]));
+            snprintf(vs[k], sizeof v1, "%s", t ? vc_of(t, key) : "");
+        }
+        snprintf(want, sizeof want, "%%s%d.0@havoc.bb%d.", s->id, b0->id);
+        CHECK(strstr(v3, want), "after the call handed a mutable reference, the field is fresh:\n%s", v3);
+        if (known) {
+            snprintf(want, sizeof want, "store %%s%d.0@bb%d.", s->id, b0->id);
+            CHECK(strstr(v1, want) && !strstr(v1, "@havoc"), "after a call handed no reference, the constructor's field 0 holds:\n%s", v1);
+            snprintf(want, sizeof want, "store %%s%d.1@bb%d.", s->id, b0->id);
+            CHECK(strstr(v2, want) && !strstr(v2, "@havoc"), "after a read-only reference, the constructor's field 1 holds:\n%s", v2);
+        } else {
+            snprintf(want, sizeof want, "%%s%d.0@havoc.bb%d.", s->id, b0->id);
+            CHECK(strstr(v1, want), "with no module, an unknown callee may write a struct handed to calls:\n%s", v1);
+        }
+        free(t);
+    }
+    printf("  field cells: a constructor's values; kept by a call with no or a read-only reference, not by a mutable one\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

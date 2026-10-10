@@ -1,0 +1,79 @@
+// The proof engine's judge versions cells the program also writes where no store to them names
+// them, and must make them fresh there (P2.2's frame rule): a local reached through a REFERENCE
+// BINDING (`var r = var n` stores n's address), by a store through r and by a call handed what r
+// refers to; two RAW pointer parameters given one address, whose pointees are never cells; and a
+// `var` parameter's storage that a raw pointer the caller took also names (`var py = &y;
+// kept(var y, py)`: E004 binds references, not raw addresses), by a store through it and by a call
+// handed it. In each case the version from before holds `= 1`, and a guard read it: stated after
+// the write, it would be false where the program runs (judge_gate checks every hypothesis of this
+// program's VCs at run time). The results are read natively and with --interpret.
+func two(p *var u32, q *var u32) u32 {
+    var t u32[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    var v u32 = 0
+    one u32 = 1
+    six u32 = 6
+    unsafe {
+        *p = one
+        *q = six
+        v = *p
+    }
+    if v < 8 { return t[v] }
+    return 0
+}
+
+func set_raw(p *var usize) {
+    six usize = 6
+    unsafe { *p = six }
+}
+
+// one function per path: a join of the two would hide either one's stale version in a disjunct
+func kept_store(n var usize, p *var usize) usize {
+    var t usize[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    one usize = 1
+    six usize = 6
+    n = one
+    unsafe { *p = six }
+    if n < 8 { return t[n] }
+    return 0
+}
+
+func kept_call(n var usize, p *var usize) usize {
+    var t usize[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    one usize = 1
+    n = one
+    set_raw(p)
+    if n < 8 { return t[n] }
+    return 0
+}
+
+func set6(var q usize) {
+    q = 6
+}
+
+func main() i32 {
+    var t i32[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    var s i32 = 0
+    var n usize = 1
+    if n < 3 {
+        var r = var n
+        r = 6
+        s = s + t[n]
+    }
+    var m usize = 1
+    if m < 3 {
+        var rm = var m
+        set6(var rm)
+        if m < 8 { s = s + t[m] }
+    }
+    if s != 12 { return 1 }
+    var x u32 = 0
+    var px = &x
+    if two(px, &x) != 6 { return 2 }
+    var y usize = 0
+    var py = &y
+    if kept_store(var y, py) != 6 { return 3 }
+    var z usize = 0
+    var pz = &z
+    if kept_call(var z, pz) != 6 { return 4 }
+    return 0
+}

@@ -1,0 +1,54 @@
+// The proof engine's judge versions a struct's FIELDS as cells (P2.1): a local struct's, and the
+// one a `var` parameter refers to. A call changes a field only when it is handed a MUTABLE
+// reference to the struct, or may run unmodelled writes: Lain has no stored references (E126) and
+// a `var` parameter's pointee is reachable only through its exclusive borrow (E004), P2.2's frame
+// rule. Handwriting's skip loop (H1) keeps `l.pos < l.src.len` across the classifier CALL in its
+// own condition; a read-only reference (`peek(l)`) leaves every field as it was; a constructor's
+// fields are its arguments; after `skip(var l)` the fields are fresh, so the index there needs its
+// own guard; and a loop whose only change to l is that call must version l afresh at its header,
+// or the second trip would read the first's `l.pos = 0`. judge_gate requires every VC of this
+// program implied, with and without the finder, and checks each field's versions at run time.
+// Read natively and with --interpret.
+type Lexer {
+    src u8[]
+    pos usize
+}
+
+func is_space(c u8) bool {
+    return c == 32 or c == 9 or c == 10 or c == 13
+}
+
+func skip(l var Lexer) {
+    while l.pos < l.src.len and is_space(l.src[l.pos]) decreasing l.src.len - l.pos {
+        l.pos = l.pos + 1
+    }
+}
+
+func peek(l Lexer) u8 {
+    if l.pos < l.src.len { return l.src[l.pos] }
+    return 0
+}
+
+func main() i32 {
+    var t i32[8] = [10, 11, 12, 13, 14, 15, 16, 17]
+    var buf u8[6] = [32, 32, 9, 97, 32, 98]
+    var l = Lexer(buf, 2)
+    var s i32 = t[l.pos]
+    c = peek(l)
+    s = s + t[l.pos + 1]
+    skip(var l)
+    if l.pos < 8 { s = s + t[l.pos] }
+    if c != 9 or l.pos != 3 or s != 38 { return 1 }
+    l.pos = 4
+    skip(var l)
+    if l.pos != 5 { return 2 }
+    l.pos = 0
+    var k i32 = 0
+    while k < 3 {
+        if l.pos < 8 { s = s + t[l.pos] }
+        skip(var l)
+        k = k + 1
+    }
+    if s != 74 { return 3 }
+    return 0
+}

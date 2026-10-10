@@ -1754,6 +1754,10 @@ ty=Slice_u8 scalar
 ### tests/trust/for_signed_range_negative_pass.ln
 rc=0
 out=
+### tests/trust/frame_unattributed_writes_pass.ln
+rc=0
+out=
+at=nonnull 2
 ### tests/trust/function_value_positions_pass.ln
 rc=0
 out=5 10 9 8
@@ -1875,6 +1879,14 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+ty=Slice_u8 scalar
+### tests/trust/judge_field_cells_pass.ln
+rc=0
+out=
+at=const 2
+at=nonnull 4
+at=pure 2
+ty=Lexer struct
 ty=Slice_u8 scalar
 ### tests/trust/judge_hull_nested_pass.ln
 rc=0

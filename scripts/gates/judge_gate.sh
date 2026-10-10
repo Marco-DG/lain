@@ -38,7 +38,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 REACHED_FLOOR=100000         # obligation events; 287,380 when the gate was written (19473f7)
-IMPLIED_FLOOR=7300       # obligations' VCs implied over the corpus; 7,319 of 7,471 when the floor was set (cfba74a and the inv claims). Lower it only with the reason
+IMPLIED_FLOOR=7450       # obligations' VCs implied over the corpus; 7,470 of 7,567 when the floor was set (102f71f and the field cells). Lower it only with the reason
 EDGE_FLOOR=50000         # claims checked at run time on the edges they are owed on; 260,682 when the floor was set
 USE_FLOOR=100000         # claims checked at run time where they are used; 1,215,712 when the floor was set
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT

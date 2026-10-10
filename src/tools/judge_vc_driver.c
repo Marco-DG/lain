@@ -103,9 +103,10 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
     // the VC's variable for it is the exact value the instruction is about to settle
     if (k == 0 && o->at && o->at->result && key == o->at->result->id) return false;
     IVal *c = &v[key];
-    if (k == 1) {
+    if (k == 1 || k == 4) {
         // the version current at the point is the cell's content; an older one is the value its
-        // store wrote, which the frame still holds (the store and that value dominate the point)
+        // store wrote, which the frame still holds (the store and that value dominate the point);
+        // kind 4 is a slice cell version's length, read the same way
         if (o->vcur[x]) {
             if (c->k != IV_PTR || !c->p.o || !c->p.o->live) return false;
             c = ip_cell(&c->p, NULL);
@@ -114,7 +115,7 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
             c = &v[o->vaux[x]];
         }
     }
-    if (k == 2) { if (c->k != IV_SLICE) return false; *out = c->len; return true; }
+    if (k == 2 || k == 4) { if (c->k != IV_SLICE) return false; *out = c->len; return true; }
     if (k == 3) {                                      // a fresh variable: its recipe
         const JRecipe *r = o->vrec ? o->vrec[x] : NULL;
         if (!r || r->den == 0) return false;
@@ -505,6 +506,7 @@ int main(int argc, char **argv) {
     sema_resolve_module(prog, mod, &sa);
     IrFunc *irmod = ir_lower_module(prog, &ia);
     vra_mod = irmod;
+    jgen_module = irmod;                               // the generator's callees (its frame rule)
     size_t cap = (size_t)1 << 28, hcap = (size_t)1 << 26;
     char *buf = malloc(cap), *hbuf = malloc(hcap);
     cl_work = malloc(CL_REGION);
@@ -560,7 +562,7 @@ int main(int argc, char **argv) {
                 for (int t = 0; t < o[i].vc.goal.nt; t++) {
                     int32_t x = o[i].vc.goal.t[t].var;
                     const char *what = "?";
-                    if (o[i].vkind[x] == 2) what = "len";
+                    if (o[i].vkind[x] == 2 || o[i].vkind[x] == 4) what = "len";
                     else if (o[i].vkind[x] == 1) {
                         const char *nmx = o[i].vc.vars[x];
                         what = strstr(nmx, "@head") ? "version.head" : strstr(nmx, "@join") ? "version.join"

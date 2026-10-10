@@ -13,9 +13,11 @@
 //   - every integer value's TYPE range, refinement included, as the interpreter's landing and
 //     settling guarantee it; never for a value whose own obligation is being stated, since that
 //     range is the obligation's conclusion;
-//   - the version of a local integer or slice CELL a load reads (P2.1): a store's version equals
-//     the value stored when its landing is exact; a join's or a written loop header's version is
-//     a fresh variable; a cell the loop never writes keeps its version through the header;
+//   - the version of an integer or slice CELL a load reads (P2.1: a local slot, or the pointee of
+//     a checked reference parameter, and a constant field path inside it): a store's version
+//     equals the value stored when its landing is exact (a constructor's field, for a whole
+//     struct); a join's, a changed loop header's, and a havoc point's version (P2.2's frame rule,
+//     at jg_cells) is a fresh variable; a cell the loop never changes keeps its version;
 //   - the branch conditions and ASSUMEs that dominate the point, as facts about the SSA values
 //     they tested (an edge counts when its target has that one predecessor);
 //   - at a join that dominates the point, one disjunct per predecessor (R7): the edge conditions
@@ -44,12 +46,11 @@
 // the block's entry anywhere its version is named. A claim is sound only with its obligations:
 // whoever proposes claims must have every claim's VCs implied, or drop the claim and generate again.
 //
-// Not stated yet, each costing precision only: cells whose address escapes (their loads are fresh
-// variables); struct field and element cells; a loop invariant no claim proposes, or of three
-// terms or more; landings at stores, arguments and returns; callees' contracts; an ABI layout's
-// size; a product of two variables (`outside`). The obligations mirror VRA's final pass for
-// bounds, division, overflow, integer casts, shifts and bit counts, so the two can be compared
-// obligation by obligation.
+// Not stated yet, each costing precision only: element cells; a raw pointer's pointee (its loads
+// are fresh variables); a loop invariant no claim proposes, or of three terms or more; landings at
+// stores, arguments and returns; callees' contracts; an ABI layout's size; a product of two
+// variables (`outside`). The obligations mirror VRA's final pass for bounds, division, overflow,
+// integer casts, shifts and bit counts, so the two can be compared obligation by obligation.
 //
 // Checked: scripts/gates/judge_gate.sh evaluates every hypothesis at run time over every accepted
 // program; src/tools/test_judge_gen.c pins the rules no program exercises.
@@ -134,7 +135,7 @@ static __int128 jg_const(const IrInstr *ins) {
 }
 
 // ── the function's structure ────────────────────────────────────────────────────────────────
-enum { JV_ENTRY, JV_STORE, JV_JOIN, JV_HEAD };
+enum { JV_ENTRY, JV_STORE, JV_JOIN, JV_HEAD, JV_HAVOC };
 typedef struct { int kind; int32_t cell, blk, idx; IrValue *stored; IrType *slot; bool unchecked; } JVer;
 typedef struct {
     JMem *m; IrFunc *f; char *err; size_t errcap;
@@ -144,8 +145,17 @@ typedef struct {
     int32_t *idom;                 // by block id; the entry's is itself
     int32_t *npred;
     IrInstr **def; int32_t *defblk, *defidx;   // by value id
-    int32_t *cell, ncells;         // by value id: the cell an ALLOCA is, or -1
-    IrValue **cellv;               // by cell: the ALLOCA's value
+    // P2.1's cells: a ROOT (a local slot, or the pointee of a checked reference parameter) and a
+    // constant field path inside it, whose leaf is an integer or a slice
+    int32_t *cell, ncells;         // by value id: the leaf cell an address is, or -1
+    IrValue **cellv;               // by cell: its first address in the RPO (the root itself for a root leaf)
+    int32_t *croot; const char **cpath; const IrType **cty; const char **cname;   // by cell
+    int32_t *aroot;                // by value id: the root an attributable address is inside, or -1
+    const char **apath;            // by value id: that address's field path (".1.0"; "" for the root)
+    int32_t *iroot;                // by value id: the root an ELEMENT address is inside, or -1
+    uint8_t *iunsafe;              // by value id: that element address came through an unchecked index
+    uint8_t *rclass;               // by value id, for a root: JR_LOCAL, JR_BORROWED or JR_LEAKED
+    int32_t *eff_cell; IrValue **eff_val; uint8_t *eff_unc; int32_t neff, eff_gen; int32_t *eff_stamp;  // jg_changes
     JVer *ver; int32_t nver, cver;
     int32_t *instate;              // by block id * ncells: the version at the block's entry
     int32_t *outstate;             // by block id * ncells: the version at the block's exit
@@ -285,35 +295,252 @@ static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, 
     }
     JVer *v = &g->ver[g->nver++];
     v->kind = kind; v->cell = cell; v->blk = blk; v->idx = idx; v->stored = stored; v->unchecked = unchecked;
-    v->slot = g->def[g->cellv[cell]->id]->aux.alloca_ty;
+    v->slot = (IrType *)g->cty[cell];
     return true;
 }
 
-// ── cells and their versions (P2.1, step A: a local whose every use is a LOAD's or STORE's address) ──
+// ── cells and their versions (P2.1) ─────────────────────────────────────────────────────────
+// A ROOT is a local slot (an ALLOCA of a fixed type, not a module table) or the pointee of a
+// parameter that is a CHECKED reference (a pointer type that is not raw). A CELL is a root and a
+// constant field path inside it whose leaf is an integer or a slice: `l.pos` through `l var Lexer`
+// is the parameter's root and path ".1". Every address an access names is ATTRIBUTABLE (the root,
+// or FIELD_PTRs from it), an ELEMENT address inside one (an ELEM_PTR from either), or neither.
+//
+// A root's ESCAPE CLASS (P2.1) is read from every use of an address inside it: LOCAL when each is
+// an access (a LOAD's or a STORE's address) or forms another address inside it; BORROWED when some
+// are also call arguments; LEAKED otherwise (a store of the address as a value, a reference
+// binding's included, a return, a cast, a constructor). A call that returns a reference into its
+// argument needs no rule of its own: it was handed a mutable reference, so the fields are fresh
+// after it, and while the reference it returned lives the struct is neither read nor written by
+// name (E004), so no fact about it can outlive a write through that reference. What changes a cell
+// (P2.2's frame rule), each a fresh version unless a store's value is known:
+//   - a store to the cell, or to a whole struct around it (a constructor's field is its value);
+//   - a call handed a MUTABLE reference to it or to a struct around it (a read-only reference
+//     cannot write it, E004);
+//   - for a BORROWED or LEAKED root, a call whose callee may run unmodelled writes (its effect
+//     row's write bit), is not known, or is indirect, and an opaque that writes;
+//   - for a LEAKED root, every call;
+//   - for a LEAKED root and a PARAMETER's pointee, a store through an address that is not
+//     attributable, and a call handed a value that may carry a RAW pointer (a raw pointer, or a
+//     struct or reference holding one). A raw pointer is checked by nothing: the caller may have
+//     taken one to the very storage a `var` parameter borrows (`var py = &y; kept(var y, py)`).
+//     A local root's address, never taken as a value, no raw pointer can name.
+// A call handed no reference to a root cannot write it: Lain has no stored references (E126) and
+// no mutable globals, and a `var` parameter's pointee is reachable by references only through its
+// exclusive borrow (E004, which binds references, not raw addresses). Those are TRUSTED premises,
+// as the translation table lists them; an extern's signature and effect row are believed. An
+// element store, checked, changes only its element, which is no cell; one through an unchecked
+// index may write anywhere in its root.
+enum { JR_NONE, JR_LOCAL, JR_BORROWED, JR_LEAKED };
+static IrFunc *jgen_module = NULL;        // where callees are looked up; none: every call is unknown
+
+static IrFunc *jg_callee(IrInstr *i) {
+    if (i->op != IR_CALL || !i->aux.callee) return NULL;
+    for (IrFunc *c = jgen_module; c; c = c->next)
+        if (c->name && c->name->length == i->aux.callee->length &&
+            !memcmp(c->name->name, i->aux.callee->name, (size_t)c->name->length)) return c;
+    return NULL;
+}
+// The type an attributable address points at, or NULL.
+static const IrType *jg_pointee(JG *g, int32_t id) {
+    IrInstr *d = g->def[id];
+    if (!d) { IrValue *v = jg_value(g, id); return v && v->type && v->type->kind == IRT_PTR ? v->type->elem : NULL; }
+    if (d->op == IR_ALLOCA) return d->aux.alloca_ty;
+    if (d->op == IR_FIELD_PTR && d->result && d->result->type)
+        return d->result->type->kind == IRT_PTR ? d->result->type->elem : d->result->type;   // an array field decays
+    return NULL;
+}
+static bool jg_leaf(const IrType *t) { return t && (jg_is_int(t) || t->kind == IRT_SLICE); }
+// Does path `p` lie inside path `q` (q a prefix at a field boundary)?
+static bool jg_inside(const char *p, const char *q) {
+    size_t n = strlen(q);
+    return !strncmp(p, q, n) && (p[n] == 0 || p[n] == '.');
+}
+static void jg_eff(JG *g, int32_t c, IrValue *val, bool unc) {
+    if (g->eff_stamp[c] == g->eff_gen) return;                // one change per cell per instruction
+    g->eff_stamp[c] = g->eff_gen;
+    g->eff_cell[g->neff] = c; g->eff_val[g->neff] = val; g->eff_unc[g->neff] = unc; g->neff++;
+}
+static void jg_havoc_root(JG *g, int32_t r, const char *under) {
+    for (int32_t c = 0; c < g->ncells; c++) if (g->croot[c] == r && jg_inside(g->cpath[c], under)) jg_eff(g, c, NULL, false);
+}
+static void jg_havoc_class(JG *g, int cls) {
+    for (int32_t c = 0; c < g->ncells; c++) if (g->rclass[g->croot[c]] >= cls) jg_eff(g, c, NULL, false);
+}
+// What a raw pointer may name: a LEAKED root, and a parameter's pointee.
+static void jg_havoc_rawable(JG *g) {
+    for (int32_t c = 0; c < g->ncells; c++) {
+        int32_t r = g->croot[c];
+        if (g->rclass[r] >= JR_LEAKED || !g->def[r]) jg_eff(g, c, NULL, false);
+    }
+}
+// May a value of this type carry a RAW pointer, itself or in what it holds or refers to? Too
+// deep a type is assumed to.
+static bool jg_carries_raw(const IrType *t, int depth) {
+    if (!t) return false;
+    if (depth > 8) return true;
+    switch (t->kind) {
+        case IRT_PTR: return t->is_raw || jg_carries_raw(t->elem, depth + 1);
+        case IRT_SLICE: case IRT_ARRAY: case IRT_VECTOR: return jg_carries_raw(t->elem, depth + 1);
+        case IRT_STRUCT: case IRT_SUM:
+            for (int k = 0; k < t->n_fields; k++) if (jg_carries_raw(t->fields[k], depth + 1)) return true;
+            return false;
+        default: return false;
+    }
+}
+// The part of a stored value at a path below the store's own: a constructor's field, recursively.
+static IrValue *jg_part(JG *g, IrValue *v, const char *rest) {
+    while (*rest == '.') {
+        IrInstr *d = v && v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
+        if (!d || d->op != IR_STRUCT_NEW) return NULL;
+        int k = atoi(rest + 1);
+        if (k < 0 || k >= d->n_operands) return NULL;
+        v = d->operands[k];
+        rest = strchr(rest + 1, '.'); if (!rest) rest = "";
+    }
+    return v;
+}
+// The cells instruction `i` may change, into g->eff_*: each with the value a store makes it, or
+// NULL for a fresh version (P2.2's frame rule, as above).
+static void jg_changes(JG *g, IrInstr *i) {
+    g->neff = 0; g->eff_gen++;
+    if (i->op == IR_STORE && i->n_operands >= 2 && i->operands[0] && i->operands[0]->id >= 0 && i->operands[0]->id < g->nv) {
+        int32_t a = i->operands[0]->id;
+        if (g->aroot[a] >= 0) {
+            for (int32_t c = 0; c < g->ncells; c++) {
+                if (g->croot[c] != g->aroot[a] || !jg_inside(g->cpath[c], g->apath[a])) continue;
+                IrValue *part = jg_part(g, i->operands[1], g->cpath[c] + strlen(g->apath[a]));
+                jg_eff(g, c, part, i->unchecked);
+            }
+        } else if (g->iroot[a] >= 0) {
+            if (g->iunsafe[a]) jg_havoc_root(g, g->iroot[a], "");
+        } else jg_havoc_rawable(g);
+        return;
+    }
+    if (i->op == IR_OPAQUE) { if (i->aux.opaque.writes) jg_havoc_class(g, JR_BORROWED); return; }
+    if (i->op != IR_CALL) return;
+    IrFunc *cf = jg_callee(i);
+    int first = i->aux.callee ? 0 : 1;                         // an indirect call's op[0] is its callee
+    IrParam *pp = cf ? cf->params : NULL;
+    bool raw = false;
+    for (int k = first; k < i->n_operands; k++, pp = pp ? pp->next : NULL) {
+        IrValue *o = i->operands[k];
+        if (!o || o->id < 0 || o->id >= g->nv) continue;
+        if (jg_carries_raw(o->type, 0)) raw = true;
+        const IrType *pt = pp && pp->value ? pp->value->type : NULL;
+        bool readonly = pt && pt->kind == IRT_PTR && !pt->is_raw && !pt->ptr_mut;
+        if (readonly) continue;
+        if (g->aroot[o->id] >= 0) jg_havoc_root(g, g->aroot[o->id], g->apath[o->id]);
+        else if (g->iroot[o->id] >= 0 && g->iunsafe[o->id]) jg_havoc_root(g, g->iroot[o->id], "");
+    }
+    if (!cf || (cf->effects & IR_EFFECT_UNMODELLED_WRITE)) jg_havoc_class(g, JR_BORROWED);
+    jg_havoc_class(g, JR_LEAKED);
+    if (raw) jg_havoc_rawable(g);
+}
 static bool jg_cells(JG *g) {
     IrFunc *f = g->f;
-    uint8_t *ok = JG_NEW(g, uint8_t, g->nv);
-    if (!ok) return jg_fail(g, "out of memory");
-    for (int32_t i = 0; i < g->nv; i++) {
-        IrInstr *d = g->def[i];
-        // an integer cell, or a slice cell (whose versions carry a length: a slice is copied whole)
-        ok[i] = d && d->op == IR_ALLOCA && d->aux.alloca_ty && !d->data &&
-                (jg_is_int(d->aux.alloca_ty) || d->aux.alloca_ty->kind == IRT_SLICE);
+    int32_t nv = g->nv;
+    if (!(g->aroot = JG_NEW(g, int32_t, nv)) || !(g->apath = JG_NEW(g, const char *, nv)) ||
+        !(g->iroot = JG_NEW(g, int32_t, nv)) || !(g->iunsafe = JG_NEW(g, uint8_t, nv)) || !(g->rclass = JG_NEW(g, uint8_t, nv)))
+        return jg_fail(g, "out of memory");
+    for (int32_t i = 0; i < nv; i++) { g->aroot[i] = g->iroot[i] = -1; g->apath[i] = NULL; g->iunsafe[i] = 0; g->rclass[i] = JR_NONE; }
+    // roots: checked reference parameters, then fixed local slots
+    for (IrParam *p = f->params; p; p = p->next) {
+        IrValue *v = p->value;
+        if (!v || v->id < 0 || v->id >= nv || !v->type || v->type->kind != IRT_PTR || v->type->is_raw || !v->type->elem) continue;
+        g->aroot[v->id] = v->id; g->apath[v->id] = ""; g->rclass[v->id] = JR_LOCAL;
     }
+    // addresses, over the RPO (an operand's definition comes first)
+    for (int32_t r = 0; r < g->nrpo; r++)
+        for (IrInstr *i = g->blk[g->rpo[r]]->instrs; i; i = i->next) {
+            if (!i->result || i->result->id < 0 || i->result->id >= nv) continue;
+            int32_t id = i->result->id;
+            if (i->op == IR_ALLOCA && i->aux.alloca_ty && !i->data && i->n_operands == 0) {
+                g->aroot[id] = id; g->apath[id] = ""; g->rclass[id] = JR_LOCAL; continue;
+            }
+            IrValue *b0 = i->n_operands >= 1 ? i->operands[0] : NULL;
+            if (!b0 || b0->id < 0 || b0->id >= nv) continue;
+            if (i->op == IR_FIELD_PTR && g->aroot[b0->id] >= 0) {
+                char buf[24]; int n = snprintf(buf, sizeof buf, ".%lld", (long long)i->aux.field_idx);
+                size_t m = strlen(g->apath[b0->id]);
+                char *pth = JG_NEW(g, char, m + (size_t)n + 1);
+                if (!pth) return jg_fail(g, "out of memory");
+                memcpy(pth, g->apath[b0->id], m); memcpy(pth + m, buf, (size_t)n + 1);
+                g->aroot[id] = g->aroot[b0->id]; g->apath[id] = pth;
+            } else if ((i->op == IR_FIELD_PTR || i->op == IR_ELEM_PTR) && (g->aroot[b0->id] >= 0 || g->iroot[b0->id] >= 0)) {
+                g->iroot[id] = g->aroot[b0->id] >= 0 ? g->aroot[b0->id] : g->iroot[b0->id];
+                g->iunsafe[id] = g->iunsafe[b0->id] || (i->op == IR_ELEM_PTR && i->unchecked);
+            }
+        }
+    // escape classes, from every use of an address inside a root
     for (IrBlock *b = f->blocks; b; b = b->next) {
+        if (g->rpoix[b->id] < 0) continue;
         for (IrInstr *i = b->instrs; i; i = i->next)
             for (int k = 0; k < i->n_operands; k++) {
                 IrValue *o = i->operands[k];
-                if (!o || o->id < 0 || o->id >= g->nv || !ok[o->id]) continue;
-                bool addr = (i->op == IR_LOAD && k == 0) || (i->op == IR_STORE && k == 0);
-                if (!addr) ok[o->id] = 0;                    // escapes: P2.1's later classes
+                if (!o || o->id < 0 || o->id >= nv) continue;
+                int32_t r = g->aroot[o->id] >= 0 ? g->aroot[o->id] : g->iroot[o->id];
+                if (r < 0) continue;
+                if ((i->op == IR_LOAD || i->op == IR_STORE || i->op == IR_FIELD_PTR || i->op == IR_ELEM_PTR) && k == 0) continue;
+                if (i->op == IR_CALL && !(i->aux.callee == NULL && k == 0)) {
+                    if (g->rclass[r] < JR_BORROWED) g->rclass[r] = JR_BORROWED;
+                    continue;
+                }
+                g->rclass[r] = JR_LEAKED;
             }
-        if (b->term.cond && b->term.cond->id >= 0 && b->term.cond->id < g->nv) ok[b->term.cond->id] = 0;
+        IrValue *tc = b->term.cond;
+        if (tc && tc->id >= 0 && tc->id < nv) {
+            int32_t r = g->aroot[tc->id] >= 0 ? g->aroot[tc->id] : g->iroot[tc->id];
+            if (r >= 0) g->rclass[r] = JR_LEAKED;
+        }
     }
+    // leaf cells: one per (root, path) an attributable address names
     g->ncells = 0;
-    for (int32_t i = 0; i < g->nv; i++) if (ok[i]) g->cell[i] = g->ncells++;
-    if (!(g->cellv = JG_NEW(g, IrValue *, g->ncells ? g->ncells : 1))) return jg_fail(g, "out of memory");
-    for (int32_t i = 0; i < g->nv; i++) if (g->cell[i] >= 0) g->cellv[g->cell[i]] = g->def[i]->result;
+    if (!(g->cellv = JG_NEW(g, IrValue *, nv ? nv : 1)) || !(g->croot = JG_NEW(g, int32_t, nv ? nv : 1)) ||
+        !(g->cpath = JG_NEW(g, const char *, nv ? nv : 1)) || !(g->cty = JG_NEW(g, const IrType *, nv ? nv : 1)) ||
+        !(g->cname = JG_NEW(g, const char *, nv ? nv : 1)))
+        return jg_fail(g, "out of memory");
+    for (int32_t pass = 0; pass < 2; pass++)                    // the parameters, then the RPO
+        for (int32_t q = 0; q < (pass ? g->nrpo : 1); q++) {
+            int32_t ids[64]; int32_t n = 0;
+            if (!pass) { for (IrParam *p = f->params; p && n < 64; p = p->next) if (p->value) ids[n++] = p->value->id; }
+            for (IrInstr *i = pass ? g->blk[g->rpo[q]]->instrs : NULL; i; i = i->next) {
+                if (!i->result || i->result->id < 0 || i->result->id >= nv || g->aroot[i->result->id] < 0) continue;
+                int32_t id = i->result->id;
+                const IrType *t = jg_pointee(g, id);
+                if (!jg_leaf(t)) continue;
+                int32_t c = -1;
+                for (int32_t c2 = 0; c2 < g->ncells && c < 0; c2++)
+                    if (g->croot[c2] == g->aroot[id] && !strcmp(g->cpath[c2], g->apath[id])) c = c2;
+                if (c < 0) {
+                    c = g->ncells++;
+                    g->cellv[c] = i->result; g->croot[c] = g->aroot[id]; g->cpath[c] = g->apath[id]; g->cty[c] = t;
+                    char nm[64]; snprintf(nm, sizeof nm, "%%s%lld%s", (long long)g->aroot[id], g->apath[id]);
+                    char *s2 = JG_NEW(g, char, strlen(nm) + 1);
+                    if (!s2) return jg_fail(g, "out of memory");
+                    strcpy(s2, nm); g->cname[c] = s2;
+                }
+                g->cell[id] = c;
+            }
+            for (int32_t k = 0; k < n; k++) {
+                int32_t id = ids[k];
+                if (id < 0 || id >= nv || g->aroot[id] < 0) continue;
+                const IrType *t = jg_pointee(g, id);
+                if (!jg_leaf(t)) continue;
+                int32_t c = g->ncells++;
+                g->cellv[c] = jg_value(g, id); g->croot[c] = id; g->cpath[c] = ""; g->cty[c] = t;
+                char nm[32]; snprintf(nm, sizeof nm, "%%s%lld", (long long)id);
+                char *s2 = JG_NEW(g, char, strlen(nm) + 1);
+                if (!s2) return jg_fail(g, "out of memory");
+                strcpy(s2, nm); g->cname[c] = s2;
+                g->cell[id] = c;
+            }
+        }
+    if (!(g->eff_cell = JG_NEW(g, int32_t, g->ncells ? g->ncells : 1)) || !(g->eff_val = JG_NEW(g, IrValue *, g->ncells ? g->ncells : 1)) ||
+        !(g->eff_unc = JG_NEW(g, uint8_t, g->ncells ? g->ncells : 1)) || !(g->eff_stamp = JG_NEW(g, int32_t, g->ncells ? g->ncells : 1)))
+        return jg_fail(g, "out of memory");
+    for (int32_t c = 0; c < g->ncells; c++) g->eff_stamp[c] = 0;
+    g->eff_gen = 0;
     // natural loops: a back edge t -> h, h dominating t; the loop is h and every block reaching t
     // without passing h
     size_t lsz = (size_t)g->nb * (size_t)g->nb, wsz = (size_t)g->nb * (size_t)(g->ncells ? g->ncells : 1);
@@ -336,15 +563,17 @@ static bool jg_cells(JG *g) {
             }
         }
     }
+    // the loop cut (D1 A2): a header versions afresh a cell its loop may change, by a store or a
+    // havoc point: the same jg_changes the versions below are made from
     for (int32_t h = 0; h < g->nb; h++) {
         uint8_t *L = g->inloop + (size_t)h * (size_t)g->nb;
         if (!L[h]) continue;
         for (int32_t x = 0; x < g->nb; x++) {
             if (!L[x] || !g->blk[x]) continue;
-            for (IrInstr *i = g->blk[x]->instrs; i; i = i->next)
-                if (i->op == IR_STORE && i->n_operands >= 2 && i->operands[0] && i->operands[0]->id >= 0 &&
-                    i->operands[0]->id < g->nv && g->cell[i->operands[0]->id] >= 0)
-                    g->writes[(size_t)h * (size_t)g->ncells + (size_t)g->cell[i->operands[0]->id]] = 1;
+            for (IrInstr *i = g->blk[x]->instrs; i; i = i->next) {
+                jg_changes(g, i);
+                for (int32_t e = 0; e < g->neff; e++) g->writes[(size_t)h * (size_t)g->ncells + (size_t)g->eff_cell[e]] = 1;
+            }
         }
     }
     // versions, forward over the RPO: a join's predecessors that are not back edges come first
@@ -388,11 +617,14 @@ static bool jg_cells(JG *g) {
         int32_t k = 0;
         for (IrInstr *i = b->instrs; i; i = i->next, k++) {
             IrValue *a = i->n_operands >= 1 ? i->operands[0] : NULL;
-            int32_t c = a && a->id >= 0 && a->id < g->nv ? g->cell[a->id] : -1;
-            if (c < 0) continue;
-            if (i->op == IR_LOAD && i->result) g->loadver[i->result->id] = o[c];
-            else if (i->op == IR_STORE && i->n_operands >= 2) {
-                if (!jg_pushver(g, JV_STORE, c, b->id, k, i->operands[1], i->unchecked)) return false;
+            if (i->op == IR_LOAD && i->result && a && a->id >= 0 && a->id < g->nv && g->cell[a->id] >= 0) {
+                g->loadver[i->result->id] = o[g->cell[a->id]];
+                continue;
+            }
+            jg_changes(g, i);
+            for (int32_t e = 0; e < g->neff; e++) {
+                int32_t c = g->eff_cell[e];
+                if (!jg_pushver(g, g->eff_val[e] ? JV_STORE : JV_HAVOC, c, b->id, k, g->eff_val[e], g->eff_unc[e])) return false;
                 o[c] = g->nver - 1;
             }
         }
@@ -404,9 +636,10 @@ static bool jg_cells(JG *g) {
 typedef struct { int32_t var; __int128 c; } JLT;
 typedef struct {
     JG *g; int32_t blk, idx;                 // the obligation's point
-    int32_t *vval, *vver, *vlen;             // var of a value, a version, a slice's length; -1 none
+    int32_t *vval, *vver, *vlen, *vlenv;     // var of a value, a version, a slice's length, a version's; -1 none
     const char **names; int32_t nvars, cvars;
-    int32_t *kind, *key;                     // per var: 0 value, 1 version, 2 length, 3 fresh; its key
+    int32_t *kind, *key;                     // per var: 0 value, 1 version, 2 length, 3 fresh, 4 a slice
+                                             // cell version's length; its key
     const IrType **vtype;                    // per var: the type it is read with
     const JRecipe **vrec;                    // per var: a fresh variable's recipe, else NULL
     int32_t *queue, qh, qt;                  // vars whose facts are still to be stated
@@ -463,13 +696,17 @@ static int32_t jb_local(JB *B, int32_t x, bool fresh) {
     return x;
 }
 static int32_t jb_ver(JB *B, int32_t ver) {
-    JVer *v = &B->g->ver[ver]; int32_t cid = B->g->cellv[v->cell]->id;
+    JVer *v = &B->g->ver[ver]; const char *cn = B->g->cname[v->cell];
     bool local = !jb_global_at(B, v->kind == JV_ENTRY ? -1 : v->blk);
     if (B->vver[ver] >= 0) return local ? jb_local(B, B->vver[ver], false) : B->vver[ver];
-    const char *n = v->kind == JV_ENTRY ? jb_str(B, "%%s%lld@entry", cid, 0, 0)
-                  : v->kind == JV_STORE ? jb_str(B, "%%s%lld@bb%lld.%lld", cid, v->blk, v->idx)
-                  : v->kind == JV_JOIN  ? jb_str(B, "%%s%lld@join.bb%lld", cid, v->blk, 0)
-                  :                       jb_str(B, "%%s%lld@head.bb%lld", cid, v->blk, 0);
+    char nm[96];
+    if (v->kind == JV_ENTRY)      snprintf(nm, sizeof nm, "%s@entry", cn);
+    else if (v->kind == JV_STORE) snprintf(nm, sizeof nm, "%s@bb%lld.%lld", cn, (long long)v->blk, (long long)v->idx);
+    else if (v->kind == JV_JOIN)  snprintf(nm, sizeof nm, "%s@join.bb%lld", cn, (long long)v->blk);
+    else if (v->kind == JV_HEAD)  snprintf(nm, sizeof nm, "%s@head.bb%lld", cn, (long long)v->blk);
+    else                          snprintf(nm, sizeof nm, "%s@havoc.bb%lld.%lld", cn, (long long)v->blk, (long long)v->idx);
+    char *n = JG_NEW(B->g, char, strlen(nm) + 1);
+    if (n) strcpy(n, nm); else B->fail = true;
     B->vver[ver] = jb_newvar(B, n, 1, ver, v->slot);
     return local ? jb_local(B, B->vver[ver], true) : B->vver[ver];
 }
@@ -491,6 +728,20 @@ static int32_t jb_len(JB *B, IrValue *s) {
         if (v->kind != JV_STORE || !v->stored || !v->stored->type || v->stored->type->kind != IRT_SLICE) break;
         s = v->stored;
         if (s->id < 0 || s->id >= B->g->nv) { B->fail = true; return 0; }
+    }
+    // a load of a slice cell's other version: every load of that version has its length
+    if (B->g->loadver[s->id] >= 0) {
+        int32_t ver = B->g->loadver[s->id];
+        JVer *v = &B->g->ver[ver];
+        bool vl = !jb_global_at(B, v->kind == JV_ENTRY ? -1 : v->blk);
+        if (B->vlenv[ver] >= 0) return vl ? jb_local(B, B->vlenv[ver], false) : B->vlenv[ver];
+        int32_t vv = jb_ver(B, ver);                         // its name, and its own facts
+        if (B->fail) return 0;
+        char nm[128]; snprintf(nm, sizeof nm, "len(%s)", B->names[vv]);
+        char *n = JG_NEW(B->g, char, strlen(nm) + 1);
+        if (n) strcpy(n, nm); else { B->fail = true; return 0; }
+        B->vlenv[ver] = jb_newvar(B, n, 4, ver, NULL);
+        return vl ? jb_local(B, B->vlenv[ver], true) : B->vlenv[ver];
     }
     bool local = !jb_global_at(B, B->g->defblk[s->id]);
     if (B->vlen[s->id] >= 0) return local ? jb_local(B, B->vlen[s->id], false) : B->vlen[s->id];
@@ -560,7 +811,9 @@ static void jb_type(JB *B, int32_t x, const IrType *ty, const char *what, long l
     JRange r; char tn[64];
     if (!jg_range(ty, &r)) return;
     jg_type_name(ty, tn, sizeof tn);
-    char o[128]; snprintf(o, sizeof o, "type %s%lld %s", what, id, tn);
+    char o[160];
+    if (id < 0) snprintf(o, sizeof o, "type %s %s", what, tn);            // a cell, by its name
+    else snprintf(o, sizeof o, "type %s%lld %s", what, id, tn);
     char *os = JG_NEW(B->g, char, strlen(o) + 1);
     if (!os) { B->fail = true; return; }
     strcpy(os, o);
@@ -676,14 +929,30 @@ static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
     if (B->kind[x] == 1) {                                     // a cell's version
         JVer *v = &g->ver[B->key[x]];
-        jb_type(B, x, v->slot, "%s", g->cellv[v->cell]->id);
+        jb_type(B, x, v->slot, g->cname[v->cell], -1);
         if (v->kind == JV_STORE && jg_store_exact(v)) {
             // the version is the value stored; a value of another type lands in the slot, and that
             // landing's obligation is the guarantee the slot's range above rests on
             JLT t[1]; t[0].var = jb_val(B, v->stored); t[0].c = 1;
-            jb_def(B, x, t, 1, jb_str(B, "store %%s%lld@bb%lld.%lld", g->cellv[v->cell]->id, v->blk, v->idx));
+            char o[96]; snprintf(o, sizeof o, "store %s@bb%lld.%lld", g->cname[v->cell], (long long)v->blk, (long long)v->idx);
+            char *os = JG_NEW(g, char, strlen(o) + 1);
+            if (os) strcpy(os, o); else B->fail = true;
+            jb_def(B, x, t, 1, os);
         }
         if (v->kind == JV_JOIN || v->kind == JV_HEAD) jb_claims(B, v);
+        return;
+    }
+    if (B->kind[x] == 4) {                                     // a slice cell version's length
+        const IrType *st = g->cty[g->ver[B->key[x]].cell];
+        int64_t es = 1;
+        if (st && st->elem && st->elem->kind == IRT_INT) es = st->elem->bits >= 8 ? st->elem->bits / 8 : 1;
+        char ob[160]; snprintf(ob, sizeof ob, "objsize %s", g->cname[g->ver[B->key[x]].cell]);
+        char *o = JG_NEW(g, char, strlen(ob) + 1);
+        if (!o) { B->fail = true; return; }
+        strcpy(o, ob);
+        JLT t[1]; t[0].var = x;
+        t[0].c = -1; jb_atom(B, o, t, 1, J_LE, 0);
+        t[0].c = 1;  jb_atom(B, o, t, 1, J_LE, (__int128)INT64_MAX / es);
         return;
     }
     if (B->kind[x] == 2) {                                     // a slice's length
@@ -892,7 +1161,10 @@ static bool jb_has(JB *B, IrValue *v) {
     // names directly (`a[0]` under `if a.len >= 1`)
     IrInstr *d = B->g->def[v->id];
     if (d && d->op == IR_SLICE_LEN && d->n_operands >= 1 && d->operands[0] &&
-        d->operands[0]->id >= 0 && d->operands[0]->id < B->g->nv) return B->vlen[d->operands[0]->id] >= 0;
+        d->operands[0]->id >= 0 && d->operands[0]->id < B->g->nv) {
+        int32_t sv = d->operands[0]->id;
+        return B->vlen[sv] >= 0 || (B->g->loadver[sv] >= 0 && B->vlenv[B->g->loadver[sv]] >= 0);
+    }
     return false;
 }
 static void jb_drain(JB *B) { while (B->qh < B->qt && !B->fail) jb_state(B, B->queue[B->qh++]); }
@@ -1051,10 +1323,11 @@ static JB jb_begin(JG *g, int32_t blk, int32_t idx, int32_t self) {
     JB B; memset(&B, 0, sizeof B);
     B.g = g; B.blk = blk; B.idx = idx; B.self = self; B.jS = -1; B.to = -1;
     B.vval = JG_NEW(g, int32_t, g->nv); B.vlen = JG_NEW(g, int32_t, g->nv); B.vver = JG_NEW(g, int32_t, g->nver ? g->nver : 1);
+    B.vlenv = JG_NEW(g, int32_t, g->nver ? g->nver : 1);
     B.cst = JG_NEW(g, int32_t, g->ncl ? g->ncl : 1);
-    if (!B.vval || !B.vlen || !B.vver || !B.cst) { B.fail = true; return B; }
+    if (!B.vval || !B.vlen || !B.vver || !B.vlenv || !B.cst) { B.fail = true; return B; }
     for (int32_t i = 0; i < g->nv; i++) B.vval[i] = B.vlen[i] = -1;
-    for (int32_t i = 0; i < g->nver; i++) B.vver[i] = -1;
+    for (int32_t i = 0; i < g->nver; i++) B.vver[i] = B.vlenv[i] = -1;
     for (int32_t i = 0; i < g->ncl; i++) B.cst[i] = -2;
     return B;
 }
@@ -1080,20 +1353,22 @@ static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *
     {   int32_t *k2 = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1);
         if (!k2) return false;
         for (int32_t i = 0; i < B->nvars; i++)
-            k2[i] = B->kind[i] == 1 ? g->cellv[g->ver[B->key[i]].cell]->id : B->key[i];
+            k2[i] = B->kind[i] == 1 || B->kind[i] == 4 ? g->cellv[g->ver[B->key[i]].cell]->id : B->key[i];
         o->vkind = B->kind; o->vkey = k2; o->vtype = B->vtype;
         int32_t *aux = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1);
         uint8_t *cur = JG_NEW(g, uint8_t, B->nvars ? B->nvars : 1);
         if (!aux || !cur) return false;
         for (int32_t i = 0; i < B->nvars; i++) {
             aux[i] = -1; cur[i] = 0;
-            if (B->kind[i] != 1) continue;
+            if (B->kind[i] != 1 && B->kind[i] != 4) continue;
             JVer *v = &g->ver[B->key[i]];
-            if (v->kind == JV_STORE && jg_store_exact(v)) aux[i] = v->stored->id;
-            // the cell's version at the point: the block's entry version, then its stores before it
+            if (v->kind == JV_STORE && (B->kind[i] == 4 ? v->stored && v->stored->type && v->stored->type->kind == IRT_SLICE : jg_store_exact(v)))
+                aux[i] = v->stored->id;
+            // the cell's version at the point: the block's entry version, then the versions its
+            // instructions before the point make (a store's, or a havoc's)
             int32_t cv = g->instate[(size_t)B->blk * (size_t)g->ncells + (size_t)v->cell];
             for (int32_t j = 0; j < g->nver; j++)
-                if (g->ver[j].kind == JV_STORE && g->ver[j].cell == v->cell && g->ver[j].blk == B->blk && g->ver[j].idx < B->idx) cv = j;
+                if (g->ver[j].idx >= 0 && g->ver[j].cell == v->cell && g->ver[j].blk == B->blk && g->ver[j].idx < B->idx) cv = j;
             cur[i] = cv == B->key[i];
         }
         o->vaux = aux; o->vcur = cur; o->vrec = B->vrec; }
@@ -1282,7 +1557,7 @@ static bool jg_loop_header(JG *g, int32_t b) {
 // integer value defined in a block that strictly dominates b.
 static bool jg_term_ok(JG *g, int32_t b, int32_t key) {
     if (key < 0 || key >= g->nv) return false;
-    if (g->cell[key] >= 0) return jg_is_int(g->def[key]->aux.alloca_ty);
+    if (g->cell[key] >= 0) return jg_is_int(g->cty[g->cell[key]]);
     IrValue *v = jg_value(g, key);
     if (!v || !jg_is_int(v->type)) return false;
     if (!g->def[key]) return true;                                // a parameter
@@ -1417,7 +1692,7 @@ static bool jgen_terms(JMem *m, IrFunc *f, int32_t blk, JSlot **out, int32_t *no
     for (int32_t c = 0; c < g.ncells; c++) {
         int32_t id = g.cellv[c]->id;
         if (!jg_term_ok(&g, blk, id)) continue;
-        K[n].blk = blk; K[n].key = id; K[n].type = g.def[id]->aux.alloca_ty; K[n].head = false; n++; seen[id] = 1;
+        K[n].blk = blk; K[n].key = id; K[n].type = g.cty[c]; K[n].head = false; n++; seen[id] = 1;
     }
     const uint8_t *L = g.inloop + (size_t)blk * (size_t)g.nb;
     for (int32_t x = 0; x < g.nb; x++) {
