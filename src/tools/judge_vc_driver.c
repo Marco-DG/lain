@@ -48,6 +48,11 @@
 #include "analysis/vra.h"
 #include "ir/emit_c.h"     // interp.h reads ir_iface_mark from it, as main.c includes them
 #include "ir/interp.h"
+#include "analysis/linearity.h"            // what static evaluation proves before it runs:
+#include "analysis/borrow.h"               // the analyses main.c runs, in its order
+#include "analysis/definite_init.h"
+#include "analysis/report.h"
+#include "frontends/lain/static_eval.h"   // DECIDE-W step 2, as main.c runs it
 #include "judge/gen.h"
 #include "judge/text.h"
 #include "solver/lia.h"    // the proposer's side only: propose_claims
@@ -653,6 +658,11 @@ int main(int argc, char **argv) {
     DeclList *prog = load_module(&aa, mod);
     if (!prog) { fprintf(stderr, "load failed\n"); return 1; }
     sema_resolve_module(prog, mod, &sa);
+    // A module constant whose initialiser calls a function is computed now and lowered as the
+    // literal it is, as the compiler does it (main.c, DECIDE-W step 2): the IR judged is the IR
+    // compiled. Without it the initialiser ran in `main`, with obligations the program never has.
+    Arena ea = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
+    if (ir_static_eval_module(prog, path, &ea)) { fprintf(stderr, "static evaluation failed\n"); return 1; }
     IrFunc *irmod = ir_lower_module(prog, &ia);
     vra_mod = irmod;
     jgen_module = irmod;                               // the generator's callees (its frame rule)

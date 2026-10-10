@@ -1,0 +1,24 @@
+// The judge must judge the IR the compiler emits. A module constant whose initialiser calls a
+// function is computed at compile time and lowered as a literal (DECIDE-W step 2, static_eval.h):
+// here F is 55, and `t[F]` is in bounds. The judge's driver lowered the module without that step,
+// so F's initialiser ran in `main`: `fib(10)` landing in a u8, and `t[F]` over all of u8, were
+// obligations the compiled program does not have, and the judge could not prove them (fib's
+// result is a sum over a loop). judge_gate requires every VC of this program implied, with and
+// without the finder. The result is read natively and with --interpret.
+func fib(n u32 <= 40) u32 {
+    var a u32 = 0
+    var b u32 = 1
+    var i u32 = 0
+    while i < n {
+        t = a +% b
+        a = b
+        b = t
+        i = i + 1
+    }
+    return a
+}
+F u8 = fib(10)
+func main() i32 {
+    var t u8[64] = [0 for k in 0..64]
+    return t[F] as i32 + F as i32 - 55
+}
