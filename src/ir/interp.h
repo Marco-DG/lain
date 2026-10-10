@@ -206,12 +206,36 @@ static void iv_shape(IVal *v, IrType *t, bool owned) {
 static IFrame *ii_frame = NULL;
 // The seal whose initialisation is running a CALL: its callee may write that binding's storage.
 static int32_t ii_open_seal = 0;
+// The cells iv_shape builds for one value of type `t`, saturating at 2^31.
+static int64_t iv_cells(const IrType *t) {
+    const int64_t cap = (int64_t)1 << 31;
+    if (!t) return 1;
+    if (t->kind == IRT_STRUCT) {
+        int64_t s = 1;
+        for (int k = 0; k < t->n_fields; k++) { s += iv_cells(t->fields[k]); if (s >= cap) return cap; }
+        return s;
+    }
+    if (t->kind == IRT_ARRAY && t->array_len >= 0) {
+        int64_t e = iv_cells(t->elem);
+        if (t->array_len > 0 && e > (cap - 1) / t->array_len) return cap;
+        return 1 + t->array_len * e;
+    }
+    if (t->kind == IRT_VECTOR) return t->array_len >= 0 && t->array_len < cap ? 1 + t->array_len : cap;
+    return 1;
+}
 static IObj *ii_new_obj(IrType *elem, int64_t count, const char *what) {
     // A count the interpreter's cells cannot hold is answered, not crashed on (I.121): the count
     // was truncated to int for the cells while the shaping loop ran to the full 64-bit count,
     // and a failed calloc was never checked.
     if (count < 0 || count > ((int64_t)1 << 24))
         ii_fail(98, "NOT MODELLED", NULL, "an object of %lld elements (%s)", (long long)count, what ? what : "?");
+    // ...and so is an ELEMENT too big to shape (I.195): the count capped the elements, not the cells
+    // under each one, and a struct of `u64[2147483647]` fields was shaped field by field until a
+    // calloc failed unchecked and the shaping wrote through NULL. The same budget for the whole tree.
+    int64_t per = iv_cells(elem);
+    if (count > 0 && per > (((int64_t)1 << 24) / count))
+        ii_fail(98, "NOT MODELLED", NULL, "an object of %lld elements of %lld cells each (%s)",
+                (long long)count, (long long)per, what ? what : "?");
     IObj *o = calloc(1, sizeof *o);
     if (!o) ii_fail(98, "NOT MODELLED", NULL, "out of memory for an object (%s)", what ? what : "?");
     o->live = true; o->what = what;
