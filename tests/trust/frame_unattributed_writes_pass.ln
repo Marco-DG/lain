@@ -26,7 +26,23 @@ func set_raw(p *var usize) {
     unsafe { *p = six }
 }
 
-// one function per path: a join of the two would hide either one's stale version in a disjunct
+// one function per path, and both through one join: the checker evaluates a join's hypothesis
+// by the disjunct of the predecessor the program took, so a stale version on either path is
+// false there, not hidden in a disjunction whose other arm it cannot evaluate
+func kept_either(n var usize, p *var usize, by_call bool) usize {
+    var t usize[8] = [0, 1, 2, 3, 4, 5, 6, 7]
+    one usize = 1
+    six usize = 6
+    n = one
+    if by_call {
+        set_raw(p)
+    } else {
+        unsafe { *p = six }
+    }
+    if n < 8 { return t[n] }
+    return 0
+}
+
 func kept_store(n var usize, p *var usize) usize {
     var t usize[8] = [0, 1, 2, 3, 4, 5, 6, 7]
     one usize = 1
@@ -75,5 +91,11 @@ func main() i32 {
     var z usize = 0
     var pz = &z
     if kept_call(var z, pz) != 6 { return 4 }
+    var e1 usize = 0
+    var pe1 = &e1
+    if kept_either(var e1, pe1, false) != 6 { return 5 }
+    var e2 usize = 0
+    var pe2 = &e2
+    if kept_either(var e2, pe2, true) != 6 { return 6 }
     return 0
 }

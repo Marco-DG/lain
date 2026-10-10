@@ -150,6 +150,19 @@ static int hk_cons(JObl *o, const JCons *c, IVal *v, int nv) {
     __int128 r = hk_jint(&c->rhs);
     return c->op == J_LE ? s <= r : c->op == J_EQ ? s == r : s != r;
 }
+// The predecessor each block was last entered from, per frame (keyed by the frame's values), from
+// the interpreter's own transitions: an R7 join's hypothesis is the disjunct of the path taken.
+typedef struct { const IVal *v; int32_t blk, pred; } HkLast;
+#define HK_LAST (1 << 16)
+static HkLast hk_lastpred[HK_LAST];
+static uint32_t hk_lp_slot(const IVal *v, int32_t blk) {
+    uint64_t x = (uint64_t)(uintptr_t)v * 0x9E3779B97F4A7C15ull ^ (uint64_t)(uint32_t)blk * 0xC2B2AE3D27D4EB4Full;
+    return (uint32_t)(x >> 32) & (HK_LAST - 1);
+}
+static int32_t hk_pred_of(const IVal *v, int32_t blk) {
+    const HkLast *e = &hk_lastpred[hk_lp_slot(v, blk)];
+    return e->v == v && e->blk == blk ? e->pred : -1;       // a slot another entry took: unknown
+}
 // Every hypothesis of one obligation, at the values the program has where it is owed.
 static void hk_check(JObl *o, IVal *v, int nv) {
     reached++;
@@ -159,8 +172,14 @@ static void hk_check(JObl *o, IVal *v, int nv) {
         // a premise is the antecedent of an implication VC (divovf: x = i64.min ⊨ y != -1),
         // not a fact about the run
         if (!strncmp(y->origin, "premise ", 8)) { premises++; continue; }
+        int32_t tp = o->hjoin && o->hjoin[k] >= 0 && o->hpred[k] ? hk_pred_of(v, o->hjoin[k]) : -1;
+        int dk = -1;
+        for (int d = 0; tp >= 0 && d < y->ndis && dk < 0; d++) if (o->hpred[k][d] == tp) dk = d;
         if (!y->disj) r = hk_cons(o, &y->cons, v, nv);
-        else {
+        else if (dk >= 0) {                                  // the join was entered from that one
+            r = 1;
+            for (int c = 0; c < y->dis[dk].nc && r != 0; c++) { int t = hk_cons(o, &y->dis[dk].c[c], v, nv); if (t == 0) r = 0; else if (t < 0) r = -1; }
+        } else {
             r = 0;
             for (int d = 0; d < y->ndis && r != 1; d++) {
                 int all = 1;
@@ -196,6 +215,7 @@ static void hk_on_block(IrFunc *f, IrBlock *to, IVal *v, int nv) {
     (void)f;
     IrBlock *b = hk_last; IVal *bv = hk_lastv;
     hk_last = NULL;
+    if (b && bv == v) { HkLast *e = &hk_lastpred[hk_lp_slot(v, to->id)]; e->v = v; e->blk = to->id; e->pred = b->id; }
     if (!b || bv != v || !nhe) return;
     HE key = { b, NULL };
     HE *h = bsearch(&key, he, (size_t)nhe, sizeof *he, he_cmp);

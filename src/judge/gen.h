@@ -90,6 +90,9 @@ typedef struct {
     // whether it is the cell's version current at the point (a VC may name an older one)
     const int32_t *vaux; const uint8_t *vcur;
     const JRecipe **vrec;                    // kind 3 (a fresh variable): its recipe
+    // per hypothesis, for a harness that knows the path taken: an R7 join's block (-1 for any other
+    // hypothesis), and the predecessor each of its disjuncts is the path through
+    const int32_t *hjoin; const int32_t *const *hpred;
 } JObl;
 
 // ── JInt from a machine integer (the generator's side; the kernel has its own arithmetic) ──
@@ -654,6 +657,7 @@ typedef struct {
     // stated inside this disjunct, never as hypotheses of their own.
     int32_t jS; JCons *sink; int32_t nsink, csink; int32_t *dsc; int32_t dgen;
     int32_t to;                              // a claim's obligation: the edge's target block; else -1
+    int32_t *jhyp, *jblk, **jpred; int32_t njr, cjr;   // R7 hypotheses: index, join, disjuncts' predecessors
     int32_t *cst;                            // per claim: -2 unstated, -1 VC-wide, else its disjunct
     bool fail;
 } JB;
@@ -1232,6 +1236,17 @@ static bool jb_join(JB *B, int32_t s) {
     JHyp *h = jb_hyp(B, jb_str(B, "join bb%lld", s, 0, 0));
     if (!h) return false;
     h->disj = true; h->ndis = np; h->dis = dis;
+    if (B->njr == B->cjr) {                                  // which predecessor each disjunct is
+        int32_t nc = B->cjr ? B->cjr * 2 : 8;
+        int32_t *a = JG_NEW(g, int32_t, nc), *b = JG_NEW(g, int32_t, nc); int32_t **c = JG_NEW(g, int32_t *, nc);
+        if (!a || !b || !c) { B->fail = true; return false; }
+        if (B->njr) { memcpy(a, B->jhyp, sizeof *a * (size_t)B->njr); memcpy(b, B->jblk, sizeof *b * (size_t)B->njr); memcpy(c, B->jpred, sizeof *c * (size_t)B->njr); }
+        B->jhyp = a; B->jblk = b; B->jpred = c; B->cjr = nc;
+    }
+    int32_t *pp = JG_NEW(g, int32_t, np);
+    if (!pp) { B->fail = true; return false; }
+    for (int k = 0; k < np; k++) pp[k] = pr[k]->id;
+    B->jhyp[B->njr] = B->nhyps - 1; B->jblk[B->njr] = s; B->jpred[B->njr] = pp; B->njr++;
     return true;
 }
 // Is the join S about the VC: a version it makes is a variable, or a condition into it tests one?
@@ -1374,7 +1389,13 @@ static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *
                 if (g->ver[j].idx >= 0 && g->ver[j].cell == v->cell && g->ver[j].blk == B->blk && g->ver[j].idx < B->idx) cv = j;
             cur[i] = cv == B->key[i];
         }
-        o->vaux = aux; o->vcur = cur; o->vrec = B->vrec; }
+        o->vaux = aux; o->vcur = cur; o->vrec = B->vrec;
+        int32_t *hj = JG_NEW(g, int32_t, B->nhyps ? B->nhyps : 1);
+        const int32_t **hp = JG_NEW(g, const int32_t *, B->nhyps ? B->nhyps : 1);
+        if (!hj || !hp) return false;
+        for (int32_t i = 0; i < B->nhyps; i++) { hj[i] = -1; hp[i] = NULL; }
+        for (int32_t r = 0; r < B->njr; r++) { hj[B->jhyp[r]] = B->jblk[r]; hp[B->jhyp[r]] = B->jpred[r]; }
+        o->hjoin = hj; o->hpred = (const int32_t *const *)hp; }
     return !B->fail && o->vc.id.irhash && o->vc.id.point && o->vc.id.ordinal;
 }
 
