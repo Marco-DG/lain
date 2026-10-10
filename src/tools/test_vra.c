@@ -305,6 +305,23 @@ static bool header_sink_reports(void) {
         && hdr_has(ic, 1, -1, 0, 10) && hdr_has(ic, -1, -1, 0, 0);        // 0 <= i <= 10
 }
 
+// I.196: a return OUTSIDE `unsafe` of a value that an unchecked instruction (one inside `unsafe`)
+// computed still owes its narrowing, i32 into the i8 result here: the waiver is the return's own
+// flag, the terminator's, as the interpreter reads it. The returned value's defining instruction
+// used to waive it. With the return itself unchecked, nothing is owed.
+static IrInstr *last_instr(IrBlock *b) { IrInstr *i = b->instrs; while (i && i->next) i = i->next; return i; }
+static bool ret_narrowing_owed(bool return_unchecked) {
+    IrFunc *f=ir_func_new(&A,nm("rw"),ir_type_int(&A,8,true),IR_FUNC_PROC);
+    IrType *i32=ir_type_int(&A,32,true);
+    IrValue *a=ir_add_param(f,i32,nm("a")), *b=ir_add_param(f,i32,nm("b"));
+    IrBlock *e=f->entry;
+    ir_binop(f,e,IR_ADD,a,b,i32);
+    IrInstr *add = last_instr(e); add->unchecked = true;     // computed inside `unsafe`
+    ir_set_ret(e, add->result); e->term.unchecked = return_unchecked;
+    ir_finalize_cfg(f);
+    Vra *V=vra_analyze(f); bool owed=find_any(V,VRA_OVERFLOW); vra_free(V); return owed;
+}
+
 // termination: `i=0; while i <cmp> B { i = i + step }`.
 static bool loop_terminates(int step, IrCmp cmp, int bound) {
     IrFunc *f=ir_func_new(&A,nm("t"),ir_type_int(&A,32,true),IR_FUNC_PURE);  // termination is a func property
@@ -525,6 +542,8 @@ int main(void) {
                accum_bounded(2), false);
     vra_expect("while x > 0 { x = x & (x-1) } terminates", mask_clear_loop(), true);
     vra_expect("the header sink reports i == s and 0 <= i <= 10 (PE.4)", header_sink_reports(), true);
+    vra_expect("a checked return of an unchecked value owes its narrowing (I.196)", ret_narrowing_owed(false), true);
+    vra_expect("an unchecked return owes no narrowing (I.196)", ret_narrowing_owed(true), false);
     vra_expect("counter cell never escapes -> terminates",
                call_resets_counter(false), true);
     vra_expect("a call is handed the counter's ADDRESS -> must NOT prove",

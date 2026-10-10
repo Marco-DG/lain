@@ -1415,7 +1415,7 @@ static int64_t  vra_argbind_lo[VRA_ARGBIND_MAX], vra_argbind_hi[VRA_ARGBIND_MAX]
 static bool     vra_argbind_has[VRA_ARGBIND_MAX];
 static int      vra_retq_depth = 0;
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
-                             IrInstr *at, int64_t line, int64_t col);   // fwd (Path-F's other half)
+                             IrInstr *at, bool waived, int64_t line, int64_t col);   // fwd (Path-F's other half)
 static int  vra_shape_len_for_stride(Vra *V, int stride_id, int *e0_out);        // fwd (S2)
 static bool vra_factor_shape(Vra *V, Octagon *W, int sbase, int idx);            // fwd (S2)
 
@@ -3376,12 +3376,18 @@ static bool vra_type_may_lose(const IrType *from, const IrType *to) {
 }
 
 static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
-                             IrInstr *at, int64_t line, int64_t col) {
+                             IrInstr *at, bool waived, int64_t line, int64_t col) {
     // Inside `unsafe` the narrowing is waived and wraps (vra_land_range), EXCEPT into a REFINED
     // type: `v i32 >= 0 and <= 3` is a predicate every reader of the value assumes, as it does a
     // struct's invariant, and a wrap to the bits cannot honour it. `unsafe { d.v = p }` with
     // p = 100 compiled, and the safe `t[d.v]` after it, proven from the refinement, read t[100].
-    if (at && at->unchecked && !(target && (target->has_refine || target->has_ne))) return;
+    //
+    // ★ `waived` IS THE LANDING'S OWN FLAG (I.196): the store's, the cast's, the call's, the
+    // constructor's, and for a return the TERMINATOR's, as the interpreter reads it (ii_land). The
+    // return site passed the returned value's defining instruction as `at`, and THAT instruction's
+    // flag waived the check: a value computed inside `unsafe` and returned outside it would have
+    // landed unchecked here and checked in the interpreter.
+    if (waived && !(target && (target->has_refine || target->has_ne))) return;
     if (!val || !val->type || !target) return;
     if (val->type->kind != IRT_INT || target->kind != IRT_INT) return;
     if (!vra_type_may_lose(val->type, target)) return;      // the target holds every value
@@ -6159,7 +6165,7 @@ static Vra *vra_analyze(IrFunc *f) {
                     IrType *slot = vra_store_slot(V, ins);
                     if (slot && vra_type_may_lose(ins->operands[1]->type, slot)) {
                         oct_close(&W);
-                        vra_check_narrow(V,&W, ins->operands[1], slot, ins, ins->line, ins->col);
+                        vra_check_narrow(V,&W, ins->operands[1], slot, ins, ins->unchecked, ins->line, ins->col);
                     }
                     break;
                 }
@@ -6175,7 +6181,7 @@ static Vra *vra_analyze(IrFunc *f) {
                         && ins->result && ins->result->type) {
                         oct_close(&W);
                         vra_check_narrow(V,&W, ins->operands[0], ins->result->type,
-                                         ins, ins->line, ins->col);
+                                         ins, ins->unchecked, ins->line, ins->col);
                     }
                     break;
                 // ── THE OTHER NARROWING SITES: every place a value MEETS A DECLARED SLOT ───
@@ -6214,7 +6220,7 @@ static Vra *vra_analyze(IrFunc *f) {
                             IrType  *pt  = pp->value ? pp->value->type : NULL;
                             if (!arg || !vra_type_may_lose(arg->type, pt)) continue;
                             oct_close(&W);
-                            vra_check_narrow(V,&W, arg, pt, ins, ins->line, ins->col);
+                            vra_check_narrow(V,&W, arg, pt, ins, ins->unchecked, ins->line, ins->col);
                         }
                     } else if (!ins->aux.callee && ins->n_operands >= 1 && ins->operands[0]
                                && ins->operands[0]->type) {
@@ -6226,7 +6232,7 @@ static Vra *vra_analyze(IrFunc *f) {
                             IrType  *pt  = ft->fields[k - 1];
                             if (!arg || !vra_type_may_lose(arg->type, pt)) continue;
                             oct_close(&W);
-                            vra_check_narrow(V,&W, arg, pt, ins, ins->line, ins->col);
+                            vra_check_narrow(V,&W, arg, pt, ins, ins->unchecked, ins->line, ins->col);
                         }
                     }
                     break;
@@ -6243,7 +6249,7 @@ static Vra *vra_analyze(IrFunc *f) {
                         IrType  *ft = st->fields[k];
                         if (!fv || !vra_type_may_lose(fv->type, ft)) continue;
                         oct_close(&W);
-                        vra_check_narrow(V,&W, fv, ft, ins, ins->line, ins->col);
+                        vra_check_narrow(V,&W, fv, ft, ins, ins->unchecked, ins->line, ins->col);
                     }
                     break;
                 }
@@ -6261,7 +6267,7 @@ static Vra *vra_analyze(IrFunc *f) {
                                    : (k==0 ? pl : NULL);
                         if (!pv2 || !vra_type_may_lose(pv2->type, ft)) continue;
                         oct_close(&W);
-                        vra_check_narrow(V,&W, pv2, ft, ins, ins->line, ins->col);
+                        vra_check_narrow(V,&W, pv2, ft, ins, ins->unchecked, ins->line, ins->col);
                     }
                     break;
                 }
@@ -6294,7 +6300,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 bool sp = site && site->line;
                 isize rl = sp ? site->line : b->term.line;
                 isize rc = sp ? site->col  : b->term.col;
-                vra_check_narrow(V,&W, rv, V->f->ret_type, site, rl, rc);
+                vra_check_narrow(V,&W, rv, V->f->ret_type, site, b->term.unchecked, rl, rc);
             }
         }
     }
