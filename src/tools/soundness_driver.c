@@ -258,7 +258,7 @@ static void trial_mem(Case *c) {
     int64_t *m = malloc((size_t)V->dsz * 8 + 8); Octagon W = { V->noct, 2 * V->noct, m };
     __int128 rlo = 0, rhi = 0;
     const int *map_saved = oct_map; oct_map = V->odim;
-    if (reached) { memcpy(m, V->in[obs->id], (size_t)V->dsz * 8); oct_close(&W); range_of(V, &W, r, &rlo, &rhi);
+    if (reached) { vra_in_load(V, obs->id, m); oct_close(&W); range_of(V, &W, r, &rlo, &rhi);
                    st.results++; if (rlo > it_min(r->type) || rhi < it_max(r->type)) st.nontrivial++; }
     oct_map = map_saved;
 
@@ -390,7 +390,7 @@ static void trial(void) {
     IrValue *vals[3] = { x, y, r }; int64_t dub[3][3];
     const int *map_saved = oct_map; oct_map = V->odim;          // queries outside vra_analyze map
     if (reached) {                                               // value ids to packed slots
-        memcpy(m, V->in[obs->id], (size_t)V->dsz * 8);
+        vra_in_load(V, obs->id, m);
         oct_close(&W);
         if (r) range_of(V, &W, r, &rlo, &rhi);
         range_of(V, &W, x, &xlo, &xhi);

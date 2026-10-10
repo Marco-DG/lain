@@ -246,6 +246,44 @@ typedef struct {
     bool      dom_tried, dom_ok;
 } Vra;
 
+// ── PER-BLOCK STATES, STORED PACKED (I.89, step 2) ──────────────────────────────────────────
+// Every block kept a dense dim² matrix for its entry state, allocated up front: a function with a
+// branch after each of 80 calls held 161 matrices of 560² entries, 1.6 GB, and 160 calls would
+// have needed about 13 GB. Since the octagon stores only what its paths derive (step 1), a state
+// differs from ⊤ in few entries, so V->in[b] is that list: in[b][0] = n, then n (index, value)
+// pairs for the entries that are not ⊤'s (0 on the diagonal, OCT_INF elsewhere). NULL: never
+// stored. Every reader expands it into a dense working matrix and every writer packs one.
+static void vra_in_load(const Vra *V, int b, int64_t *dense) {
+    int64_t n = V->dsz, d = 2 * (int64_t)V->noct;
+    for (int64_t k = 0; k < n; k++) dense[k] = OCT_INF;
+    for (int64_t k = 0; k < d; k++) dense[k * d + k] = 0;
+    const int64_t *p = V->in[b];
+    if (!p) return;
+    for (int64_t k = 0; k < p[0]; k++) dense[p[1 + 2*k]] = p[2 + 2*k];
+}
+static int64_t *vra_in_buf = NULL; static size_t vra_in_cap = 0;   // one pass, then one copy
+static void vra_in_store(Vra *V, int b, const int64_t *dense) {
+    int64_t d = 2 * (int64_t)V->noct, q = 0;
+    for (int64_t i = 0; i < d; i++) {
+        const int64_t *row = dense + i * d;
+        for (int64_t j = 0; j < d; j++) {
+            int64_t v = row[j];
+            if (v == (i == j ? 0 : OCT_INF)) continue;
+            if ((size_t)(1 + 2*q + 2) > vra_in_cap) {
+                vra_in_cap = vra_in_cap ? 2 * vra_in_cap : 4096;
+                vra_in_buf = (int64_t *)realloc(vra_in_buf, sizeof(int64_t) * vra_in_cap);
+                if (!vra_in_buf) { fprintf(stderr, "lain: out of memory storing a block's state\n"); exit(70); }
+            }
+            vra_in_buf[1 + 2*q] = i * d + j; vra_in_buf[2 + 2*q] = v; q++;
+        }
+    }
+    int64_t *p = (int64_t *)realloc(V->in[b], sizeof(int64_t) * (size_t)(1 + 2 * q));
+    if (!p) { fprintf(stderr, "lain: out of memory storing a block's state\n"); exit(70); }
+    p[0] = q;
+    if (q) memcpy(p + 1, vra_in_buf + 1, sizeof(int64_t) * (size_t)(2 * q));
+    V->in[b] = p;
+}
+
 // ★ DOES THIS OPERATION'S RESULT EQUAL ITS VALUE OVER ℤ? Every structural rule in this file —
 // the midpoint identity, a loop's `i + 1` step, an accumulator's delta, a slice's `hi − lo`
 // length — reads an `add`/`sub`/`mul` as integer arithmetic. A CHECK-mode operation earns that
@@ -621,7 +659,7 @@ static void vra_seed_element_ranges_round_to(Vra *V, int64_t *olo, int64_t *ohi,
     }
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         bool replay = Wm && V->reached && V->reached[b->id] && V->in && V->in[b->id];
-        if (replay) { memcpy(Wm, V->in[b->id], (size_t)V->dsz*8); oct_set_clean(&Wv, V->inclosed && V->inclosed[b->id]); oct_close(&Wv); }
+        if (replay) { vra_in_load(V, b->id, Wm); oct_set_clean(&Wv, V->inclosed && V->inclosed[b->id]); oct_close(&Wv); }
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             if (replay && ins->op != IR_STORE) vra_transfer_instr(V, &Wv, ins);
             if (ins->op != IR_STORE || ins->n_operands < 2) {
@@ -1821,7 +1859,7 @@ static bool vra_cell_entry_range(Vra *V, IrBlock *H, const char *body, int cell,
         if (!V->reached[q->id] || !V->in[q->id]) continue; // never reached: no entry from there
         int64_t *sc = malloc((size_t)V->dsz*8);
         if (!sc) return false;
-        memcpy(sc, V->in[q->id], (size_t)V->dsz*8);
+        vra_in_load(V, q->id, sc);
         Octagon E = { V->noct, 2*V->noct, sc };
         oct_close(&E);
         for (IrInstr *x = q->instrs; x; x = x->next) vra_transfer_instr(V, &E, x);
@@ -4155,7 +4193,7 @@ static bool vra_step_old_positive(Vra *V, IrBlock *b, IrInstr *st, IrInstr *vd) 
     if (ov < 0 || ov >= V->nvar) return false;
     int64_t *sc = malloc((size_t)V->dsz * 8);
     if (!sc) return false;
-    memcpy(sc, V->in[b->id], (size_t)V->dsz * 8);
+    vra_in_load(V, b->id, sc);
     Octagon SW = { V->noct, 2 * V->noct, sc };
     oct_close(&SW);
     for (IrInstr *q = b->instrs; q && q != st; q = q->next) vra_transfer_instr(V, &SW, q);
@@ -4241,7 +4279,7 @@ static bool vra_edge_live(Vra *V, IrBlock *q, int k) {
     if (q->term.kind != IR_TERM_BR_COND || !q->term.cond) return true;
     int64_t *sc = malloc((size_t)V->dsz*8);
     if (!sc) return true;                                     // unknown: keep the edge
-    memcpy(sc, V->in[q->id], (size_t)V->dsz*8);
+    vra_in_load(V, q->id, sc);
     Octagon E = { V->noct, 2*V->noct, sc };
     oct_close(&E);
     for (IrInstr *x=q->instrs; x; x=x->next) vra_transfer_instr(V,&E,x);
@@ -4461,7 +4499,7 @@ static bool vra_loop_terminates_pair(Vra *V, IrBlock *H, IrBlock *E) {
                 if (nv<0 || nv>=V->nvar || !V->in[b->id]) { bad=true; break; }
                 int64_t *sc = malloc((size_t)V->dsz*8);
                 if (!sc) { bad=true; break; }
-                memcpy(sc, V->in[b->id], (size_t)V->dsz*8);
+                vra_in_load(V, b->id, sc);
                 Octagon SW = { V->noct, 2*V->noct, sc };
                 oct_close(&SW);
                 for (IrInstr *q=b->instrs; q && q!=st; q=q->next) vra_transfer_instr(V,&SW,q);
@@ -4645,7 +4683,7 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
                             int64_t slo,shi; bool hl,hh;
                             int64_t *sc = malloc((size_t)V->dsz*8);
                             if (sc) {
-                                memcpy(sc, V->in[b->id], (size_t)V->dsz*8);
+                                vra_in_load(V, b->id, sc);
                                 Octagon SW = { V->noct, 2*V->noct, sc };
                                 oct_close(&SW);
                                 for (IrInstr *q=b->instrs; q && q!=st; q=q->next)
@@ -4703,7 +4741,7 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
                     int dcell = (fbase < 0) ? cell : ccell;
                     int64_t *sc2 = malloc((size_t)V->dsz*8);
                     if (sc2 && sv >= 0 && sv < V->nvar) {
-                        memcpy(sc2, V->in[b->id], (size_t)V->dsz*8);
+                        vra_in_load(V, b->id, sc2);
                         Octagon SW2 = { V->noct, 2*V->noct, sc2 };
                         oct_close(&SW2);
                         for (IrInstr *q=b->instrs; q && q!=st; q=q->next) vra_transfer_instr(V,&SW2,q);
@@ -5467,7 +5505,9 @@ static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMea
 // must start from the same entry state pass 0 did — re-running from a stale `in[entry]` would
 // start pass 1 inside pass 0's conclusions.
 static void vra_seed_entry(Vra *V, IrFunc *f, int dim) {
-    Octagon E={V->noct,dim,V->in[f->entry->id]}; oct_init_top(&E,V->noct,E.m);
+    int64_t *Em = malloc((size_t)V->dsz * 8);
+    if (!Em) { fprintf(stderr, "lain: out of memory seeding a function's entry\n"); exit(70); }
+    Octagon E={V->noct,dim,Em}; oct_init_top(&E,V->noct,E.m);
     V->inclosed[f->entry->id] = false;          // seeded constraint by constraint, never closed
       // seed each integer parameter's type interval (a usize is ≥ 0, etc.). Skip a
       // bound whose doubled DBM entry would overflow (e.g. u64's ~2^63 upper).
@@ -5485,6 +5525,8 @@ static void vra_seed_entry(Vra *V, IrFunc *f, int dim) {
           if (tlo > -OCT_INF/2) oct_add_lb(&E, p->value->id, tlo);
           if (thi <  OCT_INF/2) oct_add_ub(&E, p->value->id, thi);
       }
+      vra_in_store(V, f->entry->id, Em);
+      free(Em);
     }
 
 // ★ ONE ANALYSIS, READ BY EVERY PASS THAT CAN. A program's functions were each analysed about
@@ -5700,7 +5742,7 @@ static void vra_check_rebuild(Vra *V, IrFunc *f, int dim) {
     // the entry: the analysis's own initial state (vra_seed_entry), never searched
     {
         int e = f->entry->id;
-        Octagon E = { V->noct, dim, Wm }; memcpy(Wm, V->in[e], bytes); oct_set_clean(&E, false); oct_close(&E);
+        Octagon E = { V->noct, dim, Wm }; vra_in_load(V, e, Wm); oct_set_clean(&E, false); oct_close(&E);
         if (hdr[e]) {
             if (!cr[e]) vra_check_fail(V, "the entry bb%d is a header it states unreached", e);
             Octagon H = { V->noct, dim, C[e] }; oct_set_clean(&H, true);
@@ -5738,7 +5780,7 @@ static void vra_check_rebuild(Vra *V, IrFunc *f, int dim) {
         }
     }
     for (int i=0;i<nb;i++) {
-        if (cr[i] && C[i]) { memcpy(V->in[i], C[i], bytes); V->inclosed[i] = false; V->reached[i] = true; }
+        if (cr[i] && C[i]) { vra_in_store(V, i, C[i]); V->inclosed[i] = false; V->reached[i] = true; }
         else V->reached[i] = false;
         free(C[i]);
     }
@@ -5895,10 +5937,10 @@ static Vra *vra_analyze(IrFunc *f) {
             V->elem_known[id] = true; V->elem_lo[id] = E->lo.v; V->elem_hi[id] = E->hi.v;
         }
     }
-    for (int i=0;i<nb;i++) V->in[i]=malloc(V->dsz*sizeof(int64_t));
+    for (int i=0;i<nb;i++) V->in[i]=NULL;                       // packed, stored when first reached
 
     int64_t wb[1]; (void)wb;
-    int64_t *W_m=malloc(V->dsz*8), *T_m=malloc(V->dsz*8), *J_m=malloc(V->dsz*8), *D_m=malloc(V->dsz*8);
+    int64_t *W_m=malloc(V->dsz*8), *T_m=malloc(V->dsz*8), *J_m=malloc(V->dsz*8), *D_m=malloc(V->dsz*8), *I_m=malloc(V->dsz*8);
     Octagon W={V->noct,dim,W_m}, T={V->noct,dim,T_m}, J={V->noct,dim,J_m}, D={V->noct,dim,D_m};
 
     vra_seed_entry(V, f, dim);
@@ -6039,7 +6081,7 @@ static Vra *vra_analyze(IrFunc *f) {
             // each edge's copy of W below, although most of them were copies of a matrix closed a
             // moment before: 70% of the closures that followed a copy or a join were such
             // re-closures of a closed state.
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]);
+            vra_in_load(V, b->id, W_m); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]);
             oct_close(&W);
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
@@ -6051,14 +6093,15 @@ static Vra *vra_analyze(IrFunc *f) {
                 memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim; oct_set_clean(&T, W.clean);
                 if (guarded){ vra_refine_guard(V,&T,cond,k==0); oct_close(&T); }
                 if (oct_is_bottom(&T)) continue;
-                if (!V->reached[s->id]) { memcpy(V->in[s->id],T_m,V->dsz*8); V->inclosed[s->id]=T.clean; V->reached[s->id]=true; changed=true; continue; }
-                Octagon In={V->noct,dim,V->in[s->id]};
+                if (!V->reached[s->id]) { vra_in_store(V, s->id, T_m); V->inclosed[s->id]=T.clean; V->reached[s->id]=true; changed=true; continue; }
+                vra_in_load(V, s->id, I_m);
+                Octagon In={V->noct,dim,I_m};
                 oct_join(&J,&In,&T);
                 // The pointwise max of two tightly closed octagons is tightly closed (Miné; the
                 // unary entries stay even). A widened one is not.
                 bool jclosed = V->inclosed[s->id] && T.clean;
                 if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); oct_set_clean(&J, false); jclosed=false; }
-                if (!oct_leq(&J,&In)){ memcpy(V->in[s->id],J_m,V->dsz*8); V->inclosed[s->id]=jclosed; changed=true; }
+                if (!oct_leq(&J,&In)){ vra_in_store(V, s->id, J_m); V->inclosed[s->id]=jclosed; changed=true; }
             }
         }
     }
@@ -6084,7 +6127,7 @@ static Vra *vra_analyze(IrFunc *f) {
                     ins->result->id < V->nvar) V->modwrap[ins->result->id] = false;
             continue;
         }
-        memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]); oct_close(&W);
+        vra_in_load(V, b->id, W_m); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]); oct_close(&W);
         for (IrInstr *ins=b->instrs; ins; ins=ins->next) {
             switch (ins->op) {
                 // a constant index into a FIXED array is fully decidable from constants
@@ -6393,7 +6436,7 @@ static Vra *vra_analyze(IrFunc *f) {
             if (b->term.kind!=IR_TERM_RET) continue;
             if (!b->term.cond) { all=false; continue; }
             if (!V->reached[b->id]) continue;          // unreachable: contributes nothing
-            memcpy(W_m, V->in[b->id], V->dsz*8); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]);
+            vra_in_load(V, b->id, W_m); W.nvar=V->noct; W.dim=dim; oct_set_clean(&W, V->inclosed[b->id]);
             for (IrInstr *ins=b->instrs; ins; ins=ins->next) vra_transfer_instr(V,&W,ins);
             oct_close(&W);
             int64_t lo,hi; vra_range(V,&W,b->term.cond,&lo,&hi);
@@ -6435,7 +6478,7 @@ static Vra *vra_analyze(IrFunc *f) {
     if (f->incomplete) for (int i=0;i<V->nchecks;i++) V->checks[i].ok=false;
     for (int i=0;i<nb;i++) if (loopmod[i]) free(loopmod[i]);
     free(loopmod);
-    free(W_m); free(T_m); free(J_m); free(D_m);
+    free(W_m); free(T_m); free(J_m); free(D_m); free(I_m);
     if (vra_depth == 1 && vra_mod) {
         bool all = !f->incomplete;
         for (IrBlock *b=f->blocks; b && all; b=b->next) {
@@ -6644,7 +6687,7 @@ static bool vra_index_disjoint(void *vctx, IrValue *a, IrValue *b) {
     // two known, differing constants need no octagon
     if (V->cknown[a->id] && V->cknown[b->id]) return V->cval[a->id] != V->cval[b->id];
     int dim = 2*V->noct;
-    memcpy(D->scratch, V->in[D->blk->id], (size_t)V->dsz*8);
+    vra_in_load(V, D->blk->id, D->scratch);
     const int *oct_map_saved = oct_map; oct_map = V->odim;   // queries run outside vra_analyze
     Octagon W = { V->noct, dim, D->scratch };
     oct_close(&W);
@@ -6714,7 +6757,7 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
         bool ok = true;
         for (IrBlock *b=f->blocks; b && ok; b=b->next) {
             if (!V->reached[b->id] || !V->in[b->id]) continue;
-            memcpy(scratch, V->in[b->id], (size_t)V->dsz*8);
+            vra_in_load(V, b->id, scratch);
             Octagon W = { V->noct, dim, scratch };
             oct_close(&W);
             for (IrInstr *i=b->instrs; i && ok; i=i->next) {
@@ -6793,7 +6836,7 @@ static bool vra_recursion_terminates(Vra *V, IrFunc *f) {
                 bool ok = true;
                 for (IrBlock *b=f->blocks; b && ok; b=b->next) {
                     if (!V->reached[b->id] || !V->in[b->id]) continue;
-                    memcpy(scratch, V->in[b->id], (size_t)V->dsz*8);
+                    vra_in_load(V, b->id, scratch);
                     Octagon W = { V->noct, dim, scratch };
                     oct_close(&W);
                     for (IrInstr *i=b->instrs; i && ok; i=i->next) {
@@ -7151,7 +7194,7 @@ static bool vra_edge_shrinks(Vra *V, IrFunc *caller, IrInstr *call,
     for (IrBlock *b = caller->blocks; b && !proved; b = b->next) {
         if (!V->reached[b->id] || !V->in[b->id]) continue;
         bool holds_here = false, saw = false;
-        memcpy(scratch, V->in[b->id], (size_t)V->dsz*8);
+        vra_in_load(V, b->id, scratch);
         Octagon W = { V->noct, dim, scratch };
         oct_close(&W);
         for (IrInstr *i = b->instrs; i; i = i->next) {
@@ -7334,7 +7377,7 @@ static void vra_cert_finish(Vra *V) {
         CertHeader *H = CERT_PUSH(c->hdr, c->nhdr, c->chdr);
         H->block = b->id;
         if (!V->reached[b->id] || !V->in[b->id]) { H->bottom = true; continue; }
-        memcpy(m, V->in[b->id], (size_t)V->dsz*8);
+        vra_in_load(V, b->id, m);
         Octagon W = { V->noct, dim, m };
         oct_close(&W);
         if (oct_is_bottom(&W)) { H->bottom = true; continue; }
@@ -7399,7 +7442,7 @@ static void vra_emit_headers(Vra *V) {
         } } while (0)
     for (IrBlock *b = V->f->blocks; b; b = b->next) {
         if (!b->is_loop_header || !V->reached[b->id] || !V->in[b->id]) continue;
-        memcpy(m, V->in[b->id], (size_t)V->dsz*8);
+        vra_in_load(V, b->id, m);
         Octagon W = { V->noct, dim, m };
         oct_close(&W);
         if (oct_is_bottom(&W)) continue;
@@ -7436,7 +7479,7 @@ static void vra_dump_state(Vra *V, FILE *o) {
             V->f->name?(int)V->f->name->length:1, V->f->name?V->f->name->name:"?");
     for (IrBlock *b=V->f->blocks; b; b=b->next) {
         if (!V->reached[b->id]) { fprintf(o, "  bb%d: UNREACHED\n", b->id); continue; }
-        memcpy(m, V->in[b->id], (size_t)V->dsz*8);
+        vra_in_load(V, b->id, m);
         Octagon W = { V->noct, dim, m };
         oct_close(&W);
         fprintf(o, "  bb%d%s%s\n", b->id, b->is_loop_header ? "  [loop header]" : "",

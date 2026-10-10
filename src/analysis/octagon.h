@@ -366,6 +366,31 @@ static inline void oct_store_pair(Octagon *dst, int i, int j, int64_t v) {
 // On the values the operands IMPLY: the unary entries first, then every other pair where its
 // max is tighter than the joined unary bounds imply (the "crossing" pairs, whose bounds moved
 // in opposite directions between the operands). Its oct_get is the strong join's entry.
+// The halves of an octagon's unary entries, once per operation: h[i] = ⌊m[i][bar i]/2⌋ (the row
+// side of a pair's strengthening) and h[d + j] = ⌊m[bar j][j]/2⌋ (the column side), +∞ where the
+// entry is. A pair's implied value is then min(m[i][j], h[i] + h[d + j]) from two array reads: the
+// join and the order read it for every pair, and recomputing the halves there was most of their cost.
+static int64_t *oct_half_buf = NULL; static int oct_half_cap = 0;
+static int64_t *oct_halves_of(const Octagon *o, int slot) {
+    int d = o->dim;
+    if (oct_half_cap < 6*d) {
+        oct_half_buf = (int64_t*)realloc(oct_half_buf, (size_t)6*d*sizeof(int64_t));
+        oct_half_cap = 6*d;
+    }
+    int64_t *h = oct_half_buf + (size_t)slot*2*d;
+    for (int i=0;i<d;i++) {
+        int64_t u = o->m[(size_t)i*d + oct_bar(i)], w = o->m[(size_t)oct_bar(i)*d + i];
+        h[i]     = u < OCT_INF ? oct_fdiv2(u) : OCT_INF;
+        h[d + i] = w < OCT_INF ? oct_fdiv2(w) : OCT_INF;
+    }
+    return h;
+}
+static inline int64_t oct_hsum(int64_t x, int64_t y) {
+    if (x >= OCT_INF || y >= OCT_INF) return OCT_INF;
+    int64_t s;
+    if (__builtin_add_overflow(x, y, &s)) s = INT64_MIN / 2;
+    return s;
+}
 static void oct_join(Octagon *dst, const Octagon *a, const Octagon *b) {
     dst->nvar=a->nvar; dst->dim=a->dim; oct_set_clean(dst, false);
     int d = a->dim;
@@ -373,9 +398,19 @@ static void oct_join(Octagon *dst, const Octagon *a, const Octagon *b) {
         *oct_at(dst,i,i) = oct_max64(oct_raw(a,i,i), oct_raw(b,i,i));
         *oct_at(dst,i,oct_bar(i)) = oct_max64(oct_get(a,i,oct_bar(i)), oct_get(b,i,oct_bar(i)));
     }
-    for (int i=0;i<d;i++)
-        for (int j=0;j<d;j++)
-            if (j != i && j != oct_bar(i)) oct_store_pair(dst, i, j, oct_max64(oct_get(a,i,j), oct_get(b,i,j)));
+    const int64_t *ha = oct_halves_of(a, 0), *hb = oct_halves_of(b, 1), *hd = oct_halves_of(dst, 2);
+    for (int i=0;i<d;i++) {
+        const int64_t *ra = a->m + (size_t)i*d, *rb = b->m + (size_t)i*d;
+        int64_t *rd = dst->m + (size_t)i*d;
+        int bi = oct_bar(i);
+        for (int j=0;j<d;j++) {
+            if (j == i || j == bi) continue;
+            int64_t sa = oct_min64(ra[j], oct_hsum(ha[i], ha[d + j]));
+            int64_t sb = oct_min64(rb[j], oct_hsum(hb[i], hb[d + j]));
+            int64_t v = oct_max64(sa, sb), imp = oct_hsum(hd[i], hd[d + j]);
+            rd[j] = v < imp ? v : OCT_INF;
+        }
+    }
 }
 // Meet ⊓ — entrywise min (adds both constraint sets); caller re-closes.
 static void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
@@ -438,9 +473,19 @@ static void oct_widen_thr(Octagon *dst, const Octagon *a, const Octagon *b, cons
             if (j != i && j != oct_bar(i)) oct_store_pair(dst, i, j, oct_widen_entry(a, b, i, j, mod, thr, nthr));
 }
 static bool oct_leq(const Octagon *a, const Octagon *b) {
-    for (int i=0;i<a->dim;i++)
-        for (int j=0;j<a->dim;j++)
-            if (oct_get(a,i,j) > oct_get(b,i,j)) return false;
+    int d = a->dim;
+    const int64_t *ha = oct_halves_of(a, 0), *hb = oct_halves_of(b, 1);
+    for (int i=0;i<d;i++) {
+        const int64_t *ra = a->m + (size_t)i*d, *rb = b->m + (size_t)i*d;
+        for (int j=0;j<d;j++) {
+            int64_t sa = ra[j], sb = rb[j];
+            if (i != j) {
+                sa = oct_min64(sa, oct_hsum(ha[i], ha[d + j]));
+                sb = oct_min64(sb, oct_hsum(hb[i], hb[d + j]));
+            }
+            if (sa > sb) return false;
+        }
+    }
     return true;
 }
 

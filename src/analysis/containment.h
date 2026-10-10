@@ -46,7 +46,7 @@ static void ct_prepare(CtFunc *c, IrBlock *b) {
     k->ready = true;
     if (!V->reached[b->id]) { k->dead = true; return; }
     int64_t *m = malloc((size_t)V->dsz * 8 + 8);
-    memcpy(m, V->in[b->id], (size_t)V->dsz * 8);
+    vra_in_load(V, b->id, m);
     Octagon W; memset(&W, 0, sizeof W); W.nvar = V->noct; W.dim = 2 * V->noct; W.m = m;
     const int *saved = oct_map; oct_map = V->odim;
     oct_close(&W);
