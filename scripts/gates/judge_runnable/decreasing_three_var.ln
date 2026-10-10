@@ -1,0 +1,13 @@
+// Phase 1a precision case (Documentation, 2026-10-09): a correct, written measure refused at
+// 5c4e320 with E086 at `n - i` and E082, and E011 without the clause. Under `i + j < n`,
+// n - i - j >= 1, and every path raises i or j. The octagon cannot hold `i + j < n` (three
+// variables); the LIA judge must prove both the subtraction and the measure.
+func f(n usize < 4096) usize {
+    var i usize = 0
+    var j usize = 0
+    while i + j < n decreasing n - i - j {
+        if j < 10 { j = j + 1 } else { i = i + 1 }
+    }
+    return i
+}
+func main() i32 { return f(100) as i32 }

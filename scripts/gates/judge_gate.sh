@@ -15,6 +15,18 @@
 # A rule no program exercises is not seen here; src/tools/test_judge_gen.c pins those over a
 # hand-built IR (run_ir_tests.sh).
 #
+# PROGRAMS THE PROVER REFUSES, run too: the judge's facts must hold on every program the
+# interpreter can execute, not only on those today's prover accepts. A refused program is exactly
+# one the judge will decide at phase 4, and its false hypothesis would be a false proof there.
+# Two sources: every fail test whose expected codes are all VRA's obligation codes (E085, E086,
+# E087, E015, E011, E082, E121, the precondition E012, or [VRA]; such a refusal comes after the IR
+# exists), and the probes in scripts/gates/judge_runnable/, which no test holds. Each must leave
+# 0 false hypotheses and no generator refusal; any exit status is accepted, since such a program
+# may trap, and runs on a 1,000,000-step budget (an E011 test is a loop that does not end). One
+# that cannot run (its error stops lowering: no summary) or that reaches no obligation is SKIPPED
+# and counted, and a floor on those that ran keeps the coverage honest. A run that CRASHES is the
+# harness's failure, not a verdict, and is listed by name.
+#
 # CLAIMS. The driver proposes claims at forward joins (hulls) and loop headers (invariants),
 # untrusted: the solver's lia_maximize over the paths in, and a header's guards, filtered by
 # Houdini. The generator states each where its block's versions are named and owes it on every
@@ -41,6 +53,7 @@ REACHED_FLOOR=100000         # obligation events; 287,380 when the gate was writ
 IMPLIED_FLOOR=7450       # obligations' VCs implied over the corpus; 7,470 of 7,567 when the floor was set (102f71f and the field cells). Lower it only with the reason
 EDGE_FLOOR=50000         # claims checked at run time on the edges they are owed on; 260,682 when the floor was set
 USE_FLOOR=100000         # claims checked at run time where they are used; 1,215,712 when the floor was set
+REFUSED_FLOOR=150        # programs the prover refuses that ran and reached an obligation; 197 when the floor was set
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
 if ! gcc -std=c99 -O2 -w -o "$T/jvc" src/tools/judge_vc_driver.c -I src 2> "$T/build.err" ||
    ! gcc -std=c99 -O2 -w -o "$T/solve_vc" src/tools/solve_vc.c -I src 2>> "$T/build.err"; then
@@ -61,7 +74,22 @@ one() {
     esac
 }
 export -f one; export T
+# the refused programs: fail tests whose every EXPECT code is VRA's, and the probes
+for f in $(find tests -name '*_fail.ln' | sort); do
+    codes=$(grep -oE '^// EXPECT: \[[A-Z0-9]+\]' "$f" | grep -oE '\[[A-Z0-9]+\]' | sort -u)
+    [ -n "$codes" ] || continue
+    echo "$codes" | grep -qvE '^\[(E085|E086|E087|E015|E011|E082|E121|E012|VRA)\]$' && continue
+    echo "$f"
+done > "$T/refused.txt"
+ls scripts/gates/judge_runnable/*.ln >> "$T/refused.txt"
+refused_one() {
+    local f="$1" o; o=r_$(echo "$f" | tr '/' '_')
+    LAIN_INTERP_STEPS=1000000 timeout 120 "$T/jvc" "$f" --check-hyps > "$T/$o.out" 2> "$T/$o.err"
+    echo $? > "$T/$o.rc"
+}
+export -f refused_one
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'one "{}"' < "$T/files.txt"
+xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'refused_one "{}"' < "$T/refused.txt"
 judged=0; nosum=0; refused=0; falsec=0; reached=0; checked=0; solverr=0; implied=0; notimp=0; outbudget=0
 claims=0; hullok=0; hullbad=0; edges=0; claimchk=0; claimgoals=0; mustfail=0
 while read -r f; do
@@ -101,13 +129,29 @@ while read -r f; do
     c=$(echo "$s" | sed -nE 's/.* claim-hyps-checked=([0-9]+) .*/\1/p'); claimchk=$((claimchk + ${c:-0}))
     c=$(echo "$s" | sed -nE 's/.* claim-goals-checked=([0-9]+).*/\1/p'); claimgoals=$((claimgoals + ${c:-0}))
 done < "$T/files.txt"
+rdecl=$(wc -l < "$T/refused.txt"); rran=0; rnosum=0; rnothing=0; rfalse=0; rrefused=0; rchecked=0; rcrash=0
+while read -r f; do
+    o=r_$(echo "$f" | tr '/' '_')
+    s=$(grep -m1 '^SUMMARY ' "$T/$o.err")
+    if [ -z "$s" ] && [ "$(cat "$T/$o.rc")" -ge 128 ]; then
+        rcrash=$((rcrash+1)); echo "  CRASHED (rc $(cat "$T/$o.rc"); the harness, not a verdict): $f"; continue
+    fi
+    if [ -z "$s" ]; then rnosum=$((rnosum+1)); continue; fi              # cannot run: skipped
+    if grep -q '^ERROR ' "$T/$o.err"; then rrefused=$((rrefused+1)); echo "  GENERATOR REFUSED (a refused program): $f"; grep -m2 '^ERROR ' "$T/$o.err" | sed 's/^/      /'; fi
+    n=$(grep -c '^FALSE ' "$T/$o.err")
+    if [ "$n" -gt 0 ]; then rfalse=$((rfalse+n)); echo "  FALSE HYPOTHESES ($n), in a program the prover refuses: $f"; grep -m3 '^FALSE ' "$T/$o.err" | sed 's/^/      /'; fi
+    r=$(echo "$s" | sed -nE 's/.* reached=([0-9]+) .*/\1/p'); c=$(echo "$s" | sed -nE 's/.* hyps-checked=([0-9]+) .*/\1/p')
+    if [ "${r:-0}" -eq 0 ]; then rnothing=$((rnothing+1)); continue; fi  # reached no obligation: skipped
+    rran=$((rran+1)); rchecked=$((rchecked + ${c:-0}))
+done < "$T/refused.txt"
 echo "=================================================================="
 echo "programs declared $declared, judged $judged, no summary $nosum"
 echo "obligation events $reached, hypotheses checked at run time $checked, false $falsec, generator refusals $refused"
 echo "VCs implied $implied, not implied $notimp, budget or capacity $outbudget, solver failures $solverr (floor $IMPLIED_FLOOR)"
 echo "claims $claims: their VCs implied $hullok, not implied $hullbad; at run time, claims checked on $claimgoals edges taken (floor $EDGE_FLOOR) and $claimchk times where used (floor $USE_FLOOR)"
 echo "the judge's own programs (tests/trust/judge_*_pass.ln) with a VC not implied, with or without the finder: $mustfail"
-if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ]; then
+echo "programs the prover refuses: $rdecl; ran $rran (floor $REFUSED_FLOOR), skipped $((rnosum + rnothing)) ($rnosum cannot run, $rnothing reach no obligation), crashed $rcrash; hypotheses checked $rchecked, false $rfalse, generator refusals $rrefused"
+if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ] || [ "$rfalse" -gt 0 ] || [ "$rrefused" -gt 0 ]; then
     echo "judge_gate: FAIL"; exit 1
 fi
 if [ "$reached" -lt "$REACHED_FLOOR" ]; then
@@ -115,6 +159,9 @@ if [ "$reached" -lt "$REACHED_FLOOR" ]; then
 fi
 if [ "$claimgoals" -lt "$EDGE_FLOOR" ] || [ "$claimchk" -lt "$USE_FLOOR" ]; then
     echo "judge_gate: FAIL — claims checked at run time, $claimgoals on edges and $claimchk where used, below the floors ($EDGE_FLOOR, $USE_FLOOR): claims are stated where no run evaluates them"; exit 1
+fi
+if [ "$rran" -lt "$REFUSED_FLOOR" ]; then
+    echo "judge_gate: FAIL — $rran programs the prover refuses ran, below the floor of $REFUSED_FLOOR: the refused set lost its coverage"; exit 1
 fi
 if [ "$implied" -lt "$IMPLIED_FLOOR" ]; then
     echo "judge_gate: FAIL — $implied VCs implied is below the floor of $IMPLIED_FLOOR: the generator stopped stating a fact it stated"; exit 1
