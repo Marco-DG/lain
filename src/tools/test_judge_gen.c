@@ -747,6 +747,63 @@ int main(void) {
         free(t);
     }
     printf("  landings: a store, a field, a payload, an argument, the result; waived unless refined\n");
+    // 19. an ASSERT (P2.6) owes its condition where it stands, `unsafe` or not, its kind naming its
+    // code; a comparison is a goal as a fact is read (an equality two VCs; one value compared with
+    // itself the empty sum), anything else `!= 0`, and a comparison that cannot be a goal is owed
+    // through its own result, which nothing defines. After it, its condition is a fact; never
+    // before it, nor in its own VC
+    {   IrFunc *f = ir_func_new(&A, nm("g24"), u32t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, i32t, nm("x")), *y = ir_add_param(f, i32t, nm("y"));
+        IrValue *u = ir_add_param(f, u32t, nm("u")), *p = ir_add_param(f, boolt, nm("p"));
+        IrBlock *b0 = f->entry;
+        IrValue *q0 = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, u32t), u, u32t);   // before the asserts
+        struct { IrValue *c; int code; } as[7];
+        as[0].c = ir_icmp(f, b0, IR_CMP_SLT, x, y);                                  as[0].code = 86;
+        as[1].c = ir_icmp(f, b0, IR_CMP_EQ, x, y);                                   as[1].code = 0;
+        IrValue *zero = ir_const_int(f, b0, 0, u32t);
+        as[2].c = ir_icmp(f, b0, IR_CMP_NE, u, zero);                                as[2].code = 121;
+        as[3].c = ir_icmp(f, b0, IR_CMP_ULT, x, u);                                  as[3].code = 87;   // x may be negative
+        as[4].c = p;                                                                 as[4].code = 0;
+        as[5].c = ir_icmp(f, b0, IR_CMP_NE, x, x);                                   as[5].code = 135;
+        as[6].c = ir_icmp(f, b0, IR_CMP_ULE, u, u);                                  as[6].code = 86;
+        int at[7];
+        for (int k = 0; k < 7; k++) {
+            at[k] = nins(b0); ir_assert_coded(f, b0, as[k].c, as[k].code);
+            if (k == 2) { IrInstr *z = b0->instrs; while (z->next) z = z->next; z->unchecked = true; }
+        }
+        IrValue *q1 = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, u32t), u, u32t);   // after them
+        IrInstr *a1 = ir_instr(f, IR_ADD, u32t, 2); a1->operands[0] = q0; a1->operands[1] = q1; a1->wrap = IR_WRAP_MODULAR; ir_emit(b0, a1);
+        ir_set_ret(b0, a1->result);
+        ir_finalize_cfg(f);
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        char key[48], want[96];
+        #define VC(k, kind, ord) (snprintf(key, sizeof key, "bb%d.%d " kind " %d", b0->id, at[k], ord), t ? vc_of(t, key) : "")
+        snprintf(want, sizeof want, "goal 1*%%v%d + -1*%%v%d <= -1", x->id, y->id);
+        CHECK(strstr(VC(0, "assert.86", 0), want), "x < y is the goal, the kind naming code 86:\n%s", t ? t : "");
+        snprintf(want, sizeof want, "goal 1*%%v%d + -1*%%v%d <= 0", x->id, y->id);
+        CHECK(strstr(VC(1, "assert.0", 0), want), "x = y is two VCs, x - y <= 0...");
+        snprintf(want, sizeof want, "goal -1*%%v%d + 1*%%v%d <= 0", x->id, y->id);
+        CHECK(strstr(VC(1, "assert.0", 1), want), "...and y - x <= 0");
+        snprintf(want, sizeof want, "goal 1*%%v%d + -1*%%v%d != 0", u->id, zero->id);
+        CHECK(strstr(VC(2, "assert.121", 0), want), "u != 0 is owed inside `unsafe` too:\n%s", VC(2, "assert.121", 0));
+        snprintf(want, sizeof want, "goal 1*%%v%d != 0", as[3].c->id);
+        CHECK(strstr(VC(3, "assert.87", 0), want), "an unsigned comparison of a signed value is owed through its result:\n%s", VC(3, "assert.87", 0));
+        snprintf(want, sizeof want, "goal 1*%%v%d != 0", p->id);
+        CHECK(strstr(VC(4, "assert.0", 0), want), "a bool is owed != 0");
+        CHECK(strstr(VC(5, "assert.135", 0), "goal 0 != 0"), "x != x is the empty sum, never implied:\n%s", VC(5, "assert.135", 0));
+        CHECK(strstr(VC(6, "assert.86", 0), "goal 0 <= 0"), "u <= u is the empty sum, always implied:\n%s", VC(6, "assert.86", 0));
+        const char *v0 = VC(0, "assert.86", 0);
+        CHECK(!strstr(v0, "assert bb"), "an assert's own condition is not its hypothesis, nor a later one's:\n%s", v0);
+        snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, q1));
+        char after[1 << 12]; snprintf(after, sizeof after, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "assert bb%d.%d : ", b0->id, at[2]);
+        CHECK(strstr(after, want), "after the assert, u != 0 is a fact:\n%s", after);
+        snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, q0));
+        CHECK(t && !strstr(vc_of(t, key), "assert bb"), "before it, it is none");
+        #undef VC
+        free(t);
+    }
+    printf("  asserts: owed where they stand, their condition a fact after them\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

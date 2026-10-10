@@ -18,8 +18,9 @@
 //     equals the value stored when its landing is exact (a constructor's field, for a whole
 //     struct); a join's, a changed loop header's, and a havoc point's version (P2.2's frame rule,
 //     at jg_cells) is a fresh variable; a cell the loop never changes keeps its version;
-//   - the branch conditions and ASSUMEs that dominate the point, as facts about the SSA values
-//     they tested (an edge counts when its target has that one predecessor);
+//   - the branch conditions, ASSUMEs and ASSERTs that dominate the point, as facts about the SSA
+//     values they tested (an edge counts when its target has that one predecessor; an ASSERT's
+//     condition is owed where it stands, so a program past it has it true);
 //   - at a join that dominates the point, one disjunct per predecessor (R7): the edge conditions
 //     on its path, and the version each cell ends that path with;
 //   - a CLAIM at a forward join (P3.5's hull row: `lo <= x@join`) or a loop header (its `inv`:
@@ -53,8 +54,7 @@
 // are fresh variables); a loop invariant no claim proposes, or of three terms or more; another
 // module's callee's contract; an ABI layout's size; a product of two variables (`outside`). The
 // obligations mirror VRA's final pass for bounds, division, overflow, integer casts, shifts, bit
-// counts and landings (P2.3), so the two can be compared obligation by obligation. Not owed yet:
-// ASSERTs (a return refinement, a struct invariant, a precondition), VRA's alone.
+// counts, landings (P2.3) and ASSERTs (P2.6), so the two can be compared obligation by obligation.
 //
 // Checked: scripts/gates/judge_gate.sh evaluates every hypothesis at run time over every accepted
 // program; src/tools/test_judge_gen.c pins the rules no program exercises.
@@ -1342,12 +1342,14 @@ static void jb_facts(JB *B) {
         int32_t k = 0;
         for (IrInstr *i = S->instrs; i; i = i->next, k++) {
             if (s == B->blk && k >= B->idx) break;
-            if (i->op != IR_ASSUME || i->n_operands < 1 || !i->operands[0]) continue;
+            // and ASSERTs: a program past one has its condition true, its obligation owed there
+            if ((i->op != IR_ASSUME && i->op != IR_ASSERT) || i->n_operands < 1 || !i->operands[0]) continue;
             IrInstr *ic = i->operands[0]->id >= 0 && i->operands[0]->id < g->nv ? g->def[i->operands[0]->id] : NULL;
             if (!ic || ic->op != IR_ICMP) continue;
             if (nf == cf) { JFact *n2 = JG_NEW(g, JFact, cf * 2); if (!n2) { B->fail = true; return; } memcpy(n2, F, sizeof *F * (size_t)nf); F = n2; cf *= 2; }
             F[nf].ic = ic; F[nf].truth = true; F[nf].used = false;
-            F[nf].origin = jb_str(B, i->aux.imm == 1 ? "assume.trusted bb%lld.%lld" : "assume bb%lld.%lld", s, k, 0);
+            F[nf].origin = i->op == IR_ASSERT ? jb_str(B, "assert bb%lld.%lld", s, k, 0)
+                         : jb_str(B, i->aux.imm == 1 ? "assume.trusted bb%lld.%lld" : "assume bb%lld.%lld", s, k, 0);
             nf++;
         }
         if (s == g->f->entry->id) break;
@@ -1563,6 +1565,40 @@ static bool jg_land(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, IrVa
     return true;
 }
 
+// An ASSERT's condition as a goal (P2.6): a comparison read as jb_cmp reads a fact (an equality is
+// two VCs, `half` 0 and 1), or any other condition `!= 0`. `ic` NULL: the latter.
+typedef struct { IrInstr *ic; IrValue *v; int half; } JAssertArg;
+static bool jgk_assert(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    (void)at; JAssertArg *a = arg; JLT t[2];
+    if (!a->ic) { t[0].var = jb_val(B, a->v); t[0].c = 1; return jb_cons(B, t, 1, J_NE, 0, goal); }
+    t[0].var = jb_val(B, a->ic->operands[0]); t[1].var = jb_val(B, a->ic->operands[1]);
+    switch (a->ic->aux.cmp) {
+        case IR_CMP_SLT: case IR_CMP_ULT: t[0].c = 1;  t[1].c = -1; return jb_cons(B, t, 2, J_LE, -1, goal);
+        case IR_CMP_SLE: case IR_CMP_ULE: t[0].c = 1;  t[1].c = -1; return jb_cons(B, t, 2, J_LE, 0, goal);
+        case IR_CMP_SGT: case IR_CMP_UGT: t[0].c = -1; t[1].c = 1;  return jb_cons(B, t, 2, J_LE, -1, goal);
+        case IR_CMP_SGE: case IR_CMP_UGE: t[0].c = -1; t[1].c = 1;  return jb_cons(B, t, 2, J_LE, 0, goal);
+        case IR_CMP_EQ: t[0].c = a->half ? -1 : 1; t[1].c = -t[0].c; return jb_cons(B, t, 2, J_LE, 0, goal);
+        default:        t[0].c = 1; t[1].c = -1; return jb_cons(B, t, 2, J_NE, 0, goal);
+    }
+}
+// Can an ASSERT's comparison be a goal? Integers, and an unsigned comparison only of operands that
+// are never negative (the interpreter compares as uint64), as jb_cmp states a fact. One value
+// compared with itself leaves the empty sum: `0 <= 0` for `m <= m`, `0 != 0` for `z != z`.
+static bool jg_assert_cmp(JG *g, IrInstr *ic) {
+    if (!ic || ic->op != IR_ICMP || ic->n_operands < 2) return false;
+    IrValue *a = ic->operands[0], *b = ic->operands[1];
+    if (!a || !b || !jg_is_int(a->type) || !jg_is_int(b->type)) return false;
+    IrCmp c = ic->aux.cmp;
+    if (c == IR_CMP_ULT || c == IR_CMP_ULE || c == IR_CMP_UGT || c == IR_CMP_UGE)
+        for (int k = 0; k < 2; k++) {
+            IrValue *o = ic->operands[k];
+            if (o->type->kind == IRT_BOOL || !o->type->is_signed) continue;
+            IrInstr *od = o->id >= 0 && o->id < g->nv ? g->def[o->id] : NULL;
+            if (!(od && od->op == IR_CONST && jg_const(od) >= 0)) return false;
+        }
+    return true;
+}
+
 static bool jg_obligations(JG *g, JObls *L) {
     for (int32_t r = 0; r < g->nrpo; r++) {
         IrBlock *b = g->blk[g->rpo[r]];
@@ -1653,6 +1689,28 @@ static bool jg_obligations(JG *g, JObls *L) {
                     // of 0 they fail (interp.h:710, "proven nonzero"): an obligation, not a range
                     if (i->unchecked || i->n_operands < 1 || !i->operands[0]->type || i->operands[0]->type->kind != IRT_INT) break;
                     if (!jg_goal(g, L, i, b->id, k, -1, "nonzero", 0, jgk_nonzero, NULL)) return false;
+                    break;
+                }
+                // an ASSERT (P2.6: a precondition or a user `assert`, code 0; a return refinement,
+                // 86; a sized slice, 87; a struct invariant, 121; a refused call, 135 and 137): its
+                // condition, owed here, `unsafe` or not (interp.h checks every one). Its kind names
+                // the code: `assert.86`. A comparison is read as a fact is; anything else is owed
+                // `!= 0` (a comparison that cannot be a goal included: its result has no fact, so
+                // the VC is never implied)
+                case IR_ASSERT: {
+                    if (i->n_operands < 1 || !i->operands[0]) break;
+                    char kn[32]; snprintf(kn, sizeof kn, "assert.%lld", (long long)i->aux.imm);
+                    char *ks = JG_NEW(g, char, strlen(kn) + 1);
+                    if (!ks) return jg_fail(g, "out of memory");
+                    strcpy(ks, kn);
+                    IrValue *cv = i->operands[0];
+                    IrInstr *ic = cv->id >= 0 && cv->id < g->nv ? g->def[cv->id] : NULL;
+                    JAssertArg a = { jg_assert_cmp(g, ic) ? ic : NULL, cv, 0 };
+                    if (!jg_goal(g, L, i, b->id, k, -1, ks, 0, jgk_assert, &a)) return false;
+                    if (a.ic && a.ic->aux.cmp == IR_CMP_EQ) {
+                        a.half = 1;
+                        if (!jg_goal(g, L, i, b->id, k, -1, ks, 1, jgk_assert, &a)) return false;
+                    }
                     break;
                 }
                 // the LANDINGS (P2.3), where the interpreter lands each value (ii_land)

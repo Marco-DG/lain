@@ -97,6 +97,7 @@ static const char *vra_verdict(Vra *V, JObl *o) {
         if (!strcmp(k, "bounds.hi") && c->kind == VRA_BOUNDS) return c->hi_ok || c->ok ? "proved" : "refused";
         if ((!strcmp(k, "divzero") || !strcmp(k, "divovf")) && c->kind == VRA_DIVZERO) return c->ok ? "proved" : "refused";
         if ((!strncmp(k, "narrow", 6) || !strcmp(k, "shift")) && c->kind == VRA_OVERFLOW) return c->ok ? "proved" : "refused";
+        if (!strncmp(k, "assert.", 7) && c->kind == VRA_PRECOND) return c->ok ? "proved" : "refused";
     }
     return "none";
 }

@@ -42,8 +42,9 @@
 # MUST-REFUSE. A dropped obligation leaves no false hypothesis: the interpreter stops at the point
 # it was owed, before any fact rests on it. So a program the judge must refuse is solved too: one
 # fail test per LANDING site kind (P2.3: a store, the result, a call argument, a struct field, a
-# sum payload), each with one value that does not fit where it lands and nothing else to refuse.
-# Each must leave a `narrow` VC not implied (a model), or the judge proves a program that traps.
+# sum payload), and one per ASSERT kind (P2.6: a precondition, a return refinement, a sized slice,
+# a struct invariant), each with a value that breaks the rule of its kind. Each must leave a VC of
+# that kind not implied (a model), or the judge proves a program that traps.
 #
 # PRECISION, the other half: a hypothesis check cannot see a generator that stops stating a TRUE
 # fact. So every program's VCs are also solved by the untrusted solver (solve_vc), and the gate
@@ -58,14 +59,16 @@
 set -u
 cd "$(dirname "$0")/../.."
 REACHED_FLOOR=100000         # obligation events; 287,380 when the gate was written (19473f7)
-IMPLIED_FLOOR=10300      # obligations' VCs implied over the corpus; 10,428 of 10,627 when the floor was set (the landing obligations). Lower it only with the reason
+IMPLIED_FLOOR=10650      # obligations' VCs implied over the corpus; 10,722 of 10,940 when the floor was set (the ASSERT obligations). Lower it only with the reason
 EDGE_FLOOR=50000         # claims checked at run time on the edges they are owed on; 260,682 when the floor was set
 RETURN_FLOOR=4000        # return claims checked at run time where the program returns; 9,065 when the floor was set
 CONTRACT_FLOOR=2000      # return claims checked at run time where a caller uses them; 4,096 when the floor was set
 USE_FLOOR=100000         # claims checked at run time where they are used; 1,215,712 when the floor was set
-MUST_REFUSE="tests/vra/overflow/field_assign_overflow_fail.ln tests/vra/overflow/return_overflow_fail.ln
-             tests/vra/overflow/arg_literal_overflow_fail.ln tests/vra/overflow/struct_field_literal_overflow_fail.ln
-             tests/vra/overflow/enum_payload_overflow_fail.ln"
+MUST_REFUSE="tests/vra/overflow/field_assign_overflow_fail.ln:narrow tests/vra/overflow/return_overflow_fail.ln:narrow
+             tests/vra/overflow/arg_literal_overflow_fail.ln:narrow tests/vra/overflow/struct_field_literal_overflow_fail.ln:narrow
+             tests/vra/overflow/enum_payload_overflow_fail.ln:narrow tests/functions/fixed_array_len_precondition_fail.ln:assert.0
+             tests/errors/return_refinement_param_fail.ln:assert.86 tests/vra/sized_param_constant_length_fail.ln:assert.87
+             tests/vra/invariant/slice_len_bound_store_fail.ln:assert.121"
 REFUSED_FLOOR=150        # programs the prover refuses that ran and reached an obligation; 197 when the floor was set
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
 if ! gcc -std=c99 -O2 -w -o "$T/jvc" src/tools/judge_vc_driver.c -I src 2> "$T/build.err" ||
@@ -145,12 +148,12 @@ while read -r f; do
     c=$(echo "$s" | sed -nE 's/.* contract-hyps-checked=([0-9]+).*/\1/p'); contractchk=$((contractchk + ${c:-0}))
 done < "$T/files.txt"
 mustrefuse=0
-for f in $MUST_REFUSE; do
-    o=m_$(echo "$f" | tr '/' '_')
+for fk in $MUST_REFUSE; do
+    f=${fk%%:*}; k=${fk#*:}; o=m_$(echo "$f" | tr '/' '_')
     "$T/jvc" "$f" 2>/dev/null | grep -v '^#' > "$T/$o.vc"
     timeout 120 "$T/solve_vc" "$T/$o.vc" > "$T/$o.ans" 2>&1
-    if ! grep -qE '^model [^ ]+ [^ ]+ [^ ]+ narrow\.' "$T/$o.ans"; then
-        mustrefuse=$((mustrefuse+1)); echo "  MUST-REFUSE, EVERY narrow VC IMPLIED (the judge proves a landing that does not fit): $f"
+    if ! grep -qE "^model [^ ]+ [^ ]+ [^ ]+ ${k//./\\.}[. ]" "$T/$o.ans"; then
+        mustrefuse=$((mustrefuse+1)); echo "  MUST-REFUSE, EVERY $k VC IMPLIED (the judge proves what breaks the rule): $f"
     fi
 done
 rdecl=$(wc -l < "$T/refused.txt"); rran=0; rnosum=0; rnothing=0; rfalse=0; rrefused=0; rchecked=0; rcrash=0
@@ -175,7 +178,7 @@ echo "VCs implied $implied, not implied $notimp, budget or capacity $outbudget, 
 echo "claims $claims: their VCs implied $hullok, not implied $hullbad; at run time, claims checked on $claimgoals edges taken (floor $EDGE_FLOOR) and $claimchk times where used (floor $USE_FLOOR)"
 echo "return claims checked at run time at $retgoals returns (floor $RETURN_FLOOR) and $contractchk times at a call (floor $CONTRACT_FLOOR)"
 echo "the judge's own programs (tests/trust/judge_*_pass.ln) with a VC not implied, with or without the finder: $mustfail"
-echo "landing fail tests the judge must refuse: $(echo $MUST_REFUSE | wc -w), with every narrow VC implied: $mustrefuse"
+echo "fail tests the judge must refuse (a landing or an assert of each kind): $(echo $MUST_REFUSE | wc -w), with every VC of their kind implied: $mustrefuse"
 echo "programs the prover refuses: $rdecl; ran $rran (floor $REFUSED_FLOOR), skipped $((rnosum + rnothing)) ($rnosum cannot run, $rnothing reach no obligation), crashed $rcrash; hypotheses checked $rchecked, false $rfalse, generator refusals $rrefused"
 if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ] || [ "$mustrefuse" -gt 0 ] || [ "$rfalse" -gt 0 ] || [ "$rrefused" -gt 0 ]; then
     echo "judge_gate: FAIL"; exit 1
