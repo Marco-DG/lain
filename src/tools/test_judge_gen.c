@@ -492,6 +492,143 @@ int main(void) {
         free(t);
     }
     printf("  field cells: a constructor's values; kept by a call with no or a read-only reference, not by a mutable one\n");
+    // 17. a RETURN claim (a callee contract): owed as `post` at every return, about the value
+    // returned and the parameters' ENTRY values (a parameter's copy the body changes is not the
+    // parameter); stated at a call in the same module, the call's result for the returned value
+    // and each argument for its parameter, where the argument lands exactly; refused when it
+    // cannot be owed
+    for (int other = 0; other <= 1; other++) {
+        // mn(a, b): var r = a; if b < a { r = b }; return r     (claimed: ret - a <= 0)
+        IrFunc *mn = ir_func_new(&A, nm("mn"), u32t, IR_FUNC_PURE), *f = ir_func_new(&A, nm(other ? "g21" : "g20"), u32t, IR_FUNC_PURE);
+        IrValue *pa = ir_add_param(mn, u32t, nm("a")), *pb = ir_add_param(mn, u32t, nm("b"));
+        IrBlock *m0 = mn->entry, *m1 = ir_new_block(mn), *m2 = ir_new_block(mn), *m3 = ir_new_block(mn);
+        IrValue *r = ir_alloca(mn, m0, u32t);
+        ir_store(mn, m0, r, pa);
+        ir_set_br_cond(m0, ir_icmp(mn, m0, IR_CMP_ULT, pb, pa), m1, m2);
+        ir_store(mn, m1, r, pb); ir_set_ret(m1, ir_load(mn, m1, r, u32t));
+        ir_set_ret(m2, ir_load(mn, m2, r, u32t));
+        (void)m3;
+        mn->src_file = other ? "other.ln" : NULL;
+        mn->next = f;
+        ir_finalize_cfg(mn);
+        JClaim c; memset(&c, 0, sizeof c);
+        c.blk = JCLAIM_RET; c.fn = mn; c.nt = 2; c.key[0] = JKEY_RET; c.coef[0] = 1; c.key[1] = pa->id; c.coef[1] = -1; c.rhs = 0;
+        if (!other) {
+            char *t = gen_with(mn, &c, 1, JGEN_POST, NULL);
+            CHECK(t && count(t, " post 0\n") == 2, "one `post` VC at each of the two returns:\n%s", t ? t : "");
+            char key[32], want[64];
+            snprintf(key, sizeof key, "bb%d.%d post", m1->id, nins(m1));
+            const char *p1 = t ? vc_of(t, key) : "";
+            // the returned load is r's version there (b, stored); `a` is the parameter, not r
+            snprintf(want, sizeof want, "goal 1*%%s%d@bb%d.0 + -1*%%v%d <= 0", r->id, m1->id, pa->id);
+            CHECK(strstr(p1, want), "the goal is the value returned minus a's entry value:\n%s", p1);
+            free(t);
+            // JGEN_CLAIMS owes it too; a block id (one cut point's) does not
+            t = gen_with(mn, &c, 1, JGEN_CLAIMS, NULL);
+            CHECK(t && count(t, " post 0\n") == 2, "JGEN_CLAIMS owes the return claim:\n%s", t ? t : "");
+            free(t);
+            t = gen_with(mn, &c, 1, m1->id, NULL);
+            CHECK(t && count(t, " post ") == 0, "a block's claims only: no return claim:\n%s", t ? t : "");
+            free(t);
+        }
+        // the caller: q = 100 / mn(x, 7)
+        IrValue *x = ir_add_param(f, u32t, nm("x"));
+        IrBlock *b0 = f->entry;
+        IrInstr *call = ir_instr(f, IR_CALL, u32t, 2);
+        call->aux.callee = nm("mn"); call->operands[0] = x; call->operands[1] = ir_const_int(f, b0, 7, u32t);
+        ir_emit(b0, call);
+        IrValue *q = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, u32t), call->result, u32t);
+        ir_set_ret(b0, q);
+        ir_finalize_cfg(f);
+        f->src_file = NULL;
+        jgen_module = mn;
+        char *t = gen_with(f, &c, 1, JGEN_ALL, NULL);
+        char key[32], want[96];
+        snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, q));
+        const char *dz = t ? vc_of(t, key) : "";
+        snprintf(want, sizeof want, "contract mn #0 : 1*%%v%d + -1*%%v%d <= 0", call->result->id, x->id);
+        if (other) CHECK(dz[0] && !strstr(dz, "contract"), "a callee of another module states no contract (I.181):\n%s", dz);
+        else       CHECK(strstr(dz, want), "the call states mn's claim, its result and the argument for a:\n%s", dz);
+        CHECK(t && count(t, " post ") == 0, "the caller owes no callee's return claim:\n%s", t ? t : "");
+        free(t);
+        if (!other) {
+            // an argument that does not land exactly (a narrowing the call waives) states nothing
+            IrFunc *n8 = ir_func_new(&A, nm("n8"), u8t, IR_FUNC_PURE), *g = ir_func_new(&A, nm("g22"), u8t, IR_FUNC_PURE);
+            IrValue *pn = ir_add_param(n8, u8t, nm("v"));
+            ir_set_ret(n8->entry, pn);
+            n8->next = g; ir_finalize_cfg(n8);
+            IrValue *y = ir_add_param(g, u32t, nm("y"));
+            IrInstr *c2 = ir_instr(g, IR_CALL, u8t, 1);
+            c2->aux.callee = nm("n8"); c2->operands[0] = y; c2->unchecked = true;
+            ir_emit(g->entry, c2);
+            IrValue *q2 = ir_binop(g, g->entry, IR_UDIV, ir_const_int(g, g->entry, 100, u8t), c2->result, u8t);
+            ir_set_ret(g->entry, q2);
+            ir_finalize_cfg(g);
+            JClaim c8; memset(&c8, 0, sizeof c8);
+            c8.blk = JCLAIM_RET; c8.fn = n8; c8.nt = 2; c8.key[0] = JKEY_RET; c8.coef[0] = 1; c8.key[1] = pn->id; c8.coef[1] = -1;
+            jgen_module = n8;
+            t = gen_with(g, &c8, 1, JGEN_ALL, NULL);
+            snprintf(key, sizeof key, "bb%d.%d divzero", g->entry->id, idx_of(g->entry, q2));
+            dz = t ? vc_of(t, key) : "";
+            CHECK(dz[0] && !strstr(dz, "contract"), "an argument narrowed unchecked does not land exactly: no contract:\n%s", dz);
+            free(t);
+            // c2 checked: one that does not fit traps before n8 runs, so the claim holds of it
+            c2->unchecked = false;
+            t = gen_with(g, &c8, 1, JGEN_ALL, NULL);
+            dz = t ? vc_of(t, key) : "";
+            CHECK(strstr(dz, "contract n8 #0"), "a checked landing states it:\n%s", dz);
+            free(t);
+            // refused: no function, not about the returned value, a term no parameter, a return
+            // that wraps, a function returning no integer, one lowered with a construct dropped
+            struct { JClaim c; IrFunc *at; const char *why; } bad[6];
+            for (int k = 0; k < 6; k++) { bad[k].c = c; bad[k].at = mn; }
+            bad[0].c.fn = NULL; bad[0].why = "with no function";
+            bad[1].c.key[0] = pb->id; bad[1].why = "not about the returned value";
+            bad[2].c.key[1] = r->id; bad[2].why = "neither the returned value nor an integer parameter";
+            bad[3].c = c8; bad[3].at = n8; bad[3].why = "whose return wraps";
+            bad[4].c = c8; bad[4].at = n8; bad[4].why = "returning no integer";
+            bad[5].why = "lowered incompletely";
+            n8->entry->term.unchecked = true; n8->ret_type = u8t;
+            IrValue *wide = ir_add_param(n8, u32t, nm("w"));
+            n8->entry->term.cond = wide;                     // return w as u8, waived: it wraps
+            jgen_module = mn;
+            for (int k = 0; k < 6; k++) {
+                if (k == 4) { n8->entry->term.unchecked = false; n8->entry->term.cond = pn; n8->ret_type = slice_of(u8t); }
+                mn->incomplete = k == 5;
+                char why[200] = "";
+                char *tb = gen_with(bad[k].at, &bad[k].c, 1, JGEN_ALL, why);
+                CHECK(!tb && strstr(why, bad[k].why), "return claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
+                free(tb);
+            }
+            mn->incomplete = false;
+        }
+        jgen_module = NULL;
+    }
+    // a RECURSIVE function's return claim is a fact at its own call: down(n) returns n below 8, else
+    // down(n - 8); `ret <= 7` is owed at the second return assuming itself of the call's result
+    {   IrFunc *dn = ir_func_new(&A, nm("down"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(dn, u32t, nm("n"));
+        IrBlock *b0 = dn->entry, *b1 = ir_new_block(dn), *b2 = ir_new_block(dn);
+        ir_set_br_cond(b0, ir_icmp(dn, b0, IR_CMP_ULT, n, ir_const_int(dn, b0, 8, u32t)), b1, b2);
+        ir_set_ret(b1, n);
+        IrInstr *sub = ir_instr(dn, IR_SUB, u32t, 2); sub->operands[0] = n; sub->operands[1] = ir_const_int(dn, b2, 8, u32t);
+        sub->wrap = IR_WRAP_MODULAR; ir_emit(b2, sub);
+        IrValue *r = mk_call(dn, b2, "down", sub->result, u32t);
+        ir_set_ret(b2, r);
+        ir_finalize_cfg(dn);
+        JClaim c; memset(&c, 0, sizeof c);
+        c.blk = JCLAIM_RET; c.fn = dn; c.nt = 1; c.key[0] = JKEY_RET; c.coef[0] = 1; c.rhs = 7;
+        jgen_module = dn;
+        char *t = gen_with(dn, &c, 1, JGEN_POST, NULL);
+        jgen_module = NULL;
+        char key[32], want[64];
+        snprintf(key, sizeof key, "bb%d.%d post", b2->id, nins(b2));
+        const char *p2 = t ? vc_of(t, key) : "";
+        snprintf(want, sizeof want, "contract down #0 : 1*%%v%d <= 7", r->id);
+        CHECK(strstr(p2, want), "the self-call's result is assumed below 8 where it is returned:\n%s", p2);
+        free(t);
+    }
+    printf("  a return claim: owed at every return about the entry values, a contract at a same-module call\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

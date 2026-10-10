@@ -28,6 +28,9 @@
 //     into a join, `inv.entry` and `inv.keep` into a header, at the end of the predecessor, with the
 //     edge's condition a fact, about the versions the predecessor ends with (the cells' contents as
 //     the block is entered).
+//   - a callee's RETURN claim (its contract: `min(a, b) - b <= 0`), at a call to a function of the
+//     same module (I.181), about the call's result and the arguments; owed as `post` at every
+//     return of the callee, about the value returned and the parameters' entry values.
 // Why these hold. An SSA value's definition holds wherever the definition dominates: if an
 // operand's definition ran again after the value's and before the point, there would be a path
 // from the entry to the point that avoids the value's definition. The same argument covers a
@@ -48,9 +51,10 @@
 //
 // Not stated yet, each costing precision only: element cells; a raw pointer's pointee (its loads
 // are fresh variables); a loop invariant no claim proposes, or of three terms or more; landings at
-// stores, arguments and returns; callees' contracts; an ABI layout's size; a product of two
-// variables (`outside`). The obligations mirror VRA's final pass for bounds, division, overflow,
-// integer casts, shifts and bit counts, so the two can be compared obligation by obligation.
+// stores, arguments and returns; another module's callee's contract; an ABI layout's size; a
+// product of two variables (`outside`). The obligations mirror VRA's final pass for bounds,
+// division, overflow, integer casts, shifts and bit counts, so the two can be compared obligation
+// by obligation.
 //
 // Checked: scripts/gates/judge_gate.sh evaluates every hypothesis at run time over every accepted
 // program; src/tools/test_judge_gen.c pins the rules no program exercises.
@@ -73,10 +77,18 @@ typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; } JR
 // One term at least is a version the block makes afresh, so it is a join or a loop header, and it
 // is not the function's entry, the one block entered with no edge to owe the claim on
 // (jg_claims_ok).
-typedef struct { int32_t blk, nt; int32_t key[2]; __int128 coef[2]; __int128 rhs; } JClaim;
+// A RETURN claim (blk JCLAIM_RET) is about what a function returns: its terms are the returned
+// value (JKEY_RET) and the function's integer parameters (their entry values, which no
+// reassignment changes: a parameter is an SSA value). It is owed at every return of its function
+// (`post`), and is a fact about a call's result at a call in the SAME module (I.181's boundary:
+// across modules only the declared contract, which reaches the caller as its ASSUMEs).
+// `fn` is the claim's function; NULL means the one being generated.
+enum { JCLAIM_RET = -1, JKEY_RET = -2 };
+typedef struct { int32_t blk, nt; int32_t key[2]; __int128 coef[2]; __int128 rhs; IrFunc *fn; } JClaim;
 
 // An obligation: its instruction, its position, and its VC; or `outside` with the reason. A
-// claim's obligation has no instruction: it is owed at the end of block `blk`, on its edge to `to`.
+// claim's obligation has no instruction: it is owed at the end of block `blk`, on its edge to `to`,
+// or, a return claim's (`to` NULL), as `blk` returns.
 typedef struct {
     IrInstr *at; IrBlock *blk; int32_t idx;
     IrBlock *to; int32_t claim;               // a claim's obligation: the edge's target, the claim
@@ -910,6 +922,26 @@ static int32_t jb_term(JB *B, int32_t key, const int32_t *row) {
     if (g->cell[key] >= 0) return jb_ver(B, row[g->cell[key]]);
     return jb_val(B, jg_value(g, key));
 }
+// A cut-point claim of the function being generated (block ids are per function: another
+// function's claim at the same id is none of this one's).
+static bool jg_mine(const JG *g, const JClaim *c) { return c->blk >= 0 && (!c->fn || c->fn == g->f); }
+static bool jg_same_module(const IrFunc *a, const IrFunc *b) {
+    return (!a->src_file && !b->src_file) || (a->src_file && b->src_file && !strcmp(a->src_file, b->src_file));
+}
+// Parameter `key` of h: its position, or -1.
+static int jg_param_at(const IrFunc *h, int32_t key) {
+    int k = 0;
+    for (const IrParam *p = h->params; p; p = p->next, k++) if (p->value && p->value->id == key) return k;
+    return -1;
+}
+// A value landing in a slot of type `to` keeps its value: the same integer type, or a checked
+// landing (one that does not fit is a failed proof there, before the value is used: P2.3's landing
+// obligation, VRA's until the generator owes landings, the premise jg_store_exact rests on too).
+static bool jg_lands_exact(const IrType *from, const IrType *to, bool unchecked) {
+    if (!jg_is_int(from) || !jg_is_int(to)) return false;
+    if (from->kind == to->kind && (from->kind == IRT_BOOL || (from->bits == to->bits && from->is_signed == to->is_signed))) return true;
+    return !unchecked;
+}
 // The claims about a version a join or a header makes, stated where the version is: VC-wide, or
 // inside the current disjunct when the version is local to its path. Each once per place (a claim
 // of two terms is reached from either).
@@ -918,7 +950,7 @@ static void jb_claims(JB *B, const JVer *v) {
     int32_t at = B->jS >= 0 ? B->dgen : -1;
     for (int32_t ci = 0; ci < g->ncl && !B->fail; ci++) {
         const JClaim *c = &g->cl[ci];
-        if (c->blk != v->blk || B->cst[ci] == at) continue;
+        if (!jg_mine(g, c) || c->blk != v->blk || B->cst[ci] == at) continue;
         bool about = false;
         for (int k = 0; k < c->nt; k++) if (g->cell[c->key[k]] == v->cell) about = true;
         if (!about) continue;
@@ -1097,6 +1129,35 @@ static void jb_state(JB *B, int32_t x) {
             if (sz > 0 && d->op == IR_SIZEOF) { jb_defk(B, x, NULL, 0, sz, o); break; }
             t[0].var = x; t[0].c = -1; jb_atom(B, o, t, 1, J_LE, -1);
             if (sz > 0) { t[0].var = x; t[0].c = 1; jb_atom(B, o, t, 1, J_LE, sz); }
+            break;
+        }
+        // a call to a function of this module: its RETURN claims (I.181's boundary), the call's
+        // result for the returned value and each argument for its parameter, where the argument
+        // lands exactly (a checked landing that does not fit traps before the callee runs)
+        case IR_CALL: {
+            IrFunc *h = jg_callee(d);
+            if (!h || !jg_same_module(h, g->f)) break;
+            for (int32_t ci = 0; ci < g->ncl && !B->fail; ci++) {
+                const JClaim *c = &g->cl[ci];
+                if (c->blk != JCLAIM_RET || c->fn != h) continue;
+                JLT u[2]; bool ok = true;
+                for (int k = 0; k < c->nt && ok; k++) {
+                    u[k].c = c->coef[k];
+                    if (c->key[k] == JKEY_RET) { u[k].var = x; continue; }
+                    int pk = jg_param_at(h, c->key[k]);
+                    IrParam *pp = h->params;
+                    for (int q = 0; q < pk && pp; q++) pp = pp->next;
+                    if (pk < 0 || pk >= d->n_operands || !pp || !pp->value ||
+                        !jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
+                    u[k].var = jb_val(B, d->operands[pk]);
+                }
+                if (!ok) continue;
+                char o[96]; snprintf(o, sizeof o, "contract %.*s #%lld", (int)h->name->length, h->name->name, (long long)ci);
+                char *os = JG_NEW(g, char, strlen(o) + 1);
+                if (!os) { B->fail = true; return; }
+                strcpy(os, o);
+                jb_atom(B, os, u, c->nt, J_LE, c->rhs);
+            }
             break;
         }
         // bit counts: POPCOUNT in [0, w]; CTZ and CLZ in [0, w - 1], their argument owed nonzero
@@ -1589,10 +1650,43 @@ static bool jg_term_ok(JG *g, int32_t b, int32_t key) {
     return d >= 0 && d != b && jg_dominates(g, d, b);
 }
 // Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
+// A return claim of h: one or two terms, the returned value among them and any other an integer
+// parameter of h; h returns an integer, and every return lands exactly (a wrapping return would
+// make the value a caller sees another than the one the claim is owed about).
+static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
+    const __int128 big = (__int128)1 << 66;
+    if (!h || h->is_extern || !jg_is_int(h->ret_type)) return jg_fail(g, "a return claim on a function returning no integer");
+    // lowered with a construct dropped, the IR is not the function: it could return anything
+    if (h->incomplete) return jg_fail(g, "a return claim on a function lowered incompletely");
+    if (c->nt < 1 || c->nt > 2) return jg_fail(g, "a claim of other than one or two terms");
+    if (c->nt == 2 && c->key[0] == c->key[1]) return jg_fail(g, "a claim naming one term twice");
+    if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
+    bool ret = false;
+    for (int k = 0; k < c->nt; k++) {
+        if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
+        if (c->key[k] == JKEY_RET) { ret = true; continue; }
+        int pk = jg_param_at(h, c->key[k]);
+        const IrParam *pp = h->params;
+        for (int q = 0; q < pk && pp; q++) pp = pp->next;
+        if (pk < 0 || !pp || !pp->value || !jg_is_int(pp->value->type))
+            return jg_fail(g, "a return claim's term is neither the returned value nor an integer parameter");
+    }
+    if (!ret) return jg_fail(g, "a return claim not about the returned value");
+    for (const IrBlock *b = h->blocks; b; b = b->next)
+        if (b->term.kind == IR_TERM_RET && b->term.cond && !jg_lands_exact(b->term.cond->type, h->ret_type, b->term.unchecked))
+            return jg_fail(g, "a return claim on a function whose return wraps");
+    return true;
+}
 static bool jg_claims_ok(JG *g) {
     const __int128 big = (__int128)1 << 66;
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
+        if (c->blk == JCLAIM_RET) {                          // owed here, or a callee's contract
+            if (!c->fn) return jg_fail(g, "a return claim with no function");
+            if ((c->fn == g->f || jg_same_module(c->fn, g->f)) && !jg_ret_claim_ok(g, c, c->fn)) return false;
+            continue;
+        }
+        if (!jg_mine(g, c)) continue;                        // another function's cut point
         // a claim is owed on every edge into its block, so any reached block will do but the
         // function's entry, which is entered with no edge; one with a fresh version is a join or
         // a header (the `made` rule below)
@@ -1619,10 +1713,36 @@ static bool jg_claims_ok(JG *g) {
 // a header from before its loop, `inv.keep` along a back edge (where H's own claims about its
 // previous entry are hypotheses: the induction step). A predecessor that reaches H by both arms
 // of its branch owes it once, with no edge condition.
-static bool jg_claim_obligations(JG *g, JObls *L, int32_t only_blk) {
+// A return claim's obligation, `post`: at every return, the claim about the value returned (its
+// landing in the return type exact: jg_ret_claim_ok) and the parameters' values (their entry ones).
+static bool jg_post_obligations(JG *g, JObls *L, int32_t ci) {
+    const JClaim *c = &g->cl[ci];
+    for (IrBlock *b = g->f->blocks; b; b = b->next) {
+        if (g->rpoix[b->id] < 0 || b->term.kind != IR_TERM_RET || !b->term.cond) continue;
+        int32_t n = 0;
+        for (IrInstr *i = b->instrs; i; i = i->next) n++;
+        JB B = jb_begin(g, b->id, n, -1);
+        JLT t[2]; JCons goal;
+        for (int k = 0; k < c->nt; k++) {
+            t[k].var = jb_val(&B, c->key[k] == JKEY_RET ? b->term.cond : jg_value(g, c->key[k]));
+            t[k].c = c->coef[k];
+        }
+        if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
+        JObl *o = jg_push(g, L);
+        if (!o || !jb_finish(&B, NULL, "post", ci, &goal, o)) return jg_fail(g, "out of memory building a VC");
+        o->claim = ci;                                       // no instruction, no edge: as b returns
+    }
+    return true;
+}
+enum { JGEN_ALL = -1, JGEN_CLAIMS = -2, JGEN_POST = -3 };
+static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
-        if (only_blk >= 0 && c->blk != only_blk) continue;
+        if (c->blk == JCLAIM_RET) {
+            if (c->fn == g->f && only < 0 && !jg_post_obligations(g, L, ci)) return false;
+            continue;
+        }
+        if (!jg_mine(g, c) || only == JGEN_POST || (only >= 0 && c->blk != only)) continue;
         IrBlock *H = g->blk[c->blk];
         for (IrEdge *e = H->preds; e; e = e->next) {
             IrBlock *P = e->block;
@@ -1650,10 +1770,10 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only_blk) {
 }
 
 // The obligations of `f`, their VCs in `m`: with `only` JGEN_ALL, every obligation and every
-// claim's; JGEN_CLAIMS, the claims' only; a block id, the claims' at that block only. `cl` are
-// claims at cut points (untrusted: see the header). False with `err` on an IR the generator does
-// not read (a phi), a claim it cannot state and owe, or a region that is full.
-enum { JGEN_ALL = -1, JGEN_CLAIMS = -2 };
+// claim's; JGEN_CLAIMS, the claims' only; JGEN_POST, f's return claims' only; a block id, the
+// claims' at that block only. `cl` are the module's claims (untrusted: see the header): f's cut points and
+// returns, and its same-module callees' returns. False with `err` on an IR the generator does not
+// read (a phi), a claim it cannot state and owe, or a region that is full.
 static bool jgen_func(JMem *m, IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
                       JObl **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
@@ -1664,7 +1784,7 @@ static bool jgen_func(JMem *m, IrFunc *f, const JClaim *cl, int32_t ncl, int32_t
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
     JObls L; memset(&L, 0, sizeof L);
     if (only == JGEN_ALL && !jg_obligations(&g, &L)) return false;
-    if (!jg_claim_obligations(&g, &L, only >= 0 ? only : -1)) return false;
+    if (!jg_claim_obligations(&g, &L, only)) return false;
     *out = L.o; *nout = L.n;
     return true;
 }

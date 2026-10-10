@@ -1,16 +1,18 @@
 // src/tools/judge_vc_driver.c — phase 1a of the proof engine's judge: the VCs the generator
 // (src/judge/gen.h) states for every obligation of a Lain file, beside VRA's verdict on the same
 // instruction. Nothing here decides anything: the judge has no kernel yet. The untrusted solver
-// runs only to PROPOSE claims at forward joins and loop headers (propose_claims below), which the
-// generator then owes as obligations of their own (`hull`, `inv.entry`, `inv.keep`);
-// `--no-claims` proposes none.
+// runs only to PROPOSE claims at forward joins, loop headers and returns (propose_module below),
+// which the generator then owes as obligations of their own (`hull`, `inv.entry`, `inv.keep`,
+// `post`); `--no-claims` proposes none.
 //
 //   gcc -std=c99 -O2 -o /tmp/jvc src/tools/judge_vc_driver.c -I src
 //   /tmp/jvc FILE.ln            each obligation: a header line, then its VC in the text form; a
-//                               claim's (`# claim on the edge bbP->bbH`) after the function's
-//                               own, and a last line counting the claims proposed and kept
+//                               claim's (`# claim on the edge bbP->bbH`, `# claim at the return
+//                               of bbR`) after the function's own, and a last line counting the
+//                               claims proposed and kept
 //   --claims                    also each claim kept, as a comment line
-//   --no-claims, --no-finder    propose no claim; or none from VRA's header states (PE.4)
+//   --no-claims, --no-finder    propose no claim; or none from VRA's header states (PE.4) and
+//                               return intervals
 //   /tmp/jvc FILE.ln --smt      the same, as SMT-LIB (QF_LIA), for an offline solver
 //   /tmp/jvc FILE.ln --stats    one TSV line per obligation: function, point, kind, ordinal,
 //                               VRA's verdict, outside or stated, #vars, #hyps
@@ -23,7 +25,8 @@
 //                               the program's own output is on stdout and need not end a line.
 //                               A claim's obligation is checked when the program takes its edge,
 //                               and so is the CLAIM, its goal: a claim is a fact wherever its
-//                               join's version is named (its VCs implied, judge_gate.sh).
+//                               join's version is named (its VCs implied, judge_gate.sh). A
+//                               return claim's, and the claim, as the program returns.
 //
 // VRA's verdict is read from its checks on the same instruction: `proved` when VRA discharged the
 // matching half, `refused` when it did not, `none` when VRA states no obligation there.
@@ -90,7 +93,7 @@ static const char *vra_verdict(Vra *V, JObl *o) {
 // ── --check-hyps ───────────────────────────────────────────────────────────────────────────
 typedef struct { IrInstr *at; JObl *o; } HK;
 static HK *hk; static int64_t nhk;
-static long long reached, checked, falsec, unknown, premises, claimchk, claimgoals;
+static long long reached, checked, falsec, unknown, premises, claimchk, claimgoals, contractchk, postgoals;
 static int hk_cmp(const void *a, const void *b) {
     uintptr_t x = (uintptr_t)((const HK *)a)->at, y = (uintptr_t)((const HK *)b)->at;
     return x < y ? -1 : x > y;
@@ -190,6 +193,7 @@ static void hk_check(JObl *o, IVal *v, int nv) {
         if (r < 0) { unknown++; continue; }
         checked++;
         if (!strncmp(y->origin, "claim ", 6)) claimchk++;   // a claim stated after its join
+        if (!strncmp(y->origin, "contract ", 9)) contractchk++;   // a callee's return claim
         if (r == 1) continue;
         falsec++;
         fprintf(stderr, "FALSE %s %s %s %s h%d (%s):", o->vc.id.fn, o->vc.id.point, o->vc.id.kind, o->vc.id.ordinal, k + 1, y->origin);
@@ -200,9 +204,10 @@ static void hk_check(JObl *o, IVal *v, int nv) {
         fprintf(stderr, "\n");
     }
 }
-// A claim's obligations, by the block whose END they are owed at, each on one edge out of it.
+// A claim's obligations, by the block whose END they are owed at: each on one edge out of it, or a
+// return claim's (`post`, no edge) as the block returns.
 typedef struct { IrBlock *from; JObl *o; } HE;
-static HE *he; static int64_t nhe; static long long edges;
+static HE *he; static int64_t nhe; static long long edges, posts;
 static int he_cmp(const void *a, const void *b) {
     uintptr_t x = (uintptr_t)((const HE *)a)->from, y = (uintptr_t)((const HE *)b)->from;
     return x < y ? -1 : x > y;
@@ -211,36 +216,47 @@ static int he_cmp(const void *a, const void *b) {
 // entered next in the same frame (ii_on_block), with nothing run between. A record left by a
 // block that returned matches no claim (such a block has no edge to owe one on).
 static IrBlock *hk_last; static IVal *hk_lastv;
+// A claim obligation reached where it is owed: its hypotheses, and its goal (the claim), counted
+// in `goals` when it could be evaluated.
+static void hk_claim(JObl *o, IVal *v, int nv, const char *where, long long *goals) {
+    hk_check(o, v, nv);
+    int r = hk_cons(o, &o->vc.goal, v, nv);
+    if (r < 0) { unknown++; return; }
+    (*goals)++;
+    if (r == 1) return;
+    falsec++;
+    fprintf(stderr, "FALSE %s %s %s %s goal (the claim, %s):", o->vc.id.fn, o->vc.id.point, o->vc.id.kind, o->vc.id.ordinal, where);
+    for (int32_t x = 0; x < o->vc.nvars; x++) {
+        __int128 val;
+        if (hk_var(o, x, v, nv, &val)) fprintf(stderr, " %s=%lld", o->vc.vars[x], (long long)val);
+    }
+    fprintf(stderr, "\n");
+}
+static HE *hk_from(const IrBlock *b) {
+    HE key = { (IrBlock *)b, NULL };
+    HE *h = nhe ? bsearch(&key, he, (size_t)nhe, sizeof *he, he_cmp) : NULL;
+    while (h && h > he && h[-1].from == b) h--;
+    return h;
+}
 static void hk_on_block(IrFunc *f, IrBlock *to, IVal *v, int nv) {
     (void)f;
     IrBlock *b = hk_last; IVal *bv = hk_lastv;
     hk_last = NULL;
     if (b && bv == v) { HkLast *e = &hk_lastpred[hk_lp_slot(v, to->id)]; e->v = v; e->blk = to->id; e->pred = b->id; }
-    if (!b || bv != v || !nhe) return;
-    HE key = { b, NULL };
-    HE *h = bsearch(&key, he, (size_t)nhe, sizeof *he, he_cmp);
-    if (!h) return;
-    while (h > he && h[-1].from == b) h--;
-    for (; h < he + nhe && h->from == b; h++) {
-        if (h->o->to != to) continue;
-        edges++; hk_check(h->o, v, nv);
-        int r = hk_cons(h->o, &h->o->vc.goal, v, nv);
-        if (r < 0) { unknown++; continue; }
-        claimgoals++;
-        if (r == 1) continue;
-        falsec++;
-        fprintf(stderr, "FALSE %s %s %s %s goal (the claim, on the edge bb%d->bb%d):", h->o->vc.id.fn, h->o->vc.id.point,
-                h->o->vc.id.kind, h->o->vc.id.ordinal, b->id, to->id);
-        for (int32_t x = 0; x < h->o->vc.nvars; x++) {
-            __int128 val;
-            if (hk_var(h->o, x, v, nv, &val)) fprintf(stderr, " %s=%lld", h->o->vc.vars[x], (long long)val);
-        }
-        fprintf(stderr, "\n");
-    }
+    if (!b || bv != v) return;
+    char where[64]; snprintf(where, sizeof where, "on the edge bb%d->bb%d", b->id, to->id);
+    for (HE *h = hk_from(b); h && h < he + nhe && h->from == b; h++)
+        if (h->o->to == to) { edges++; hk_claim(h->o, v, nv, where, &claimgoals); }
 }
 static void hk_on_instr(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) {
     (void)f;
-    if (!i) { hk_last = b; hk_lastv = v; return; }  // the block's end: its edge is known at the next entry
+    if (!i) {                                        // the block's end: its edge is known next
+        hk_last = b; hk_lastv = v;
+        if (b->term.kind == IR_TERM_RET)                 // a return claim, owed as b returns
+            for (HE *h = hk_from(b); h && h < he + nhe && h->from == b; h++)
+                if (!h->o->to) { posts++; hk_claim(h->o, v, nv, "at the return", &postgoals); }
+        return;
+    }
     if (!nhk) return;
     HK key = { i, NULL };
     HK *h = bsearch(&key, hk, (size_t)nhk, sizeof *hk, hk_cmp);
@@ -279,10 +295,17 @@ static void hdr_sink(void *ctx, IrFunc *f, int bid, const VraRel *r, int n) {
 // add candidates with a fixed bound: `i < 2` proposes `i <= 1`, `i <= 2` and `i <= 3`, each side,
 // since the bound an induction keeps is the guard's give or take a step. VRA's converged state at
 // the header (PE.4) adds its relations as fixed candidates too, those whose terms a claim there may
-// name, one of them a version the header makes.
+// name, one of them a version the header makes. At a function's RETURNS (ret_candidates), for a
+// function some function of its module calls: each side of the value returned and of its
+// difference and sum with each integer parameter, bounded over the returns' paths, and VRA's
+// return interval as a fixed candidate.
 // Nothing here is believed: the generator owes every claim on every edge into its block, back
-// edges included, and HOUDINI drops a claim one of those VCs is not implied by, and solves the rest
-// again, until none is: what survives is inductive together. Bounds are computed in ROUNDS, each
+// edges included, and a return claim at every return, and HOUDINI drops a claim one of those VCs
+// is not implied by, and solves the rest again, until none is: what survives is inductive
+// together. Claims are proposed for the whole MODULE at once and Houdini runs over all of them,
+// since a return claim may rest on its function's loop invariants, a loop on a callee's return
+// claim, and a recursive function's return claim on itself at its own calls (induction over the
+// calls). Bounds are computed in ROUNDS, each
 // under the claims the previous round verified only (a candidate not yet verified may contradict
 // another, and a bound computed under it would be vacuous): round 1 under none, then until a
 // round verifies nothing new, three at most. A round's verified set contains the last one's.
@@ -290,6 +313,7 @@ static void hdr_sink(void *ctx, IrFunc *f, int bid, const VraRel *r, int n) {
 static char *cl_work;
 static const JWork cl_lim = { 100000, 4096, 4096 };    // solve_vc's
 static long long cl_proposed, cl_kept, cl_dropped;
+static bool cl_finder = true;                          // VRA's facts as candidates (--no-finder)
 typedef struct { JClaim c; __int128 tb; bool fixed; } JCand;
 static bool cand_push(JCand **cd, int32_t *n, int32_t *cap, int32_t blk, int32_t k0, int c0, int32_t k1, int c1,
                       const IrType *t0, const IrType *t1) {
@@ -312,17 +336,27 @@ static bool same_form(const JClaim *a, const JClaim *b) {
     for (int k = 0; k < a->nt; k++) if (a->key[k] != b->key[k] || a->coef[k] != b->coef[k]) return false;
     return true;
 }
-// Houdini over cl[0..nc): the claims left, in order, or -1 when the generator refuses them.
-static int32_t houdini(IrFunc *f, char *buf, size_t cap, JClaim *cl, int32_t nc, char *err, size_t errcap) {
+// Houdini over the module's claims cl[0..nc): each function's claim VCs (its cut points' and its
+// returns'), solved; a claim one of them is not implied by is dropped, and the rest solved again,
+// until none is. The claims left, in order. A function the generator refuses has none of its own,
+// and its final generation reports the refusal.
+static int32_t houdini_module(IrFunc *mod, char *buf, size_t cap, JClaim *cl, int32_t nc) {
+    char err[200];
     for (bool again = nc > 0; again; ) {
         again = false;
-        JMem m = jmem_over(buf, cap);
-        JObl *o; int32_t n;
-        if (!jgen_func(&m, f, cl, nc, JGEN_CLAIMS, &o, &n, err, errcap)) return -1;
         uint8_t *bad = calloc((size_t)nc, 1);
-        if (!bad) { snprintf(err, errcap, "out of memory"); return -1; }
-        for (int32_t q = 0; q < n; q++)
-            if (!bad[o[q].claim] && lia_solve(&o[q].vc, cl_lim, cl_work, CL_REGION).k != J_ANS_CERT) bad[o[q].claim] = 1;
+        if (!bad) return -1;
+        for (IrFunc *f = mod; f; f = f->next) {
+            if (f->is_extern || !f->entry) continue;
+            JMem m = jmem_over(buf, cap);
+            JObl *o; int32_t n;
+            if (!jgen_func(&m, f, cl, nc, JGEN_CLAIMS, &o, &n, err, sizeof err)) {
+                for (int32_t ci = 0; ci < nc; ci++) if (cl[ci].fn == f) bad[ci] = 1;
+                continue;
+            }
+            for (int32_t q = 0; q < n; q++)
+                if (!bad[o[q].claim] && lia_solve(&o[q].vc, cl_lim, cl_work, CL_REGION).k != J_ANS_CERT) bad[o[q].claim] = 1;
+        }
         int32_t keep = 0;
         for (int32_t ci = 0; ci < nc; ci++) if (!bad[ci]) cl[keep++] = cl[ci]; else { cl_dropped++; again = true; }
         nc = keep;
@@ -419,70 +453,156 @@ oom:
     free(tm); snprintf(err, errcap, "out of memory");
     return false;
 }
-static JClaim *propose_claims(IrFunc *f, char *buf, size_t cap, int32_t *ncl, char *err, size_t errcap) {
-    *ncl = 0; err[0] = 0;
-    JMem m = jmem_over(buf, cap);
-    JSlot *s0; int32_t ns;
-    if (!jgen_slots(&m, f, &s0, &ns, err, errcap) || ns == 0) return NULL;
-    JSlot *sl = malloc(sizeof *sl * (size_t)ns);
-    JClaim *cl = NULL, *as = NULL;                       // this round's claims; the verified ones
+// Each candidate's bound, from the VCs o[0..n) of a claim set whose candidates start at `base`:
+// the largest value its objective takes over its VCs (a fixed one keeps its own). What survives,
+// unless a verified claim is as tight or this very claim was proposed already, goes into cl.
+static bool bound_candidates(const JCand *cd, int32_t ncd, const JObl *o, int32_t n, int32_t base,
+                             const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    for (int32_t c = 0; c < ncd; c++) {
+        JClaim got = cd[c].c;
+        if (!cd[c].fixed) {
+            __int128 best = 0;
+            bool ok = true, any = false;
+            for (int32_t q = 0; q < n && ok; q++) {
+                if (o[q].claim != base + c) continue;
+                JVc v = o[q].vc;
+                jg_int(&v.goal.rhs, cd[c].tb - 1);
+                if (lia_solve(&v, cl_lim, cl_work, CL_REGION).k != J_ANS_CERT) { ok = false; break; }
+                LMax x = lia_maximize(&o[q].vc, o[q].vc.goal.t, o[q].vc.goal.nt, cl_lim, cl_work, CL_REGION);
+                if (x.k == LIA_MAX_EMPTY) continue;
+                if (x.k != LIA_MAX_BOUND) { ok = false; break; }
+                __int128 bb = hk_jint(&x.b);
+                if (!any || bb > best) best = bb;
+                any = true;
+            }
+            if (!ok || !any) continue;
+            got.rhs = best;
+        }
+        // already verified as tight, or this very candidate already proposed (a tighter one not
+        // yet verified does not make it redundant: it may fail)
+        bool dup = false;
+        for (int32_t v2 = 0; v2 < nv && !dup; v2++) dup = same_form(&as[v2], &got) && as[v2].fn == got.fn && as[v2].rhs <= got.rhs;
+        for (int32_t v2 = nv; v2 < *nc && !dup; v2++) dup = same_form(&(*cl)[v2], &got) && (*cl)[v2].fn == got.fn && (*cl)[v2].rhs == got.rhs;
+        if (dup) continue;
+        if (*nc == *ccl) {
+            int32_t nn = *ccl ? *ccl * 2 : 64;
+            JClaim *x = realloc(*cl, sizeof *x * (size_t)nn);
+            if (!x) return false;
+            *cl = x; *ccl = nn;
+        }
+        (*cl)[(*nc)++] = got;
+        cl_proposed++;
+    }
+    return true;
+}
+// Whether a function of the module that `f`'s claims reach (its own, I.181) calls f.
+static bool called_here(IrFunc *mod, IrFunc *f) {
+    for (IrFunc *g = mod; g; g = g->next) {
+        if (g->is_extern || !jg_same_module(g, f)) continue;
+        for (IrBlock *b = g->blocks; b; b = b->next)
+            for (IrInstr *i = b->instrs; i; i = i->next)
+                if (i->op == IR_CALL && jg_callee(i) == f) return true;
+    }
+    return false;
+}
+// A function's return candidates: VRA's interval (its summary, after the analysis: ir.h's
+// ret_range_state), each side of the returned value, and of its difference and sum with each
+// integer parameter (`min(a, b) <= a`; `clamp(x, lo, hi) >= lo`). None for a function no caller
+// here can use them in, or whose return may wrap, whose claims the generator would refuse.
+static bool ret_candidates(IrFunc *mod, IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
+    *ncd = 0;
+    if (!jg_is_int(f->ret_type) || f->incomplete || !called_here(mod, f)) return true;
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        if (b->term.kind == IR_TERM_RET && b->term.cond && !jg_lands_exact(b->term.cond->type, f->ret_type, b->term.unchecked)) return true;
+    JRange tr;
+    // a side tighter than the type's
+    if (cl_finder && f->ret_range_state == 2 && jg_range(f->ret_type, &tr))
+        for (int sd = 1; sd >= -1; sd -= 2) {
+            __int128 rhs = sd > 0 ? (__int128)f->ret_range_hi : -(__int128)f->ret_range_lo;
+            if (rhs >= (sd > 0 ? tr.hi : -tr.lo)) continue;
+            int32_t at = *ncd;
+            if (!cand_push(cd, ncd, ccd, JCLAIM_RET, JKEY_RET, sd, -1, 0, f->ret_type, NULL)) return false;
+            if (*ncd == at + 1) { (*cd)[at].fixed = true; (*cd)[at].c.rhs = rhs; }
+        }
+    if (!cand_push(cd, ncd, ccd, JCLAIM_RET, JKEY_RET, 1, -1, 0, f->ret_type, NULL) ||
+        !cand_push(cd, ncd, ccd, JCLAIM_RET, JKEY_RET, -1, -1, 0, f->ret_type, NULL)) return false;
+    for (IrParam *p = f->params; p; p = p->next) {
+        if (!p->value || !jg_is_int(p->value->type)) continue;
+        for (int sr = -1; sr <= 1; sr += 2)
+            for (int sp = -1; sp <= 1; sp += 2)
+                if (!cand_push(cd, ncd, ccd, JCLAIM_RET, JKEY_RET, sr, p->value->id, sp, f->ret_type, p->value->type)) return false;
+    }
+    for (int32_t c = 0; c < *ncd; c++) (*cd)[c].c.fn = f;
+    return true;
+}
+// The module's claims, in ROUNDS (each under the claims the previous one verified only): every
+// function's cut-point candidates and return candidates, bounded, then Houdini over them all, since
+// a return claim may need its function's loop invariants and a loop a callee's return claim.
+static JClaim *propose_module(IrFunc *mod, char *buf, size_t cap, int32_t *ncl) {
+    char err[200];
+    JClaim *cl = NULL, *as = NULL;
     JCand *cd = NULL;
     int32_t nc = 0, ccl = 0, nv = 0, ncd = 0, ccd = 0;
-    if (!sl) goto oom;
-    memcpy(sl, s0, sizeof *sl * (size_t)ns);
+    *ncl = 0;
     for (int round = 0; round < 3; round++) {
-        nc = 0;
-        if (nv + 1 > ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)(nv + 1)); if (!x) goto oom; cl = x; ccl = nv + 1; }
+        if (nv > ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)nv); if (!x) goto oom; cl = x; ccl = nv; }
         if (nv) memcpy(cl, as, sizeof *cl * (size_t)nv);
         nc = nv;
-        for (int32_t i = 0, j; i < ns; i = j) {
-            for (j = i; j < ns && sl[j].blk == sl[i].blk; j++) ;
-            int32_t H = sl[i].blk;
-            if (!block_candidates(f, buf, cap, sl, i, j, &cd, &ncd, &ccd, err, errcap)) goto fail;
-            // the verified claims, then this block's candidates: the generator's obligations for them
-            JClaim *q2 = malloc(sizeof *q2 * (size_t)(nv + ncd + 1));
-            if (!q2) goto oom;
-            if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
-            for (int32_t c = 0; c < ncd; c++) q2[nv + c] = cd[c].c;
-            m = jmem_over(buf, cap);
-            JObl *o; int32_t n;
-            bool gok = jgen_func(&m, f, q2, nv + ncd, H, &o, &n, err, errcap);
-            free(q2);
-            if (!gok) goto fail;
-            for (int32_t c = 0; c < ncd; c++) {
-                JClaim got = cd[c].c;
-                if (!cd[c].fixed) {
-                    __int128 best = 0;
-                    bool ok = true, any = false;
-                    for (int32_t q = 0; q < n && ok; q++) {
-                        if (o[q].claim != nv + c) continue;
-                        JVc v = o[q].vc;
-                        jg_int(&v.goal.rhs, cd[c].tb - 1);
-                        if (lia_solve(&v, cl_lim, cl_work, CL_REGION).k != J_ANS_CERT) { ok = false; break; }
-                        LMax x = lia_maximize(&o[q].vc, o[q].vc.goal.t, o[q].vc.goal.nt, cl_lim, cl_work, CL_REGION);
-                        if (x.k == LIA_MAX_EMPTY) continue;
-                        if (x.k != LIA_MAX_BOUND) { ok = false; break; }
-                        __int128 b = hk_jint(&x.b);
-                        if (!any || b > best) best = b;
-                        any = true;
-                    }
-                    if (!ok || !any) continue;
-                    got.rhs = best;
-                }
-                // already verified as tight, or this very candidate already proposed (a tighter one
-                // not yet verified does not make it redundant: it may fail)
-                bool dup = false;
-                for (int32_t v2 = 0; v2 < nv && !dup; v2++) dup = same_form(&as[v2], &got) && as[v2].rhs <= got.rhs;
-                for (int32_t v2 = nv; v2 < nc && !dup; v2++) dup = same_form(&cl[v2], &got) && cl[v2].rhs == got.rhs;
-                if (dup) continue;
-                if (nc == ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)(ccl * 2)); if (!x) goto oom; cl = x; ccl *= 2; }
-                cl[nc++] = got;
-                cl_proposed++;
+        for (IrFunc *f = mod; f; f = f->next) {
+            if (f->is_extern || !f->entry) continue;
+            JMem m = jmem_over(buf, cap);
+            JSlot *s0; int32_t ns = 0;
+            JSlot *sl = NULL;
+            if (jgen_slots(&m, f, &s0, &ns, err, sizeof err) && ns > 0) {
+                if (!(sl = malloc(sizeof *sl * (size_t)ns))) goto oom;
+                memcpy(sl, s0, sizeof *sl * (size_t)ns);
             }
+            // the cut points, block by block, then the returns; each under the verified claims
+            for (int32_t i = 0, j; i <= ns; i = j) {
+                int32_t only;
+                if (i < ns) {
+                    for (j = i; j < ns && sl[j].blk == sl[i].blk; j++) ;
+                    if (!block_candidates(f, buf, cap, sl, i, j, &cd, &ncd, &ccd, err, sizeof err)) continue;
+                    for (int32_t c = 0; c < ncd; c++) cd[c].c.fn = f;
+                    only = sl[i].blk;
+                } else {
+                    j = ns + 1;
+                    if (!ret_candidates(mod, f, &cd, &ncd, &ccd)) { free(sl); goto oom; }
+                    only = JGEN_POST;
+                }
+                if (ncd == 0) continue;
+                JClaim *q2 = malloc(sizeof *q2 * (size_t)(nv + ncd + 1));
+                if (!q2) { free(sl); goto oom; }
+                if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
+                for (int32_t c = 0; c < ncd; c++) q2[nv + c] = cd[c].c;
+                m = jmem_over(buf, cap);
+                JObl *o; int32_t n;
+                bool gok = jgen_func(&m, f, q2, nv + ncd, only, &o, &n, err, sizeof err);
+                free(q2);
+                if (gok && !bound_candidates(cd, ncd, o, n, nv, as, nv, &cl, &nc, &ccl)) { free(sl); goto oom; }
+                // a header's back edge from ANY previous trip: each side of each header version
+                // alone, under the verified claims only (at their placeholders the header's
+                // comparisons, give or take one, contradict each other, and the back edge bounds
+                // nothing): `k = next(k)` with `next(k) <= 7` keeps `k <= 7` whatever k was
+                if (gok && i < ns && sl[i].head) {
+                    int32_t n1 = 0;
+                    for (int32_t c = 0; c < ncd; c++) if (!cd[c].fixed && cd[c].c.nt == 1) cd[n1++] = cd[c];
+                    if (n1 > 0) {
+                        if (!(q2 = malloc(sizeof *q2 * (size_t)(nv + n1)))) { free(sl); goto oom; }
+                        if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
+                        for (int32_t c = 0; c < n1; c++) { q2[nv + c] = cd[c].c; q2[nv + c].rhs = cd[c].tb; }
+                        m = jmem_over(buf, cap);
+                        gok = jgen_func(&m, f, q2, nv + n1, only, &o, &n, err, sizeof err);
+                        free(q2);
+                        if (gok && !bound_candidates(cd, n1, o, n, nv, as, nv, &cl, &nc, &ccl)) { free(sl); goto oom; }
+                    }
+                }
+            }
+            free(sl);
         }
         if (nc == nv) break;                                 // nothing new to verify
-        int32_t kept = houdini(f, buf, cap, cl, nc, err, errcap);
-        if (kept < 0) goto fail;
+        int32_t kept = houdini_module(mod, buf, cap, cl, nc);
+        if (kept < 0) goto oom;
         bool grew = kept > nv;
         free(as); as = malloc(sizeof *as * (size_t)(kept ? kept : 1));
         if (!as) goto oom;
@@ -490,15 +610,14 @@ static JClaim *propose_claims(IrFunc *f, char *buf, size_t cap, int32_t *ncl, ch
         nv = kept;
         if (!grew) break;
     }
-    free(sl); free(cd); free(cl);
+    free(cd); free(cl);
     cl_kept += nv;
     *ncl = nv;
     if (nv == 0) { free(as); return NULL; }
     return as;
 oom:
-    snprintf(err, errcap, "out of memory");
-fail:
-    free(sl); free(cd); free(cl); free(as);
+    free(cd); free(cl); free(as);
+    fprintf(stderr, "propose_module: out of memory\n");
     return NULL;
 }
 
@@ -533,34 +652,46 @@ int main(int argc, char **argv) {
     if (!buf || !hbuf || !cl_work) { fprintf(stderr, "out of memory\n"); return 1; }
     int rc = 0;
     JMem m = jmem_over(buf, cap);                      // one region: --check-hyps keeps every VC
-    for (IrFunc *f = irmod; f; f = f->next) {
-        if (f->is_extern) continue;
-        int32_t ncl = 0; char err[200]; err[0] = 0;
-        if (claims && finder) {                              // VRA's header states, as candidates
+    // the module's claims: VRA's header states and return intervals first, as candidates
+    int32_t ncl = 0;
+    JClaim *cl = NULL;
+    cl_finder = finder;
+    if (claims) {
+        for (IrFunc *f = irmod; finder && f; f = f->next) {
+            if (f->is_extern) continue;
             vra_header_sink = hdr_sink; vra_header_ctx = NULL;
             Vra *VH = vra_analyze(f);
             vra_header_sink = NULL;
             if (VH) vra_free(VH);
         }
-        JClaim *cl = claims ? propose_claims(f, hbuf, hcap, &ncl, err, sizeof err) : NULL;
-        for (int32_t c = 0; show && c < ncl; c++) {
-            printf("# claim %.*s bb%d: %lld*%%%d", (int)f->name->length, f->name->name, cl[c].blk, (long long)cl[c].coef[0], cl[c].key[0]);
-            if (cl[c].nt > 1) printf(" + %lld*%%%d", (long long)cl[c].coef[1], cl[c].key[1]);
-            JInt r; jg_int(&r, cl[c].rhs); printf(" <= "); jint_print(&r, stdout); printf("\n");
+        cl = propose_module(irmod, hbuf, hcap, &ncl);
+    }
+    for (int32_t c = 0; show && c < ncl; c++) {
+        static const char *kn[] = { "%ret" };
+        printf("# claim %.*s ", (int)cl[c].fn->name->length, cl[c].fn->name->name);
+        if (cl[c].blk == JCLAIM_RET) printf("ret: "); else printf("bb%d: ", cl[c].blk);
+        for (int k = 0; k < cl[c].nt; k++) {
+            if (k) printf(" + ");
+            if (cl[c].key[k] == JKEY_RET) printf("%lld*%s", (long long)cl[c].coef[k], kn[0]);
+            else printf("%lld*%%%d", (long long)cl[c].coef[k], cl[c].key[k]);
         }
+        JInt r; jg_int(&r, cl[c].rhs); printf(" <= "); jint_print(&r, stdout); printf("\n");
+    }
+    for (IrFunc *f = irmod; f; f = f->next) {
+        if (f->is_extern) continue;
+        char err[200]; err[0] = 0;
         if (check) {
             JObl *o; int32_t n;
-            if (err[0] || !jgen_func(&m, f, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
-                fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; free(cl); continue;
+            if (!jgen_func(&m, f, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
+                fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; continue;
             }
-            free(cl);
             HK *nh = realloc(hk, sizeof *hk * (size_t)(nhk + n + 1));
             HE *ne = realloc(he, sizeof *he * (size_t)(nhe + n + 1));
             if (!nh || !ne) { fprintf(stderr, "out of memory\n"); return 1; }
             hk = nh; he = ne;
             for (int32_t i = 0; i < n; i++) {
                 if (o[i].outside) continue;
-                if (o[i].to) { he[nhe].from = o[i].blk; he[nhe].o = &o[i]; nhe++; }
+                if (o[i].to || !o[i].at) { he[nhe].from = o[i].blk; he[nhe].o = &o[i]; nhe++; }
                 else { hk[nhk].at = o[i].at; hk[nhk].o = &o[i]; nhk++; }
             }
             continue;
@@ -568,11 +699,10 @@ int main(int argc, char **argv) {
         Vra *V = vra_analyze(f);
         m = jmem_over(buf, cap);
         JObl *o; int32_t n;
-        if (err[0] || !jgen_func(&m, f, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
+        if (!jgen_func(&m, f, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
             printf("%s %.*s: %s\n", stats ? "ERROR\t" : "# generator refused", (int)f->name->length, f->name->name, err);
-            rc = 1; free(cl); vra_free(V); continue;
+            rc = 1; vra_free(V); continue;
         }
-        free(cl);
         for (int32_t i = 0; i < n; i++) {
             const char *vv = o[i].outside ? "-" : vra_verdict(V, &o[i]);
             if (why) {
@@ -627,6 +757,7 @@ int main(int argc, char **argv) {
                 continue;
             }
             if (o[i].to) printf("# claim on the edge bb%d->bb%d\n", o[i].blk->id, o[i].to->id);
+            else if (!o[i].at) printf("# claim at the return of bb%d\n", o[i].blk->id);
             else printf("# vra=%s\n", vv);
             if (smt) jvc_print_smtlib(&o[i].vc, stdout); else jvc_print(&o[i].vc, stdout);
         }
@@ -639,11 +770,12 @@ int main(int argc, char **argv) {
         int st = ir_interpret_module(irmod, path);
         fflush(stdout);
         fprintf(stderr, "SUMMARY obligations=%lld reached=%lld hyps-checked=%lld false=%lld not-evaluable=%lld premises=%lld status=%d"
-                " claims=%lld claims-dropped=%lld claim-obligations=%lld edges=%lld claim-hyps-checked=%lld claim-goals-checked=%lld\n",
+                " claims=%lld claims-dropped=%lld claim-obligations=%lld edges=%lld claim-hyps-checked=%lld claim-goals-checked=%lld"
+               " returns=%lld return-goals-checked=%lld contract-hyps-checked=%lld\n",
                (long long)nhk, reached, checked, falsec, unknown, premises, st, cl_kept, cl_dropped, (long long)nhe, edges,
-               claimchk, claimgoals);
+               claimchk, claimgoals, posts, postgoals, contractchk);
         if (falsec) rc = 3;
     } else if (claims) printf("# claims proposed %lld, kept %lld, dropped %lld\n", cl_proposed, cl_kept, cl_dropped);
-    free(buf); free(hbuf); free(cl_work);
+    free(cl); free(buf); free(hbuf); free(cl_work);
     return rc;
 }

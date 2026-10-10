@@ -1884,6 +1884,10 @@ at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
 ty=Slice_u8 scalar
+### tests/trust/judge_callee_contracts_pass.ln
+rc=0
+out=
+at=const 14
 ### tests/trust/judge_field_cells_pass.ln
 rc=0
 out=

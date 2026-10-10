@@ -1,0 +1,20 @@
+// A RECURSIVE callee's contract: `down(n) <= 7` is owed at down's own returns, one of which
+// returns what the recursive call returned, where the contract is assumed: the induction over the
+// calls, as Houdini over the cycle keeps it. The judge proves `t[down(i)]` from it; VRA has no
+// return range for a function in its own cycle and refuses the index (E085), so only judge_gate's
+// run of refused programs checks the contract where the program returns and where it is used.
+func down(n u32) u32 {
+    if n < 8 { return n }
+    return down(n - 8)
+}
+func main() i32 {
+    var t u8[8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    var s u32 = 0
+    var i u32 = 0
+    while i < 30 decreasing 30 - i {
+        s = s +% t[down(i)]
+        i = i + 1
+    }
+    if s != 129 { return 1 }
+    return 0
+}

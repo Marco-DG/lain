@@ -35,7 +35,9 @@
 # time (a claim never evaluated is not a hold): each time the program takes an edge a claim is owed
 # on, the driver evaluates the claim there, with its obligation's hypotheses, and where the claim
 # is used after its block, as any hypothesis. The two are floored apart: the uses outnumber the
-# edges, and would hide a run that checks no edge.
+# edges, and would hide a run that checks no edge. RETURN claims (callee contracts) are owed at
+# every return (`post` VCs) and stated at each call in the same module. They are floored apart
+# too: checked where the program returns, and where a caller uses one.
 #
 # PRECISION, the other half: a hypothesis check cannot see a generator that stops stating a TRUE
 # fact. So every program's VCs are also solved by the untrusted solver (solve_vc), and the gate
@@ -52,6 +54,8 @@ cd "$(dirname "$0")/../.."
 REACHED_FLOOR=100000         # obligation events; 287,380 when the gate was written (19473f7)
 IMPLIED_FLOOR=7450       # obligations' VCs implied over the corpus; 7,470 of 7,567 when the floor was set (102f71f and the field cells). Lower it only with the reason
 EDGE_FLOOR=50000         # claims checked at run time on the edges they are owed on; 260,682 when the floor was set
+RETURN_FLOOR=4000        # return claims checked at run time where the program returns; 9,065 when the floor was set
+CONTRACT_FLOOR=2000      # return claims checked at run time where a caller uses them; 4,096 when the floor was set
 USE_FLOOR=100000         # claims checked at run time where they are used; 1,215,712 when the floor was set
 REFUSED_FLOOR=150        # programs the prover refuses that ran and reached an obligation; 197 when the floor was set
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
@@ -91,7 +95,7 @@ export -f refused_one
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'one "{}"' < "$T/files.txt"
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'refused_one "{}"' < "$T/refused.txt"
 judged=0; nosum=0; refused=0; falsec=0; reached=0; checked=0; solverr=0; implied=0; notimp=0; outbudget=0
-claims=0; hullok=0; hullbad=0; edges=0; claimchk=0; claimgoals=0; mustfail=0
+claims=0; hullok=0; hullbad=0; edges=0; claimchk=0; claimgoals=0; mustfail=0; retgoals=0; contractchk=0
 while read -r f; do
     o=$(echo "$f" | tr '/' '_')
     s=$(grep -m1 '^SUMMARY ' "$T/$o.err")
@@ -107,12 +111,12 @@ while read -r f; do
     if [ -f "$T/$o.src" ]; then
         if [ "$(cat "$T/$o.src")" != 0 ]; then solverr=$((solverr+1)); echo "  SOLVER FAILED (rc $(cat "$T/$o.src")): $f"; tail -2 "$T/$o.ans" | sed 's/^/      /'; fi
         # an answer line names its VC: `cert FN IRHASH POINT KIND ORDINAL`; a claim's kind is `hull`,
-        # `inv.entry` or `inv.keep`, and every other kind is an obligation's
-        h=$(grep -cE '^cert [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep) ' "$T/$o.ans"); hullok=$((hullok + h))
-        implied=$((implied + $(grep -c '^cert ' "$T/$o.ans") - h)); notimp=$((notimp + $(grep -c '^model ' "$T/$o.ans") - $(grep -cE '^model [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep) ' "$T/$o.ans")))
-        outbudget=$((outbudget + $(grep -cE '^(budget|capacity) ' "$T/$o.ans") - $(grep -cE '^(budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep) ' "$T/$o.ans")))
-        n=$(grep -cE '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep) ' "$T/$o.ans")
-        if [ "$n" -gt 0 ]; then hullbad=$((hullbad+n)); echo "  CLAIM NOT IMPLIED ($n): $f"; grep -m2 -E '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep) ' "$T/$o.ans" | sed 's/^/      /'; fi
+        # `inv.entry`, `inv.keep` or `post`, and every other kind is an obligation's
+        h=$(grep -cE '^cert [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans"); hullok=$((hullok + h))
+        implied=$((implied + $(grep -c '^cert ' "$T/$o.ans") - h)); notimp=$((notimp + $(grep -c '^model ' "$T/$o.ans") - $(grep -cE '^model [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans")))
+        outbudget=$((outbudget + $(grep -cE '^(budget|capacity) ' "$T/$o.ans") - $(grep -cE '^(budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans")))
+        n=$(grep -cE '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans")
+        if [ "$n" -gt 0 ]; then hullbad=$((hullbad+n)); echo "  CLAIM NOT IMPLIED ($n): $f"; grep -m2 -E '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans" | sed 's/^/      /'; fi
         case "$f" in tests/trust/judge_*_pass.ln)
             n=$(grep -cE '^(model|budget|capacity) ' "$T/$o.ans")
             if [ "$n" -gt 0 ] || [ ! -s "$T/$o.ans" ]; then mustfail=$((mustfail+1)); echo "  MUST-PROVE, $n NOT IMPLIED: $f"; grep -m2 -E '^(model|budget|capacity) ' "$T/$o.ans" | sed 's/^/      /'; fi
@@ -128,6 +132,8 @@ while read -r f; do
     claims=$((claims + ${r:-0})); edges=$((edges + ${c:-0}))
     c=$(echo "$s" | sed -nE 's/.* claim-hyps-checked=([0-9]+) .*/\1/p'); claimchk=$((claimchk + ${c:-0}))
     c=$(echo "$s" | sed -nE 's/.* claim-goals-checked=([0-9]+).*/\1/p'); claimgoals=$((claimgoals + ${c:-0}))
+    c=$(echo "$s" | sed -nE 's/.* return-goals-checked=([0-9]+).*/\1/p'); retgoals=$((retgoals + ${c:-0}))
+    c=$(echo "$s" | sed -nE 's/.* contract-hyps-checked=([0-9]+).*/\1/p'); contractchk=$((contractchk + ${c:-0}))
 done < "$T/files.txt"
 rdecl=$(wc -l < "$T/refused.txt"); rran=0; rnosum=0; rnothing=0; rfalse=0; rrefused=0; rchecked=0; rcrash=0
 while read -r f; do
@@ -149,6 +155,7 @@ echo "programs declared $declared, judged $judged, no summary $nosum"
 echo "obligation events $reached, hypotheses checked at run time $checked, false $falsec, generator refusals $refused"
 echo "VCs implied $implied, not implied $notimp, budget or capacity $outbudget, solver failures $solverr (floor $IMPLIED_FLOOR)"
 echo "claims $claims: their VCs implied $hullok, not implied $hullbad; at run time, claims checked on $claimgoals edges taken (floor $EDGE_FLOOR) and $claimchk times where used (floor $USE_FLOOR)"
+echo "return claims checked at run time at $retgoals returns (floor $RETURN_FLOOR) and $contractchk times at a call (floor $CONTRACT_FLOOR)"
 echo "the judge's own programs (tests/trust/judge_*_pass.ln) with a VC not implied, with or without the finder: $mustfail"
 echo "programs the prover refuses: $rdecl; ran $rran (floor $REFUSED_FLOOR), skipped $((rnosum + rnothing)) ($rnosum cannot run, $rnothing reach no obligation), crashed $rcrash; hypotheses checked $rchecked, false $rfalse, generator refusals $rrefused"
 if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ] || [ "$rfalse" -gt 0 ] || [ "$rrefused" -gt 0 ]; then
@@ -159,6 +166,9 @@ if [ "$reached" -lt "$REACHED_FLOOR" ]; then
 fi
 if [ "$claimgoals" -lt "$EDGE_FLOOR" ] || [ "$claimchk" -lt "$USE_FLOOR" ]; then
     echo "judge_gate: FAIL — claims checked at run time, $claimgoals on edges and $claimchk where used, below the floors ($EDGE_FLOOR, $USE_FLOOR): claims are stated where no run evaluates them"; exit 1
+fi
+if [ "$retgoals" -lt "$RETURN_FLOOR" ] || [ "$contractchk" -lt "$CONTRACT_FLOOR" ]; then
+    echo "judge_gate: FAIL — return claims checked at run time, $retgoals at returns and $contractchk at calls, below the floors ($RETURN_FLOOR, $CONTRACT_FLOOR): contracts are stated where no run evaluates them"; exit 1
 fi
 if [ "$rran" -lt "$REFUSED_FLOOR" ]; then
     echo "judge_gate: FAIL — $rran programs the prover refuses ran, below the floor of $REFUSED_FLOOR: the refused set lost its coverage"; exit 1
