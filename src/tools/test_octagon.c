@@ -5,6 +5,7 @@
 //
 //   gcc -std=c99 -O2 -o test_octagon src/tools/test_octagon.c -I src && ./test_octagon   (run_ir_tests.sh runs it)
 #include "analysis/octagon.h"
+#include "tools/octagon_ref.h"
 #include <stdio.h>
 #include <time.h>
 
@@ -17,11 +18,13 @@ static int64_t bufA[DIM*DIM], bufB[DIM*DIM], bufC[DIM*DIM];
 // e(d) for a concrete point
 static int64_t edim(const int *x, int d) { return (d%2==0) ? x[d/2] : -x[d/2]; }
 
-// does a point satisfy every constraint encoded in m?
+// does a point satisfy every constraint encoded in m? The STORED constraints define γ: the
+// strengthening oct_get adds is a consequence of the unary ones (I.89), and reading it at every
+// entry of every box point doubled this test's time.
 static bool pt_sat(const Octagon *o, const int *x) {
     for (int i=0;i<o->dim;i++)
         for (int j=0;j<o->dim;j++) {
-            int64_t c = oct_get(o,i,j);
+            int64_t c = oct_raw(o,i,j);
             if (c >= OCT_INF) continue;
             if (edim(x,j) - edim(x,i) > c) return false;
         }
@@ -252,12 +255,136 @@ int main(void) {
             bool ba = oct_is_bottom(&A), bb = oct_is_bottom(&B);
             CHECK(ba == bb, "incremental and full closure disagree on emptiness");
             if (ba) incr_bottom++; else incr_trials++;
-            // ⊥ included: the same matrix, not merely the same emptiness (a dead-code query
-            // reads a ⊥ matrix's entries).
-            CHECK(memcmp(ma, mb, sizeof ma) == 0, "incremental closure differs from the full closure");
+            // ⊥ included: the same values, not merely the same emptiness (a dead-code query
+            // reads a ⊥ matrix's entries). The values IMPLIED, as every reader sees them: the
+            // stored matrix leaves the strengthening to oct_get (I.89), so two closures may store
+            // different pairs and imply the same ones.
+            bool same = true;
+            for (int i=0;i<DB && same;i++) for (int j=0;j<DB && same;j++)
+                if (oct_get(&A,i,j) != oct_get(&B,i,j)) same = false;
+            CHECK(same, "incremental closure differs from the full closure");
         }
     }
     printf("octagon: incremental = full closure on %d satisfiable edit sequences and %d empty ones, entry for entry\n", incr_trials, incr_bottom);
+
+    // 13. THE SPARSE OCTAGON = THE STRONG ONE IT REPLACED (I.89). Every value the new oct_get reads
+    //     must be the entry the old strongly closed matrix holds (src/tools/octagon_ref.h, the old
+    //     octagon.h renamed), after every operation VRA performs: constraints then a closure
+    //     (incremental or full), a join of closed states marked closed as the fixpoint marks it,
+    //     constraints added on top of such a join, a widening with thresholds and a loop-modified
+    //     mask then a closure, a meet, a forget, and the order. Six variables, constants up to ±40,
+    //     and one sequence in five near the representable edge (I.170). A widened state is also
+    //     kept UNCLOSED and used as an operand, as the fixpoint stores a header's widened state:
+    //     there the new operations read implied values the old raw matrix had not derived, so they
+    //     may be tighter, and those cases are counted, not failed (the corpus measures them).
+    long d_ops = 0, d_open = 0, d_open_diff = 0, d_leq = 0, d_bot = 0, d_forget_empty = 0;
+    {
+        enum { NB2 = 6, DB2 = 2*NB2, NP = 7 };
+        static int64_t nm[NP][DB2*DB2], rm[NP][DB2*DB2];
+        Octagon N[NP]; RefOctagon F[NP]; bool open[NP], taint[NP];
+        int64_t thr[4]; char mod[NB2];
+        for (int t=0; t<6000; t++) {
+            int64_t K = (t % 5 == 0) ? (REF_OCT_BOUND_MAX / 3) : 40;
+            for (int p=0;p<NP;p++) { oct_init_top(&N[p], NB2, nm[p]); ref_oct_init_top(&F[p], NB2, rm[p]);
+                                     oct_close(&N[p]); ref_oct_close(&F[p]); open[p] = false; taint[p] = false; }
+            for (int step=0; step<18; step++) {
+                int op = rand()%7, p = rand()%NP, q = rand()%NP, r = rand()%NP;
+                bool check = true;
+                // a result computed from a state that was ever open is TAINTED until closed and re-synced
+                bool tin = taint[p] || open[p] || ((op == 1 || op == 2 || op == 4) && (taint[q] || open[q]));
+                // the fixpoint never joins, widens or meets an EMPTY state (it skips a ⊥ edge, and an
+                // unreached block takes its first state by copy), and a ⊥ matrix's entries are arbitrary
+                if ((op == 1 || op == 2 || op == 4) && (oct_is_bottom(&N[p]) || oct_is_bottom(&N[q]) ||
+                                                        ref_oct_is_bottom(&F[p]) || ref_oct_is_bottom(&F[q]))) continue;
+                switch (op) {
+                case 0: case 6: {                                          // constraints, then close
+                    int k = 1 + rand()%4;
+                    for (int e=0;e<k;e++) {
+                        int a=rand()%NB2, b=rand()%NB2, kind=rand()%6;
+                        int64_t c = (int64_t)(rand()%201 - 100) * K / 100;
+                        switch (kind) {
+                            case 0: oct_add_ub(&N[p],a,c); ref_oct_add_ub(&F[p],a,c); break;
+                            case 1: oct_add_lb(&N[p],a,c); ref_oct_add_lb(&F[p],a,c); break;
+                            case 2: if (a!=b) { oct_add_diff_le(&N[p],a,b,c); ref_oct_add_diff_le(&F[p],a,b,c); } break;
+                            case 3: oct_add_sum_le(&N[p],a,b,c); ref_oct_add_sum_le(&F[p],a,b,c); break;
+                            case 4: oct_add_negsum_le(&N[p],a,b,c); ref_oct_add_negsum_le(&F[p],a,b,c); break;
+                            case 5: oct_add_const(&N[p],a,c); ref_oct_add_const(&F[p],a,c); break;
+                        }
+                    }
+                    oct_close(&N[p]); ref_oct_close(&F[p]); open[p] = false; r = p; break; }
+                case 1: {                                                  // join, closed if both were
+                    if (r == p || r == q) { check = false; break; }
+                    bool was_open = open[p] || open[q];
+                    oct_join(&N[r], &N[p], &N[q]); ref_oct_join(&F[r], &F[p], &F[q]);
+                    if (!was_open) { oct_set_clean(&N[r], true); ref_oct_set_clean(&F[r], true); }
+                    else { oct_close(&N[r]); ref_oct_close(&F[r]); }
+                    open[r] = false; break; }
+                case 2: {                                                  // widen a header: In ∇ (In ⊔ T), left open
+                    if (r == p || r == q) { check = false; break; }
+                    static int64_t jn[DB2*DB2], jr[DB2*DB2];
+                    Octagon JN; RefOctagon JR; JN.m = jn; JR.m = jr;
+                    oct_join(&JN, &N[p], &N[q]); ref_oct_join(&JR, &F[p], &F[q]);
+                    if (open[p] || open[q]) { oct_close(&JN); ref_oct_close(&JR); }
+                    thr[0] = -10; thr[1] = 0; thr[2] = 10; thr[3] = 2*K;
+                    for (int v=0; v<NB2; v++) mod[v] = (char)(rand()%2);
+                    const char *mm = rand()%3 ? mod : NULL;
+                    oct_widen_thr(&N[r], &N[p], &JN, mm, thr, 4); ref_oct_widen_thr(&F[r], &F[p], &JR, mm, thr, 4);
+                    if (rand()%2) { oct_close(&N[r]); ref_oct_close(&F[r]); open[r] = false; }
+                    else { open[r] = true; taint[r] = true; check = false; }
+                    break; }
+                case 3: {                                                  // forget, then close
+                    int v = rand()%NB2;
+                    bool was_empty = ref_oct_is_bottom(&F[p]) && oct_is_bottom(&N[p]);
+                    oct_forget(&N[p], v); ref_oct_forget(&F[p], v);
+                    oct_close(&N[p]); ref_oct_close(&F[p]); open[p] = false; r = p;
+                    // Projecting a variable out of an EMPTY set leaves it empty. The strong matrix kept
+                    // that only where its contradiction had spread past v; the sparse one always does.
+                    if (was_empty && oct_is_bottom(&N[p]) && !ref_oct_is_bottom(&F[p])) {
+                        d_forget_empty++; memcpy(nm[p], rm[p], sizeof nm[p]); oct_set_clean(&N[p], true);
+                        check = false;
+                    }
+                    break; }
+                case 4: {                                                  // meet, then close
+                    if (r == p || r == q) { check = false; break; }
+                    oct_meet(&N[r], &N[p], &N[q]); ref_oct_meet(&F[r], &F[p], &F[q]);
+                    oct_close(&N[r]); ref_oct_close(&F[r]); open[r] = false; break; }
+                case 5: {                                                  // the order, on closed states
+                    check = false;
+                    if (open[p] || open[q] || oct_is_bottom(&N[p]) || oct_is_bottom(&N[q])) break;
+                    CHECK(oct_leq(&N[p], &N[q]) == ref_oct_leq(&F[p], &F[q]), "sparse and strong orders disagree");
+                    d_leq++; break; }
+                }
+                if (!check) continue;
+                if (tin) {                                 // compare, count, and re-sync from the strong one
+                    d_open++;
+                    bool same = oct_is_bottom(&N[r]) == ref_oct_is_bottom(&F[r]);
+                    if (same && !ref_oct_is_bottom(&F[r]))
+                        for (int i=0;i<DB2&&same;i++) for (int j=0;j<DB2&&same;j++)
+                            if (oct_get(&N[r],i,j) != ref_oct_get(&F[r],i,j)) same = false;
+                    if (!same) d_open_diff++;
+                    memcpy(nm[r], rm[r], sizeof nm[r]); oct_set_clean(&N[r], true); taint[r] = false;
+                    continue;
+                }
+                taint[r] = false;
+                d_ops++;
+                bool bn = oct_is_bottom(&N[r]), bf = ref_oct_is_bottom(&F[r]);
+                if (bn != bf) printf("  op %d: emptiness sparse %d strong %d\n", op, bn, bf);
+                CHECK(bn == bf, "sparse and strong octagons disagree on emptiness");
+                if (bn) { d_bot++; continue; }
+                bool same = true;
+                for (int i=0;i<DB2&&same;i++) for (int j=0;j<DB2&&same;j++)
+                    if (oct_get(&N[r],i,j) != ref_oct_get(&F[r],i,j)) {
+                        same = false;
+                        if (fails < 5) printf("  op %d: entry [%d][%d] sparse %lld strong %lld\n", op, i, j,
+                                              (long long)oct_get(&N[r],i,j), (long long)ref_oct_get(&F[r],i,j));
+                    }
+                CHECK(same, "the sparse octagon implies a different value than the strong one");
+            }
+        }
+    }
+    printf("octagon: sparse = strong on %ld closed results (%ld empty) and %ld orders; %ld results from open states, %ld of them different;"
+           " %ld forgets of an empty state kept empty where the strong one was not\n",
+           d_ops, d_bot, d_leq, d_open, d_open_diff, d_forget_empty);
 
     if (fails==0) printf("octagon: ALL PROPERTIES HOLD over %d random trials (box [-%d,%d]^%d) + tightness/integer cases\n", trials, R,R,NV);
     else          printf("octagon: %d FAILURES\n", fails);
