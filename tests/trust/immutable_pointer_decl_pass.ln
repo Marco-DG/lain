@@ -1,0 +1,22 @@
+// I.189: an immutable declaration of a pointer type, `name *T = expr`, which spec 09 gives for every
+// type. `*` also starts a product, and `p *i32 = &x` was parsed as `p * i32` (E100), `g *func() i32 = two`
+// as `g * func` (E100). The compound `*=` and a product on the right of `=` keep their meaning.
+func two() i32 { return 2 }
+func main() i32 {
+    var x i32 = 5
+    p *i32 = &x
+    q *var i32 = &x
+    g *func() i32 = two
+    var n i32 = 3
+    n *= 2
+    m = n * 2
+    var r i32 = 0
+    unsafe {
+        *q = 7
+        r = *p
+    }
+    if r != 7 { return 1 }
+    if g() != 2 { return 2 }
+    if m != 12 { return 3 }
+    return 0
+}

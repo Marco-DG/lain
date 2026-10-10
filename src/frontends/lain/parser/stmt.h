@@ -58,6 +58,32 @@ Stmt *parse_decl_stmt(Arena *arena, Parser *parser) {
     return stmt_var(arena, var_name, type_annotation, assigned_expr);
 }
 
+// ★ `name *T = expr` IS A DECLARATION (I.189). An immutable declaration is recognised AFTER its
+// name is parsed as an expression: a bare identifier followed by a type. `*` is the one type
+// start that is also a binary operator, so `p *i32 = &x` was parsed as `p * i32` and refused
+// ("the left side of `=` must be a variable"), and `g *func() i32 = two` as `g * func` ("unexpected
+// `func`"), though spec 09 gives `name [Type] = expr` for every type. A product is never a place,
+// so `a * b = c` can never assign: an identifier, a `*`, and an `=` at the top level of the same
+// line is a declaration of a pointer type. `==` is its own token, and `p *= 2` is `*=`.
+static bool ident_star_declares(Parser *parser) {
+    Lexer fork = *parser->lexer;
+    Token t = lexer_next(&fork);
+    if (t.kind != TOKEN_ASTERISK) return false;
+    int depth = 0;
+    for (int guard = 0; guard < 4096; guard++) {
+        t = lexer_next(&fork);
+        switch (t.kind) {
+            case TOKEN_EOL: case TOKEN_EOF: case TOKEN_L_BRACE: case TOKEN_R_BRACE: case TOKEN_SEMICOLON:
+                return false;
+            case TOKEN_L_PAREN: case TOKEN_L_BRACKET: depth++; break;
+            case TOKEN_R_PAREN: case TOKEN_R_BRACKET: if (depth > 0) depth--; break;
+            case TOKEN_EQUAL: if (depth == 0) return true; break;
+            default: break;
+        }
+    }
+    return false;
+}
+
 Stmt *parse_defer_stmt(Arena *arena, Parser *parser) {
     // Parse the inner statement that should be executed later
     // The 'defer' keyword has already been consumed by parse_stmt
@@ -203,6 +229,9 @@ Stmt *parse_stmt(Arena* arena, Parser* parser)
     else if (parser_match(TOKEN_KEYWORD_DEFER)) {
         parser_advance(); // consume 'defer'
         result = parse_defer_stmt(arena, parser);
+    }
+    else if (parser_match(TOKEN_IDENTIFIER) && ident_star_declares(parser)) {
+        result = parse_decl_stmt(arena, parser);
     }
     else {
     Expr *lhs = parse_expr(arena, parser);

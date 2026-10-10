@@ -1799,6 +1799,10 @@ at=const 8
 ### tests/trust/i64_min_divisor_pass.ln
 rc=0
 out=
+### tests/trust/immutable_pointer_decl_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/immutable_storage_pass.ln
 rc=0
 out=
