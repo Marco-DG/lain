@@ -13,7 +13,10 @@
 //      past 512 bits, a close of a fact with a variable or a constant not negative, a disjunction
 //      outside a case, a case on a plain hypothesis or with too few branches, a case fact its
 //      disjunct lacks, a hypothesis the VC lacks, a step after a terminal step and a branch with
-//      no terminal step (by hand), an equality goal (by hand);
+//      no terminal step (by hand), an equality goal (by hand); and, since a certificate may come
+//      in memory from the untrusted solver, what no text can say: a sign byte of 2 on a
+//      multiplier (I.197: it multiplied with the wrong sign, and a satisfiable VC was refuted) or
+//      a coefficient, a step of no known kind, a combination or a split whose array is missing;
 //   3. memory: a region too small at every size up to the one that suffices refuses with "out of
 //      memory", never an abort.
 //
@@ -72,6 +75,12 @@ static void zero_split_coef(JVc *v, JCert *c) { (void)v; memset(&c->body.s[0].sp
 static void close_not_last(JVc *v, JCert *c) { (void)v; c->body.n = 1; c->body.s[0].k = J_CLOSE; c->body.s[0].f = 1; c->body.n = 2; }
 static void no_terminal(JVc *v, JCert *c) { (void)v; c->body.n = 1; }
 static void eq_goal(JVc *v, JCert *c) { (void)c; v->goal.op = J_EQ; }
+// I.197 (Main Compiler Work's probe): a multiplier's sign byte 2 read as a sign of its own
+static void sign_two(JVc *v, JCert *c) { (void)v; c->body.s[0].mul[0].m.neg = 2; }
+static void hyp_sign_two(JVc *v, JCert *c) { (void)c; v->hyps[1].cons.t[0].coef.neg = 2; }
+static void unknown_step(JVc *v, JCert *c) { (void)v; c->body.s[0].k = (JStepKind)77; }
+static void no_mul(JVc *v, JCert *c) { (void)v; c->body.s[0].mul = NULL; }
+static void no_branches(JVc *v, JCert *c) { (void)v; c->body.s[0].br = NULL; }
 
 int main(void) {
     printf("── accepted ──\n");
@@ -144,6 +153,17 @@ int main(void) {
         "cert f 9c1e bb2.3 bounds.hi 0 v1\n  f1 = lin 1*h3 + 1*g\n  close f1\nend\n", close_not_last, "after a terminal step");
     run("a branch with no terminal step (by hand)", GUARD,
         "cert f 9c1e bb2.3 bounds.hi 0 v1\n  f1 = lin 1*h3 + 1*g\n  close f1\nend\n", no_terminal, "does not end");
+    run("a multiplier's sign byte 2 (by hand, I.197)",
+        "vc n2 0 bb0.1 assume 0\n  var x\n  var y\n  hyp h1 a : 1*x + -1*y = 0\n  hyp h2 b : 1*x + 1*y <= -2\n  goal 0 <= -1\nend\n",
+        "cert n2 0 bb0.1 assume 0 v1\n  f1 = lin -1*h1 + 1*h2\n  close f1\nend\n", sign_two, "not canonical");
+    run("a coefficient's sign byte 2 (by hand)", GUARD,
+        "cert f 9c1e bb2.3 bounds.hi 0 v1\n  f1 = lin 1*h3 + 1*g\n  close f1\nend\n", hyp_sign_two, "not canonical");
+    run("a step of no known kind (by hand)", GUARD,
+        "cert f 9c1e bb2.3 bounds.hi 0 v1\n  f1 = lin 1*h3 + 1*g\n  close f1\nend\n", unknown_step, "no known kind");
+    run("a combination with no multipliers (by hand)", GUARD,
+        "cert f 9c1e bb2.3 bounds.hi 0 v1\n  f1 = lin 1*h3 + 1*g\n  close f1\nend\n", no_mul, "empty combination");
+    run("a split with no branches (by hand)", BB,
+        "cert bb 0 bb0.1 assume 0 v1\n  split s1 : 1*x <= 0\n  le:\n    f1 = lin 1*h2 + 2*s1\n    close f1\n  gt:\n    f2 = lin 1*h1 + 2*s1\n    close f2\nend\n", no_branches, "without exactly");
     run("an equality goal (by hand)", GUARD,
         "cert f 9c1e bb2.3 bounds.hi 0 v1\n  f1 = lin 1*h3 + 1*g\n  close f1\nend\n", eq_goal, "equality");
 

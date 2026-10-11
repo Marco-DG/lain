@@ -28,7 +28,9 @@
 // Its integers are its own: JInt's representation (format.h: 512 bits in 32-bit limbs, sign and
 // magnitude), with arithmetic written here, no compiler builtins. Anything that does not fit
 // REFUSES the certificate; nothing wraps. Its memory is the caller's region (mem.h): running out
-// refuses too. It refuses with a reason; it never aborts and keeps no state between calls.
+// refuses too. It refuses with a reason; it never aborts and keeps no state between calls. Its
+// input may come in memory from the untrusted solver, so it assumes no field's representation: a
+// number's sign byte, a step's kind, a pointer behind a count are checked, never trusted.
 #include <string.h>
 #include <stdio.h>
 #include "judge/format.h"
@@ -43,8 +45,10 @@ static void kint_set(KInt *x, int64_t v) {
     x->limb[0] = (uint32_t)u; x->limb[1] = (uint32_t)(u >> 32); x->n = 2; x->neg = v < 0;
     kint_norm(x);
 }
+// Canonical: a sign of 0 or 1 (the arithmetic compares signs, so a 2 would read as a third sign:
+// I.197, Main Compiler Work's review), at most J_LIMBS limbs, the top one nonzero, zero unsigned.
 static bool kint_canon(const KInt *x) {
-    if (x->n > J_LIMBS) return false;
+    if (x->neg > 1 || x->n > J_LIMBS) return false;
     if (x->n == 0) return x->neg == 0;
     return x->limb[x->n - 1] != 0;
 }
@@ -177,6 +181,8 @@ static bool kfact_new(KK *k, KFact *x) {
 // A constraint as written: canonical, or refused.
 static bool kfact_of(KK *k, const JCons *c, KFact *x) {
     if (c->op == J_NE) return kfail(k, "a `!=` is a goal only, never a fact", -1);
+    if (c->op != J_LE && c->op != J_EQ) return kfail(k, "a constraint of no known kind", -1);
+    if (c->nt < 0 || (c->nt > 0 && !c->t)) return kfail(k, "a sum with no terms", -1);
     if (!kfact_new(k, x)) return false;
     x->eq = c->op == J_EQ;
     if (!kint_canon(&c->rhs)) return kfail(k, "a constant that is not canonical", -1);
@@ -218,7 +224,7 @@ static const KFact *kref(KK *k, const JRef *r, KFact *tmp) {
         case J_REF_SC: {
             if (r->a < 1 || r->a >= k->ns || k->sstate[r->a] != 1 || !k->sc[r->a]) { kfail(k, "a case fact not in scope", r->a); return NULL; }
             const JConj *d = k->sc[r->a];
-            if (r->b < 1 || r->b > d->nc) { kfail(k, "a case fact its disjunct does not have", r->b); return NULL; }
+            if (r->b < 1 || r->b > d->nc || !d->c) { kfail(k, "a case fact its disjunct does not have", r->b); return NULL; }
             if (!kfact_of(k, &d->c[r->b - 1], tmp)) return NULL;
             return tmp;
         }
@@ -237,7 +243,7 @@ static bool kbranch(KK *k, const JSteps *br) {
     return ok;
 }
 static bool ksteps(KK *k, const JSteps *br) {
-    if (br->n < 1) return kfail(k, "a branch with no step", -1);
+    if (!br || br->n < 1 || !br->s) return kfail(k, "a branch with no step", -1);
     for (int32_t i = 0; i < br->n; i++) {
         const JStep *s = &br->s[i];
         bool last = i == br->n - 1, term = s->k == J_CLOSE || s->k == J_SPLIT || s->k == J_CASE;
@@ -249,7 +255,7 @@ static bool ksteps(KK *k, const JSteps *br) {
                 KFact r;
                 if (!kfact_new(k, &r)) return false;
                 if (s->k == J_LIN) {
-                    if (s->nmul < 1) return kfail(k, "an empty combination", s->f);
+                    if (s->nmul < 1 || !s->mul) return kfail(k, "an empty combination", s->f);
                     kint_set(&r.b, 0);
                     for (int32_t j = 0; j < s->nmul; j++) {
                         KFact tmp; const KFact *x = kref(k, &s->mul[j].r, &tmp);
@@ -295,7 +301,7 @@ static bool ksteps(KK *k, const JSteps *br) {
                 if (s->s < 1 || s->s >= k->ns) return kfail(k, "a split fact's number out of range", s->s);
                 if (k->sstate[s->s]) return kfail(k, "a split fact's number used twice", s->s);
                 if (s->split.op != J_LE) return kfail(k, "a split on other than `<=`", s->s);
-                if (s->nbr != 2) return kfail(k, "a split without exactly `le` and `gt`", s->s);
+                if (s->nbr != 2 || !s->br) return kfail(k, "a split without exactly `le` and `gt`", s->s);
                 KFact le; if (!kfact_of(k, &s->split, &le)) return false;
                 KFact gt; if (!kfact_new(k, &gt)) return false;
                 for (int32_t v = 0; v < k->v->nvars; v++) { gt.a[v] = le.a[v]; kint_neg(&gt.a[v]); }
@@ -316,7 +322,7 @@ static bool ksteps(KK *k, const JSteps *br) {
                 if (s->hyp < 1 || s->hyp > k->v->nhyps) return kfail(k, "a case on a hypothesis the VC does not have", s->hyp);
                 const JHyp *h = &k->v->hyps[s->hyp - 1];
                 if (!h->disj) return kfail(k, "a case on a hypothesis that is not a disjunction", s->hyp);
-                if (s->nbr != h->ndis) return kfail(k, "a case whose branches are not one per disjunct", s->hyp);
+                if (s->nbr != h->ndis || !s->br || !h->dis) return kfail(k, "a case whose branches are not one per disjunct", s->hyp);
                 for (int32_t b = 0; b < s->nbr; b++) {
                     k->sstate[s->s] = 1; k->sc[s->s] = &h->dis[b];
                     if (!kbranch(k, &s->br[b])) return false;
@@ -324,23 +330,25 @@ static bool ksteps(KK *k, const JSteps *br) {
                 k->sstate[s->s] = 2; k->sc[s->s] = NULL;
                 return true;
             }
+            default: return kfail(k, "a step of no known kind", i);
         }
     }
     return kfail(k, "a branch that does not end in a terminal step", -1);
 }
-// The numbers a certificate uses, to size the tables.
+// The numbers a certificate uses, to size the tables. It reads before anything is checked, so it
+// follows no pointer it has not seen set (ksteps refuses what is missing).
 static void kscan(const JSteps *br, int32_t *mf, int32_t *ms) {
-    for (int32_t i = 0; i < br->n; i++) {
+    for (int32_t i = 0; br && br->s && i < br->n; i++) {
         const JStep *s = &br->s[i];
         if ((s->k == J_LIN || s->k == J_RND || s->k == J_CLOSE) && s->f > *mf) *mf = s->f;
         if (s->k == J_RND && s->of > *mf) *mf = s->of;
-        if (s->k == J_LIN) for (int32_t j = 0; j < s->nmul; j++) {
+        if (s->k == J_LIN && s->mul) for (int32_t j = 0; j < s->nmul; j++) {
             const JRef *r = &s->mul[j].r;
             if (r->k == J_REF_F && r->a > *mf) *mf = r->a;
             if ((r->k == J_REF_S || r->k == J_REF_SC) && r->a > *ms) *ms = r->a;
         }
         if ((s->k == J_SPLIT || s->k == J_CASE) && s->s > *ms) *ms = s->s;
-        for (int32_t b = 0; b < s->nbr; b++) kscan(&s->br[b], mf, ms);
+        for (int32_t b = 0; s->br && b < s->nbr; b++) kscan(&s->br[b], mf, ms);
     }
 }
 #define J_KERNEL_MAX_NUMBER (1 << 20)
@@ -350,7 +358,7 @@ static bool jkernel_check(JMem *m, const JVc *v, const JCert *c, char *why, size
     KK k; memset(&k, 0, sizeof k);
     k.m = m; k.v = v; k.why = why; k.whycap = whycap;
     if (why && whycap) why[0] = 0;
-    if (!v || !c || v->nvars < 0 || v->nhyps < 0) return kfail(&k, "no VC or no certificate", -1);
+    if (!v || !c || v->nvars < 0 || v->nhyps < 0 || (v->nhyps > 0 && !v->hyps)) return kfail(&k, "no VC or no certificate", -1);
     k.hyp = JMEM_NEW(m, KFact, v->nhyps ? v->nhyps : 1);
     k.hypok = JMEM_NEW(m, bool, v->nhyps ? v->nhyps : 1);
     if (!k.hyp || !k.hypok) return kfail(&k, "out of memory (the caller's region is full)", -1);
