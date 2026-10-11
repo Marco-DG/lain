@@ -1,0 +1,7 @@
+vc canary 00000000 bb2.3 bounds.hi 0
+  var %v3
+  var %v8
+  hyp h1 type %v3 usize : -1*%v3 <= 0
+  hyp h2 guard bb1->bb2 : 1*%v3 + -1*%v8 <= -1
+  goal 1*%v3 + -1*%v8 <= -1
+end

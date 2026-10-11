@@ -1,0 +1,5 @@
+cert canary 00000000 bb2.3 bounds.hi 0 v1
+  f1 = lin -1*h2 + 1*g
+  close f1
+end
+work pivot:0 node:0 leaf:0

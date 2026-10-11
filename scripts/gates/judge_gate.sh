@@ -47,13 +47,15 @@
 # that kind not implied (a model), or the judge proves a program that traps.
 #
 # PRECISION, the other half: a hypothesis check cannot see a generator that stops stating a TRUE
-# fact. So every program's VCs are also solved by the untrusted solver (solve_vc), and the gate
-# reports how many are implied, failing below a floor. These are phase 1a's numbers; no kernel
-# checks the certificates yet (scripts/gates/solver_harness.py checks the solver itself). A floor
-# over the corpus has slack, so the judge's OWN programs, tests/trust/judge_*_pass.ln, each written
-# for one rule, must have EVERY VC implied: one that is not is a rule that stopped working. They
-# must be, too, from the judge's own candidates alone (`--no-finder`: no proof may need VRA's
-# precision), except a program written for the finder (judge_*finder*_pass.ln).
+# fact. So every program's VCs are also solved by the untrusted solver (solve_vc), and every
+# certificate it writes goes through the trusted KERNEL (src/judge/kernel.h, by judge_check): a VC
+# counts as implied only when the kernel accepts its certificate, and a certificate it refuses
+# fails the gate (a solver or kernel bug). The gate reports how many are implied, failing below a
+# floor. scripts/gates/solver_harness.py checks the solver against a second, independent kernel.
+# A floor over the corpus has slack, so the judge's OWN programs, tests/trust/judge_*_pass.ln,
+# each written for one rule, must have EVERY VC implied: one that is not is a rule that stopped
+# working. They must be, too, from the judge's own candidates alone (`--no-finder`: no proof may
+# need VRA's precision), except a program written for the finder (judge_*finder*_pass.ln).
 #
 #   bash scripts/gates/judge_gate.sh
 set -u
@@ -72,8 +74,16 @@ MUST_REFUSE="tests/vra/overflow/field_assign_overflow_fail.ln:narrow tests/vra/o
 REFUSED_FLOOR=150        # programs the prover refuses that ran and reached an obligation; 197 when the floor was set
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
 if ! gcc -std=c99 -O2 -w -o "$T/jvc" src/tools/judge_vc_driver.c -I src 2> "$T/build.err" ||
-   ! gcc -std=c99 -O2 -w -o "$T/solve_vc" src/tools/solve_vc.c -I src 2>> "$T/build.err"; then
+   ! gcc -std=c99 -O2 -w -o "$T/solve_vc" src/tools/solve_vc.c -I src 2>> "$T/build.err" ||
+   ! gcc -std=c99 -O2 -w -o "$T/judge_check" src/tools/judge_check.c -I src 2>> "$T/build.err"; then
     echo "judge_gate: the driver or the solver does not build:"; head -5 "$T/build.err"; exit 1
+fi
+# the kernel's wiring, checked where it runs: judge_check must refuse a certificate the kernel
+# refuses (a negative multiplier on an inequality), or the gate would count a refused one implied
+canary=0
+"$T/judge_check" scripts/gates/judge_canary/negative_multiplier.vc scripts/gates/judge_canary/negative_multiplier.ans > "$T/canary.jc" 2>&1
+if [ $? -ne 1 ] || ! grep -q '^REFUSED .*negative multiplier' "$T/canary.jc"; then
+    canary=1; echo "  THE KERNEL'S CANARY WAS NOT REFUSED (judge_check accepted a certificate it must refuse):"; sed 's/^/      /' "$T/canary.jc"
 fi
 find tests -name '*_pass.ln' | sort > "$T/files.txt"
 declared=$(wc -l < "$T/files.txt")
@@ -83,10 +93,15 @@ one() {
     echo $? > "$T/$o.rc"
     # the same VCs, solved: the driver's VC text without its comment lines
     "$T/jvc" "$f" 2>/dev/null | grep -v '^#' > "$T/$o.vc"
-    if [ -s "$T/$o.vc" ]; then timeout 120 "$T/solve_vc" "$T/$o.vc" > "$T/$o.ans" 2>&1; echo $? > "$T/$o.src"; fi
+    if [ -s "$T/$o.vc" ]; then
+        timeout 120 "$T/solve_vc" "$T/$o.vc" > "$T/$o.ans" 2>&1; echo $? > "$T/$o.src"
+        # the KERNEL's verdict on every answer: an obligation is implied when it accepts the certificate
+        "$T/judge_check" "$T/$o.vc" "$T/$o.ans" > "$T/$o.jc" 2>&1; echo $? > "$T/$o.jcrc"
+    fi
     case "$f" in tests/trust/judge_*finder*_pass.ln) ;; tests/trust/judge_*_pass.ln)
         "$T/jvc" "$f" --no-finder 2>/dev/null | grep -v '^#' > "$T/$o.nf.vc"
-        timeout 120 "$T/solve_vc" "$T/$o.nf.vc" > "$T/$o.nf.ans" 2>&1;;
+        timeout 120 "$T/solve_vc" "$T/$o.nf.vc" > "$T/$o.nf.ans" 2>&1
+        "$T/judge_check" "$T/$o.nf.vc" "$T/$o.nf.ans" > "$T/$o.nf.jc" 2>&1;;
     esac
 }
 export -f one; export T
@@ -106,7 +121,7 @@ refused_one() {
 export -f refused_one
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'one "{}"' < "$T/files.txt"
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'refused_one "{}"' < "$T/refused.txt"
-judged=0; nosum=0; refused=0; falsec=0; reached=0; checked=0; solverr=0; implied=0; notimp=0; outbudget=0
+judged=0; nosum=0; refused=0; falsec=0; reached=0; checked=0; solverr=0; implied=0; notimp=0; outbudget=0; krefused=0
 claims=0; hullok=0; hullbad=0; edges=0; claimchk=0; claimgoals=0; mustfail=0; retgoals=0; contractchk=0
 while read -r f; do
     o=$(echo "$f" | tr '/' '_')
@@ -122,19 +137,24 @@ while read -r f; do
     if [ "$n" -gt 0 ]; then falsec=$((falsec+n)); echo "  FALSE HYPOTHESES ($n): $f"; grep -m3 '^FALSE ' "$T/$o.err" | sed 's/^/      /'; fi
     if [ -f "$T/$o.src" ]; then
         if [ "$(cat "$T/$o.src")" != 0 ]; then solverr=$((solverr+1)); echo "  SOLVER FAILED (rc $(cat "$T/$o.src")): $f"; tail -2 "$T/$o.ans" | sed 's/^/      /'; fi
-        # an answer line names its VC: `cert FN IRHASH POINT KIND ORDINAL`; a claim's kind is `hull`,
-        # `inv.entry`, `inv.keep` or `post`, and every other kind is an obligation's
-        h=$(grep -cE '^cert [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans"); hullok=$((hullok + h))
-        implied=$((implied + $(grep -c '^cert ' "$T/$o.ans") - h)); notimp=$((notimp + $(grep -c '^model ' "$T/$o.ans") - $(grep -cE '^model [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans")))
-        outbudget=$((outbudget + $(grep -cE '^(budget|capacity) ' "$T/$o.ans") - $(grep -cE '^(budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans")))
-        n=$(grep -cE '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans")
-        if [ "$n" -gt 0 ]; then hullbad=$((hullbad+n)); echo "  CLAIM NOT IMPLIED ($n): $f"; grep -m2 -E '^(model|budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.ans" | sed 's/^/      /'; fi
+        # the kernel's verdict names its VC: `implied FN IRHASH POINT KIND ORDINAL`; a claim's kind
+        # is `hull`, `inv.entry`, `inv.keep` or `post`, and every other kind is an obligation's. A
+        # certificate the kernel refuses is a solver bug or a kernel bug, never noise
+        if [ "$(cat "$T/$o.jcrc")" != 0 ]; then
+            n=$(grep -c '^REFUSED ' "$T/$o.jc"); krefused=$((krefused + (n > 0 ? n : 1)))
+            echo "  KERNEL REFUSED A CERTIFICATE ($n; judge_check rc $(cat "$T/$o.jcrc")): $f"; grep -m2 -vE '^(implied|not-implied|budget|capacity) ' "$T/$o.jc" | sed 's/^/      /'
+        fi
+        h=$(grep -cE '^implied [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.jc"); hullok=$((hullok + h))
+        implied=$((implied + $(grep -c '^implied ' "$T/$o.jc") - h)); notimp=$((notimp + $(grep -c '^not-implied ' "$T/$o.jc") - $(grep -cE '^not-implied [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.jc")))
+        outbudget=$((outbudget + $(grep -cE '^(budget|capacity) ' "$T/$o.jc") - $(grep -cE '^(budget|capacity) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post) ' "$T/$o.jc")))
+        n=$(grep -cE '^(not-implied|budget|capacity|REFUSED) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post)[ :]' "$T/$o.jc")
+        if [ "$n" -gt 0 ]; then hullbad=$((hullbad+n)); echo "  CLAIM NOT IMPLIED ($n): $f"; grep -m2 -E '^(not-implied|budget|capacity|REFUSED) [^ ]+ [^ ]+ [^ ]+ (hull|inv\.entry|inv\.keep|post)[ :]' "$T/$o.jc" | sed 's/^/      /'; fi
         case "$f" in tests/trust/judge_*_pass.ln)
-            n=$(grep -cE '^(model|budget|capacity) ' "$T/$o.ans")
-            if [ "$n" -gt 0 ] || [ ! -s "$T/$o.ans" ]; then mustfail=$((mustfail+1)); echo "  MUST-PROVE, $n NOT IMPLIED: $f"; grep -m2 -E '^(model|budget|capacity) ' "$T/$o.ans" | sed 's/^/      /'; fi
-            if [ -f "$T/$o.nf.ans" ]; then
-                n=$(grep -cE '^(model|budget|capacity) ' "$T/$o.nf.ans")
-                if [ "$n" -gt 0 ] || [ ! -s "$T/$o.nf.ans" ]; then mustfail=$((mustfail+1)); echo "  MUST-PROVE WITHOUT THE FINDER, $n NOT IMPLIED: $f"; grep -m2 -E '^(model|budget|capacity) ' "$T/$o.nf.ans" | sed 's/^/      /'; fi
+            n=$(grep -cE '^(not-implied|budget|capacity|REFUSED) ' "$T/$o.jc")
+            if [ "$n" -gt 0 ] || ! grep -q '^implied ' "$T/$o.jc"; then mustfail=$((mustfail+1)); echo "  MUST-PROVE, $n NOT IMPLIED: $f"; grep -m2 -E '^(not-implied|budget|capacity|REFUSED) ' "$T/$o.jc" | sed 's/^/      /'; fi
+            if [ -f "$T/$o.nf.jc" ]; then
+                n=$(grep -cE '^(not-implied|budget|capacity|REFUSED) ' "$T/$o.nf.jc")
+                if [ "$n" -gt 0 ] || ! grep -q '^implied ' "$T/$o.nf.jc"; then mustfail=$((mustfail+1)); echo "  MUST-PROVE WITHOUT THE FINDER, $n NOT IMPLIED: $f"; grep -m2 -E '^(not-implied|budget|capacity|REFUSED) ' "$T/$o.nf.jc" | sed 's/^/      /'; fi
             fi;;
         esac
     fi
@@ -174,13 +194,13 @@ done < "$T/refused.txt"
 echo "=================================================================="
 echo "programs declared $declared, judged $judged, no summary $nosum"
 echo "obligation events $reached, hypotheses checked at run time $checked, false $falsec, generator refusals $refused"
-echo "VCs implied $implied, not implied $notimp, budget or capacity $outbudget, solver failures $solverr (floor $IMPLIED_FLOOR)"
+echo "VCs implied $implied (each certificate accepted by the kernel), not implied $notimp, budget or capacity $outbudget, solver failures $solverr, certificates the kernel refused $krefused (floor $IMPLIED_FLOOR)"
 echo "claims $claims: their VCs implied $hullok, not implied $hullbad; at run time, claims checked on $claimgoals edges taken (floor $EDGE_FLOOR) and $claimchk times where used (floor $USE_FLOOR)"
 echo "return claims checked at run time at $retgoals returns (floor $RETURN_FLOOR) and $contractchk times at a call (floor $CONTRACT_FLOOR)"
 echo "the judge's own programs (tests/trust/judge_*_pass.ln) with a VC not implied, with or without the finder: $mustfail"
 echo "fail tests the judge must refuse (a landing or an assert of each kind): $(echo $MUST_REFUSE | wc -w), with every VC of their kind implied: $mustrefuse"
 echo "programs the prover refuses: $rdecl; ran $rran (floor $REFUSED_FLOOR), skipped $((rnosum + rnothing)) ($rnosum cannot run, $rnothing reach no obligation), crashed $rcrash; hypotheses checked $rchecked, false $rfalse, generator refusals $rrefused"
-if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ] || [ "$mustrefuse" -gt 0 ] || [ "$rfalse" -gt 0 ] || [ "$rrefused" -gt 0 ]; then
+if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$krefused" -gt 0 ] || [ "$canary" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ] || [ "$mustrefuse" -gt 0 ] || [ "$rfalse" -gt 0 ] || [ "$rrefused" -gt 0 ]; then
     echo "judge_gate: FAIL"; exit 1
 fi
 if [ "$reached" -lt "$REACHED_FLOOR" ]; then
