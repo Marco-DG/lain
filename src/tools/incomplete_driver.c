@@ -20,6 +20,7 @@
 #include "target.h"
 #include "frontends/lain/sema.h"
 #include "frontends/lain/lower.h"
+#include "tools/drv_lower.h"   // static evaluation first, as main.c
 static char *mn(Arena *a, const char *path){ const char *p=path;
   while ((p[0]=='.'&&(p[1]=='/'||p[1]=='\\'))||p[0]=='/'||p[0]=='\\') p+=(p[0]=='/'||p[0]=='\\')?1:2;
   size_t n=strlen(p),e=(n>3&&strcmp(p+n-3,".ln")==0)?n-3:n;
@@ -36,7 +37,7 @@ int main(int argc,char**argv){ if(argc<2) return 2;
   if(sl && path[0]=='/'){ char d[4096]; size_t dl=(size_t)(sl-path); if(dl<sizeof d){memcpy(d,path,dl);d[dl]='\0'; if(chdir(d)!=0){} path=sl+1;} }
   char *m=mn(&aa,path); DeclList*pr=load_module(&aa,m); if(!pr) return 2;
   sema_resolve_module(pr,m,&sa);
-  IrFunc *mod=ir_lower_module(pr,&ia); int tot=0,inc=0;
+  IrFunc *mod=drv_lower_module(pr, path, &ia); int tot=0,inc=0;
   for(IrFunc*f=mod;f;f=f->next){ if(f->is_extern) continue; tot++;
     if(f->incomplete){ inc++; printf("WHY %s\n", f->incomplete_why?f->incomplete_why:"(unlabelled)"); } }
   printf("TOT %d %d\n",tot,inc); return 0; }

@@ -19,6 +19,7 @@
 #include "frontends/lain/lower.h"
 #include "ir/dump.h"
 #include "analysis/vra.h"
+#include "tools/drv_lower.h"   // static evaluation first, as main.c
 
 static char *drv_modname(Arena *a, const char *path) {
     const char *p = path;
@@ -56,7 +57,7 @@ int main(int argc, char **argv) {
     // Lower the whole MODULE, not one function at a time: a call's result range is read off
     // the callee's body, so the callee has to exist. (Same function set — ir_lower_module
     // lowers every body in the program, plus extern stubs, which are skipped below.)
-    IrFunc *irmod = ir_lower_module(prog, &ia);
+    IrFunc *irmod = drv_lower_module(prog, path, &ia);
     vra_mod = irmod;
     for (IrFunc *f=irmod; f; f=f->next) {
         {

@@ -21,6 +21,7 @@
 #include "analysis/linearity.h"
 #include "analysis/borrow.h"
 #include "analysis/definite_init.h"
+#include "tools/drv_lower.h"   // static evaluation first, as main.c
 
 static char *drv_modname(Arena *a, const char *path) {
     const char *p = path;
@@ -53,7 +54,7 @@ int main(int argc, char **argv) {
     if (!program){ fprintf(stderr,"load failed: %s\n",mod); return 2; }
     sema_resolve_module(program, mod, &sa);
 
-    IrFunc *m = ir_lower_module(program, &ia);
+    IrFunc *m = drv_lower_module(program, path, &ia);
     lin_mod = m;   // callee lookup: which arguments a call takes OWNERSHIP of
     int total=0;
     for (IrFunc *f=m; f; f=f->next) {

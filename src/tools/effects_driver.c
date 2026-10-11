@@ -19,6 +19,7 @@
 #include "frontends/lain/sema.h"
 #include "frontends/lain/lower.h"
 #include "analysis/effects.h"
+#include "tools/drv_lower.h"   // static evaluation first, as main.c
 
 static char *drv_modname(Arena *a, const char *path) {
     const char *p = path;
@@ -54,7 +55,7 @@ int main(int argc, char **argv) {
     if (!program){ fprintf(stderr,"load failed: %s\n",modname); return 2; }
     sema_resolve_module(program, modname, &sema_arena);
 
-    IrFunc *mod = ir_lower_module(program, &ir_arena);
+    IrFunc *mod = drv_lower_module(program, path, &ir_arena);
     ir_effects_module(mod);
 
     int mism=0, n=0;

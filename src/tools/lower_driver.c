@@ -22,6 +22,7 @@
 #include "frontends/lain/lower.h"
 #include "ir/dump.h"
 #include "ir/emit_c.h"
+#include "tools/drv_lower.h"   // static evaluation first, as main.c
 
 // module name = basename without ".ln" (mirrors main.c's private helper)
 static char *drv_modname(Arena *a, const char *path) {
@@ -86,7 +87,7 @@ int main(int argc, char **argv) {
     // declaration, so the emitted C called printf and friends with no prototype in scope —
     // an implicit declaration, and the single largest cause of the new backend failing to
     // build the corpus at all.
-    IrFunc *head = ir_lower_module(program, &ir_arena);
+    IrFunc *head = drv_lower_module(program, path, &ir_arena);
     for (IrFunc *f = head; f; f = f->next) {
         if (f->is_extern) continue;
         n_total++; if (f->incomplete) n_incomplete++;

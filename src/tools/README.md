@@ -16,6 +16,7 @@ compiler.
 | `judge_vc_driver.c` | | the generator's VCs for a Lain file beside VRA's verdicts (`--smt`, `--stats`, `--why`), with claims at forward joins (hulls) and loop headers (invariants) proposed by the untrusted solver and VRA's header states, filtered by Houdini, and owed as `hull`, `inv.entry` and `inv.keep` VCs (`--no-claims` proposes none); `--check-hyps` runs the program on the interpreter and evaluates every hypothesis where it is used, and each claim on every edge taken into its block (`scripts/gates/judge_gate.sh`) |
 | `solve_vc.c` | | the proof engine's untrusted solver (`src/solver/lia.h`) on VC texts: a certificate, a model or a refusal per VC, each answer round-tripped through the judge's parser; `scripts/gates/solver_harness.py` checks the answers with its own kernel and brute force |
 | `*_driver.c` | vra, linearity, effects, incomplete, lower | drive one analysis over real source and print what it concluded; the surveys and several fuzzers are built on them |
+| `drv_lower.h` | | how every `*_driver.c` lowers a module: static evaluation first, then `ir_lower_module`, as `main.c` does, so a driver analyses the IR the compiler emits |
 | `fuzz_vra.c` | | the in-process VRA fuzzer |
 
 Build: `gcc -std=c99 -o /tmp/<name> src/tools/<name>.c -I src`
