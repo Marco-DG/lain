@@ -1,0 +1,16 @@
+// A join decided by a BOOL condition: `if b { k = 2 }` and then `if b { t[k] }`. Past the second
+// branch's first edge b = 1, so of the first join's two paths only the one with k = 2 is possible.
+// The judge proves `t[k]` from that disjunct; VRA's join forgets which way b went (k in {2, 9}) and
+// refuses the index (E085), so only judge_gate's run of refused programs checks the facts here,
+// b = 1 and b = 0 inside the join's disjuncts among them, where the program runs.
+func pick(b bool) u8 {
+    var t u8[4] = [10, 20, 30, 40]
+    var k usize = 9
+    if b { k = 2 }
+    if b { return t[k] }
+    return 0
+}
+func main() i32 {
+    if pick(true) != 30 or pick(false) != 0 { return 1 }
+    return 0
+}

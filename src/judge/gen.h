@@ -20,7 +20,8 @@
 //     at jg_cells) is a fresh variable; a cell the loop never changes keeps its version;
 //   - the branch conditions, ASSUMEs and ASSERTs that dominate the point, as facts about the SSA
 //     values they tested (an edge counts when its target has that one predecessor; an ASSERT's
-//     condition is owed where it stands, so a program past it has it true);
+//     condition is owed where it stands, so a program past it has it true); a condition that is
+//     a bool value rather than a comparison is 1 where it held and 0 where it did not;
 //   - at a join that dominates the point, one disjunct per predecessor (R7): the edge conditions
 //     on its path, and the version each cell ends that path with;
 //   - a CLAIM at a forward join (P3.5's hull row: `lo <= x@join`) or a loop header (its `inv`:
@@ -1222,6 +1223,22 @@ static bool jb_cmp(JB *B, IrInstr *ic, bool truth, const char *origin) {
     }
     return true;
 }
+// A CONDITION as a fact: a comparison (jb_cmp), or a bool value itself, which is 1 where it held
+// and 0 where it did not (a bool is 0 or 1, and a branch takes its first target on nonzero).
+// `ic` is the comparison that defines it, or NULL. False when nothing is stated.
+static IrInstr *jg_cond_cmp(JG *g, IrValue *cv) {
+    IrInstr *ic = cv && cv->id >= 0 && cv->id < g->nv ? g->def[cv->id] : NULL;
+    return ic && ic->op == IR_ICMP ? ic : NULL;
+}
+static bool jg_cond_ok(JG *g, IrValue *cv) { return cv && cv->id >= 0 && cv->id < g->nv; }   // jb_cond decides
+static bool jb_cond(JB *B, IrValue *cv, bool truth, const char *origin) {
+    IrInstr *ic = jg_cond_cmp(B->g, cv);
+    if (ic) return jb_cmp(B, ic, truth, origin);
+    if (!cv || !cv->type || cv->type->kind != IRT_BOOL) return false;
+    JLT t[1]; t[0].var = jb_val(B, cv); t[0].c = 1;
+    jb_atom(B, origin, t, 1, J_EQ, truth ? 1 : 0);
+    return true;
+}
 // Does a value's variable already exist in this VC (without creating one)?
 static bool jb_has(JB *B, IrValue *v) {
     if (!v || v->id < 0 || v->id >= B->g->nv) return false;
@@ -1282,11 +1299,8 @@ static bool jb_join(JB *B, int32_t s) {
         }
         IrBlock *Y = S, *X = pr[k];
         for (int hop = 0; hop < 64; hop++) {
-            if (X->term.kind == IR_TERM_BR_COND && X->term.a != X->term.b && X->term.cond &&
-                X->term.cond->id >= 0 && X->term.cond->id < g->nv) {
-                IrInstr *ic = g->def[X->term.cond->id];
-                if (ic && ic->op == IR_ICMP) jb_cmp(B, ic, X->term.a == Y, "");
-            }
+            if (X->term.kind == IR_TERM_BR_COND && X->term.a != X->term.b && jg_cond_ok(g, X->term.cond))
+                jb_cond(B, X->term.cond, X->term.a == Y, "");
             if (X->id == d0 || g->npred[X->id] != 1 || !X->preds) break;
             Y = X; X = X->preds->block;
         }
@@ -1321,14 +1335,14 @@ static bool jb_join_relevant(JB *B, int32_t s) {
     }
     for (IrEdge *e = g->blk[s]->preds; e; e = e->next) {
         IrBlock *X = e->block;
-        if (X->term.kind != IR_TERM_BR_COND || !X->term.cond || X->term.cond->id < 0 || X->term.cond->id >= g->nv) continue;
-        IrInstr *ic = g->def[X->term.cond->id];
-        if (ic && ic->op == IR_ICMP && (jb_rel(B, ic->operands[0], 3) || jb_rel(B, ic->operands[1], 3))) return true;
+        if (X->term.kind != IR_TERM_BR_COND || !jg_cond_ok(g, X->term.cond)) continue;
+        IrInstr *ic = jg_cond_cmp(g, X->term.cond);
+        if (ic ? jb_rel(B, ic->operands[0], 3) || jb_rel(B, ic->operands[1], 3) : jb_rel(B, X->term.cond, 3)) return true;
     }
     return false;
 }
 
-typedef struct { IrInstr *ic; bool truth; const char *origin; bool used; } JFact;
+typedef struct { IrValue *cv; bool truth; const char *origin; bool used; } JFact;
 static void jb_facts(JB *B) {
     JG *g = B->g;
     int32_t nf = 0, cf = 16;
@@ -1343,11 +1357,9 @@ static void jb_facts(JB *B) {
         for (IrInstr *i = S->instrs; i; i = i->next, k++) {
             if (s == B->blk && k >= B->idx) break;
             // and ASSERTs: a program past one has its condition true, its obligation owed there
-            if ((i->op != IR_ASSUME && i->op != IR_ASSERT) || i->n_operands < 1 || !i->operands[0]) continue;
-            IrInstr *ic = i->operands[0]->id >= 0 && i->operands[0]->id < g->nv ? g->def[i->operands[0]->id] : NULL;
-            if (!ic || ic->op != IR_ICMP) continue;
+            if ((i->op != IR_ASSUME && i->op != IR_ASSERT) || i->n_operands < 1 || !jg_cond_ok(g, i->operands[0])) continue;
             if (nf == cf) { JFact *n2 = JG_NEW(g, JFact, cf * 2); if (!n2) { B->fail = true; return; } memcpy(n2, F, sizeof *F * (size_t)nf); F = n2; cf *= 2; }
-            F[nf].ic = ic; F[nf].truth = true; F[nf].used = false;
+            F[nf].cv = i->operands[0]; F[nf].truth = true; F[nf].used = false;
             F[nf].origin = i->op == IR_ASSERT ? jb_str(B, "assert bb%lld.%lld", s, k, 0)
                          : jb_str(B, i->aux.imm == 1 ? "assume.trusted bb%lld.%lld" : "assume bb%lld.%lld", s, k, 0);
             nf++;
@@ -1355,15 +1367,11 @@ static void jb_facts(JB *B) {
         if (s == g->f->entry->id) break;
         if (g->npred[s] == 1 && S->preds) {
             IrBlock *P = S->preds->block;
-            if (P->term.kind == IR_TERM_BR_COND && P->term.a != P->term.b && P->term.cond &&
-                P->term.cond->id >= 0 && P->term.cond->id < g->nv) {
-                IrInstr *ic = g->def[P->term.cond->id];
-                if (ic && ic->op == IR_ICMP) {
-                    if (nf == cf) { JFact *n2 = JG_NEW(g, JFact, cf * 2); if (!n2) { B->fail = true; return; } memcpy(n2, F, sizeof *F * (size_t)nf); F = n2; cf *= 2; }
-                    F[nf].ic = ic; F[nf].truth = P->term.a == S; F[nf].used = false;
-                    F[nf].origin = jb_str(B, "guard bb%lld->bb%lld", P->id, s, 0);
-                    nf++;
-                }
+            if (P->term.kind == IR_TERM_BR_COND && P->term.a != P->term.b && jg_cond_ok(g, P->term.cond)) {
+                if (nf == cf) { JFact *n2 = JG_NEW(g, JFact, cf * 2); if (!n2) { B->fail = true; return; } memcpy(n2, F, sizeof *F * (size_t)nf); F = n2; cf *= 2; }
+                F[nf].cv = P->term.cond; F[nf].truth = P->term.a == S; F[nf].used = false;
+                F[nf].origin = jb_str(B, "guard bb%lld->bb%lld", P->id, s, 0);
+                nf++;
             }
         }
         if (g->idom[s] == s) break;
@@ -1371,15 +1379,11 @@ static void jb_facts(JB *B) {
     // a claim's obligation is owed on ONE edge out of its block: that edge's condition holds
     if (B->to >= 0) {
         IrBlock *P = g->blk[B->blk];
-        if (P->term.kind == IR_TERM_BR_COND && P->term.a != P->term.b && P->term.cond &&
-            P->term.cond->id >= 0 && P->term.cond->id < g->nv) {
-            IrInstr *ic = g->def[P->term.cond->id];
-            if (ic && ic->op == IR_ICMP) {
-                if (nf == cf) { JFact *n2 = JG_NEW(g, JFact, cf * 2); if (!n2) { B->fail = true; return; } memcpy(n2, F, sizeof *F * (size_t)nf); F = n2; cf *= 2; }
-                F[nf].ic = ic; F[nf].truth = P->term.a->id == B->to; F[nf].used = false;
-                F[nf].origin = jb_str(B, "edge bb%lld->bb%lld", P->id, B->to, 0);
-                nf++;
-            }
+        if (P->term.kind == IR_TERM_BR_COND && P->term.a != P->term.b && jg_cond_ok(g, P->term.cond)) {
+            if (nf == cf) { JFact *n2 = JG_NEW(g, JFact, cf * 2); if (!n2) { B->fail = true; return; } memcpy(n2, F, sizeof *F * (size_t)nf); F = n2; cf *= 2; }
+            F[nf].cv = P->term.cond; F[nf].truth = P->term.a->id == B->to; F[nf].used = false;
+            F[nf].origin = jb_str(B, "edge bb%lld->bb%lld", P->id, B->to, 0);
+            nf++;
         }
     }
     for (bool more = true; more && !B->fail; ) {
@@ -1387,9 +1391,10 @@ static void jb_facts(JB *B) {
         jb_drain(B);
         for (int32_t i = 0; i < nf; i++) {
             if (F[i].used) continue;
-            if (!jb_rel(B, F[i].ic->operands[0], 3) && !jb_rel(B, F[i].ic->operands[1], 3)) continue;
+            IrInstr *ic = jg_cond_cmp(g, F[i].cv);
+            if (ic ? !jb_rel(B, ic->operands[0], 3) && !jb_rel(B, ic->operands[1], 3) : !jb_rel(B, F[i].cv, 3)) continue;
             F[i].used = true;
-            if (jb_cmp(B, F[i].ic, F[i].truth, F[i].origin)) more = true;
+            if (jb_cond(B, F[i].cv, F[i].truth, F[i].origin)) more = true;
         }
         for (int32_t i = 0; i < nj && !B->fail; i++) {
             if (jused[i]) continue;

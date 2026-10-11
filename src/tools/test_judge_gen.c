@@ -804,6 +804,63 @@ int main(void) {
         free(t);
     }
     printf("  asserts: owed where they stand, their condition a fact after them\n");
+    // 20. a BOOL condition is a fact as a comparison is: 1 on its branch's first edge, 0 on the
+    // other (a branch takes its first target on nonzero, and a bool is 0 or 1), along a guard,
+    // inside a join's disjunct, and after an ASSERT of it
+    {   IrFunc *f = ir_func_new(&A, nm("g25"), u32t, IR_FUNC_PURE);
+        IrValue *p = ir_add_param(f, boolt, nm("p")), *q = ir_add_param(f, boolt, nm("q")), *u = ir_add_param(f, u32t, nm("u"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, s, u);
+        ir_set_br_cond(b0, p, b1, b2);
+        IrValue *d1 = ir_binop(f, b1, IR_UDIV, ir_const_int(f, b1, 100, u32t), ir_load(f, b1, s, u32t), u32t);   // p = 1 here
+        ir_store(f, b1, s, ir_const_int(f, b1, 1, u32t));
+        ir_set_br(b1, b3);
+        ir_store(f, b2, s, ir_const_int(f, b2, 2, u32t));
+        ir_set_br(b2, b3);
+        IrValue *ls = ir_load(f, b3, s, u32t);
+        int aq = nins(b3); ir_assert(f, b3, q);
+        IrValue *d2 = ir_binop(f, b3, IR_UDIV, ir_const_int(f, b3, 100, u32t), ls, u32t);
+        IrInstr *a1 = ir_instr(f, IR_ADD, u32t, 2); a1->operands[0] = d1; a1->operands[1] = d2; a1->wrap = IR_WRAP_MODULAR; ir_emit(b3, a1);
+        IrValue *d3 = ir_binop(f, b3, IR_UDIV, ir_const_int(f, b3, 7, u32t), ir_load(f, b3, ir_alloca(f, b3, u32t), u32t), u32t);
+        (void)d3;
+        ir_set_ret(b3, a1->result);
+        ir_finalize_cfg(f);
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        char key[48], want[96], vb[1 << 12];
+        snprintf(key, sizeof key, "bb%d.%d divzero", b1->id, idx_of(b1, d1));
+        snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "guard bb%d->bb%d : 1*%%v%d = 1", b0->id, b1->id, p->id);
+        (void)want;
+        // d1's VC names no p: a guard is stated once one of its operands is in the VC
+        CHECK(!strstr(vb, "guard"), "a guard about nothing the VC names is not stated:\n%s", vb);
+        snprintf(key, sizeof key, "bb%d.%d divzero", b3->id, idx_of(b3, d2));
+        snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "1*%%v%d = 1", p->id);
+        CHECK(strstr(vb, "join bb") && strstr(vb, want), "the join's disjunct through the first edge has p = 1:\n%s", vb);
+        snprintf(want, sizeof want, "1*%%v%d = 0", p->id);
+        CHECK(strstr(vb, want), "and the other p = 0:\n%s", vb);
+        snprintf(key, sizeof key, "bb%d.%d assert.0", b3->id, aq);
+        snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "goal 1*%%v%d != 0", q->id);
+        CHECK(strstr(vb, want) && !strstr(vb, "assert bb"), "assert(q) owes q != 0, not assuming it:\n%s", vb);
+        free(t);
+        // after assert(q), a later VC that names q has q = 1
+        IrFunc *h = ir_func_new(&A, nm("g26"), u32t, IR_FUNC_PURE);
+        IrValue *r = ir_add_param(h, boolt, nm("r"));
+        IrBlock *h0 = h->entry;
+        int ar = nins(h0); ir_assert(h, h0, r);
+        int ar2 = nins(h0); ir_assert(h, h0, r);
+        ir_set_ret(h0, ir_const_int(h, h0, 0, u32t));
+        ir_finalize_cfg(h);
+        t = gen_with(h, NULL, 0, JGEN_ALL, NULL);
+        snprintf(key, sizeof key, "bb%d.%d assert.0", h0->id, ar2);
+        snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "assert bb%d.%d : 1*%%v%d = 1", h0->id, ar, r->id);
+        CHECK(strstr(vb, want), "after assert(r), r = 1 is a fact:\n%s", vb);
+        free(t);
+    }
+    printf("  a bool condition: 1 on its first edge, 0 on the other, and after an assert of it\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
