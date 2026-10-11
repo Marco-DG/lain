@@ -83,9 +83,8 @@ typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; } JR
 // reassignment changes: a parameter is an SSA value). It is owed at every return of its function
 // (`post`), and is a fact about a call's result at a call in the SAME module (I.181's boundary:
 // across modules only the declared contract, which reaches the caller as its ASSUMEs).
-// `fn` is the claim's function; NULL means the one being generated.
-enum { JCLAIM_RET = -1, JKEY_RET = -2 };
-typedef struct { int32_t blk, nt; int32_t key[2]; __int128 coef[2]; __int128 rhs; IrFunc *fn; } JClaim;
+// `fn` is the claim's function; NULL means the one being generated. JClaim and its constants are
+// format.h's, since an untrusted proposer writes claims.
 
 // An obligation: its instruction, its position, and its VC; or `outside` with the reason. A
 // claim's obligation has no instruction: it is owed at the end of block `blk`, on its edge to `to`,
@@ -1879,7 +1878,6 @@ static bool jg_post_obligations(JG *g, JObls *L, int32_t ci) {
     }
     return true;
 }
-enum { JGEN_ALL = -1, JGEN_CLAIMS = -2, JGEN_POST = -3 };
 static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
@@ -1937,7 +1935,7 @@ static bool jgen_func(JMem *m, IrFunc *f, const JClaim *cl, int32_t ncl, int32_t
 // For whoever proposes claims (nothing here is trusted: every claim is checked and owed). The
 // versions a claim can be about: every forward join's fresh version of an integer cell, and every
 // loop header's (`head`), in reverse post-order, so a block's forward predecessors come first.
-typedef struct { int32_t blk, key; const IrType *type; bool head; } JSlot;
+// (JSlot is format.h's.)
 static bool jgen_slots(JMem *m, IrFunc *f, JSlot **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
@@ -2021,6 +2019,38 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, int32_t blk, const int32_t *keys
         if (jv >= 0 && (g.ver[jv].kind == JV_JOIN || g.ver[jv].kind == JV_HEAD) && g.ver[jv].blk == blk) kind[i] = 2;
     }
     return true;
+}
+
+// ── the generator offered to an UNTRUSTED proposer (format.h's JudgeGen) ─────────────────────
+// Each call works in the caller's region from its start, so an answer lives until the next call.
+typedef struct { char *buf; size_t cap; } JGenOffer;
+static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
+                          JClaimVc **out, int32_t *nout, char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    JObl *o; int32_t n;
+    if (!jgen_func(&m, f, cl, ncl, only, &o, &n, err, errcap)) return false;
+    JClaimVc *v = JMEM_NEW(&m, JClaimVc, n ? n : 1);
+    if (!v) { snprintf(err, errcap, "out of memory"); return false; }
+    for (int32_t i = 0; i < n; i++) { v[i].vc = o[i].vc; v[i].claim = o[i].claim; }
+    *out = v; *nout = n;
+    return true;
+}
+static bool jgo_slots(void *ctx, struct IrFunc *f, JSlot **out, int32_t *nout, char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    return jgen_slots(&m, f, out, nout, err, errcap);
+}
+static bool jgo_terms(void *ctx, struct IrFunc *f, int32_t blk, JSlot **out, int32_t *nout, char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    return jgen_terms(&m, f, blk, out, nout, err, errcap);
+}
+static bool jgo_term_kinds(void *ctx, struct IrFunc *f, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
+                           char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    return jgen_term_kinds(&m, f, blk, keys, n, kind, err, errcap);
+}
+static JudgeGen jgen_offer(JGenOffer *x) {
+    JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
+    return g;
 }
 
 #endif // LAIN_JUDGE_GEN_H

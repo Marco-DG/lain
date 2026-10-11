@@ -84,4 +84,32 @@ typedef struct {
     JWork used;                 // every answer; for J_ANS_BUDGET, the counter at its limit says which
 } JAnswer;
 
+// ── claims: what an untrusted PROPOSER hands the judge, and what the judge offers it ──────────
+// (judge_interfaces §8; the proposer is src/solver/finder.h). The IR's types are opaque here.
+struct IrFunc; struct IrType;
+// A claim at a cut point (blk >= 0: a forward join or a loop header), `sum(coef * term) <= rhs`
+// over one or two terms by value id (a cell's ALLOCA id is its version at the block); or a RETURN
+// claim (blk JCLAIM_RET) over the value returned (JKEY_RET) and integer parameters. `fn` is the
+// claim's function. gen.h states and owes them; nothing here is believed.
+enum { JCLAIM_RET = -1, JKEY_RET = -2 };
+typedef struct { int32_t blk, nt; int32_t key[2]; __int128 coef[2]; __int128 rhs; struct IrFunc *fn; } JClaim;
+// A version a claim can be about: a join's or a loop header's (`head`) fresh version of a cell.
+typedef struct { int32_t blk, key; const struct IrType *type; bool head; } JSlot;
+// A VC a claim owes, and which claim (an index into the set it was generated with).
+typedef struct { JVc vc; int32_t claim; } JClaimVc;
+// What a claim VC generation covers: every claim's VCs and every obligation (ALL), the claims'
+// only (CLAIMS), the function's return claims' only (POST), or a block id's claims only.
+enum { JGEN_ALL = -1, JGEN_CLAIMS = -2, JGEN_POST = -3 };
+// The judge's generator, offered to the proposer as calls (gen.h's jgen_offer). Each answer lives
+// in the judge's region until the next call. False with `err` when the generator refuses.
+typedef struct {
+    void *ctx;
+    bool (*claim_vcs)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
+                      JClaimVc **out, int32_t *nout, char *err, uint32_t errcap);
+    bool (*slots)(void *ctx, struct IrFunc *f, JSlot **out, int32_t *nout, char *err, uint32_t errcap);
+    bool (*terms)(void *ctx, struct IrFunc *f, int32_t blk, JSlot **out, int32_t *nout, char *err, uint32_t errcap);
+    bool (*term_kinds)(void *ctx, struct IrFunc *f, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
+                       char *err, uint32_t errcap);
+} JudgeGen;
+
 #endif // LAIN_JUDGE_FORMAT_H
