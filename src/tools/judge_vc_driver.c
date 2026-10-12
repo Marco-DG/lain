@@ -356,6 +356,7 @@ int main(int argc, char **argv) {
         }
         F.hdr = hdr; F.nhdr = nhdr;
         cl = finder_propose(&F, &ncl);
+        if (F.oom) fprintf(stderr, "finder_propose: out of memory\n");
     }
     for (int32_t c = 0; show && c < ncl; c++) {
         static const char *kn[] = { "%ret" };

@@ -8,7 +8,10 @@
 #      src/solver/: a judge that shares code with what it checks is blind to that code's bugs;
 #   2. of src/judge/, src/solver/ includes, directly or not, only judge/format.h;
 #   3. judge/format.h is plain data: it includes only <stdint.h> and <stdbool.h>, and defines no
-#      function, so the solver receives no arithmetic of the judge's.
+#      function, so the solver receives no arithmetic of the judge's;
+#   4. nothing under src/judge/ or src/solver/ names the process's streams or ends the process
+#      (judge_interfaces §8, G5): a library reports through its records, an `err` buffer, a flag,
+#      or a FILE * its caller passes, so a compiler that links it decides what reaches the user.
 # Includes are followed TRANSITIVELY, since a rule checked one level deep holds only until a header
 # in the middle gains an include. A quoted include that resolves to no file is a violation: the
 # check cannot vouch for what it cannot read.
@@ -92,6 +95,15 @@ if os.path.isfile(fmt):
         bad.append(f'src/judge/format.h:{line}: `{m.group(0).strip()}`: format.h defines no function or macro function, only data')
 elif judge:
     bad.append('src/judge/format.h is missing: it is the one file the solver may include')
+
+# rule 4, on the code with comments and string literals blanked: `fprintf(o, ...)` to a caller's
+# FILE * and `snprintf` into a caller's buffer stay allowed
+proc = re.compile(r'\b(stderr|stdout|stdin)\b|\b(exit|_Exit|quick_exit|abort|printf|puts|putchar|perror|getchar)\s*\(')
+for f in judge + solver:
+    text = re.sub(r'"(?:\\.|[^"\\\n])*"', '""', strip_comments(open(f, encoding='utf-8', errors='replace').read()))
+    for m in proc.finditer(text):
+        line = text.count('\n', 0, m.start()) + 1
+        bad.append(f'{rel(f)}:{line}: `{m.group(0).rstrip("(").strip()}`: the proof engine writes to no process stream and never ends the process')
 
 for b in bad: print('  ' + b)
 print(f'judge include rules: {len(judge)} judge files, {len(solver)} solver files, '

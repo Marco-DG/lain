@@ -9,9 +9,11 @@
 //   JFinder F = { .gen = &gen, .mod = mod, .work = w, .worksz = n, .lim = lim, .use_vra = true,
 //                 .hdr = hdr, .nhdr = nhdr };
 //   JClaim *cl = finder_propose(&F, &ncl);      // malloc'd, NULL for none; F's counters count
+//   if (F.oom) ...                              // NULL because memory ran out, not for want of claims
+// It writes nothing anywhere (G5): the caller reports.
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
+#include <stdio.h>                       // snprintf into the caller's err only
 #include "ir/ir.h"
 #include "judge/format.h"
 #include "solver/lia.h"
@@ -27,6 +29,7 @@ typedef struct {
     bool use_vra;                        // VRA's header states and return intervals as candidates
     const FdHdr *hdr; int nhdr;
     long long proposed, kept, dropped;   // counted across calls
+    bool oom;                            // the last call returned no claims because memory ran out
 } JFinder;
 
 // ── its own small helpers (the generator's are the judge's; these are untrusted copies) ─────────
@@ -336,6 +339,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     JCand *cd = NULL;
     int32_t nc = 0, ccl = 0, nv = 0, ncd = 0, ccd = 0;
     *ncl = 0;
+    F->oom = false;
     for (int round = 0; round < 3; round++) {
         if (nv > ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)nv); if (!x) goto oom; cl = x; ccl = nv; }
         if (nv) memcpy(cl, as, sizeof *cl * (size_t)nv);
@@ -406,7 +410,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     return as;
 oom:
     free(cd); free(cl); free(as);
-    fprintf(stderr, "finder_propose: out of memory\n");
+    F->oom = true;
     return NULL;
 }
 
