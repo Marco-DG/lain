@@ -1,0 +1,14 @@
+// EXPECT: [E131]
+// EXPECT-TEXT: extern 'getenv' returns a slice, which no C function fills
+// I.201: a slice RESULT, a sentinel one included, is emitted as the two-word struct no C function
+// fills. This compiled on 7f3ee28 as `Slice_u8 getenv(uint8_t*)`: the length was whatever the
+// second return register held (len=4 for an 11-byte HOME), and the range analysis and the judge
+// both trusted it, so an index under `i < s.len` was a wild read in safe code. A C string comes
+// back as `*u8`.
+extern func getenv(name u8[:0]) u8[:0] effects io
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func main() i32 effects io {
+    s = getenv("HOME")
+    libc_printf("len=%llu\n", s.len)
+    return 0
+}

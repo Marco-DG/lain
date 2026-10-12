@@ -3163,7 +3163,7 @@ The `...` is only valid in `extern` function declarations.
 | `*u8`, `*T` | `uint8_t*`, `T*` | Read-only: the compiler refuses a write (`[E009]`) |
 | `*var u8`, `*var T` | `uint8_t*`, `T*` | Writable |
 | `mov *T` | `T*` | Owned pointer |
-| `T[]` | `struct { T* data; size_t len; }` | Passed as two parameters, the length first; not allowed in an `extern` (`[E131]`) |
+| `T[]` | `struct { T* data; size_t len; }` | Passed as two parameters, the length first; an `extern` may neither take nor return one (`[E131]`) |
 
 ---
 

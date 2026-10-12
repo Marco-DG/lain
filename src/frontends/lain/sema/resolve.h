@@ -598,6 +598,23 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
                                      d->line ? d->col  : (pp->decl ? pp->decl->col  : 0));
                 exit(1);
             }
+            // ★ ...AND MAY NOT RETURN ONE, a sentinel slice included (I.201). A slice result is
+            // emitted as the two-word struct a C function never fills: `extern func getenv(name
+            // u8[:0]) u8[:0]` was declared `Slice_u8 getenv(uint8_t*)`, the length was whatever
+            // the second return register held (len=4 for an 11-byte HOME), and VRA and the judge
+            // both trusted it, so `s[i]` under `i < s.len` was a wild read in safe code. A C
+            // string comes back as `*u8`, as std/ returns it everywhere.
+            {   Type *xt = rt;
+                if (xt && xt->kind == TYPE_SIMPLE) { Type *a = resolve_type_alias(xt); if (a && (a->kind == TYPE_SLICE || a->kind == TYPE_ARRAY)) xt = a; }
+                if (xt && (xt->kind == TYPE_SLICE || (xt->kind == TYPE_ARRAY && xt->array_len == -1))) {
+                    fprintf(stderr, "[E131] Error Ln %li, Col %li: extern '%.*s' returns a slice, which no C "
+                        "function fills — its length would be whatever the callee left behind. Return a "
+                        "pointer (`*u8`) and take the length separately, as std/ does.\n",
+                        (long)d->line, (long)d->col, (int)id->length, id->name);
+                    diagnostic_show_line(d->line, d->col);
+                    exit(1);
+                }
+            }
             // Extern functions use their raw name
             cnamef = strdup(rawf);
         } else {

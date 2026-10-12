@@ -1,0 +1,10 @@
+// EXPECT: [E131]
+// EXPECT-TEXT: extern 'get_s' returns a slice
+// I.201: a dynamic slice result, as the parameter rule (extern_slice_param_fail) refuses one as a
+// parameter: no C function returns Lain's two-word slice, so its length is unknowable.
+extern func get_s() u8[] effects io
+func main() i32 effects io {
+    s = get_s()
+    if s.len > 5 { return 1 }
+    return 0
+}

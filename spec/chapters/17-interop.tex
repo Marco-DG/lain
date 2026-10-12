@@ -91,6 +91,23 @@ Ownership annotations on extern parameters work identically to those on
 native Lain functions; the borrow checker tracks ownership of resources
 obtained via extern calls.
 
+\pnum
+An \lain{extern} shall neither take nor return a slice, a sentinel slice
+included~(\diagcode{E131}).  A slice has no C representation as a parameter, and no C
+function fills one as a result: its length would be whatever the callee happened to leave
+behind.  Take or return a pointer instead, \lain{*u8} for a C string, and carry the length
+separately, as \lain{std} does.  A struct with a slice field may still be passed or returned,
+since a C function that returns one is written against the layout of
+\S\,\ref{sec:interop.types}.
+
+\begin{laincode}
+extern func last_name() u8[]    // ERROR [E131]
+
+func main() i32 {
+    return 0
+}
+\end{laincode}
+
 \section{Type mapping}
 \label{sec:interop.types}
 \index{type mapping}
@@ -129,7 +146,7 @@ output.
 shared struct \lain{T} & \texttt{T * restrict} & a parameter \\
 \lain{var} struct \lain{T} & \texttt{T * restrict} & a parameter \\
 \lain{mov} struct \lain{T} & \texttt{T}   & by value \\
-\lain{T[]}         & \texttt{struct \{ T* data; size\_t len; \}} & passed as two parameters, the length first; not in an \lain{extern}~(\diagcode{E131}) \\
+\lain{T[]}         & \texttt{struct \{ T* data; size\_t len; \}} & passed as two parameters, the length first; an \lain{extern} may neither take nor return one~(\diagcode{E131}) \\
 \lain{*T}          & \texttt{T*}        & read-only: the compiler refuses a write~(\diagcode{E009}) \\
 \lain{*var T}      & \texttt{T*}        & writable \\
 \end{longtable}
