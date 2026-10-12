@@ -179,14 +179,17 @@ run_test() {
         fi
         # An optional `// EXPECT-TEXT: <text>` must appear in the output too. The code says which
         # rule refused the program; the text says the message EXPLAINS it, and a message is the
-        # documentation a user reads when stuck. Nothing tested one before.
+        # documentation a user reads when stuck. Nothing tested one before. Each EXPECT-TEXT line is
+        # checked (I.200): a message that spans lines, such as E011's path shown as source lines with
+        # what each test decided, is pinned line by line.
         local etext
-        etext="$(grep -m1 -oE '// EXPECT-TEXT: .*' "$file" | sed 's|^// EXPECT-TEXT: ||')"
-        if [[ -n "$etext" ]] && ! echo "$out" | grep -qF -- "$etext"; then
-            FAIL_COUNT=$((FAIL_COUNT + 1))
-            FAILED_TESTS+=("$file (expected the message to say: $etext)")
-            return
-        fi
+        while IFS= read -r etext; do
+            if [[ -n "$etext" ]] && ! echo "$out" | grep -qF -- "$etext"; then
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+                FAILED_TESTS+=("$file (expected the message to say: $etext)")
+                return
+            fi
+        done < <(grep -oE '// EXPECT-TEXT: .*' "$file" | sed 's|^// EXPECT-TEXT: ||')
         # ★ THE FIRST CODED ERROR SAYS WHERE IT IS: a line, or at least the function (I.68). This
         # MEASURES what check_build_warnings can only grep for: that gate looked for a literal
         # `"[E086] Error:"`, while report.h's ir_diag passes the code as a format argument, so six

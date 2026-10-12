@@ -118,6 +118,7 @@ typedef struct {
     // things to change. 42% of unproven obligations are the engine refusing correctly, so the
     // quality of the refusal IS the user experience.
     bool     accum;                       // the numbers below are meaningful
+    IrValue *accum_load;                  // the running total's own load (`year` in `year + 1`)
     int64_t  accum_T, accum_dlo, accum_dhi, accum_s0lo, accum_s0hi;
     // The loop an accumulator's bound or a loop's termination is about: its header's block id + 1
     // (0: none). A running total with no bound only because its loop has no trip count is a
@@ -126,6 +127,8 @@ typedef struct {
     // A failed loop termination: a counter that falls (or rises) on some paths round the loop,
     // and the branch decisions of one path on which it does not (I.165), for the E011's note.
     IrValue *wit_counter;
+    IrValue *wit_bound;      // what the counter is compared with, and whether it rises toward it
+    bool     wit_rising;     // (`i < n`) or falls (`days > 365`): the E011 sentence names both
     int      wit_n;
     int64_t  wit_line[6], wit_col[6];
     bool     wit_true[6];
@@ -4326,7 +4329,7 @@ static bool vra_edge_live(Vra *V, IrBlock *q, int k) {
 // header. Its branch decisions are recorded, for the first counter that makes progress on SOME
 // path (vra_loop_terminates_at), keyed by the function and the loop.
 static IrFunc *vra_wit_f = NULL; static int vra_wit_loop = -1, vra_wit_n = 0;
-static IrValue *vra_wit_counter = NULL;
+static IrValue *vra_wit_counter = NULL, *vra_wit_bound = NULL; static bool vra_wit_rising = false;
 static int64_t vra_wit_line[6], vra_wit_col[6]; static bool vra_wit_true[6];
 static bool vra_wit_pending = false;              // a path was found by the last failing walk
 static int64_t vra_pw_line[6], vra_pw_col[6]; static bool vra_pw_true[6]; static int vra_pw_n = 0;
@@ -4799,6 +4802,7 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
         bool ok = vra_progress_on_every_path(V, H, nbb, body, prog);
         if (!ok && vra_wit_pending && !(vra_wit_f == V->f && vra_wit_loop == H->id)) {
             vra_wit_f = V->f; vra_wit_loop = H->id; vra_wit_counter = ivv; vra_wit_n = vra_pw_n;
+            vra_wit_bound = bnd; vra_wit_rising = lt;
             memcpy(vra_wit_line, vra_pw_line, sizeof vra_pw_line); memcpy(vra_wit_col, vra_pw_col, sizeof vra_pw_col);
             memcpy(vra_wit_true, vra_pw_true, sizeof vra_pw_true);
         }
@@ -5426,6 +5430,7 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
     bool haveT = vra_loop_trips(V, W, H, &T);
     if (c && vra_is_running_total(V, val, H)) {
         c->accum = true; c->accum_dlo = dlo; c->accum_dhi = dhi;
+        c->accum_load = V->def[val->id]->operands[0];     // vra_accum_delta: an ADD or SUB of a LOAD
         c->accum_s0lo = s0lo; c->accum_s0hi = s0hi;
         c->accum_T = haveT ? T : -1;                 // -1 = the trip count is not bounded
         c->loop1 = H->id + 1;
@@ -6362,6 +6367,7 @@ static Vra *vra_analyze(IrFunc *f) {
         c.ok = V->checking ? vra_check_termination(V, b) : vra_loop_terminates(V,b);
         if (!c.ok && vra_wit_f == V->f && vra_wit_loop == b->id && vra_wit_counter) {
             c.wit_counter = vra_wit_counter; c.wit_n = vra_wit_n;
+            c.wit_bound = vra_wit_bound; c.wit_rising = vra_wit_rising;
             memcpy(c.wit_line, vra_wit_line, sizeof c.wit_line); memcpy(c.wit_col, vra_wit_col, sizeof c.wit_col);
             memcpy(c.wit_true, vra_wit_true, sizeof c.wit_true);
         }

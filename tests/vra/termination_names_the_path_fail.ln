@@ -1,5 +1,9 @@
 // EXPECT: [E011]
-// EXPECT-TEXT: the test at Ln 16, Col 12 is true and the test at Ln 17, Col 16 is false, so this measure does not cover every way round the loop
+// EXPECT-TEXT: `days` falls toward 365 on some paths through the loop, but not on this one:
+// EXPECT-TEXT:  20 |         if is_leap_year(year) {
+// EXPECT-TEXT:     |            ^ true
+// EXPECT-TEXT:  21 |             if days > 366 {
+// EXPECT-TEXT:     |                ^ false
 // I.165: an E011 names the path round the loop on which the counter does not move. It said only
 // "no measure could be inferred", and the reader of the Zune 30's ConvertDays (31 Dec 2008) had to
 // find for themselves that on the last day of a leap year, `is_leap_year(year)` true and

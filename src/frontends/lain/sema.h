@@ -39,6 +39,23 @@ static void diagnostic_show_line(isize line, isize col) {
     fprintf(stderr, "^\n");
 }
 
+// One test on a path, for E011 (I.200): its source line, unless the previous mark showed the same
+// line, then a caret under the test with what it decided (`^ true`), in a gutter of width w.
+static void diagnostic_show_mark(isize line, isize col, const char *label, int w, bool show_line) {
+    if (!sema_source_text || line <= 0) return;
+    const char *p = sema_source_text;
+    isize cur_line = 1;
+    while (*p && cur_line < line) { if (*p == '\n') cur_line++; p++; }
+    if (!*p && cur_line < line) return;
+    const char *line_end = p;
+    while (*line_end && *line_end != '\n') line_end++;
+    int line_len = (int)(line_end - p);
+    if (show_line) fprintf(stderr, " %*li | %.*s\n", w, (long)line, line_len, p);
+    fprintf(stderr, " %*s | ", w, "");
+    for (isize i = 0; i < (col > 0 ? col - 1 : 0); i++) fputc(i < line_len && p[i] == '\t' ? '\t' : ' ', stderr);
+    fprintf(stderr, "^ %s\n", label);
+}
+
 // In-guard table (declared before sub-header includes so typecheck.h can use them)
 typedef struct InGuardEntry {
     Expr *index;

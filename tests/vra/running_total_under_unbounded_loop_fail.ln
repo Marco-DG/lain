@@ -1,5 +1,5 @@
 // EXPECT: [E011]
-// EXPECT-TEXT: note: the running total at Ln 19, Col 17 has no bound only because this loop has none
+// EXPECT-TEXT: note: `year` grows by 1 on every trip (Ln 19, Ln 23), so it stays within `i32` only if the loop runs a limited number of times
 // I.159: Zune 30's ConvertDays (31 Dec 2008), in the driver's types: on day 366 of a leap year
 // neither branch moves `days`, and the loop never ends. That is the E011 at the `while`. The two
 // `year = year + 1` have no bound only because the loop has no trip count, and they were reported

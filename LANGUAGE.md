@@ -1699,8 +1699,8 @@ func g(flag bool) i32 {
 [E011] Error Ln 2, Col 5: this loop is not provably terminating, and no measure could be inferred
 ```
 
-When a candidate falls on some paths round the loop but not on all of them, the error names the
-path on which it does not. This is the loop that froze every Zune 30 on 31 December 2008, day 366
+When a candidate falls on some paths through the loop but not on all of them, the error shows the
+path on which it does not, test by test. This is the loop that froze every Zune 30 on 31 December 2008, day 366
 of a leap year:
 
 ```lain
@@ -1724,13 +1724,21 @@ func year_of(days0 u32) i32 {
 
 ```
 [E011] Error Ln 4, Col 11: this loop is not provably terminating, and no measure could be inferred
-       `days` moves toward the loop's bound on some paths, but not on the one where
-       the test at Ln 5, Col 12 is true and the test at Ln 6, Col 16 is false, so this measure does not cover every way round the loop
-       note: the running total at Ln 8, Col 17 has no bound only because this loop has none
-       note: the running total at Ln 12, Col 13 has no bound only because this loop has none
+   |
+ 4 |     while days > 365 {               // ERROR [E011]
+   |           ^
+       `days` falls toward 365 on some paths through the loop, but not on this one:
+   |
+ 5 |         if year % 4 == 0 {
+   |            ^ true
+ 6 |             if days > 366 {
+   |                ^ false
+   |
+       note: `year` grows by 1 on every trip (Ln 8, Ln 12), so it stays within `i32`
+       only if the loop runs a limited number of times
 ```
 
-The fix is an `else { break }` on the inner test: then every way round the loop either lowers
+The fix is an `else { break }` on the inner test: then every path through the loop either lowers
 `days` or leaves the loop.
 
 A `decreasing` measure that is supplied and does not hold is `[E082]`:

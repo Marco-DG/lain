@@ -279,9 +279,10 @@ int main(int argc, char **argv) {
             Decl *sd = (Decl *)f->src_decl;
             ir_diag_excerpt = (sd && (!sd->defining_module || strcmp(sd->defining_module, modname) == 0))
                               ? diagnostic_show_line : NULL;
+            ir_diag_mark = ir_diag_excerpt ? diagnostic_show_mark : NULL;
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
-        ir_diag_excerpt = NULL;
+        ir_diag_excerpt = NULL; ir_diag_mark = NULL;
         // --dump-effects: the IR's row (I.143), for what this file defines and the instances it
         // made of generic functions defined elsewhere, after the analyses that decide DIVERGE.
         if (args.dump_effects)
