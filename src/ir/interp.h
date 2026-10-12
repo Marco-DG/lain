@@ -511,12 +511,11 @@ static void ii_binop_scalar(IrInstr *ins, IVal *a, IVal *b, IrType *ta, IrType *
         case IR_XOR: z = (__int128)((int64_t)x ^ (int64_t)y); if (!it_signed(rt)) z = it_wrap(z, rt); break;
         case IR_SHL: case IR_LSHR: case IR_ASHR: {
             int w = it_bits(ta);
-            // A vector's lanes shifted past their width read 0. A scalar amount is an
-            // obligation in every wrap mode: `<<%` wraps the bits shifted out, not the amount,
-            // and the C `<<` by the width or more is undefined.
-            bool lane = ins->result && ins->result->type && ins->result->type->kind == IRT_VECTOR;
+            // The amount is an obligation in every wrap mode: `<<%` wraps the bits shifted out,
+            // not the amount, and the C `<<` by the width or more is undefined. A LANE's too
+            // (I.202): spec 07 owes a vector's amount as a scalar's, and the C shifts lane by
+            // lane, undefined past the width. Lanes shifted past it used to read 0 here.
             if (y < 0 || y >= w) {
-                if (lane) { z = 0; break; }
                 if (ins->unchecked) II_UB(ins, "shift by %lld, outside [0, %d)", (long long)y, w);
                 II_PROOF(ins, "shift by %lld, outside [0, %d) (proven in range)", (long long)y, w);
             }

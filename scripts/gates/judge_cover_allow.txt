@@ -2,7 +2,3 @@
 # judge_gate.sh fails on an uncovered check not listed here, and on a listed one that is covered: an
 # exemption expires with its bug. One per line: program<TAB>function<TAB>class<TAB>line:col<TAB>reason.
 # Classes: B bounds, D divisor, V a division's TYPE_MIN / -1, O overflow and narrowing, P precondition.
-tests/trust/simd_lane_write_pass.ln	main	O	24:20	I.202: a vector shift's amount; the interpreter reads a lane shifted past its width as 0, so no shift is owed
-tests/trust/simd_shuffle_pass.ln	main	O	19:33	I.202: a vector shift's amount; the interpreter reads a lane shifted past its width as 0, so no shift is owed
-tests/trust/simd_signed_lanes_wrap_pass.ln	main	O	17:19	I.202: a vector shift's amount; the interpreter reads a lane shifted past its width as 0, so no shift is owed
-tests/vra/overflow/simd_shift_amount_fail.ln	main	O	7:19	I.202: a vector shift's amount; the interpreter reads a lane shifted past its width as 0, so no shift is owed

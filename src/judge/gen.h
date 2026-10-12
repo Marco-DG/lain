@@ -1758,6 +1758,16 @@ static bool jg_obligations(JG *g, JObls *L) {
                 }
                 case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: {
                     if (i->unchecked || i->n_operands < 2) break;
+                    // a VECTOR divided lane by lane (spec 07): a scalar divisor is owed non-zero
+                    // as a scalar's is, one given per lane is refused (no per-lane facts), and
+                    // lanes wrap, so no result is owed
+                    const IrType *dvt = i->operands[0]->type;
+                    if (dvt && dvt->kind == IRT_VECTOR) {
+                        if (!dvt->elem || dvt->elem->kind != IRT_INT) break;
+                        if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "a divisor given per lane")) return false; break; }
+                        if (!jg_goal(g, L, i, b->id, k, -1, "divzero", 0, jgk_divzero, NULL)) return false;
+                        break;
+                    }
                     if (!jg_is_int(i->operands[0]->type) || !jg_is_int(i->operands[1]->type)) break;
                     if (!jg_goal(g, L, i, b->id, k, -1, "divzero", 0, jgk_divzero, NULL)) return false;
                     if (i->wrap != IR_WRAP_CHECK) break;             // `/%` and `/|` define the result
@@ -1802,8 +1812,20 @@ static bool jg_obligations(JG *g, JObls *L) {
                     break;
                 }
                 case IR_SHL: case IR_LSHR: case IR_ASHR: {
-                    if (i->unchecked || i->n_operands < 2 || !i->result || !i->result->type ||
-                        i->result->type->kind != IRT_INT || !jg_is_int(i->operands[1]->type)) break;
+                    if (i->unchecked || i->n_operands < 2 || !i->result || !i->result->type) break;
+                    // a VECTOR's amount is owed as a scalar's (spec 07: a scalar provably in
+                    // [0, w-1] for w-bit lanes, E086; the C shifts lane by lane, I.202); one given
+                    // per lane is refused, as VRA refuses it. Lanes wrap: no narrowing is owed
+                    const IrType *vt = i->result->type;
+                    if (vt->kind == IRT_VECTOR) {
+                        if (!vt->elem || vt->elem->kind != IRT_INT) break;
+                        if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "a shift amount given per lane")) return false; break; }
+                        JNarrowArg vlo = { 0, false, i->operands[1] }, vhi = { vt->elem->bits - 1, true, i->operands[1] };
+                        if (!jg_goal(g, L, i, b->id, k, -1, "shift", 0, jgk_narrow, &vlo)) return false;
+                        if (!jg_goal(g, L, i, b->id, k, -1, "shift", 1, jgk_narrow, &vhi)) return false;
+                        break;
+                    }
+                    if (vt->kind != IRT_INT || !jg_is_int(i->operands[1]->type)) break;
                     int w = i->operands[0]->type && i->operands[0]->type->kind == IRT_INT ? i->operands[0]->type->bits : 64;
                     JNarrowArg lo = { 0, false, i->operands[1] }, hi = { w - 1, true, i->operands[1] };
                     if (!jg_goal(g, L, i, b->id, k, -1, "shift", 0, jgk_narrow, &lo)) return false;

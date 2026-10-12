@@ -976,6 +976,37 @@ int main(void) {
         }
     }
     printf("  a division's result: MIN / -1 at its own width, MIN %% -1 where C traps, the dividend's range, the divisor's sign\n");
+    // 30. a VECTOR lane by lane (spec 07, I.202): a scalar shift amount is owed in [0, w-1] for
+    // w-bit lanes and a scalar divisor non-zero, with no narrowing and no divovf (lanes wrap); an
+    // amount or a divisor given per lane is `outside`
+    {   IrType *v = ir_type_new(&A, IRT_VECTOR); v->elem = u32t; v->array_len = 4;
+        IrType *vi = ir_type_new(&A, IRT_VECTOR); vi->elem = i32t; vi->array_len = 4;
+        for (int k = 0; k < 4; k++) {
+            IrFunc *f = ir_func_new(&A, nm("g30"), k < 2 ? v : vi, IR_FUNC_PURE);
+            IrValue *a = ir_add_param(f, k < 2 ? v : vi, nm("a"));
+            IrValue *y = ir_add_param(f, k == 1 ? v : k == 3 ? vi : k == 0 ? u32t : i32t, nm("y"));
+            IrBlock *b0 = f->entry;
+            IrValue *r = ir_binop(f, b0, k < 2 ? IR_SHL : IR_SDIV, a, y, k < 2 ? v : vi);
+            ir_set_ret(b0, r);
+            char *t = gen_text(f), want[96];
+            if (k == 0) {
+                snprintf(want, sizeof want, "goal 1*%%v%d <= 31", y->id);
+                CHECK(t && strstr(vc_of(t, "shift 1"), want), "a lane's amount: y <= 31 for u32 lanes:\n%s", t ? t : "");
+                snprintf(want, sizeof want, "goal -1*%%v%d <= 0", y->id);
+                CHECK(t && strstr(vc_of(t, "shift 0"), want), "and 0 <= y:\n%s", t ? t : "");
+                CHECK(t && !strstr(t, "narrow."), "lanes wrap: no narrowing:\n%s", t ? t : "");
+            }
+            if (k == 2) {
+                snprintf(want, sizeof want, "goal 1*%%v%d != 0", y->id);
+                CHECK(t && strstr(vc_of(t, "divzero"), want), "a scalar divisor of lanes: y != 0:\n%s", t ? t : "");
+                CHECK(t && !strstr(t, "divovf"), "lanes wrap: no divovf:\n%s", t ? t : "");
+            }
+            if (k == 1) CHECK(t && strstr(t, "outside a shift amount given per lane") && !strstr(t, "vc "), "a per-lane amount is outside:\n%s", t ? t : "");
+            if (k == 3) CHECK(t && strstr(t, "outside a divisor given per lane") && !strstr(t, "vc "), "a per-lane divisor is outside:\n%s", t ? t : "");
+            free(t);
+        }
+    }
+    printf("  a vector: a scalar amount and a scalar divisor owed, per-lane ones outside\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

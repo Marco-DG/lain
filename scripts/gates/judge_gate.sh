@@ -45,8 +45,8 @@
 # sum payload), and one per ASSERT kind (P2.6: a precondition, a return refinement, a sized slice,
 # a struct invariant), each with a value that breaks the rule of its kind. Each must leave a VC of
 # that kind not implied (a model), or the judge proves a program that traps. A subslice's end, of a
-# slice and of an array, owed at its MAKE_SLICE; and TYPE_MIN / -1 at 64 bits, by division and by
-# remainder (guards: they held before the subslice rows were added).
+# slice and of an array, owed at its MAKE_SLICE; TYPE_MIN / -1 at 64 bits, by division and by
+# remainder (guards: they held before the subslice rows were added); a vector's shift amount (I.202).
 #
 # COVERAGE (Main Compiler Work's census): the judge can take VRA's place only where it owes what VRA
 # checks. Every test program and probe goes through the driver's --cover: each check VRA makes
@@ -83,7 +83,8 @@ MUST_REFUSE="tests/vra/overflow/field_assign_overflow_fail.ln:narrow tests/vra/o
              tests/errors/return_refinement_param_fail.ln:assert.86 tests/vra/sized_param_constant_length_fail.ln:assert.87
              tests/vra/invariant/slice_len_bound_store_fail.ln:assert.121
              tests/vra/bounds/subslice_oob_fail.ln:bounds tests/types/sub_slice_bounds_fail.ln:bounds
-             tests/types/div_i64_min_by_minus_one_fail.ln:divovf tests/types/rem_i64_min_by_minus_one_fail.ln:divovf"
+             tests/types/div_i64_min_by_minus_one_fail.ln:divovf tests/types/rem_i64_min_by_minus_one_fail.ln:divovf
+             tests/vra/overflow/simd_shift_amount_fail.ln:shift"
 REFUSED_FLOOR=150        # programs the prover refuses that ran and reached an obligation; 197 when the floor was set
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
 if ! gcc -std=c99 -O2 -w -o "$T/jvc" src/tools/judge_vc_driver.c -I src 2> "$T/build.err" ||
@@ -247,7 +248,7 @@ echo "VCs implied $implied (each certificate accepted by the kernel), not implie
 echo "claims $claims: their VCs implied $hullok, not implied $hullbad; at run time, claims checked on $claimgoals edges taken (floor $EDGE_FLOOR) and $claimchk times where used (floor $USE_FLOOR)"
 echo "return claims checked at run time at $retgoals returns (floor $RETURN_FLOOR) and $contractchk times at a call (floor $CONTRACT_FLOOR)"
 echo "the judge's own programs (tests/trust/judge_*_pass.ln) with a VC not implied, with or without the finder: $mustfail"
-echo "fail tests the judge must refuse (a landing, an assert, a subslice, a division of each kind): $(echo $MUST_REFUSE | wc -w), with every VC of their kind implied: $mustrefuse"
+echo "fail tests the judge must refuse (a landing, an assert, a subslice, a division, a vector shift): $(echo $MUST_REFUSE | wc -w), with every VC of their kind implied: $mustrefuse"
 echo "coverage: $(wc -l < "$T/cover.txt") programs, $cran lowered, $cchecks VRA checks: $cstated with an obligation, $cout outside, $(wc -l < "$T/unc.txt") uncovered ($(wc -l < "$T/allow.txt") allowed), $cnew not allowed, $cstale stale, $ccrash runs failed"
 echo "programs the prover refuses: $rdecl; ran $rran (floor $REFUSED_FLOOR), skipped $((rnosum + rnothing)) ($rnosum cannot run, $rnothing reach no obligation), crashed $rcrash; hypotheses checked $rchecked, false $rfalse, generator refusals $rrefused"
 if [ "$nosum" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$falsec" -gt 0 ] || [ "$judged" -ne "$declared" ] || [ "$solverr" -gt 0 ] || [ "$krefused" -gt 0 ] || [ "$canary" -gt 0 ] || [ "$hullbad" -gt 0 ] || [ "$mustfail" -gt 0 ] || [ "$mustrefuse" -gt 0 ] || [ "$rfalse" -gt 0 ] || [ "$rrefused" -gt 0 ] || [ "$cnew" -gt 0 ] || [ "$cstale" -gt 0 ] || [ "$ccrash" -gt 0 ]; then
