@@ -46,6 +46,7 @@ static char jsh_class(const char *kind) {
     if (!strncmp(kind, "narrow", 6) || !strcmp(kind, "shift")) return 'O';
     if (!strncmp(kind, "assert", 6)) return 'P';
     if (!strcmp(kind, "objsize")) return 'S';      // VRA has no such check: always judge-extra, shown when unproved
+    if (!strncmp(kind, "rank.", 5)) return 'T';     // a loop's termination (PE.5): keyed to VRA's by its header
     return '?';
 }
 static void jsh_sink(void *ctx, const JRecord *r) {
@@ -73,7 +74,7 @@ static void jsh_sink(void *ctx, const JRecord *r) {
 }
 
 // ── the untrusted callbacks ──────────────────────────────────────────────────────────────────
-typedef struct { char *work; size_t wcap; JFinder *F; JClaim *last; } JshCtx;
+typedef struct { char *work; size_t wcap; JFinder *F; JClaim *last; JRank *last_rk; } JshCtx;
 static bool jsh_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     JshCtx *c = ctx;
     *out = lia_solve(vc, lim, c->work, c->wcap);
@@ -81,10 +82,10 @@ static bool jsh_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
 }
 static bool jsh_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk) {
     JshCtx *c = ctx;
-    *rk = NULL; *nrk = 0;                           // ranking claims: none proposed yet (the finder's, PE.5)
     c->F->gen = gen; c->F->mod = mod;
-    free(c->last);
+    free(c->last); free(c->last_rk);
     c->last = *out = finder_propose(c->F, nout);
+    c->last_rk = *rk = c->F->rk; *nrk = c->F->nrk;      // ranking claims (PE.5): owed, never facts
     return !c->F->oom;                              // the judge reports a failed proposer
 }
 // VRA's converged loop-header states, the finder's candidates (PE.4's sink), first report only
@@ -137,6 +138,7 @@ static const char *jsh_kind_name(JRecordKind k) {
 // Run the judge on `mod` and report against VRA, on stderr.
 static void judge_shadow_module(IrFunc *mod) {
     long long n_chk = 0, agree_p = 0, agree_r = 0, vra_only = 0, judge_only = 0, judge_only_c = 0, unowed = 0, outside = 0, term = 0;
+    long long nterm = 0, term_p = 0, term_j = 0;      // loops' termination: compared, agreed proved, judge only
     long long extra = 0, extra_p = 0;
     // 1. VRA's header states for the finder, from a VRA pass of each function
     jsh_nhdr = 0;
@@ -154,7 +156,7 @@ static void judge_shadow_module(IrFunc *mod) {
     JFinder F; memset(&F, 0, sizeof F);
     F.work = work; F.worksz = wcap; F.use_vra = true; F.hdr = jsh_hdr; F.nhdr = jsh_nhdr;
     F.lim.pivot = 100000; F.lim.node = 4096; F.lim.leaf = 4096;
-    JshCtx jc = { work, wcap, &F, NULL };
+    JshCtx jc = { work, wcap, &F, NULL, NULL };
     JudgeCalls calls = { &jc, jsh_solve, jsh_propose };
     JudgeLimits lim; lim.lim = F.lim;
     char err[200] = "";
@@ -177,7 +179,36 @@ static void judge_shadow_module(IrFunc *mod) {
         for (int64_t j = 0; j < R.n; j++) if (R.r[j].fn == f && R.r[j].k != JREC_PROVED && R.r[j].cls != '?') unproved++;
         for (int i = 0; i < V->nchecks; i++) {
             VraCheck *c = &V->checks[i];
-            if (c->kind == VRA_TERMINATION) { term++; continue; }
+            // a LOOP's termination (PE.5): VRA's check names its header (loop1 - 1); the judge's
+            // rank.* records sit on the back edges into it (the predecessor branches to it), and
+            // with no ranking function proposed there is one `outside` record at the header, which
+            // is the judge proving nothing. A recursion's has no judge obligation yet.
+            if (c->kind == VRA_TERMINATION) {
+                if (c->recursion || c->loop1 <= 0) { term++; continue; }
+                int32_t hid = c->loop1 - 1;
+                int seen = 0, proved = 0; JRecordKind worst = JREC_PROVED;
+                for (int64_t j = 0; j < R.n; j++) {
+                    JshRec *q = &R.r[j];
+                    if (q->fn != f || !q->blk) continue;
+                    bool rank = q->cls == 'T' && ((q->blk->term.a && q->blk->term.a->id == hid) ||
+                                                  (q->blk->term.b && q->blk->term.b->id == hid));
+                    bool none = q->k == JREC_OUTSIDE && !q->at && q->blk->id == hid;
+                    if (!rank && !none) continue;
+                    q->used = true; seen++;
+                    if (q->k == JREC_PROVED) proved++; else worst = q->k;
+                }
+                n_chk++; nterm++;
+                bool jok = seen && proved == seen;
+                if (!seen) { unowed++; fprintf(stderr, "judge-shadow: unowed %.*s Ln %lld, Col %lld: a termination check (VRA %s) has no obligation\n",
+                                                (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, c->ok ? "proves it" : "refuses it"); }
+                else if (c->ok && jok) { agree_p++; term_p++; }
+                else if (!c->ok && !jok) agree_r++;
+                else if (c->ok) { vra_only++; fprintf(stderr, "judge-shadow: vra-only %.*s Ln %lld, Col %lld: VRA proves this loop terminates, the judge: %s\n",
+                                                      (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, jsh_kind_name(worst)); }
+                else { judge_only++; term_j++; fprintf(stderr, "judge-shadow: judge-only %.*s Ln %lld, Col %lld: the judge proves this loop terminates, VRA refuses it\n",
+                                                       (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col); }
+                continue;
+            }
             char cc = jsh_vra_class(c);
             if (!cc) continue;
             n_chk++;
@@ -238,12 +269,12 @@ static void judge_shadow_module(IrFunc *mod) {
     }
     if (ran)
         fprintf(stderr, "judge-shadow: %lld VRA checks: %lld agree (%lld proved, %lld refused), %lld vra-only, %lld judge-only (%lld conditional), "
-                        "%lld unowed, %lld outside; %lld judge-extra (%lld proved); %lld termination checks not judged yet; records: "
+                        "%lld unowed, %lld outside; %lld judge-extra (%lld proved); %lld loops' termination among them (%lld proved by both, %lld by the judge only), %lld recursions' not judged yet; records: "
                         "%lld proved, %lld not-implied, %lld outside, %lld budget, %lld capacity, %lld solver-bug, %lld uncertified\n",
-                n_chk, agree_p + agree_r, agree_p, agree_r, vra_only, judge_only, judge_only_c, unowed, outside, extra, extra_p, term,
+                n_chk, agree_p + agree_r, agree_p, agree_r, vra_only, judge_only, judge_only_c, unowed, outside, extra, extra_p, nterm, term_p, term_j, term,
                 R.kinds[JREC_PROVED], R.kinds[JREC_NOT_IMPLIED], R.kinds[JREC_OUTSIDE], R.kinds[JREC_BUDGET],
                 R.kinds[JREC_CAPACITY], R.kinds[JREC_SOLVER_BUG], R.kinds[JREC_UNCERTIFIED]);
-    free(R.r); free(jc.last); free(buf); free(work);
+    free(R.r); free(jc.last); free(jc.last_rk); free(buf); free(work);
     for (int i = 0; i < jsh_nhdr; i++) free((void *)jsh_hdr[i].r);
     free(jsh_hdr); jsh_hdr = NULL; jsh_nhdr = jsh_chdr = 0;
 }

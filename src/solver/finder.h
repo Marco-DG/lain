@@ -17,6 +17,7 @@
 #include "ir/ir.h"
 #include "judge/format.h"
 #include "solver/lia.h"
+#include "solver/rank.h"                 // PE.5 ranking functions and PE.7 relations, over a loop's paths
 
 // VRA's relation at a loop header (PE.4's sink: vra.h's VraRel, copied by whoever runs VRA):
 // sa*x[a] + sb*x[b] <= c, b < 0 for one term; and a header's converged state.
@@ -30,6 +31,7 @@ typedef struct {
     const FdHdr *hdr; int nhdr;
     long long proposed, kept, dropped;   // counted across calls
     bool oom;                            // the last call returned no claims because memory ran out
+    JRank *rk; int32_t nrk;              // the last call's ranking claims (malloc'd; the caller frees)
 } JFinder;
 
 // ── its own small helpers (the generator's are the judge's; these are untrusted copies) ─────────
@@ -159,6 +161,328 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc) {
     }
     return nc;
 }
+// ── PE.5, PE.7: a loop's paths, merged into one variable list for rank.h ─────────────────────
+// gen->paths gives each edge into a header in its OWN variables; rank.h wants the back edges as
+// conjunctive paths over ONE list, with a (pre, post) pair per quantity a function may read. Here
+// each header version (a pair's key, a cell) is one pre and one post variable on every path; a
+// value fixed at the header (a `%v<id>` term_kinds calls nameable, no cell) is one variable, its
+// own pair (pre == post); every other variable stays its path's own. A disjunctive hypothesis is
+// flattened, one path per choice of its disjuncts, FD_MAXFLAT at most per loop: beyond that, no
+// candidate, which costs precision only. Nothing here is believed: a ranking claim is owed on every
+// back edge, and a relation is a candidate Houdini keeps only if it is inductive.
+#define FD_MAXFLAT 32
+typedef struct { JCons c; int32_t *v; } FdCons;              // a constraint over a raw path's variables
+typedef struct { bool disj; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size
+typedef struct { int32_t nv, *val, nh; FdHyp *h; int32_t from, *pre, *post; } FdRaw;
+typedef struct {
+    char *mem, *cur, *end;
+    int32_t npairs, *pkey, *pre, *post;     // in the merged list; pkey: the cell or the value id
+    int32_t nv; const char **names;
+    const JVc **paths; int32_t npaths, *edge;
+    int32_t nedges, edges[JRANK_MAXE];
+    int32_t npk;                            // the first npk pairs are the header's versions (cells)
+} FdLoop;
+static void *fd_bump(FdLoop *L, size_t n) {
+    uintptr_t at = ((uintptr_t)L->cur + 15u) & ~(uintptr_t)15u;
+    if (at > (uintptr_t)L->end || n > (size_t)((uintptr_t)L->end - at)) return NULL;
+    L->cur = (char *)at + n; memset((void *)at, 0, n); return (void *)at;
+}
+static int32_t fd_value_id(const char *nm) {                  // `%v<digits>` exactly, else -1
+    if (!nm || nm[0] != '%' || nm[1] != 'v' || !nm[2]) return -1;
+    int64_t x = 0;
+    for (const char *q = nm + 2; *q; q++) { if (*q < '0' || *q > '9' || x > 100000000) return -1; x = x * 10 + (*q - '0'); }
+    return (int32_t)x;
+}
+static bool fd_copy_cons(FdLoop *L, const JCons *src, FdCons *dst) {
+    dst->c = *src; dst->c.t = fd_bump(L, sizeof(JTerm) * (size_t)(src->nt ? src->nt : 1));
+    if (!dst->c.t) return false;
+    memcpy(dst->c.t, src->t, sizeof(JTerm) * (size_t)src->nt);
+    return true;
+}
+// A merged constraint: each term's variable through `map`, then ascending with duplicates summed
+// (a value two variables share can meet itself), zero coefficients dropped.
+static bool fd_map_cons(FdLoop *L, const JCons *c, const int32_t *map, JCons *out) {
+    *out = *c; out->nt = 0; out->t = fd_bump(L, sizeof(JTerm) * (size_t)(c->nt ? c->nt : 1));
+    if (!out->t) return false;
+    for (int32_t i = 0; i < c->nt; i++) { out->t[out->nt] = c->t[i]; out->t[out->nt].var = map[c->t[i].var]; out->nt++; }
+    for (int32_t i = 1; i < out->nt; i++)
+        for (int32_t j = i; j > 0 && out->t[j - 1].var > out->t[j].var; j--) { JTerm x = out->t[j]; out->t[j] = out->t[j - 1]; out->t[j - 1] = x; }
+    int32_t m = 0;
+    for (int32_t i = 0; i < out->nt; i++) {
+        if (m && out->t[m - 1].var == out->t[i].var) {
+            LSol N; memset(&N, 0, sizeof N);
+            LSi a = ls_from_j(&N, &out->t[m - 1].coef), b = ls_from_j(&N, &out->t[i].coef);
+            if (N.cap) return false;
+            ls_to_j(a + b, &out->t[m - 1].coef);
+        } else out->t[m++] = out->t[i];
+        if (m && out->t[m - 1].coef.n == 0) m--;
+    }
+    out->nt = m;
+    return true;
+}
+// Which hypotheses a ranking function or a relation can use: those connected, through shared
+// variables, to a quantity a pair names, and with no constant past 2^31. A type's bound such as
+// 2^64 - 1 or an object size's 2^61 is never what a ranking proof rests on, and the Farkas system
+// multiplies it with every other constant until 128-bit arithmetic overflows (CAPACITY after twenty
+// pivots, on two thirds of the corpus's loops). Dropping a hypothesis only weakens the path, so
+// what is found without it holds with it: candidates are lost at worst, never made wrong.
+#define FD_BIGC ((LSi)1 << 31)
+static bool fd_small(const JCons *c) {
+    LSol N; memset(&N, 0, sizeof N);
+    LSi r = ls_from_j(&N, &c->rhs);
+    if (N.cap || r > FD_BIGC || r < -FD_BIGC) return false;
+    for (int32_t i = 0; i < c->nt; i++) {
+        LSi a = ls_from_j(&N, &c->t[i].coef);
+        if (N.cap || a > FD_BIGC || a < -FD_BIGC) return false;
+    }
+    return true;
+}
+static int32_t fd_slice(FdLoop *L, JHyp *hy, int32_t m, int32_t nv) {
+    uint8_t *rel = fd_bump(L, (size_t)(nv ? nv : 1));
+    if (!rel) return 0;
+    int32_t k = 0;
+    for (int32_t i = 0; i < m; i++) if (fd_small(&hy[i].cons)) hy[k++] = hy[i];
+    m = k;
+    for (int32_t q = 0; q < L->npairs; q++) rel[L->pre[q]] = rel[L->post[q]] = 1;
+    for (bool grew = true; grew; ) {
+        grew = false;
+        for (int32_t i = 0; i < m; i++) {
+            bool touch = false;
+            for (int32_t t = 0; t < hy[i].cons.nt && !touch; t++) touch = rel[hy[i].cons.t[t].var];
+            if (!touch) continue;
+            for (int32_t t = 0; t < hy[i].cons.nt; t++) if (!rel[hy[i].cons.t[t].var]) { rel[hy[i].cons.t[t].var] = 1; grew = true; }
+        }
+    }
+    k = 0;
+    for (int32_t i = 0; i < m; i++) {
+        bool touch = false;
+        for (int32_t t = 0; t < hy[i].cons.nt && !touch; t++) touch = rel[hy[i].cons.t[t].var];
+        if (touch) hy[k++] = hy[i];
+    }
+    return k;
+}
+// Build L for header H of f under the claims cl: false when there is nothing to propose (no back
+// edge, a refused header, too many paths, out of memory); never an error of the judge's.
+static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdLoop *L) {
+    char err[200];
+    memset(L, 0, sizeof *L);
+    size_t cap = (size_t)1 << 22;
+    if (!(L->mem = malloc(cap))) { F->oom = true; return false; }
+    L->cur = L->mem; L->end = L->mem + cap;
+    JPaths P;
+    if (!F->gen->paths || !F->gen->paths(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) || P.refused) return false;
+    // 1. the back edges, copied out of the generator's region (the next call reuses it)
+    int32_t nraw = 0;
+    for (int32_t k = 0; k < P.n; k++) if (P.p[k].back) nraw++;
+    if (nraw == 0 || nraw > JRANK_MAXE) return false;
+    FdRaw *raw = fd_bump(L, sizeof *raw * (size_t)nraw);
+    int32_t npk = -1, *pk = NULL;
+    if (!raw) return false;
+    int32_t r = 0;
+    for (int32_t k = 0; k < P.n; k++) {
+        const JPath *pp = &P.p[k];
+        if (!pp->back) continue;
+        if (npk < 0) {                                       // the header's versions, by key
+            npk = pp->npairs; pk = fd_bump(L, sizeof *pk * (size_t)(npk ? npk : 1));
+            if (!pk) return false;
+            for (int32_t q = 0; q < npk; q++) pk[q] = pp->pairs[q].key;
+        } else if (pp->npairs != npk) return false;
+        FdRaw *w = &raw[r++];
+        const JVc *v = pp->vc;
+        w->from = pp->from; w->nv = v->nvars; w->nh = v->nhyps;
+        w->val = fd_bump(L, sizeof(int32_t) * (size_t)(v->nvars ? v->nvars : 1));
+        w->pre = fd_bump(L, sizeof(int32_t) * (size_t)(npk ? npk : 1));
+        w->post = fd_bump(L, sizeof(int32_t) * (size_t)(npk ? npk : 1));
+        w->h = fd_bump(L, sizeof(FdHyp) * (size_t)(v->nhyps ? v->nhyps : 1));
+        if (!w->val || !w->pre || !w->post || !w->h) return false;
+        for (int32_t q = 0; q < npk; q++) {
+            int32_t at = -1;
+            for (int32_t z = 0; z < pp->npairs; z++) if (pp->pairs[z].key == pk[q]) at = z;
+            if (at < 0 || pp->pairs[at].pre < 0 || pp->pairs[at].post < 0) return false;
+            w->pre[q] = pp->pairs[at].pre; w->post[q] = pp->pairs[at].post;
+        }
+        for (int32_t x = 0; x < v->nvars; x++) w->val[x] = fd_value_id(v->vars[x]);
+        for (int32_t q = 0; q < npk; q++) w->val[w->pre[q]] = w->val[w->post[q]] = -1;
+        for (int32_t h = 0; h < v->nhyps; h++) {
+            const JHyp *hy = &v->hyps[h];
+            FdHyp *o = &w->h[h];
+            o->disj = hy->disj;
+            if (!hy->disj) { if (!fd_copy_cons(L, &hy->cons, &o->c)) return false; continue; }
+            int32_t tot = 0;
+            for (int32_t d = 0; d < hy->ndis; d++) tot += hy->dis[d].nc;
+            o->nd = hy->ndis;
+            o->dn = fd_bump(L, sizeof(int32_t) * (size_t)(hy->ndis ? hy->ndis : 1));
+            o->dc = fd_bump(L, sizeof(FdCons) * (size_t)(tot ? tot : 1));
+            if (!o->dn || !o->dc) return false;
+            int32_t z = 0;
+            for (int32_t d = 0; d < hy->ndis; d++) {
+                o->dn[d] = hy->dis[d].nc;
+                for (int32_t c = 0; c < hy->dis[d].nc; c++) if (!fd_copy_cons(L, &hy->dis[d].c[c], &o->dc[z++])) return false;
+            }
+        }
+    }
+    // 2. which `%v` values are fixed at the header (a claim may name them): one variable each
+    int32_t nval = 0, *vals = fd_bump(L, sizeof(int32_t) * 256);
+    if (!vals) return false;
+    for (int32_t k = 0; k < nraw; k++)
+        for (int32_t x = 0; x < raw[k].nv; x++) {
+            int32_t id = raw[k].val[x]; bool seen = false;
+            if (id < 0) continue;
+            for (int32_t q = 0; q < nval && !seen; q++) seen = vals[q] == id;
+            if (!seen && nval < 256) vals[nval++] = id;
+        }
+    uint8_t *kind = fd_bump(L, (size_t)(nval ? nval : 1));
+    if (!kind) return false;
+    if (nval && !F->gen->term_kinds(F->gen->ctx, f, H, vals, nval, kind, err, sizeof err)) return false;
+    int32_t nshared = 0;
+    for (int32_t q = 0; q < nval; q++) if (kind[q] == 1) vals[nshared] = vals[q], kind[nshared++] = 1;
+    // 3. the merged list: the header's versions (pre, post), the shared values, then each path's own
+    L->npk = npk;
+    int32_t nv = 2 * npk + nshared, base_local = nv;
+    for (int32_t k = 0; k < nraw; k++) nv += raw[k].nv;
+    L->nv = nv;
+    L->names = fd_bump(L, sizeof(char *) * (size_t)(nv ? nv : 1));
+    L->npairs = npk + nshared;
+    L->pkey = fd_bump(L, sizeof(int32_t) * (size_t)(L->npairs ? L->npairs : 1));
+    L->pre = fd_bump(L, sizeof(int32_t) * (size_t)(L->npairs ? L->npairs : 1));
+    L->post = fd_bump(L, sizeof(int32_t) * (size_t)(L->npairs ? L->npairs : 1));
+    char *nb = fd_bump(L, (size_t)nv * 16);
+    if (!L->names || !L->pkey || !L->pre || !L->post || !nb) return false;
+    for (int32_t v = 0; v < nv; v++) { snprintf(nb + (size_t)v * 16, 16, "m%d", v); L->names[v] = nb + (size_t)v * 16; }
+    for (int32_t q = 0; q < npk; q++) { L->pkey[q] = pk[q]; L->pre[q] = 2 * q; L->post[q] = 2 * q + 1; }
+    for (int32_t q = 0; q < nshared; q++) { L->pkey[npk + q] = vals[q]; L->pre[npk + q] = L->post[npk + q] = 2 * npk + q; }
+    // 4. each path flattened, in the merged variables
+    L->paths = fd_bump(L, sizeof(JVc *) * FD_MAXFLAT);
+    L->edge = fd_bump(L, sizeof(int32_t) * FD_MAXFLAT);
+    if (!L->paths || !L->edge) return false;
+    int32_t local = base_local;
+    for (int32_t k = 0; k < nraw; k++) {
+        FdRaw *w = &raw[k];
+        int32_t *map = fd_bump(L, sizeof(int32_t) * (size_t)(w->nv ? w->nv : 1));
+        if (!map) return false;
+        for (int32_t x = 0; x < w->nv; x++) {
+            map[x] = -1;
+            for (int32_t q = 0; q < npk; q++) { if (w->pre[q] == x) map[x] = 2 * q; if (w->post[q] == x) map[x] = 2 * q + 1; }
+            for (int32_t q = 0; q < nshared && map[x] < 0; q++) if (w->val[x] == vals[q]) map[x] = 2 * npk + q;
+            if (map[x] < 0) map[x] = local++;
+        }
+        bool seen = false;
+        for (int32_t e = 0; e < L->nedges; e++) seen |= L->edges[e] == w->from;
+        if (!seen) L->edges[L->nedges++] = w->from;
+        int32_t nchoice = 1, nd = 0;                         // the disjunctions' product
+        for (int32_t h = 0; h < w->nh; h++) if (w->h[h].disj) { nchoice *= w->h[h].nd; nd++; if (nchoice > FD_MAXFLAT) return false; }
+        for (int32_t ch = 0; ch < nchoice; ch++) {
+            if (L->npaths == FD_MAXFLAT) return false;
+            int32_t nh = 0;
+            for (int32_t h = 0; h < w->nh; h++) nh += 1;
+            int32_t extra = 0, rest = ch;
+            for (int32_t h = 0; h < w->nh; h++) if (w->h[h].disj) { extra += w->h[h].dn[rest % w->h[h].nd]; rest /= w->h[h].nd; }
+            JVc *vc = fd_bump(L, sizeof *vc);
+            JHyp *hy = fd_bump(L, sizeof(JHyp) * (size_t)(nh + extra + 1));
+            if (!vc || !hy) return false;
+            int32_t m = 0; rest = ch;
+            for (int32_t h = 0; h < w->nh; h++) {
+                FdHyp *o = &w->h[h];
+                if (!o->disj) { hy[m].origin = "path"; if (!fd_map_cons(L, &o->c.c, map, &hy[m].cons)) return false; m++; continue; }
+                int32_t pick = rest % o->nd; rest /= o->nd;
+                int32_t z = 0;
+                for (int32_t d = 0; d < pick; d++) z += o->dn[d];
+                for (int32_t c = 0; c < o->dn[pick]; c++) { hy[m].origin = "path case"; if (!fd_map_cons(L, &o->dc[z + c].c, map, &hy[m].cons)) return false; m++; }
+            }
+            vc->vars = L->names; vc->nvars = nv; vc->hyps = hy; vc->nhyps = m;
+            vc->id.fn = "loop"; vc->id.irhash = "0"; vc->id.point = "path"; vc->id.kind = "path"; vc->id.ordinal = "0";
+            // a path that cannot run (a wrapping step's wrap case under a guard that rules it out)
+            // is dropped: rk_build's Farkas form asks every path for the decrease as a combination
+            // of its rows, which an infeasible one need not give, and lia_rank then says NONE. It is
+            // asked on the WHOLE path, before slicing: a wrap case's 2^w is a large constant, and
+            // without it the case would look feasible and say nothing
+            vc->goal.op = J_LE; vc->goal.nt = 0; fd_jint(&vc->goal.rhs, -1);
+            if (lia_solve(vc, F->lim, F->work, F->worksz).k == J_ANS_CERT) continue;
+            fd_jint(&vc->goal.rhs, 0);                       // 0 <= 0: nothing is asked of it
+            vc->nhyps = fd_slice(L, hy, m, nv);
+            L->paths[L->npaths] = vc; L->edge[L->npaths] = w->from; L->npaths++;
+        }
+    }
+    return L->npaths > 0;
+}
+static bool fd_i128(const JInt *x, __int128 *out) {
+    LSol N; memset(&N, 0, sizeof N);
+    LSi v = ls_from_j(&N, x);
+    if (N.cap || v > ((__int128)1 << 66) || v < -((__int128)1 << 66)) return false;
+    *out = v; return true;
+}
+// PE.5: a ranking claim for the loop at H, from L: a linear one if lia_rank finds it, else a
+// lexicographic one whose falling component agrees on every flattened path of each back edge (the
+// judge owes one fall per edge). False: none.
+static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
+    memset(out, 0, sizeof *out);
+    out->blk = H; out->fn = f; out->nedge = L->nedges;
+    for (int32_t e = 0; e < L->nedges; e++) out->from[e] = L->edges[e];
+    LRank R1 = lia_rank(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz);
+    JInt *coef[JRANK_MAXC]; JInt c0[JRANK_MAXC]; int32_t ncomp = 0;
+    int32_t fall_of_edge[JRANK_MAXE];
+    if (R1.k == LIA_RANK_FOUND) {
+        coef[0] = R1.coef; c0[0] = R1.c0; ncomp = 1;
+        for (int32_t e = 0; e < L->nedges; e++) fall_of_edge[e] = 0;
+    } else {
+        LRankLex R2 = lia_rank_lex(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz);
+        if (R2.k != LIA_RANK_FOUND || R2.ncomp > JRANK_MAXC) return false;
+        ncomp = R2.ncomp;
+        for (int32_t j = 0; j < ncomp; j++) { coef[j] = R2.coef[j]; c0[j] = R2.c0[j]; }
+        for (int32_t e = 0; e < L->nedges; e++) {
+            fall_of_edge[e] = -1;
+            for (int32_t k = 0; k < L->npaths; k++) {
+                if (L->edge[k] != L->edges[e]) continue;
+                if (fall_of_edge[e] < 0) fall_of_edge[e] = R2.fall[k];
+                else if (fall_of_edge[e] != R2.fall[k]) return false;   // one fall per back edge
+            }
+            if (fall_of_edge[e] < 0) return false;
+        }
+    }
+    // the terms: every pair a component reads
+    int32_t idx[JRANK_MAXT]; int32_t nt = 0;
+    for (int32_t i = 0; i < L->npairs; i++) {
+        bool used = false;
+        for (int32_t j = 0; j < ncomp; j++) used |= coef[j][i].n != 0;
+        if (!used) continue;
+        if (nt == JRANK_MAXT) return false;
+        idx[nt++] = i;
+    }
+    if (nt == 0) return false;
+    out->ncomp = ncomp; out->nt = nt;
+    for (int32_t t = 0; t < nt; t++) out->key[t] = L->pkey[idx[t]];
+    for (int32_t j = 0; j < ncomp; j++) {
+        if (!fd_i128(&c0[j], &out->c0[j])) return false;
+        for (int32_t t = 0; t < nt; t++) if (!fd_i128(&coef[j][idx[t]], &out->coef[j][t])) return false;
+    }
+    for (int32_t e = 0; e < L->nedges; e++) out->fall[e] = (int8_t)fall_of_edge[e];
+    return true;
+}
+// PE.7: the two-variable relations the loop keeps (lia_relations), as candidates for the header's
+// claims, bounded like any other (bound_candidates) and kept by Houdini only if inductive. One of
+// the two terms must be a version the header makes (a claim names one); a relation between two
+// values fixed at the header says nothing a claim may state.
+static bool fd_relation_candidates(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, int32_t npk,
+                                   JCand **cd, int32_t *n, int32_t *cap) {
+    LRel rel[32];
+    int32_t nr = lia_relations(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz, rel, 32);
+    for (int32_t q = 0; q < nr; q++) {
+        if (rel[q].t >= npk && rel[q].j >= npk) continue;
+        if (*n == *cap) {
+            int32_t nc = *cap ? *cap * 2 : 32;
+            JCand *x = realloc(*cd, sizeof *x * (size_t)nc);
+            if (!x) return false;
+            *cd = x; *cap = nc;
+        }
+        JCand *c = &(*cd)[(*n)++]; memset(c, 0, sizeof *c);
+        c->c.blk = H; c->c.nt = 2; c->c.fn = f;
+        c->c.key[0] = L->pkey[rel[q].t]; c->c.coef[0] = rel[q].ct;
+        c->c.key[1] = L->pkey[rel[q].j]; c->c.coef[1] = rel[q].cj;
+        c->tb = ((__int128)1 << 100);                        // the type bound's role: any finite bound is tighter
+    }
+    return true;
+}
+
 // One block's candidates (the slots sl[i..j), all at one block), into `cd`.
 static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, int32_t j,
                              JCand **cd, int32_t *ncd, int32_t *ccd, char *err, size_t errcap) {
@@ -239,6 +563,14 @@ static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, 
             if (*ncd == before + 1) { (*cd)[before].fixed = true; (*cd)[before].c.rhs = v->c; }
         }
         free(keys); free(kind);
+    }
+    // PE.7: the relations the loop keeps between its versions (and values fixed at it)
+    if (head) {
+        FdLoop L;
+        bool built = fd_loop_build(F, f, H, NULL, 0, &L);
+        bool ok = !built || fd_relation_candidates(F, f, H, &L, L.npk, cd, ncd, ccd);
+        free(L.mem);
+        if (!ok) goto oom;
     }
     free(tm);
     return true;
@@ -340,6 +672,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     int32_t nc = 0, ccl = 0, nv = 0, ncd = 0, ccd = 0;
     *ncl = 0;
     F->oom = false;
+    F->rk = NULL; F->nrk = 0;                                // the caller frees the last call's
     for (int round = 0; round < 3; round++) {
         if (nv > ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)nv); if (!x) goto oom; cl = x; ccl = nv; }
         if (nv) memcpy(cl, as, sizeof *cl * (size_t)nv);
@@ -404,12 +737,26 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
         if (!grew) break;
     }
     free(cd); free(cl);
+    // PE.5: a ranking claim per loop header, under the claims Houdini kept (owed, never believed)
+    for (IrFunc *f = mod; f; f = f->next) {
+        if (f->is_extern || !f->entry) continue;
+        for (IrBlock *b = f->blocks; b; b = b->next) {
+            if (!b->is_loop_header) continue;
+            FdLoop L; JRank r;
+            bool got = fd_loop_build(F, f, b->id, as, nv, &L) && fd_rank(F, f, b->id, &L, &r);
+            free(L.mem);
+            if (!got) continue;
+            JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
+            if (!x) goto oom;
+            F->rk = x; F->rk[F->nrk++] = r;
+        }
+    }
     F->kept += nv;
     *ncl = nv;
     if (nv == 0) { free(as); return NULL; }
     return as;
 oom:
-    free(cd); free(cl); free(as);
+    free(cd); free(cl); free(as); free(F->rk); F->rk = NULL; F->nrk = 0;
     F->oom = true;
     return NULL;
 }

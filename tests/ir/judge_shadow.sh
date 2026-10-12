@@ -39,6 +39,23 @@ shadow=$("$ROOT/lain" ok.ln --judge=shadow -o b.c 2>&1); rs=$?
 [ $rp -eq 0 ] && [ $rs -eq 0 ] || { echo "2: exit $rp / $rs"; exit 1; }
 cmp -s a.c b.c || { echo "2: the emitted C differs under shadow"; exit 1; }
 echo "$shadow" | grep -qE '^judge-shadow: [0-9]+ VRA checks: ' || { echo "2: no summary: $shadow"; exit 1; }
+# 2b. a counted loop's termination is proved by both: the finder's ranking function (PE.5), owed
+# by the judge on the back edge, beside VRA's measure
+cat > loop.ln <<'LN'
+func f(n i32 >= 0 and <= 100) i32 {
+    var i i32 = 0
+    var s i32 = 0
+    while i < n {
+        s = s + 1
+        i = i + 1
+    }
+    return s
+}
+func main() i32 { return f(5) }
+LN
+shadow=$("$ROOT/lain" loop.ln --judge=shadow -o d.c 2>&1)
+echo "$shadow" | grep -qE "1 loops' termination among them \(1 proved by both, 0 by the judge only\)" \
+    || { echo "2b: the loop's termination is not proved by both: $shadow"; exit 1; }
 out=$("$ROOT/lain" ok.ln --judge=authority -o c.c 2>&1); rc=$?
 [ $rc -ne 0 ] && echo "$out" | grep -q "unknown --judge mode 'authority'" || { echo "3: --judge=authority not refused ($rc): $out"; exit 1; }
 [ ! -e c.c ] || { echo "3: C written under an unknown mode"; exit 1; }

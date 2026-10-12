@@ -380,9 +380,9 @@ static bool jj_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
 }
 static bool jj_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk) {
     JjCtx *c = ctx;
-    *rk = NULL; *nrk = 0;                // ranking claims: none proposed yet (the finder's, PE.5)
     c->F->gen = gen; c->F->mod = mod;
     *out = finder_propose(c->F, nout);
+    *rk = c->F->rk; *nrk = c->F->nrk;    // ranking claims (PE.5): owed, never facts
     return !c->F->oom;                   // a NULL for want of memory is not "no claims"
 }
 static long long jrec_n[9];
