@@ -862,6 +862,120 @@ int main(void) {
         free(t);
     }
     printf("  a bool condition: 1 on its first edge, 0 on the other, and after an assert of it\n");
+    // 27. a subslice a[lo..lo+n] is ELEM_PTR(data, lo) and MAKE_SLICE(that, n): its start and its
+    // end are owed AT the MAKE_SLICE (where VRA checks the pair), never at the ELEM_PTR, which is
+    // not an access; and objsize, n <= MAX_LEN(u8), which every reader of a length is given
+    {   IrFunc *f = ir_func_new(&A, nm("g27"), u64t, IR_FUNC_PURE);
+        IrValue *a = ir_add_param(f, slice_of(u8t), nm("a")), *lo = ir_add_param(f, u64t, nm("lo"));
+        IrValue *n = ir_add_param(f, u64t, nm("n"));
+        IrBlock *b0 = f->entry;
+        IrValue *d = ir_slice_data(f, b0, a, u8t);
+        IrValue *p = ir_elem_ptr(f, b0, d, lo, u8t);
+        int ms = nins(b0); IrValue *s = ir_make_slice(f, b0, p, n, u8t);
+        ir_set_ret(b0, ir_slice_len(f, b0, s));
+        char *t = gen_text(f);
+        char key[64], want[128], vb[1 << 14];
+        CHECK(t && count(t, "bounds.") == 2, "one start and one end, both at the MAKE_SLICE:\n%s", t ? t : "");
+        snprintf(key, sizeof key, "bb%d.%d bounds.lo 0", b0->id, ms);
+        snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "goal -1*%%v%d <= 0", lo->id);
+        CHECK(strstr(vb, want), "the start: 0 <= lo:\n%s", vb);
+        snprintf(key, sizeof key, "bb%d.%d bounds.hi 0", b0->id, ms);
+        snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "goal 1*%%v%d + 1*%%v%d + -1*len(%%v%d) <= 0", lo->id, n->id, a->id);
+        CHECK(strstr(vb, want), "the end: lo + n <= len(a):\n%s", vb);
+        snprintf(key, sizeof key, "bb%d.%d objsize 0", b0->id, ms);
+        snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+        snprintf(want, sizeof want, "goal 1*%%v%d <= 9223372036854775807", n->id);
+        CHECK(strstr(vb, want), "objsize: n <= MAX_LEN(u8):\n%s", vb);
+        free(t);
+        printf("  a subslice: its start and end at the MAKE_SLICE, and objsize\n");
+    }
+    // 28. any other data must be an object the lowering made with the slice's length: a string
+    // literal (its NUL counted), a local array, a dynamic local of exactly n elements, each owing
+    // objsize only; data the generator cannot bound is `outside`; in `unsafe` only objsize, never
+    // waived. A dynamic local of integers has the probed-allocation premise (I.121); a struct's, not.
+    for (int k = 0; k < 7; k++) {
+        IrFunc *f = ir_func_new(&A, nm("g28"), u64t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u64t, nm("n")), *raw = ir_add_param(f, ir_type_new(&A, IRT_PTR), nm("p"));
+        IrBlock *b0 = f->entry;
+        IrType *arr = ir_type_new(&A, IRT_ARRAY); arr->elem = u8t; arr->array_len = 4;
+        IrType *st = ir_type_new(&A, IRT_STRUCT);
+        IrValue *data, *len;
+        switch (k) {
+            case 0: data = ir_str_const(f, b0, "abc", 3); len = ir_const_int(f, b0, 4, u64t); break;     // with the NUL
+            case 1: data = ir_str_const(f, b0, "abc", 3); len = ir_const_int(f, b0, 5, u64t); break;     // past it
+            case 2: data = ir_alloca_array(f, b0, arr); len = ir_const_int(f, b0, 4, u64t); break;
+            case 3: data = ir_alloca_array(f, b0, arr); len = ir_const_int(f, b0, 5, u64t); break;
+            case 4: data = ir_alloca_dyn(f, b0, u8t, n); len = n; break;
+            case 5: data = ir_alloca_dyn(f, b0, st, n); len = n; break;
+            default: data = raw; len = n; break;
+        }
+        IrValue *s = ir_make_slice(f, b0, data, len, k == 5 ? st : u8t);
+        if (k == 6) b0->instrs_tail->unchecked = true;
+        ir_set_ret(b0, ir_slice_len(f, b0, s));
+        char *t = gen_text(f);
+        bool out = t && strstr(t, "outside a slice over data whose length the generator does not know");
+        CHECK(t && count(t, "objsize 0\n") == 1, "objsize at every MAKE_SLICE (shape %d):\n%s", k, t ? t : "");
+        CHECK(t && !strstr(t, "bounds."), "no start or end to owe (shape %d):\n%s", k, t ? t : "");
+        CHECK(out == (k == 1 || k == 3), "outside exactly where the data cannot hold n (shape %d):\n%s", k, t ? t : "");
+        bool prem = t && strstr(vc_of(t, "objsize"), "premise object");
+        CHECK(prem == (k == 4), "the probed-allocation premise only for a dynamic local of integers (shape %d):\n%s", k, t ? t : "");
+        free(t);
+        // the raw pointer outside `unsafe`: outside
+        if (k == 6) {
+            IrFunc *h = ir_func_new(&A, nm("g28r"), u64t, IR_FUNC_PURE);
+            IrValue *hn = ir_add_param(h, u64t, nm("n")), *hp = ir_add_param(h, ir_type_new(&A, IRT_PTR), nm("p"));
+            IrValue *hs = ir_make_slice(h, h->entry, hp, hn, u8t);
+            ir_set_ret(h->entry, ir_slice_len(h, h->entry, hs));
+            t = gen_text(h);
+            CHECK(t && strstr(t, "outside a slice over data whose length the generator does not know"), "a raw pointer's slice outside `unsafe` is outside:\n%s", t ? t : "");
+            free(t);
+        }
+    }
+    printf("  a slice over a literal, an array, a dynamic local, a raw pointer, in unsafe\n");
+    // 29. what a division's result owes, on the interpreter's semantics (ii_settle, I.185)
+    {   IrType *i48t = ir_type_int(&A, 48, true), *i16t = ir_type_int(&A, 16, true);
+        struct { IrOp op; IrType *xt, *yt, *rt; IrWrapMode w; const char *want; } dc[] = {
+            { IR_SDIV, i32t, i32t, i32t, IR_WRAP_CHECK,   "0:-2147483648" },        // i32 / i32 at i32
+            { IR_SDIV, i32t, i32t, i64t, IR_WRAP_CHECK,   "" },                     // widened: its narrowing owes
+            { IR_SDIV, i64t, u64t, i64t, IR_WRAP_CHECK,   "0:-9223372036854775808" },// as VRA states it
+            { IR_SDIV, i64t, i64t, i64t, IR_WRAP_MODULAR, "" },                     // `/%` defines it
+            { IR_SREM, i32t, i32t, i32t, IR_WRAP_CHECK,   "0:-2147483648" },        // C traps
+            { IR_SREM, i48t, i48t, i48t, IR_WRAP_CHECK,   "" },                     // computed in a wider C type
+            { IR_SREM, i16t, i16t, i16t, IR_WRAP_CHECK,   "" },
+            { IR_UDIV, i64t, u64t, u64t, IR_WRAP_CHECK,   "1" },                    // `100 /% x`: the literal an i64
+            { IR_UDIV, u64t, i64t, u64t, IR_WRAP_CHECK,   "3" },                    // `(lo + hi) / 2`
+            { IR_SDIV, i64t, i64t, i32t, IR_WRAP_CHECK,   "0:-2147483648 1 2" },    // a dividend wider than the result
+        };
+        for (int k = 0; k < (int)(sizeof dc / sizeof dc[0]); k++) {
+            IrFunc *f = ir_func_new(&A, nm("g29"), dc[k].rt, IR_FUNC_PURE);
+            IrValue *x = ir_add_param(f, dc[k].xt, nm("x")), *y = ir_add_param(f, dc[k].yt, nm("y"));
+            IrBlock *b0 = f->entry;
+            IrValue *q = ir_binop(f, b0, dc[k].op, x, y, dc[k].rt);
+            b0->instrs_tail->wrap = dc[k].w;
+            ir_set_ret(b0, q);
+            char *t = gen_text(f);
+            char got[96] = "", one[40];
+            for (int o = 0; o < 4; o++) {
+                char key[24]; snprintf(key, sizeof key, "divovf %d", o);
+                const char *v = t ? vc_of(t, key) : "";
+                if (!*v) continue;
+                const char *pm = strstr(v, "premise divovf");
+                const char *eq = pm ? strstr(pm, " = ") : NULL;
+                if (o == 0) snprintf(one, sizeof one, "%s0:%lld", *got ? " " : "", eq ? atoll(eq + 3) : 0LL);
+                else snprintf(one, sizeof one, "%s%d", *got ? " " : "", o);
+                strcat(got, one);
+            }
+            CHECK(!strcmp(got, dc[k].want), "division %d owes [%s], not [%s]:\n%s", k, dc[k].want, got, t ? t : "");
+            if (k == 8) {
+                char want[64]; snprintf(want, sizeof want, "goal -1*%%v%d <= 0", y->id);
+                CHECK(t && strstr(vc_of(t, "divovf 3"), want), "a signed divisor into an unsigned quotient: y >= 0:\n%s", t ? t : "");
+            }
+            free(t);
+        }
+    }
+    printf("  a division's result: MIN / -1 at its own width, MIN %% -1 where C traps, the dividend's range, the divisor's sign\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

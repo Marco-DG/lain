@@ -20,6 +20,10 @@
 //                               exit 1 on a solver bug, unstable claims or a refusal
 //   --judge-corrupt             --judge with every certificate damaged (a sign byte of 2) before
 //                               the judge reads it: nothing may be proved (judge_gate's canary)
+//   --cover                     each of VRA's checks (termination aside) beside an obligation of
+//                               its class at its instruction (Main Compiler Work's census): one
+//                               `UNCOVERED` line for a check the judge owes nothing for, then a
+//                               `COVER` count line (judge_gate's coverage leg)
 //   /tmp/jvc FILE.ln --smt      the same, as SMT-LIB (QF_LIA), for an offline solver
 //   /tmp/jvc FILE.ln --stats    one TSV line per obligation: function, point, kind, ordinal,
 //                               VRA's verdict, outside or stated, #vars, #hyps
@@ -103,11 +107,64 @@ static const char *vra_verdict(Vra *V, JObl *o) {
         if (c->at != at) continue;
         if (!strcmp(k, "bounds.lo") && c->kind == VRA_BOUNDS) return c->lo_ok || c->ok ? "proved" : "refused";
         if (!strcmp(k, "bounds.hi") && c->kind == VRA_BOUNDS) return c->hi_ok || c->ok ? "proved" : "refused";
-        if ((!strcmp(k, "divzero") || !strcmp(k, "divovf")) && c->kind == VRA_DIVZERO) return c->ok ? "proved" : "refused";
-        if ((!strncmp(k, "narrow", 6) || !strcmp(k, "shift")) && c->kind == VRA_OVERFLOW) return c->ok ? "proved" : "refused";
+        if (!strcmp(k, "divzero") && c->kind == VRA_DIVZERO) return c->ok ? "proved" : "refused";
+        // VRA's TYPE_MIN / -1 is an overflow check at the division itself (vra_check_div, shift 3)
+        if (!strcmp(k, "divovf") && c->kind == VRA_OVERFLOW && c->shift == 3) return c->ok ? "proved" : "refused";
+        if ((!strncmp(k, "narrow", 6) || !strcmp(k, "shift")) && c->kind == VRA_OVERFLOW && c->shift != 3) return c->ok ? "proved" : "refused";
         if (!strncmp(k, "assert.", 7) && c->kind == VRA_PRECOND) return c->ok ? "proved" : "refused";
     }
     return "none";
+}
+
+// ── --cover: every VRA check (termination aside), and an obligation of its class at its place ──
+// A class pairs what VRA and the judge each call the same rule. VRA files TYPE_MIN / -1 as an
+// overflow at the division (shift 3, vra_check_div), and a quotient's NARROWING (shift 0 or 5) at
+// the division too when it is returned: the judge owes that as the return's `narrow`, so only
+// shift 3 is the division's own class.
+static const char *cls_of_kind(const char *k) {
+    if (!strncmp(k, "bounds", 6)) return "B";
+    if (!strcmp(k, "divovf")) return "V";
+    if (!strcmp(k, "divzero") || !strcmp(k, "nonzero")) return "D";
+    if (!strncmp(k, "narrow", 6) || !strcmp(k, "shift")) return "O";
+    if (!strncmp(k, "assert", 6)) return "P";
+    return "?";
+}
+static const char *cls_of_check(const VraCheck *c) {
+    bool dv = c->at && (c->at->op == IR_SDIV || c->at->op == IR_SREM || c->at->op == IR_UDIV || c->at->op == IR_UREM);
+    switch (c->kind) {
+        case VRA_BOUNDS: return "B";
+        case VRA_DIVZERO: return "D";
+        case VRA_OVERFLOW: return dv && c->shift == 3 ? "V" : "O";
+        case VRA_PRECOND: return "P";
+        default: return NULL;
+    }
+}
+static long long cv_checks, cv_cov, cv_cov_out, cv_unc;
+static void cover_func(IrFunc *f, Vra *V, JObl *o, int32_t n) {
+    for (int i = 0; i < V->nchecks; i++) {
+        VraCheck *c = &V->checks[i];
+        const char *cc = cls_of_check(c);
+        if (!cc) continue;
+        cv_checks++;
+        int found = 0;                                      // 1 stated, 2 outside
+        for (int32_t j = 0; j < n && found != 1; j++) {
+            IrInstr *at = o[j].at;
+            if (!at && o[j].blk && o[j].blk->term.kind == IR_TERM_RET && o[j].blk->term.cond && !o[j].to) {
+                IrValue *rv = o[j].blk->term.cond;          // a return's landing: VRA files it at the value's definition
+                at = rv->id >= 0 && rv->id < V->nvar ? V->def[rv->id] : NULL;
+            }
+            if (at != c->at) continue;
+            if (o[j].outside) { if (!found) found = 2; continue; }   // an outside record has no kind of its own
+            if (!strcmp(cls_of_kind(o[j].vc.id.kind ? o[j].vc.id.kind : ""), cc)) found = 1;
+        }
+        if (found == 1) cv_cov++;
+        else if (found == 2) cv_cov_out++;
+        else {
+            cv_unc++;
+            printf("UNCOVERED\t%.*s\t%s\t%s\t%lld:%lld\top=%d\tshift=%d\n", (int)f->name->length, f->name->name, cc,
+                   c->ok ? "vra-ok" : "vra-refused", (long long)c->line, (long long)c->col, c->at ? (int)c->at->op : -1, c->shift);
+        }
+    }
 }
 
 // ── --check-hyps ───────────────────────────────────────────────────────────────────────────
@@ -355,7 +412,7 @@ static void jrec_print(void *ctx, const JRecord *r) {
 
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln> [--smt | --stats | --why | --check-hyps] [--no-claims]\n", argv[0]); return 2; }
-    bool smt = false, stats = false, check = false, why = false, claims = true, show = false, finder = true, judge = false, corrupt = false;
+    bool smt = false, stats = false, check = false, why = false, claims = true, show = false, finder = true, judge = false, corrupt = false, cover = false;
     for (int k = 2; k < argc; k++) {
         if (!strcmp(argv[k], "--no-claims")) claims = false;
         if (!strcmp(argv[k], "--claims")) show = true;
@@ -366,6 +423,7 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--why")) why = true;
         if (!strcmp(argv[k], "--judge")) judge = true;
         if (!strcmp(argv[k], "--judge-corrupt")) judge = corrupt = true;
+        if (!strcmp(argv[k], "--cover")) cover = true;
     }
     Arena aa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -377,6 +435,9 @@ int main(int argc, char **argv) {
     DeclList *prog = load_module(&aa, mod);
     if (!prog) { fprintf(stderr, "load failed\n"); return 1; }
     sema_resolve_module(prog, mod, &sa);
+    // ...and stop where the compiler stops (main.c): lowering a program the front end refused is
+    // not defined, and a `break` out of a deferred statement (E138) recursed until the stack ran out
+    if (sema_check_undeclared(prog, path)) { fprintf(stderr, "refused by the front end\n"); return 1; }
     // A module constant whose initialiser calls a function is computed now and lowered as the
     // literal it is, as the compiler does it (main.c, DECIDE-W step 2): the IR judged is the IR
     // compiled. Without it the initialiser ran in `main`, with obligations the program never has.
@@ -465,6 +526,7 @@ int main(int argc, char **argv) {
             printf("%s %.*s: %s\n", stats ? "ERROR\t" : "# generator refused", (int)f->name->length, f->name->name, err);
             rc = 1; vra_free(V); continue;
         }
+        if (cover) { cover_func(f, V, o, n); vra_free(V); continue; }
         for (int32_t i = 0; i < n; i++) {
             const char *vv = o[i].outside ? "-" : vra_verdict(V, &o[i]);
             if (why) {
@@ -538,6 +600,7 @@ int main(int argc, char **argv) {
                claimchk, claimgoals, posts, postgoals, contractchk);
         if (falsec) rc = 3;
     } else if (claims) printf("# claims proposed %lld, kept %lld, dropped %lld\n", F.proposed, F.kept, F.dropped);
+    if (cover) printf("COVER\tchecks %lld\tstated %lld\toutside %lld\tuncovered %lld\n", cv_checks, cv_cov, cv_cov_out, cv_unc);
     free(cl); free(buf); free(hbuf); free(work);
     return rc;
 }

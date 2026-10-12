@@ -965,6 +965,15 @@ static void jb_claims(JB *B, const JVer *v) {
         jb_atom(B, jb_str(B, "claim bb%lld #%lld", c->blk, ci, 0), t, c->nt, J_LE, c->rhs);
     }
 }
+// MAX_LEN(T) for a slice of type `st` (P2.4, D1 A3): ISIZE_MAX / sizeof(T), with sizeof(T) its
+// byte width for an integer element and 1 otherwise, which only weakens the bound. ONE function
+// for the fact every reader of a length is given (jb_state) and for the `objsize` obligation every
+// MAKE_SLICE owes: the fact is sound only while the two agree.
+static int64_t jg_len_max(const IrType *st) {
+    int64_t es = 1;
+    if (st && st->elem && st->elem->kind == IRT_INT) es = st->elem->bits >= 8 ? st->elem->bits / 8 : 1;
+    return INT64_MAX / es;
+}
 // The facts of one variable: its definition and its range.
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
@@ -985,25 +994,21 @@ static void jb_state(JB *B, int32_t x) {
     }
     if (B->kind[x] == 4) {                                     // a slice cell version's length
         const IrType *st = g->cty[g->ver[B->key[x]].cell];
-        int64_t es = 1;
-        if (st && st->elem && st->elem->kind == IRT_INT) es = st->elem->bits >= 8 ? st->elem->bits / 8 : 1;
         char ob[160]; snprintf(ob, sizeof ob, "objsize %s", g->cname[g->ver[B->key[x]].cell]);
         char *o = JG_NEW(g, char, strlen(ob) + 1);
         if (!o) { B->fail = true; return; }
         strcpy(o, ob);
         JLT t[1]; t[0].var = x;
         t[0].c = -1; jb_atom(B, o, t, 1, J_LE, 0);
-        t[0].c = 1;  jb_atom(B, o, t, 1, J_LE, (__int128)INT64_MAX / es);
+        t[0].c = 1;  jb_atom(B, o, t, 1, J_LE, jg_len_max(st));
         return;
     }
     if (B->kind[x] == 2) {                                     // a slice's length
         IrValue *s = jg_value(g, B->key[x]);
         IrType *st = s ? s->type : NULL;
-        int64_t es = 1;
-        if (st && st->elem && st->elem->kind == IRT_INT) es = st->elem->bits >= 8 ? st->elem->bits / 8 : 1;
         JLT t[1]; t[0].var = x;
         t[0].c = -1; jb_atom(B, jb_str(B, "objsize %%v%lld", B->key[x], 0, 0), t, 1, J_LE, 0);
-        t[0].c = 1;  jb_atom(B, jb_str(B, "objsize %%v%lld", B->key[x], 0, 0), t, 1, J_LE, (__int128)INT64_MAX / es);
+        t[0].c = 1;  jb_atom(B, jb_str(B, "objsize %%v%lld", B->key[x], 0, 0), t, 1, J_LE, jg_len_max(st));
         IrInstr *d = g->def[B->key[x]];
         if (d && d->op == IR_MAKE_SLICE && d->n_operands >= 2 && jg_is_int(d->operands[1]->type)) {
             JLT u[1]; u[0].var = jb_val(B, d->operands[1]); u[0].c = 1;
@@ -1511,6 +1516,39 @@ static bool jgk_bounds_hi(JB *B, IrInstr *at, void *arg, JCons *goal) {
     if (a->slice) { t[1].var = jb_len(B, a->slice); t[1].c = -1; return jb_cons(B, t, 2, J_LE, -(__int128)a->w, goal); }
     return jb_cons(B, t, 1, J_LE, (__int128)a->clen - a->w, goal);
 }
+// MAKE_SLICE (data, n) over `data = ELEM_PTR(base, lo)`: the subslice's start and its length.
+typedef struct { IrValue *lo, *n; JBoundArg a; } JSliceArg;
+static bool jgk_slice_lo(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    (void)at; JSliceArg *s = arg; JLT t[1];
+    t[0].var = jb_val(B, s->lo); t[0].c = -1;                // 0 <= lo
+    return jb_cons(B, t, 1, J_LE, 0, goal);
+}
+static bool jgk_slice_hi(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    (void)at; JSliceArg *s = arg; JLT t[3];
+    t[0].var = jb_val(B, s->lo); t[0].c = 1;                 // lo + n <= len(base)
+    t[1].var = jb_val(B, s->n); t[1].c = 1;
+    if (s->a.slice) { t[2].var = jb_len(B, s->a.slice); t[2].c = -1; return jb_cons(B, t, 3, J_LE, 0, goal); }
+    return jb_cons(B, t, 2, J_LE, (__int128)s->a.clen, goal);
+}
+static bool jgk_slice_n(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    (void)arg; JLT t[1]; t[0].var = jb_val(B, at->operands[1]); t[0].c = -1;   // 0 <= n
+    return jb_cons(B, t, 1, J_LE, 0, goal);
+}
+static bool jgk_objsize(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    (void)arg; JLT t[1]; t[0].var = jb_val(B, at->operands[1]); t[0].c = 1;    // n <= MAX_LEN(T)
+    // A dynamic local of exactly n integer elements (`var a u8[n]`): the emitter probes its every
+    // page (I.121), so an allocation that returns IS an object of n elements, and an object spans
+    // at most ISIZE_MAX bytes (spec 07, O-1). TRUSTED, listed with the premises. Its C size is the
+    // storage width, at least the byte width jg_len_max divides by, so the premise implies the goal.
+    IrValue *dv = at->operands[0];
+    IrInstr *d = dv && dv->id >= 0 && dv->id < B->g->nv ? B->g->def[dv->id] : NULL;
+    if (d && d->op == IR_ALLOCA && !d->data && d->n_operands == 1 && d->operands[0] == at->operands[1] &&
+        d->aux.alloca_ty && d->aux.alloca_ty->kind == IRT_INT) {
+        int64_t bytes = ir_int_storage_bits(d->aux.alloca_ty->bits) / 8;
+        jb_atom(B, jb_str(B, "premise object %%v%lld", dv->id, 0, 0), t, 1, J_LE, (__int128)INT64_MAX / bytes);
+    }
+    return jb_cons(B, t, 1, J_LE, jg_len_max(at->result ? at->result->type : NULL), goal);
+}
 static bool jgk_divzero(JB *B, IrInstr *at, void *arg, JCons *goal) {
     (void)arg; JLT t[1]; t[0].var = jb_val(B, at->operands[1]); t[0].c = 1;
     return jb_cons(B, t, 1, J_NE, 0, goal);
@@ -1520,9 +1558,9 @@ static bool jgk_nonzero(JB *B, IrInstr *at, void *arg, JCons *goal) {
     return jb_cons(B, t, 1, J_NE, 0, goal);
 }
 static bool jgk_divovf(JB *B, IrInstr *at, void *arg, JCons *goal) {
-    (void)arg; JLT t[1];
+    __int128 *min = arg; JLT t[1];                           // dividend = min => divisor != -1
     t[0].var = jb_val(B, at->operands[0]); t[0].c = 1;
-    jb_atom(B, jb_str(B, "premise divovf %%v%lld", at->result ? at->result->id : -1, 0, 0), t, 1, J_EQ, -((__int128)1 << 63));
+    jb_atom(B, jb_str(B, "premise divovf %%v%lld", at->result ? at->result->id : -1, 0, 0), t, 1, J_EQ, *min);
     t[0].var = jb_val(B, at->operands[1]); t[0].c = 1;
     return jb_cons(B, t, 1, J_NE, -1, goal);
 }
@@ -1603,6 +1641,74 @@ static bool jg_assert_cmp(JG *g, IrInstr *ic) {
     return true;
 }
 
+// The length an ELEM_PTR's base is indexed against (VRA's rules): a local array's, an array
+// value's, a pointer to a vector's, a slice's (through SLICE_DATA); neither when it is not known.
+static void jg_bound_arg(JG *g, IrInstr *i, JBoundArg *a) {
+    IrValue *base = i->operands[0];
+    IrInstr *bd = base && base->id >= 0 && base->id < g->nv ? g->def[base->id] : NULL;
+    a->w = i->aux.elem_width > 0 ? i->aux.elem_width : 1; a->clen = -1; a->slice = NULL;
+    if (bd && bd->op == IR_ALLOCA && bd->aux.alloca_ty &&
+        (bd->aux.alloca_ty->kind == IRT_ARRAY || bd->aux.alloca_ty->kind == IRT_VECTOR))
+        a->clen = bd->aux.alloca_ty->array_len;
+    else if (base->type && (base->type->kind == IRT_ARRAY || base->type->kind == IRT_VECTOR))
+        a->clen = base->type->array_len;
+    else if (base->type && base->type->kind == IRT_PTR && base->type->elem && base->type->elem->kind == IRT_VECTOR)
+        a->clen = base->type->elem->array_len;
+    else if (bd && bd->op == IR_SLICE_DATA && bd->n_operands >= 1) a->slice = bd->operands[0];
+}
+// A slice the lowering builds over an object it made with that length (lower.h's other four
+// MAKE_SLICE sites): a string literal (its bytes and the NUL), a local array or a module constant
+// table (n a constant within it), a dynamic local of exactly n elements (`var a u8[n]`). Read from
+// the IR, not trusted: any other shape is `outside`.
+static bool jg_slice_whole(JG *g, IrInstr *ms) {
+    IrValue *dv = ms->operands[0], *nv = ms->operands[1];
+    IrInstr *d = dv && dv->id >= 0 && dv->id < g->nv ? g->def[dv->id] : NULL;
+    IrInstr *nd = nv && nv->id >= 0 && nv->id < g->nv ? g->def[nv->id] : NULL;
+    if (!d) return false;
+    bool kn = nd && nd->op == IR_CONST && jg_const(nd) >= 0;
+    if (d->op == IR_STR_CONST) return kn && jg_const(nd) <= (__int128)d->aux.str.len + 1;
+    if (d->op != IR_ALLOCA) return false;
+    if (d->data) return kn && jg_const(nd) <= d->data->n;
+    if (d->n_operands == 0 && d->aux.alloca_ty && d->aux.alloca_ty->kind == IRT_ARRAY)
+        return kn && jg_const(nd) <= d->aux.alloca_ty->array_len;
+    return d->n_operands == 1 && d->operands[0] == nv;
+}
+
+// What a checked division's RESULT owes, on the interpreter's semantics: it computes x / y
+// (truncating) and x % y (the sign of x) exactly, then lands the result in its type (ii_settle).
+// - The dividend in the result's range (`divovf` 1 and 2, owed only where the types do not nest:
+//   `100 /% x` with an i64 literal and a u64 result, I.56). With it, a remainder lies between 0
+//   and x, and |q| <= |x|, so the result lands, but for the quotient's sign:
+// - -MIN does not land: x = MIN of a signed result and y = -1 (`divovf` 0, the dividend at MIN
+//   the premise; I.198's i32 / i32 at i32 included, while a `/` widened by a bit cannot fail
+//   here and its narrowing does). Owed wherever x may reach that MIN, as VRA states it
+//   (vra_check_div), an unsigned divisor's type range implying it;
+// - a negative divisor makes a negative quotient, which an unsigned result cannot hold: where the
+//   divisor's type has negative values, `divovf` 3 owes it non-negative (`(lo + hi) / 2`, the
+//   literal 2 an i64);
+// - and C traps on MIN % -1 where the operands' C type is their type (32 or 64 bits,
+//   storage-exact), which the interpreter checks by itself (I.185): `divovf` 0 again.
+typedef struct { bool lo, hi, min, ypos; __int128 rlo, rhi, mval; } JDivOwe;
+static __int128 jg_width_lo(const IrType *t) { return t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0; }
+static __int128 jg_width_hi(const IrType *t) {
+    return t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+}
+static bool jg_div_result(const IrInstr *i, JDivOwe *d) {
+    const IrType *xt = i->operands[0]->type, *yt = i->operands[1]->type;
+    const IrType *rt = i->result ? i->result->type : NULL;
+    if (!rt || rt->kind != IRT_INT || rt->bits < 1 || rt->bits > 64) return false;
+    __int128 xlo = jg_width_lo(xt), xhi = jg_width_hi(xt), ylo = jg_width_lo(yt);
+    d->rlo = jg_width_lo(rt); d->rhi = jg_width_hi(rt);
+    d->lo = xlo < d->rlo; d->hi = xhi > d->rhi; d->min = false; d->ypos = false; d->mval = 0;
+    if (i->op == IR_SDIV || i->op == IR_UDIV) {
+        d->ypos = d->rlo == 0 && ylo < 0;
+        if (d->rlo < 0 && xlo <= d->rlo) { d->min = true; d->mval = d->rlo; }
+    } else if (xt->is_signed && xt->bits >= 32 && xt->bits == ir_int_storage_bits(xt->bits)) {
+        d->min = true; d->mval = xlo;
+    }
+    return true;
+}
+
 static bool jg_obligations(JG *g, JObls *L) {
     for (int32_t r = 0; r < g->nrpo; r++) {
         IrBlock *b = g->blk[g->rpo[r]];
@@ -1616,30 +1722,53 @@ static bool jg_obligations(JG *g, JObls *L) {
                     for (IrInstr *j = i->next; j && !sub; j = j->next)
                         if (j->op == IR_MAKE_SLICE && j->n_operands >= 1 && j->operands[0] == i->result) sub = true;
                     if (sub) break;
-                    IrValue *base = i->operands[0];
-                    IrInstr *bd = base && base->id >= 0 && base->id < g->nv ? g->def[base->id] : NULL;
-                    JBoundArg a; a.w = i->aux.elem_width > 0 ? i->aux.elem_width : 1; a.clen = -1; a.slice = NULL;
-                    if (bd && bd->op == IR_ALLOCA && bd->aux.alloca_ty &&
-                        (bd->aux.alloca_ty->kind == IRT_ARRAY || bd->aux.alloca_ty->kind == IRT_VECTOR))
-                        a.clen = bd->aux.alloca_ty->array_len;
-                    else if (base->type && (base->type->kind == IRT_ARRAY || base->type->kind == IRT_VECTOR))
-                        a.clen = base->type->array_len;
-                    else if (base->type && base->type->kind == IRT_PTR && base->type->elem && base->type->elem->kind == IRT_VECTOR)
-                        a.clen = base->type->elem->array_len;
-                    else if (bd && bd->op == IR_SLICE_DATA && bd->n_operands >= 1) a.slice = bd->operands[0];
+                    JBoundArg a; jg_bound_arg(g, i, &a);
                     if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "an index that is not an integer")) return false; break; }
                     if (!jg_goal(g, L, i, b->id, k, -1, "bounds.lo", 0, jgk_bounds_lo, NULL)) return false;
                     if (a.clen < 0 && !a.slice) { if (!jg_outside(g, L, i, b->id, k, "no length is known for the base (a shape or a shared-term cancellation)")) return false; break; }
                     if (!jg_goal(g, L, i, b->id, k, -1, "bounds.hi", 0, jgk_bounds_hi, &a)) return false;
                     break;
                 }
+                case IR_MAKE_SLICE: {
+                    // P2.4. `objsize` at every one, `unsafe` included: every reader of a slice's
+                    // length is given len <= MAX_LEN(T) (jb_state), so it is never waived (D1 A3).
+                    // Then pointer validity, waived in `unsafe` (spec 18): a subslice's start and
+                    // length, both here, where VRA checks the pair (vra_check_subslice; the
+                    // interpreter checks the start at the ELEM_PTR, whose operand reaches this
+                    // point unchanged); any other data must be an object made with the slice's
+                    // length (jg_slice_whole).
+                    if (i->n_operands < 2 || !i->result) break;
+                    IrValue *n = i->operands[1];
+                    if (!jg_is_int(n->type)) { if (!jg_outside(g, L, i, b->id, k, "a slice length that is not an integer")) return false; break; }
+                    if (!jg_goal(g, L, i, b->id, k, -1, "objsize", 0, jgk_objsize, NULL)) return false;
+                    if (i->unchecked) break;
+                    if (n->type->is_signed && !jg_goal(g, L, i, b->id, k, -1, "bounds.lo", 1, jgk_slice_n, NULL)) return false;
+                    IrValue *dv = i->operands[0];
+                    IrInstr *ep = dv && dv->id >= 0 && dv->id < g->nv ? g->def[dv->id] : NULL;
+                    if (!ep || ep->op != IR_ELEM_PTR || ep->n_operands < 2) {
+                        if (!jg_slice_whole(g, i) && !jg_outside(g, L, i, b->id, k, "a slice over data whose length the generator does not know")) return false;
+                        break;
+                    }
+                    if (!jg_is_int(ep->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "a subslice start that is not an integer")) return false; break; }
+                    JSliceArg sa; sa.lo = ep->operands[1]; sa.n = n; jg_bound_arg(g, ep, &sa.a);
+                    if (!jg_goal(g, L, i, b->id, k, -1, "bounds.lo", 0, jgk_slice_lo, &sa)) return false;
+                    if (sa.a.clen < 0 && !sa.a.slice) { if (!jg_outside(g, L, i, b->id, k, "no length is known for the subslice's base")) return false; break; }
+                    if (!jg_goal(g, L, i, b->id, k, -1, "bounds.hi", 0, jgk_slice_hi, &sa)) return false;
+                    break;
+                }
                 case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: {
                     if (i->unchecked || i->n_operands < 2) break;
                     if (!jg_is_int(i->operands[0]->type) || !jg_is_int(i->operands[1]->type)) break;
                     if (!jg_goal(g, L, i, b->id, k, -1, "divzero", 0, jgk_divzero, NULL)) return false;
-                    IrType *xt = i->operands[0]->type, *yt = i->operands[1]->type;
-                    if (xt->kind == IRT_INT && xt->is_signed && xt->bits == 64 && yt->kind == IRT_INT && yt->is_signed)
-                        if (!jg_goal(g, L, i, b->id, k, -1, "divovf", 0, jgk_divovf, NULL)) return false;
+                    if (i->wrap != IR_WRAP_CHECK) break;             // `/%` and `/|` define the result
+                    JDivOwe dw;
+                    if (!jg_div_result(i, &dw)) { if (!jg_outside(g, L, i, b->id, k, "a division whose result is not an integer of at most 64 bits")) return false; break; }
+                    if (dw.min && !jg_goal(g, L, i, b->id, k, -1, "divovf", 0, jgk_divovf, &dw.mval)) return false;
+                    JNarrowArg dl = { dw.rlo, false, i->operands[0] }, dh = { dw.rhi, true, i->operands[0] };
+                    if (dw.lo && !jg_goal(g, L, i, b->id, k, -1, "divovf", 1, jgk_narrow, &dl)) return false;
+                    if (dw.hi && !jg_goal(g, L, i, b->id, k, -1, "divovf", 2, jgk_narrow, &dh)) return false;
+                    JNarrowArg dy = { 0, false, i->operands[1] };
+                    if (dw.ypos && !jg_goal(g, L, i, b->id, k, -1, "divovf", 3, jgk_narrow, &dy)) return false;
                     break;
                 }
                 case IR_ADD: case IR_SUB: case IR_MUL: case IR_NEG: {
