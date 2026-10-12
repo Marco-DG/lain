@@ -208,6 +208,10 @@ incorrect}:
         without proof.  With \lain{type D \{ v i32 >= 0 and <= 3 \}}, the write
         \lain{*(\&d.v as *var i32) = 100} makes a subsequent \lain{t[d.v]} read outside
         \lain{t i32[4]} although the index was proven in bounds.
+  \item Writing, through a raw pointer or a cast that reinterprets bytes, a slice whose length
+        exceeds the bound of \S\,\ref{sec:types.slice}.  The bound is a premise of the same kind
+        as a refinement (\S\,\ref{sec:unsafe.not-disabled}): every later read of the slice
+        relies on it.
 \end{itemize}
 
 \pnum

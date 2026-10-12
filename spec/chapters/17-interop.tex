@@ -81,6 +81,12 @@ whatever the extern's row names, by the ordinary rule.
 \end{note}
 
 \pnum
+An \lain{extern}'s result, and every value it writes through a pointer parameter, shall be valid
+for its declared type, including a refined type's range and the length bound of every slice it
+contains (\S\,\ref{sec:types.slice}).  The compiler believes this, as it believes the row, and a C
+function that breaks it makes the program's behaviour undefined.
+
+\pnum
 Ownership annotations on extern parameters work identically to those on
 native Lain functions; the borrow checker tracks ownership of resources
 obtained via extern calls.

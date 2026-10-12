@@ -620,6 +620,12 @@ representation is a \textit{fat} pair, a data pointer and a length
 (\texttt{struct \{ T* data; size\_t len; \}}); as a parameter it is passed as two
 arguments, the length first (\S\,\ref{sec:interop.abi}).
 
+\pnum
+An object occupies at most as many bytes as the largest \lain{isize} value, $2^{N-1} - 1$ on an
+$N$-bit target (\S\,\ref{sec:types.integer}).  So a slice's length is at most that value divided
+by the size of \lain{T}, and at most that value whatever the size of \lain{T}.  The bound holds
+for every slice value, and every reader of a slice may rely on it.
+
 \begin{constraint}
   \textbf{The \lain{*} rule.}  A \lain{*} prefix denotes a \emph{raw pointer},
   and only that.  Arrays and slices are always passed by reference, so they
