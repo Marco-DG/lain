@@ -187,6 +187,31 @@ int main(void) {
     snprintf(rf, sizeof rf, "not-implied bb%d.%d rank.fall", h2->id, hp);
     CHECK(strstr(recs, rf) && nrec[JREC_NOT_IMPLIED] == 1 && nrec[JREC_SOLVER_BUG] == 0, "a ranking claim that rises: rank.fall not implied:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
+    // a WRAPPING step, `i = i +% 1` on u8 under `i < n`: the add's two cases, and the guard rules
+    // out the wrapped one, so n - i falls (Main Compiler Work's census: 7 such loops)
+    IrType *u8t = ir_type_int(&A, 8, false);
+    IrFunc *w = ir_func_new(&A, nm("w"), u32t, IR_FUNC_PURE);
+    IrValue *wn = ir_add_param(w, u8t, nm("n"));
+    IrBlock *w0 = w->entry, *w1 = ir_new_block(w), *w2 = ir_new_block(w), *w3 = ir_new_block(w);
+    IrValue *wi = ir_alloca(w, w0, u8t);
+    ir_store(w, w0, wi, ir_const_int(w, w0, 0, u8t)); ir_set_br(w0, w1);
+    ir_set_br_cond(w1, ir_icmp(w, w1, IR_CMP_ULT, ir_load(w, w1, wi, u8t), wn), w2, w3);
+    IrValue *ws = ir_binop(w, w2, IR_ADD, ir_load(w, w2, wi, u8t), ir_const_int(w, w2, 1, u8t), u8t);
+    w2->instrs_tail->wrap = IR_WRAP_MODULAR;
+    ir_store(w, w2, wi, ws); ir_set_br(w2, w1);
+    ir_set_ret(w3, ir_const_int(w, w3, 0, u32t));
+    ir_finalize_cfg(w);
+    s.propose = P_RANK; s.nrank = 1;
+    memset(&s.rank[0], 0, sizeof s.rank[0]);
+    s.rank[0].blk = w1->id; s.rank[0].fn = w; s.rank[0].ncomp = 1; s.rank[0].nt = 2;
+    s.rank[0].key[0] = wi->id; s.rank[0].key[1] = wn->id; s.rank[0].coef[0][0] = -1; s.rank[0].coef[0][1] = 1;   // n - i
+    s.rank[0].nedge = 1; s.rank[0].from[0] = w2->id; s.rank[0].fall[0] = 0;
+    int wp = 0;
+    for (IrInstr *i = w2->instrs; i; i = i->next) wp++;
+    snprintf(rf, sizeof rf, "proved bb%d.%d rank.fall", w2->id, wp);
+    CHECK(run(w, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, rf) && nrec[JREC_SOLVER_BUG] == 0, "i +%% 1 under i < n: n - i falls:\n%s", recs);
+    s.propose = P_NONE; s.nrank = 0;
 
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);

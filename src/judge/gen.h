@@ -118,6 +118,11 @@ static void jg_int(JInt *x, __int128 v) {
 // A type's integer range as the interpreter reads it (iv_get): an unsigned 64-bit value is in
 // [0, 2^64 - 1], not clamped as irtype_int_range clamps it for the octagon. Refinement included.
 typedef struct { __int128 lo, hi; bool has_ne; int64_t ne; } JRange;
+// An integer type's range by its width alone (its refinement aside).
+static __int128 jg_width_lo(const IrType *t) { return t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0; }
+static __int128 jg_width_hi(const IrType *t) {
+    return t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+}
 static bool jg_range(const IrType *t, JRange *r) {
     if (!t) return false;
     r->has_ne = false; r->ne = 0;
@@ -977,6 +982,42 @@ static int64_t jg_len_max(const IrType *st) {
     if (st && st->elem && st->elem->kind == IRT_INT) es = st->elem->bits >= 8 ? st->elem->bits / 8 : 1;
     return INT64_MAX / es;
 }
+// A WRAPPING x + y or x - y (`+%`, `-%`, or unsigned arithmetic inside `unsafe`): the interpreter
+// computes s = x +- y exactly and lands it once in the result's w bits (ii_settle, it_wrap), so the
+// result is s - k*2^w for the one k that puts it in the result's range. Over the operands' type
+// ranges (facts, licensed by their own obligations) s lies in [slo, shi], which leaves at most three
+// k; with the result's own range that disjunction pins it. Not inside a disjunct (a disjunct holds
+// no disjunction), and nothing when the result is not an integer of at most 64 bits.
+static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
+    JRange ra, rb, rr;
+    const IrType *rt = d->result ? d->result->type : NULL;
+    if (B->jS >= 0 || !rt || rt->kind != IRT_INT || rt->bits < 1 || rt->bits > 64) return;
+    if (!jg_range(d->operands[0]->type, &ra) || !jg_range(d->operands[1]->type, &rb)) return;
+    rr.lo = jg_width_lo(rt); rr.hi = jg_width_hi(rt);
+    __int128 M = (__int128)1 << rt->bits;
+    __int128 slo = d->op == IR_ADD ? ra.lo + rb.lo : ra.lo - rb.hi, shi = d->op == IR_ADD ? ra.hi + rb.hi : ra.hi - rb.lo;
+    // r = s - k*M in [rr.lo, rr.hi]: k from ceil((slo - rr.hi) / M) to floor((shi - rr.lo) / M)
+    __int128 klo = slo - rr.hi, khi = shi - rr.lo;
+    klo = klo >= 0 ? (klo + M - 1) / M : -((-klo) / M);
+    khi = khi >= 0 ? khi / M : -((-khi + M - 1) / M);
+    if (khi < klo || khi - klo > 2) return;                    // three cases at most (a w-bit sum)
+    int32_t xa = jb_val(B, d->operands[0]), xb = jb_val(B, d->operands[1]);
+    const char *origin = jb_str(B, d->op == IR_ADD ? "def %%v%lld add.wrap" : "def %%v%lld sub.wrap", id, 0, 0);
+    JLT t[3];
+    t[0].var = x; t[0].c = 1; t[1].var = xa; t[1].c = -1; t[2].var = xb; t[2].c = d->op == IR_ADD ? -1 : 1;
+    if (klo == khi) { jb_atom(B, origin, t, 3, J_EQ, -klo * M); return; }   // one case: exact
+    JHyp *h = jb_hyp(B, origin);
+    if (!h) return;
+    int32_t nd = (int32_t)(khi - klo + 1);
+    h->disj = true; h->ndis = nd;
+    if (!(h->dis = JG_NEW(B->g, JConj, nd))) { B->fail = true; return; }
+    for (int32_t k = 0; k < nd; k++) {                         // r - x -+ y = -k*M
+        if (!(h->dis[k].c = JG_NEW(B->g, JCons, 1))) { B->fail = true; return; }
+        h->dis[k].nc = 1;
+        t[0].var = x; t[0].c = 1; t[1].var = xa; t[1].c = -1; t[2].var = xb; t[2].c = d->op == IR_ADD ? -1 : 1;
+        jb_cons(B, t, 3, J_EQ, -(klo + k) * M, &h->dis[k].c[0]);
+    }
+}
 // The facts of one variable: its definition and its range.
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
@@ -1037,8 +1078,12 @@ static void jb_state(JB *B, int32_t x) {
             jb_defk(B, x, NULL, 0, jg_const(d), jb_str(B, "def %%v%lld const", id, 0, 0));
             break;
         case IR_ADD: case IR_SUB:
-            if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) break;
-            if (!jg_is_int(d->operands[0]->type) || !jg_is_int(d->operands[1]->type)) break;
+            if (d->n_operands < 2 || !jg_is_int(d->operands[0]->type) || !jg_is_int(d->operands[1]->type)) break;
+            if (d->wrap == IR_WRAP_MODULAR || (d->unchecked && !v->type->is_signed && d->wrap == IR_WRAP_CHECK)) {
+                jb_wrap(B, x, d, id);                          // `+%`, `-%`, and unsigned arithmetic in `unsafe`
+                break;
+            }
+            if (d->wrap != IR_WRAP_CHECK || d->unchecked) break;
             t[0].var = jb_val(B, d->operands[0]); t[0].c = 1;
             t[1].var = jb_val(B, d->operands[1]); t[1].c = d->op == IR_ADD ? 1 : -1;
             jb_def(B, x, t, 2, jb_str(B, d->op == IR_ADD ? "def %%v%lld add" : "def %%v%lld sub", id, 0, 0));
@@ -1692,10 +1737,6 @@ static bool jg_slice_whole(JG *g, IrInstr *ms) {
 // - and C traps on MIN % -1 where the operands' C type is their type (32 or 64 bits,
 //   storage-exact), which the interpreter checks by itself (I.185): `divovf` 0 again.
 typedef struct { bool lo, hi, min, ypos; __int128 rlo, rhi, mval; } JDivOwe;
-static __int128 jg_width_lo(const IrType *t) { return t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0; }
-static __int128 jg_width_hi(const IrType *t) {
-    return t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
-}
 static bool jg_div_result(const IrInstr *i, JDivOwe *d) {
     const IrType *xt = i->operands[0]->type, *yt = i->operands[1]->type;
     const IrType *rt = i->result ? i->result->type : NULL;

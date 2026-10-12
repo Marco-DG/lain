@@ -1204,6 +1204,46 @@ int main(void) {
         }
     }
     printf("  a slice's length as a term: in a ranking claim, in a claim, as a pair, and refused where it is none\n");
+    // 34. a WRAPPING add or sub is the exact result less k*2^w, k one of the few the operands'
+    // type ranges allow (the interpreter wraps once): u8 `+%` two cases, i8 three, u8 `-%` two
+    // (an offset of +256), u64 at 2^64; unsigned `+` inside `unsafe` wraps alike; signed `+` inside
+    // `unsafe` is undefined past its range, and gets nothing. Read where the result is a divisor.
+    {   IrType *i8t = ir_type_int(&A, 8, true);
+        struct { IrOp op; IrType *t; IrWrapMode w; bool unsafe_; int ncase; const char *has; } wc[] = {
+            { IR_ADD, u8t,  IR_WRAP_MODULAR, false, 2, "= -256" },
+            { IR_ADD, i8t,  IR_WRAP_MODULAR, false, 3, "= 256" },
+            { IR_SUB, u8t,  IR_WRAP_MODULAR, false, 2, "= 256" },
+            { IR_ADD, u64t, IR_WRAP_MODULAR, false, 2, "= -18446744073709551616" },
+            { IR_ADD, u8t,  IR_WRAP_CHECK,   true,  2, "= -256" },
+            { IR_ADD, i8t,  IR_WRAP_CHECK,   true,  0, "" },
+        };
+        for (int k = 0; k < (int)(sizeof wc / sizeof wc[0]); k++) {
+            IrFunc *f = ir_func_new(&A, nm("g34"), wc[k].t, IR_FUNC_PURE);
+            IrValue *x = ir_add_param(f, wc[k].t, nm("x")), *y = ir_add_param(f, wc[k].t, nm("y"));
+            IrBlock *b0 = f->entry;
+            IrValue *r = ir_binop(f, b0, wc[k].op, x, y, wc[k].t);
+            b0->instrs_tail->wrap = wc[k].w; b0->instrs_tail->unchecked = wc[k].unsafe_;
+            IrValue *hundred = ir_const_int(f, b0, 100, wc[k].t);
+            ir_set_ret(b0, ir_binop(f, b0, wc[k].t->is_signed ? IR_SDIV : IR_UDIV, hundred, r, wc[k].t));
+            char *t = gen_text(f);
+            const char *vd = t ? vc_of(t, "divzero") : "";
+            const char *h = strstr(vd, ".wrap : or {");
+            int bars = 0;
+            for (const char *q = h; q && *q && *q != '\n'; q++) if (*q == '|') bars++;
+            if (wc[k].ncase) CHECK(h && bars == wc[k].ncase - 1 && strstr(h, wc[k].has), "wrap %d: %d cases, among them `%s`:\n%s", k, wc[k].ncase, wc[k].has, vd);
+            if (wc[k].ncase && h) {                                  // r - x - y (add) or r - x + y (sub), in every case
+                char line[512]; size_t n = 0;
+                while (h[n] && h[n] != '\n' && n + 1 < sizeof line) { line[n] = h[n]; n++; }
+                line[n] = 0;
+                char mx[32], my[32]; snprintf(mx, sizeof mx, "-1*%%v%d", x->id); snprintf(my, sizeof my, "-1*%%v%d", y->id);
+                int cx = count(line, mx), cy = count(line, my);
+                CHECK(cx == wc[k].ncase && cy == (wc[k].op == IR_ADD ? wc[k].ncase : 0), "wrap %d: x and y with their signs in each case: %s", k, line);
+            }
+            else CHECK(!strstr(vd, ".wrap") && !strstr(vd, " add :"), "wrap %d: signed `+` in `unsafe` states nothing:\n%s", k, vd);
+            free(t);
+        }
+    }
+    printf("  a wrapping add or sub: the exact result less k*2^w, in its few cases\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
