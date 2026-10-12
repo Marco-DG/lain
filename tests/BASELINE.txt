@@ -2006,6 +2006,20 @@ out=1 1 1 1
 out=0 1 1 0
 at=const 16
 ty=Slice_u8 scalar
+### tests/trust/mixed_sign_bitwise_pass.ln
+rc=0
+out=-1 -5 65535
+at=const 4
+ty=Slice_u8 scalar
+### tests/trust/mixed_sign_division_pass.ln
+rc=0
+out=20
+out=-33 -1
+out=0
+out=-14 -2147483648
+out=-33
+at=const 14
+ty=Slice_u8 scalar
 ### tests/trust/module_comprehension_cast_pass.ln
 rc=0
 out=
