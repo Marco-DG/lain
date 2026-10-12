@@ -398,7 +398,7 @@ int main(void) {
         // what a proposer may name at the header: s made there, u and y fixed there, ls not
         {   JMem m = jmem_over(region, sizeof region);
             int32_t keys[4] = { s->id, u->id, y->id, ls->id }; uint8_t kind[4]; char err[200];
-            bool ok = jgen_term_kinds(&m, f, gen_mod, b3->id, keys, 4, kind, err, sizeof err);
+            bool ok = jgen_term_kinds(&m, f, gen_mod, b3->id, keys, NULL, 4, kind, err, sizeof err);
             CHECK(ok && kind[0] == 2 && kind[1] == 1 && kind[2] == 1 && kind[3] == 0,
                   "term kinds at the header: s 2, u 1, y 1, ls 0 (got %d %d %d %d)", kind[0], kind[1], kind[2], kind[3]);
         }
@@ -1110,6 +1110,100 @@ int main(void) {
         }
     }
     printf("  a loop's termination: outside without a ranking claim, keep, fall and bound with one, and the paths\n");
+    // 33. a slice's LENGTH as a term (JTERM_LEN): `while i < xs.len { i = i + 1 }`. A ranking
+    // claim len(xs) - i, len(xs) fixed at the header (pre == post, cancelling in the fall), its
+    // bound read from the guard; a claim i - len(xs) <= 0 at the header, stated and owed; a slice
+    // cell the loop rewrites is a pair of the paths, by its length; refused: a length of an
+    // integer, an unknown kind, a return claim over a length
+    {   IrFunc *f = ir_func_new(&A, nm("g33"), u32t, IR_FUNC_PURE);
+        IrValue *xs = ir_add_param(f, slice_of(u8t), nm("xs")), *ys = ir_add_param(f, slice_of(u8t), nm("ys"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u64t), *sc = ir_alloca(f, b0, slice_of(u8t));
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_store(f, b0, sc, xs); ir_set_br(b0, b1);
+        IrValue *li = ir_load(f, b1, i, u64t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, li, ir_slice_len(f, b1, xs)), b2, b3);
+        IrValue *li2 = ir_load(f, b2, i, u64t);
+        ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li2, ir_const_int(f, b2, 1, u64t), u64t));
+        IrValue *ln = ir_slice_len(f, b2, ir_load(f, b2, sc, slice_of(u8t)));   // the header version's length
+        IrValue *hundred = ir_const_int(f, b2, 100, u64t);
+        int dz = nins(b2); ir_binop(f, b2, IR_UDIV, hundred, ln, u64t);
+        ir_store(f, b2, sc, ys);                                             // the slice cell, rewritten
+        ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, u32t));
+        ir_finalize_cfg(f);
+        char want[96], key[48];
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.ncomp = 1; r.nt = 2;
+        r.key[0] = i->id; r.key[1] = xs->id; r.tk[1] = JTERM_LEN; r.coef[0][0] = -1; r.coef[0][1] = 1;   // len(xs) - i
+        r.nedge = 1; r.from[0] = b2->id;
+        gen_rk = &r; gen_nrk = 1;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        snprintf(key, sizeof key, "bb%d.%d rank.bound 0", b2->id, nins(b2));
+        const char *vb = t ? vc_of(t, key) : "", *g = strstr(vb, "goal ");
+        snprintf(want, sizeof want, "-1*len(%%v%d)", xs->id);
+        CHECK(g && strstr(g, want) && strstr(g, "<= 0") && strstr(vb, "guard bb"), "the bound: i - len(xs) <= 0, under the guard:\n%s", vb);
+        snprintf(key, sizeof key, "bb%d.%d rank.fall 0", b2->id, nins(b2));
+        const char *vf = t ? vc_of(t, key) : "";
+        g = strstr(vf, "goal ");
+        CHECK(g && !strstr(g, "len(") && strstr(g, "<= -1"), "the fall: len(xs) cancels, i rises by 1:\n%s", vf);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0;
+        JClaim c; memset(&c, 0, sizeof c);
+        c.blk = b1->id; c.fn = f; c.nt = 2; c.key[0] = i->id; c.coef[0] = 1; c.key[1] = xs->id; c.tk[1] = JTERM_LEN; c.coef[1] = -1;
+        t = gen_with(f, &c, 1, JGEN_CLAIMS, NULL);
+        snprintf(key, sizeof key, "bb%d.%d inv.keep 0", b2->id, nins(b2));
+        const char *vk = t ? vc_of(t, key) : "";
+        snprintf(want, sizeof want, "-1*len(%%v%d)", xs->id);
+        CHECK(strstr(vk, want) && strstr(vk, "claim bb"), "the claim i <= len(xs): owed on the back edge, a fact at the previous entry:\n%s", vk);
+        free(t);
+        {   JMem m = jmem_over(region, sizeof region);
+            JPaths P; char err[200];
+            bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+            int lens = 0;
+            for (int32_t k = 0; ok && k < P.n; k++)
+                for (int32_t q = 0; q < P.p[k].npairs; q++)
+                    if (P.p[k].pairs[q].tk == JTERM_LEN && P.p[k].pairs[q].key == sc->id) {
+                        lens++;
+                        const JVc *v = P.p[k].vc; const JPathPair *pp = &P.p[k].pairs[q];
+                        CHECK(!strncmp(v->vars[pp->post], "len(", 4) && (!P.p[k].back || !strncmp(v->vars[pp->pre], "len(", 4)),
+                              "a slice cell's pair is its length (%s)", v->vars[pp->post]);
+                    }
+            CHECK(ok && lens == 2, "the rewritten slice cell is a pair on both edges, by its length (got %d)", lens);
+        }
+        // a claim about the slice cell's length alone, len(sc) >= 1: stated where only that length is
+        // named (the division's divisor), so 100 / sc.len is owed with it
+        JClaim c3; memset(&c3, 0, sizeof c3);
+        c3.blk = b1->id; c3.fn = f; c3.nt = 1; c3.key[0] = sc->id; c3.tk[0] = JTERM_LEN; c3.coef[0] = -1; c3.rhs = -1;
+        t = gen_with(f, &c3, 1, JGEN_ALL, NULL);
+        snprintf(key, sizeof key, "bb%d.%d divzero 0", b2->id, dz);
+        const char *vd = t ? vc_of(t, key) : "";
+        snprintf(want, sizeof want, "claim bb%d #0 : -1*len(%%s%d@head.bb%d) <= -1", b1->id, sc->id, b1->id);
+        CHECK(strstr(vd, want), "the claim about len(sc) is a fact where its length alone is named:\n%s", vd);
+        free(t);
+        // what a proposer may name at the header, by kind: xs's length (fixed), sc's length (made
+        // there), i (made there); xs as a value is no integer
+        {   JMem m = jmem_over(region, sizeof region);
+            int32_t keys[4] = { xs->id, sc->id, i->id, xs->id };
+            uint8_t tks[4] = { JTERM_LEN, JTERM_LEN, JTERM_VALUE, JTERM_VALUE }, kind[4]; char err[200];
+            bool ok = jgen_term_kinds(&m, f, gen_mod, b1->id, keys, tks, 4, kind, err, sizeof err);
+            CHECK(ok && kind[0] == 1 && kind[1] == 2 && kind[2] == 2 && kind[3] == 0,
+                  "term kinds at the header: len(xs) 1, len(sc) 2, i 2, xs 0 (got %d %d %d %d)", kind[0], kind[1], kind[2], kind[3]);
+        }
+        struct { JClaim c; const char *why; } bad[3];
+        for (int k = 0; k < 3; k++) bad[k].c = c;
+        bad[0].c.tk[0] = JTERM_LEN; bad[0].why = "not a cell or a value fixed at its block";       // i is no slice
+        bad[1].c.tk[0] = 2; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
+        memset(&bad[2].c, 0, sizeof bad[2].c);
+        bad[2].c.blk = JCLAIM_RET; bad[2].c.fn = f; bad[2].c.nt = 2; bad[2].c.key[0] = JKEY_RET; bad[2].c.coef[0] = 1;
+        bad[2].c.key[1] = xs->id; bad[2].c.tk[1] = JTERM_LEN; bad[2].c.coef[1] = -1; bad[2].why = "a return claim over a length";
+        for (int k = 0; k < 3; k++) {
+            char why[200] = "";
+            t = gen_with(f, &bad[k].c, 1, JGEN_ALL, why);
+            CHECK(!t && strstr(why, bad[k].why), "length claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
+            free(t);
+        }
+    }
+    printf("  a slice's length as a term: in a ranking claim, in a claim, as a pair, and refused where it is none\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

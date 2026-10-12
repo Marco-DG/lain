@@ -333,7 +333,7 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
         }
     uint8_t *kind = fd_bump(L, (size_t)(nval ? nval : 1));
     if (!kind) return false;
-    if (nval && !F->gen->term_kinds(F->gen->ctx, f, H, vals, nval, kind, err, sizeof err)) return false;
+    if (nval && !F->gen->term_kinds(F->gen->ctx, f, H, vals, NULL, nval, kind, err, sizeof err)) return false;
     int32_t nshared = 0;
     for (int32_t q = 0; q < nval; q++) if (kind[q] == 1) vals[nshared] = vals[q], kind[nshared++] = 1;
     // 3. the merged list: the header's versions (pre, post), the shared values, then each path's own
@@ -549,7 +549,7 @@ static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, 
         uint8_t *kind = malloc((size_t)F->hdr[h].n * 2);
         if (!keys || !kind) { free(keys); free(kind); goto oom; }
         for (int r = 0; r < F->hdr[h].n; r++) { keys[2 * r] = F->hdr[h].r[r].a; keys[2 * r + 1] = F->hdr[h].r[r].b >= 0 ? F->hdr[h].r[r].b : F->hdr[h].r[r].a; }
-        if (!F->gen->term_kinds(F->gen->ctx, f, H, keys, F->hdr[h].n * 2, kind, err, (uint32_t)errcap)) { free(keys); free(kind); free(tm); return false; }
+        if (!F->gen->term_kinds(F->gen->ctx, f, H, keys, NULL, F->hdr[h].n * 2, kind, err, (uint32_t)errcap)) { free(keys); free(kind); free(tm); return false; }
         for (int r = 0; r < F->hdr[h].n; r++) {
             const FdRel *v = &F->hdr[h].r[r];
             if (!kind[2 * r] || !kind[2 * r + 1] || (kind[2 * r] != 2 && kind[2 * r + 1] != 2)) continue;

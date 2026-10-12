@@ -740,6 +740,20 @@ static int32_t jb_val(JB *B, IrValue *v) {
     B->vval[v->id] = jb_newvar(B, jb_str(B, "%%v%lld", v->id, 0, 0), 0, v->id, v->type);
     return local ? jb_local(B, B->vval[v->id], true) : B->vval[v->id];
 }
+// The length of a slice cell's version `ver`. It names the version too, so a join's or a header's
+// claims, those about its length among them, are stated wherever the length is (jb_state).
+static int32_t jb_verlen(JB *B, int32_t ver) {
+    JVer *v = &B->g->ver[ver];
+    bool vl = !jb_global_at(B, v->kind == JV_ENTRY ? -1 : v->blk);
+    if (B->vlenv[ver] >= 0) return vl ? jb_local(B, B->vlenv[ver], false) : B->vlenv[ver];
+    int32_t vv = jb_ver(B, ver);                             // its name, and its own facts
+    if (B->fail) return 0;
+    char nm[128]; snprintf(nm, sizeof nm, "len(%s)", B->names[vv]);
+    char *n = JG_NEW(B->g, char, strlen(nm) + 1);
+    if (n) strcpy(n, nm); else { B->fail = true; return 0; }
+    B->vlenv[ver] = jb_newvar(B, n, 4, ver, NULL);
+    return vl ? jb_local(B, B->vlenv[ver], true) : B->vlenv[ver];
+}
 static int32_t jb_len(JB *B, IrValue *s) {
     if (!s || s->id < 0 || s->id >= B->g->nv) { B->fail = true; return 0; }
     // a load of a slice cell's STORE version is the slice stored, length and all; the store and
@@ -751,19 +765,7 @@ static int32_t jb_len(JB *B, IrValue *s) {
         if (s->id < 0 || s->id >= B->g->nv) { B->fail = true; return 0; }
     }
     // a load of a slice cell's other version: every load of that version has its length
-    if (B->g->loadver[s->id] >= 0) {
-        int32_t ver = B->g->loadver[s->id];
-        JVer *v = &B->g->ver[ver];
-        bool vl = !jb_global_at(B, v->kind == JV_ENTRY ? -1 : v->blk);
-        if (B->vlenv[ver] >= 0) return vl ? jb_local(B, B->vlenv[ver], false) : B->vlenv[ver];
-        int32_t vv = jb_ver(B, ver);                         // its name, and its own facts
-        if (B->fail) return 0;
-        char nm[128]; snprintf(nm, sizeof nm, "len(%s)", B->names[vv]);
-        char *n = JG_NEW(B->g, char, strlen(nm) + 1);
-        if (n) strcpy(n, nm); else { B->fail = true; return 0; }
-        B->vlenv[ver] = jb_newvar(B, n, 4, ver, NULL);
-        return vl ? jb_local(B, B->vlenv[ver], true) : B->vlenv[ver];
-    }
+    if (B->g->loadver[s->id] >= 0) return jb_verlen(B, B->g->loadver[s->id]);
     bool local = !jb_global_at(B, B->g->defblk[s->id]);
     if (B->vlen[s->id] >= 0) return local ? jb_local(B, B->vlen[s->id], false) : B->vlen[s->id];
     B->vlen[s->id] = jb_newvar(B, jb_str(B, "len(%%v%lld)", s->id, 0, 0), 2, s->id, NULL);
@@ -915,11 +917,12 @@ static bool jg_const_of(JG *g, IrValue *v, __int128 *c) {
 static bool jg_uns(const IrType *t) { return t && (t->kind == IRT_BOOL || (t->kind == IRT_INT && !t->is_signed)); }
 
 // A claim's term as a VC variable: a cell is its version in `row` (a block's entry state, or the
-// exit state of the predecessor an obligation is owed at), any other id that SSA value.
-static int32_t jb_term(JB *B, int32_t key, const int32_t *row) {
+// exit state of the predecessor an obligation is owed at), any other id that SSA value; of kind
+// JTERM_LEN, the length of that slice version or value.
+static int32_t jb_term(JB *B, int32_t key, uint8_t tk, const int32_t *row) {
     JG *g = B->g;
-    if (g->cell[key] >= 0) return jb_ver(B, row[g->cell[key]]);
-    return jb_val(B, jg_value(g, key));
+    if (g->cell[key] >= 0) return tk == JTERM_LEN ? jb_verlen(B, row[g->cell[key]]) : jb_ver(B, row[g->cell[key]]);
+    return tk == JTERM_LEN ? jb_len(B, jg_value(g, key)) : jb_val(B, jg_value(g, key));
 }
 // A cut-point claim of the function being generated (block ids are per function: another
 // function's claim at the same id is none of this one's).
@@ -959,7 +962,7 @@ static void jb_claims(JB *B, const JVer *v) {
         B->cst[ci] = at;
         JLT t[JCLAIM_MAXT];
         for (int k = 0; k < c->nt; k++) {
-            t[k].var = jb_term(B, c->key[k], g->instate + (size_t)c->blk * (size_t)g->ncells);
+            t[k].var = jb_term(B, c->key[k], c->tk[k], g->instate + (size_t)c->blk * (size_t)g->ncells);
             t[k].c = c->coef[k];
         }
         jb_atom(B, jb_str(B, "claim bb%lld #%lld", c->blk, ci, 0), t, c->nt, J_LE, c->rhs);
@@ -1934,12 +1937,16 @@ static bool jg_loop_header(JG *g, int32_t b) {
     return b >= 0 && b < g->nb && g->blk[b] && g->rpoix[b] >= 0 && g->inloop[(size_t)b * (size_t)g->nb + (size_t)b];
 }
 // A claim's term at block b: an integer cell (its version at b), an integer parameter, or an
-// integer value defined in a block that strictly dominates b.
-static bool jg_term_ok(JG *g, int32_t b, int32_t key) {
+// integer value defined in a block that strictly dominates b; of kind JTERM_LEN, the same of a
+// slice, its length.
+static bool jg_term_kind(const IrType *t, uint8_t tk) {
+    return tk == JTERM_LEN ? t && t->kind == IRT_SLICE : tk == JTERM_VALUE && jg_is_int(t);
+}
+static bool jg_term_ok(JG *g, int32_t b, int32_t key, uint8_t tk) {
     if (key < 0 || key >= g->nv) return false;
-    if (g->cell[key] >= 0) return jg_is_int(g->cty[g->cell[key]]);
+    if (g->cell[key] >= 0) return jg_term_kind(g->cty[g->cell[key]], tk);
     IrValue *v = jg_value(g, key);
-    if (!v || !jg_is_int(v->type)) return false;
+    if (!v || !jg_term_kind(v->type, tk)) return false;
     if (!g->def[key]) return true;                                // a parameter
     int32_t d = g->defblk[key];
     return d >= 0 && d != b && jg_dominates(g, d, b);
@@ -1963,6 +1970,7 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
     if (h->incomplete) return jg_fail(g, "a return claim on a function lowered incompletely");
     if (!jg_claim_shape(g, c->key, c->nt, JCLAIM_MAXT)) return false;
     if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
+    for (int k = 0; k < c->nt; k++) if (c->tk[k] != JTERM_VALUE) return jg_fail(g, "a return claim over a length");
     bool ret = false;
     for (int k = 0; k < c->nt; k++) {
         if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
@@ -1999,7 +2007,7 @@ static bool jg_claims_ok(JG *g) {
         bool made = false;
         for (int k = 0; k < c->nt; k++) {
             int32_t key = c->key[k];
-            if (!jg_term_ok(g, c->blk, key)) return jg_fail(g, "a claim's term is not a cell or a value fixed at its block");
+            if (!jg_term_ok(g, c->blk, key, c->tk[k])) return jg_fail(g, "a claim's term is not a cell or a value fixed at its block");
             if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
             if (g->cell[key] < 0) continue;
             int32_t jv = g->instate[(size_t)c->blk * (size_t)g->ncells + (size_t)g->cell[key]];
@@ -2056,7 +2064,7 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
             B.to = H->id;
             JLT t[JCLAIM_MAXT]; JCons goal;
             for (int k = 0; k < c->nt; k++) {
-                t[k].var = jb_term(&B, c->key[k], g->outstate + (size_t)P->id * (size_t)g->ncells);
+                t[k].var = jb_term(&B, c->key[k], c->tk[k], g->outstate + (size_t)P->id * (size_t)g->ncells);
                 t[k].c = c->coef[k];
             }
             if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
@@ -2110,7 +2118,7 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             return jg_fail(g, "a ranking claim of no components, or of more than it may have");
         if (!jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
         for (int32_t i = 0; i < r->nt; i++)
-            if (!jg_term_ok(g, H->id, r->key[i])) return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
+            if (!jg_term_ok(g, H->id, r->key[i], r->tk[i])) return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
         for (int32_t j = 0; j < r->ncomp; j++) {
             if (r->c0[j] > big || r->c0[j] < -big) return jg_fail(g, "a ranking claim's constant out of range");
             for (int32_t i = 0; i < r->nt; i++)
@@ -2142,8 +2150,8 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                     B.to = H->id;
                     int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
                     for (int32_t i = 0; i < r->nt; i++) {
-                        pre[i] = jb_term(&B, r->key[i], g->instate + (size_t)H->id * (size_t)g->ncells);
-                        post[i] = jb_term(&B, r->key[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
+                        pre[i] = jb_term(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells);
+                        post[i] = jb_term(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
                     }
                     JCons goal;
                     if (B.fail || !jg_rank_goal(&B, r, j, pre, post, what, &goal)) return jg_fail(g, "out of memory building a ranking VC");
@@ -2225,7 +2233,7 @@ static bool jgen_terms(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, JSlot **out
     memset(seen, 0, (size_t)g.nv);
     for (int32_t c = 0; c < g.ncells; c++) {
         int32_t id = g.cellv[c]->id;
-        if (!jg_term_ok(&g, blk, id)) continue;
+        if (!jg_term_ok(&g, blk, id, JTERM_VALUE)) continue;
         K[n].blk = blk; K[n].key = id; K[n].type = g.cty[c]; K[n].head = false; n++; seen[id] = 1;
     }
     const uint8_t *L = g.inloop + (size_t)blk * (size_t)g.nb;
@@ -2237,7 +2245,7 @@ static bool jgen_terms(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, JSlot **out
                 IrValue *o = i->operands[k];
                 if (!o || o->id < 0 || o->id >= g.nv || seen[o->id]) continue;
                 if (g.def[o->id] && g.def[o->id]->op == IR_CONST) continue;
-                if (!jg_term_ok(&g, blk, o->id)) continue;
+                if (!jg_term_ok(&g, blk, o->id, JTERM_VALUE)) continue;
                 K[n].blk = blk; K[n].key = o->id; K[n].type = o->type; K[n].head = false; n++; seen[o->id] = 1;
             }
         }
@@ -2250,7 +2258,7 @@ static bool jgen_terms(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, JSlot **out
 // cell's version, or a value fixed at blk), 2 when it is moreover a version blk makes afresh (a
 // claim must name one). A candidate from elsewhere (VRA's header states) is filtered by it, since
 // a claim the generator cannot state is refused with the whole function.
-static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
+static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const int32_t *keys, const uint8_t *tk, int32_t n, uint8_t *kind,
                             char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
@@ -2259,7 +2267,7 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const 
     if (!jg_structure(&g) || !jg_cells(&g)) return false;
     if (blk < 0 || blk >= g.nb || !g.blk[blk]) return true;
     for (int32_t i = 0; i < n; i++) {
-        if (!jg_term_ok(&g, blk, keys[i])) continue;
+        if (!jg_term_ok(&g, blk, keys[i], tk ? tk[i] : JTERM_VALUE)) continue;
         kind[i] = 1;
         if (g.cell[keys[i]] < 0) continue;
         int32_t jv = g.instate[(size_t)blk * (size_t)g.ncells + (size_t)g.cell[keys[i]]];
@@ -2285,13 +2293,17 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
     if (!jg_loop_header(&g, header)) { out->refused = "not a loop header"; return true; }
     IrBlock *H = g.blk[header];
     int32_t nk = 0, *keys = JG_NEW(&g, int32_t, g.ncells ? g.ncells : 1);
+    uint8_t *tks = JG_NEW(&g, uint8_t, g.ncells ? g.ncells : 1);
     int32_t np = 0;
     for (IrEdge *e = H->preds; e; e = e->next) np++;
     JPath *P = JG_NEW(&g, JPath, np ? np : 1);
-    if (!keys || !P) return jg_fail(&g, "out of memory");
+    if (!keys || !tks || !P) return jg_fail(&g, "out of memory");
     for (int32_t c = 0; c < g.ncells; c++) {
         int32_t jv = g.instate[(size_t)header * (size_t)g.ncells + (size_t)c];
-        if (jv >= 0 && g.ver[jv].blk == header && g.ver[jv].kind == JV_HEAD && jg_is_int(g.ver[jv].slot)) keys[nk++] = g.cellv[c]->id;
+        if (jv < 0 || g.ver[jv].blk != header || g.ver[jv].kind != JV_HEAD) continue;
+        const IrType *st = g.ver[jv].slot;
+        if (jg_is_int(st)) { tks[nk] = JTERM_VALUE; keys[nk++] = g.cellv[c]->id; }
+        else if (st && st->kind == IRT_SLICE) { tks[nk] = JTERM_LEN; keys[nk++] = g.cellv[c]->id; }   // its length
     }
     int32_t n = 0;
     for (IrEdge *e = H->preds; e; e = e->next) {
@@ -2309,8 +2321,9 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
         if (B.fail || !pp) return jg_fail(&g, "out of memory");
         for (int32_t k = 0; k < nk; k++) {
             pp[k].key = keys[k];
-            pp[k].post = jb_term(&B, keys[k], g.outstate + (size_t)Pb->id * (size_t)g.ncells);
-            pp[k].pre = back ? jb_term(&B, keys[k], g.instate + (size_t)header * (size_t)g.ncells) : -1;
+            pp[k].post = jb_term(&B, keys[k], tks[k], g.outstate + (size_t)Pb->id * (size_t)g.ncells);
+            pp[k].pre = back ? jb_term(&B, keys[k], tks[k], g.instate + (size_t)header * (size_t)g.ncells) : -1;
+            pp[k].tk = tks[k];
         }
         JLT none[1]; JCons goal; JObl o;
         JVc *vc = JG_NEW(&g, JVc, 1);
@@ -2345,10 +2358,10 @@ static bool jgo_terms(void *ctx, struct IrFunc *f, int32_t blk, JSlot **out, int
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_terms(&m, f, x->mod, blk, out, nout, err, errcap);
 }
-static bool jgo_term_kinds(void *ctx, struct IrFunc *f, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
+static bool jgo_term_kinds(void *ctx, struct IrFunc *f, int32_t blk, const int32_t *keys, const uint8_t *tk, int32_t n, uint8_t *kind,
                            char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
-    return jgen_term_kinds(&m, f, x->mod, blk, keys, n, kind, err, errcap);
+    return jgen_term_kinds(&m, f, x->mod, blk, keys, tk, n, kind, err, errcap);
 }
 static bool jgo_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
                       char *err, uint32_t errcap) {
