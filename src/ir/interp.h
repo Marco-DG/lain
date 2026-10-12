@@ -498,7 +498,10 @@ static void ii_binop_scalar(IrInstr *ins, IVal *a, IVal *b, IrType *ta, IrType *
             // the interpreter ran past what the native program dies on. Only where the operands'
             // C type IS their type: a narrower or odd-width operand is computed in a wider C type.
             IrType *ot = ii_ty(ins->operands[0]);
-            if (y == -1 && it_signed(ot) && it_bits(ot) >= 32 && it_bits(ot) == ir_int_storage_bits(it_bits(ot)) && x == it_min(ot)) {
+            // a LANE's remainder wraps, as every lane operation does (spec 07; I.203): TYPE_MIN % -1
+            // in a lane is 0, which the emitter spells out, so there is no trap to model there
+            bool lane = ins->result && ins->result->type && ins->result->type->kind == IRT_VECTOR;
+            if (!lane && y == -1 && it_signed(ot) && it_bits(ot) >= 32 && it_bits(ot) == ir_int_storage_bits(it_bits(ot)) && x == it_min(ot)) {
                 // Worded as an overflow, as it is one (the quotient), and as every reader of a
                 // trap classifies them: fuzz_soundness files a trap by "overflows" or "outside".
                 if (ins->unchecked) II_UB(ins, "the remainder of the type's minimum by -1 overflows (its quotient does not fit)");

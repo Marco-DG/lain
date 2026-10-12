@@ -876,6 +876,38 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                 ir_emit_modular(i, o);
                 break;
             }
+            // ★ ...AND A SIGNED LANE'S DIVISION WRAPS TOO (I.203). Spec 07: integer lanes wrap and
+            // vector arithmetic carries no overflow obligation, so TYPE_MIN / -1 in a lane is TYPE_MIN
+            // and TYPE_MIN % -1 is 0, as the interpreter computes them. `v0 / (int32_t)v1` gave C a
+            // lane division that is undefined there: SIGFPE at -O0, where gcc scalarises the lanes
+            // to idiv. The -1 divisor is spelled out as the scalar `/%` spells it: by a scalar, a
+            // conditional; by a vector, its -1 lanes divide by 1 and the wrapped negation (or 0) is
+            // selected back in by the lane mask. No C division sees TYPE_MIN / -1.
+            if (i->n_operands == 2 && i->result && i->result->type && i->result->type->kind == IRT_VECTOR &&
+                (i->op == IR_SDIV || i->op == IR_SREM) && i->result->type->elem &&
+                i->result->type->elem->kind == IRT_INT && i->result->type->elem->is_signed &&
+                i->operands[0]->type && i->operands[0]->type->kind == IRT_VECTOR && i->operands[1]->type &&
+                (i->operands[1]->type->kind == IRT_VECTOR || i->operands[1]->type->kind == IRT_INT)) {
+                IrType *vt = i->result->type;
+                int a = i->operands[0]->id, b = i->operands[1]->id, r = i->result->id;
+                bool div = i->op == IR_SDIV;
+                if (i->operands[1]->type->kind == IRT_INT) {          // a scalar divisor
+                    fprintf(o, "  v%d = (v%d == -1) ? ", r, b);
+                    if (div) { fputc('(', o); ir_ctype(vt, o); fputs(")(-(", o); ir_vec_unsigned_ctype(vt, o); fprintf(o, ")v%d)", a); }
+                    else { fputc('(', o); ir_ctype(vt, o); fprintf(o, ")(v%d - v%d)", a, a); }
+                    fputs(" : (", o); ir_ctype(vt, o); fprintf(o, ")(v%d %s (", a, div ? "/" : "%");
+                    ir_ctype(vt->elem, o); fprintf(o, ")v%d);\n", b);
+                } else {                                            // a divisor per lane
+                    fprintf(o, "  { "); ir_ctype(vt, o); fprintf(o, " m_ = (");
+                    ir_ctype(vt, o); fprintf(o, ")(v%d == -1); ", b);
+                    ir_ctype(vt, o); fprintf(o, " d_ = (v%d & ~m_) | (m_ & 1); ", b);
+                    if (div) {
+                        fprintf(o, "v%d = (m_ & (", r); ir_ctype(vt, o); fputs(")(-(", o);
+                        ir_vec_unsigned_ctype(vt, o); fprintf(o, ")v%d)) | (~m_ & (v%d / d_)); }\n", a, a);
+                    } else fprintf(o, "v%d = ~m_ & (v%d %% d_); }\n", r, a);
+                }
+                break;
+            }
             // ★ A VECTOR'S LANES WRAP (the language's rule: sema exempts vector arithmetic from
             // the overflow check for that reason). On SIGNED lanes the C `+ - * <<` is signed
             // overflow, undefined: UBSan, on `i32x4 + i32x4` at 2147483647, "signed integer

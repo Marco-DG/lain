@@ -1,0 +1,36 @@
+// I.203: a signed lane's `/` and `%` wrap, as every lane operation does (spec 07: vector arithmetic
+// carries no overflow obligation), so TYPE_MIN / -1 in a lane is TYPE_MIN and TYPE_MIN % -1 is 0.
+// The C was `v0 / (int32_t)v1`, a lane division undefined at TYPE_MIN / -1: SIGFPE at -O0 (gcc
+// scalarises the lanes to idiv), and it survived at -O2 by accident. The -1 divisor is now spelled
+// out: by a scalar, a conditional; by a vector (here under `unsafe`, which waives the lanes' zero
+// check and nothing else), a lane mask. Run natively at both levels (hint_gate) and interpreted.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func by_scalar(a i32x4, d i32 != 0) i32x4 {
+    return a / d
+}
+func rem_scalar(a i32x4, d i32 != 0) i32x4 {
+    return a % d
+}
+func by_lane(a i32x4, d i32x4) i32x4 {
+    var q i32x4 = a
+    unsafe { q = a / d }
+    return q
+}
+func rem_lane(a i32x4, d i32x4) i32x4 {
+    var r i32x4 = a
+    unsafe { r = a % d }
+    return r
+}
+func main() i32 effects io {
+    var a i32x4 = [-2147483647 - 1, 7, -9, 100]
+    var d i32x4 = [-1, -1, 2, -3]
+    q = by_scalar(a, -1)
+    r = rem_scalar(a, -1)
+    libc_printf("%d %d %d %d / %d %d %d %d\n", q[0], q[1], q[2], q[3], r[0], r[1], r[2], r[3])
+    s = by_scalar(a, 3)
+    libc_printf("%d %d %d %d\n", s[0], s[1], s[2], s[3])
+    u = by_lane(a, d)
+    w = rem_lane(a, d)
+    libc_printf("%d %d %d %d / %d %d %d %d\n", u[0], u[1], u[2], u[3], w[0], w[1], w[2], w[3])
+    return 0
+}

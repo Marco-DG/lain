@@ -2698,6 +2698,14 @@ ty=Shade scalar
 ty=Slice_u8 scalar
 ty=Tone scalar
 ty=__U_ptr_u8_Found_Not_Found scalar
+### tests/trust/vector_division_min_wraps_pass.ln
+rc=0
+out=-2147483648 -7 9 -100 / 0 0 0 0
+out=-715827882 2 -3 33
+out=-2147483648 -7 -4 -33 / 0 0 -1 1
+at=const 8
+at=vector_size 3
+ty=Slice_u8 scalar
 ### tests/trust/vla_large_probed_pass.ln
 rc=0
 out=7
