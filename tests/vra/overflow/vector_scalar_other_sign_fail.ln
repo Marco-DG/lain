@@ -1,0 +1,10 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: this value is not provably within [-2147483648, 2147483647], the range of the type it lands in
+// I.204: a scalar beside a vector applies to every lane, so it lands in the lane type (spec 07's
+// implicit conversion, refused unless proven to fit). Here a u32 that may exceed every i32 lane.
+// On 05314a7 this compiled, and with d = 4294967295 the interpreter divided by 4294967295 (0 in
+// every lane) while the C divided by -1 (the lanes negated).
+func f(a i32x4, d u32 != 0) i32x4 {
+    return a / d
+}
+func main() i32 { return 0 }

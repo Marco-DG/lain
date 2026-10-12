@@ -803,8 +803,11 @@ expected: a declaration, an argument, a field, a return, or an operand beside a 
 every lane.
 
 \pnum
-The arithmetic, bitwise and shift operators and the comparisons apply lane by lane, and a
-scalar operand applies to every lane. Integer lanes \emph{wrap}: a lane's result is taken modulo
+The arithmetic, bitwise and shift operators and the comparisons apply lane by lane, on the lane
+type and with its signedness. A scalar operand applies to every lane: it is converted to the lane
+type as any implicit conversion is (\S\,\ref{sec:types.rank}), so it shall be provably within the
+lane type's range (\diagcode{E086}). A shift's amount is the exception, since it is not a lane
+value and keeps its own type. Integer lanes \emph{wrap}: a lane's result is taken modulo
 $2^w$ for a $w$-bit lane, including unary \lain{-}, so vector arithmetic carries no overflow
 obligation. Two obligations remain, as on scalars:
 \begin{itemize}
@@ -814,6 +817,26 @@ obligation. Two obligations remain, as on scalars:
   \item a shift's amount shall be a scalar provably in $[0, w-1]$ (\diagcode{E086}); an amount
         given per lane is refused for the same reason.
 \end{itemize}
+
+\begin{laincode}
+func add(v u8x16, x i32) u8x16 {
+    return v + x    // ERROR [E086]
+}
+
+func main() i32 {
+    return 0
+}
+\end{laincode}
+
+\begin{laincode}
+// VERIFY: exit 7
+func main() i32 {
+    var v u8x16 = @splat(u8x16, 3)
+    w = v + 4
+    if w[0] != 7 { return 1 }
+    return 7
+}
+\end{laincode}
 
 \pnum
 A comparison yields a \emph{mask}: every bit of a lane is set where the comparison holds and

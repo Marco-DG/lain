@@ -1476,6 +1476,30 @@ static bool ir_cmp_op(TokenKind t, bool sgn, IrCmp *c) {
 static bool ir_nonneg_lit(Expr *e) {
     return e && e->kind == EXPR_LITERAL && e->as.literal_expr.value >= 0;
 }
+// ★ A SCALAR BESIDE A VECTOR LANDS IN THE LANE TYPE, CHECKED (I.204). It applies to every lane
+// (spec 07), so it is a lane value, and turning a u32 into an i32 lane is the implicit conversion
+// spec 07 refuses unless it is proven to fit. Left in its own type, `a / d` on i32 lanes with
+// d = 4294967295 divided by 4294967295 in the interpreter (0) and by -1 in the C (the lanes
+// negated), and `a < d` held in every lane interpreted and in one natively. The lane type is the
+// vector OPERAND's (a float-lane comparison's result is an integer mask, never the scalar's type).
+// A shift's amount is not a lane value and keeps its type; its caller does not land it.
+static void ir_land_scalar_in_lane(LowerCtx *c, IrValue **x, IrValue **y) {
+    IrValue *vec = (*x && (*x)->type && (*x)->type->kind == IRT_VECTOR) ? *x
+                 : (*y && (*y)->type && (*y)->type->kind == IRT_VECTOR) ? *y : NULL;
+    if (!vec || !vec->type->elem || vec->type->elem->kind != IRT_INT) return;
+    IrType *lt = vec->type->elem;
+    IrValue **xy[2] = { x, y };
+    for (int k = 0; k < 2; k++) {
+        IrValue *v = *xy[k];
+        if (!v || !v->type || v->type->kind != IRT_INT ||
+            (v->type->bits == lt->bits && v->type->is_signed == lt->is_signed)) continue;
+        IrInstr *cv = ir_instr(c->f, IR_CAST, lt, 1); cv->operands[0] = v;
+        cv->aux.cast_kind = v->type->bits > lt->bits ? IR_CAST_TRUNC : v->type->bits < lt->bits
+                          ? (v->type->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT) : IR_CAST_BITCAST;
+        cv->wrap = IR_WRAP_CHECK; cv->unchecked = c->unsafe;
+        ir_emit(c->cur, cv); *xy[k] = cv->result;
+    }
+}
 // Does integer type t hold every value of integer type s?
 static bool ir_int_holds(const IrType *t, const IrType *s) {
     if (t->is_signed == s->is_signed) return t->bits >= s->bits;
@@ -2660,7 +2684,16 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             }
             // Signedness comes from the OPERANDS, not e->type: a comparison's result
             // type is bool, so deriving from it would mistag every `i < len` as signed.
-            Type *sty = (L->type && L->type->kind==TYPE_SIMPLE && L->type->int_width_cache>0) ? L->type
+            // ★ A VECTOR'S LANES DECIDE (I.204). An operand that is a vector was passed over (it is
+            // not a TYPE_SIMPLE), so `a >> b` on i8 lanes by a u32 amount took the AMOUNT's
+            // signedness: a logical shift in the IR, where VRA and the interpreter read -128 >> 5 as
+            // 4 and the C, an arithmetic shift on a signed vector, gave -4. A non-negative fact about
+            // a lane that is negative natively. The lane type is the operand's type here.
+            Type *lane_l = (L->type && L->type->kind==TYPE_VECTOR) ? L->type->element_type : NULL;
+            Type *lane_r = (R->type && R->type->kind==TYPE_VECTOR) ? R->type->element_type : NULL;
+            Type *sty = (lane_l && lane_l->kind==TYPE_SIMPLE && lane_l->int_width_cache>0) ? lane_l
+                      : (lane_r && lane_r->kind==TYPE_SIMPLE && lane_r->int_width_cache>0) ? lane_r
+                      : (L->type && L->type->kind==TYPE_SIMPLE && L->type->int_width_cache>0) ? L->type
                       : (R->type && R->type->kind==TYPE_SIMPLE && R->type->int_width_cache>0) ? R->type
                       : e->type;
             // An operator with an overflow policy computes in ITS type, which a literal on the left
@@ -2687,8 +2720,10 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                        ? ir_lower_vec_literal(c, R, lvt) : NULL;
             if (!y) y = ir_lower_expr(c, R);
             IrOp op; IrWrapMode wrap; IrCmp cmp;
-            if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp))
+            if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp)) {
+                ir_land_scalar_in_lane(c, &x, &y);              // a lane comparison's scalar too (I.204)
                 return ir_cmp_value(c, e->as.binary_expr.op, x, y, ir_nonneg_lit(L), ir_nonneg_lit(R), sgn);
+            }
             if (ir_bin_op(e->as.binary_expr.op, sgn, &op, &wrap)) {
                 // ★ A DIVISION OR REMAINDER OF MIXED SIGNEDNESS IS COMPUTED IN i64 (I.198). The IR's
                 // `/` and `%` are exact on the operands' values (interp.h treats SDIV and UDIV
@@ -2713,6 +2748,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 // an int8_t. Computed in i64 and landed checked, the landing is owed like any other.
                 // (In 64 bits the IR's operation is on the two's complement bits, as C's is, and its
                 // result always fits.)
+                if (op != IR_SHL && op != IR_LSHR && op != IR_ASHR) ir_land_scalar_in_lane(c, &x, &y);
                 bool divrem = op == IR_SDIV || op == IR_UDIV || op == IR_SREM || op == IR_UREM;
                 bool bitw = op == IR_AND || op == IR_OR || op == IR_XOR;
                 if ((divrem || bitw) &&
