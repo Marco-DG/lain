@@ -13,6 +13,13 @@
 //   --claims                    also each claim kept, as a comment line
 //   --no-claims, --no-finder    propose no claim; or none from VRA's header states (PE.4) and
 //                               return intervals
+//   --judge                     the entry point the compiler calls (src/judge/judge.h): one §3
+//                               record a line (`v1 <id> proved cert=<n>`, `not-implied model {..}`,
+//                               `outside`, `budget`, `solver-bug`, `uncertified`; `refused <fn>`,
+//                               `no-claims`), the claims' VCs first, then a `# judge` count line;
+//                               exit 1 on a solver bug, unstable claims or a refusal
+//   --judge-corrupt             --judge with every certificate damaged (a sign byte of 2) before
+//                               the judge reads it: nothing may be proved (judge_gate's canary)
 //   /tmp/jvc FILE.ln --smt      the same, as SMT-LIB (QF_LIA), for an offline solver
 //   /tmp/jvc FILE.ln --stats    one TSV line per obligation: function, point, kind, ordinal,
 //                               VRA's verdict, outside or stated, #vars, #hyps
@@ -54,6 +61,7 @@
 #include "analysis/report.h"
 #include "frontends/lain/static_eval.h"   // DECIDE-W step 2, as main.c runs it
 #include "judge/gen.h"
+#include "judge/judge.h"     // --judge: the entry point the compiler calls
 #include "judge/text.h"
 #include "solver/finder.h" // the claim proposer (untrusted): src/solver/finder.h
 
@@ -299,9 +307,55 @@ static void hdr_sink(void *ctx, IrFunc *f, int bid, const VraRel *r, int n) {
     hdr[nhdr].f = f; hdr[nhdr].bid = bid; hdr[nhdr].r = c; hdr[nhdr].n = n; nhdr++;
 }
 
+// ── --judge: judge_module with the untrusted solver and finder as its callbacks, one §3 line a record
+typedef struct { char *work; size_t wcap; bool corrupt; JFinder *F; } JjCtx;
+static void jj_corrupt(JSteps *b, bool *done) {       // a multiplier's sign byte 2 (I.197): the kernel must refuse it
+    for (int32_t i = 0; b && i < b->n && !*done; i++) {
+        if (b->s[i].k == J_LIN && b->s[i].nmul > 0) { b->s[i].mul[0].m.neg = 2; *done = true; }
+        for (int32_t k = 0; k < b->s[i].nbr && !*done; k++) jj_corrupt(&b->s[i].br[k], done);
+    }
+}
+static bool jj_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
+    JjCtx *c = ctx;
+    *out = lia_solve(vc, lim, c->work, c->wcap);
+    if (c->corrupt && out->k == J_ANS_CERT) { bool done = false; jj_corrupt(&out->cert.body, &done); }
+    return true;
+}
+static bool jj_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout) {
+    JjCtx *c = ctx;
+    c->F->gen = gen; c->F->mod = mod;
+    *out = finder_propose(c->F, nout);
+    return !c->F->oom;                   // a NULL for want of memory is not "no claims"
+}
+static long long jrec_n[9];
+static void jrec_print(void *ctx, const JRecord *r) {
+    (void)ctx;
+    static const char *kn[] = { "proved", "not-implied", "outside", "budget", "capacity", "solver-bug", "uncertified", "refused", "no-claims" };
+    jrec_n[r->k]++;
+    if (r->k == JREC_NO_CLAIMS) { printf("no-claims: %s\n", r->reason); return; }
+    if (r->k == JREC_REFUSED) { printf("refused %.*s: %s\n", (int)r->fn->name->length, r->fn->name->name, r->reason); return; }
+    if (r->id && r->id->fn) printf("v1 %s %s %s %s %s %s", r->id->fn, r->id->irhash, r->id->point, r->id->kind, r->id->ordinal, kn[r->k]);
+    else printf("v1 %.*s - bb%d.%d - - %s", (int)r->fn->name->length, r->fn->name->name, r->blk ? r->blk->id : -1, r->idx, kn[r->k]);
+    switch (r->k) {
+        case JREC_PROVED: printf(" cert=%d", r->steps); break;
+        case JREC_NOT_IMPLIED:
+            printf(" model {");
+            for (int32_t i = 0; r->model && i < r->model->n; i++) {
+                printf("%s %s=", i ? " ;" : "", r->vc->vars[i]); jint_print(&r->model->val[i], stdout);
+            }
+            printf(" }");
+            break;
+        case JREC_BUDGET: case JREC_CAPACITY:
+            printf(" used=pivot:%llu,node:%llu,leaf:%llu", (unsigned long long)r->used.pivot, (unsigned long long)r->used.node, (unsigned long long)r->used.leaf);
+            break;
+        default: if (r->reason) printf(" reason=%s", r->reason); break;
+    }
+    printf("\n");
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln> [--smt | --stats | --why | --check-hyps] [--no-claims]\n", argv[0]); return 2; }
-    bool smt = false, stats = false, check = false, why = false, claims = true, show = false, finder = true;
+    bool smt = false, stats = false, check = false, why = false, claims = true, show = false, finder = true, judge = false, corrupt = false;
     for (int k = 2; k < argc; k++) {
         if (!strcmp(argv[k], "--no-claims")) claims = false;
         if (!strcmp(argv[k], "--claims")) show = true;
@@ -310,6 +364,8 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--stats")) stats = true;
         if (!strcmp(argv[k], "--check-hyps")) check = true;
         if (!strcmp(argv[k], "--why")) why = true;
+        if (!strcmp(argv[k], "--judge")) judge = true;
+        if (!strcmp(argv[k], "--judge-corrupt")) judge = corrupt = true;
     }
     Arena aa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -328,14 +384,13 @@ int main(int argc, char **argv) {
     if (ir_static_eval_module(prog, path, &ea)) { fprintf(stderr, "static evaluation failed\n"); return 1; }
     IrFunc *irmod = ir_lower_module(prog, &ia);
     vra_mod = irmod;
-    jgen_module = irmod;                               // the generator's callees (its frame rule)
     size_t cap = (size_t)1 << 28, hcap = (size_t)1 << 26;
     char *buf = malloc(cap), *hbuf = malloc(hcap);
     size_t wcap = (size_t)1 << 26;
     char *work = malloc(wcap);
     if (!buf || !hbuf || !work) { fprintf(stderr, "out of memory\n"); return 1; }
     // the finder (untrusted, src/solver/finder.h) proposes; the generator is offered to it as calls
-    JGenOffer offer = { hbuf, hcap };
+    JGenOffer offer = { hbuf, hcap, irmod };
     JudgeGen gen = jgen_offer(&offer);
     JFinder F; memset(&F, 0, sizeof F);
     F.gen = &gen; F.mod = irmod; F.work = work; F.worksz = wcap;
@@ -355,8 +410,23 @@ int main(int argc, char **argv) {
             if (VH) vra_free(VH);
         }
         F.hdr = hdr; F.nhdr = nhdr;
-        cl = finder_propose(&F, &ncl);
-        if (F.oom) fprintf(stderr, "finder_propose: out of memory\n");
+        if (!judge) {
+            cl = finder_propose(&F, &ncl);
+            if (F.oom) fprintf(stderr, "finder_propose: out of memory\n");
+        }
+    }
+    if (judge) {
+        // the entry point the compiler calls, its callbacks the untrusted solver and finder
+        JjCtx jc = { work, wcap, corrupt, &F };
+        JudgeCalls calls = { &jc, jj_solve, claims ? jj_propose : NULL };
+        JudgeLimits lim; lim.lim = F.lim;
+        JMem jm = jmem_over(buf, cap);
+        char err[200];
+        if (!judge_module(irmod, &lim, &calls, jrec_print, NULL, &jm, err, sizeof err)) { fprintf(stderr, "judge_module: %s\n", err); return 1; }
+        printf("# judge proved=%lld not-implied=%lld outside=%lld budget=%lld capacity=%lld solver-bug=%lld uncertified=%lld refused=%lld no-claims=%lld\n",
+               jrec_n[0], jrec_n[1], jrec_n[2], jrec_n[3], jrec_n[4], jrec_n[5], jrec_n[6], jrec_n[7], jrec_n[8]);
+        free(buf); free(hbuf); free(work);
+        return jrec_n[JREC_SOLVER_BUG] || jrec_n[JREC_UNCERTIFIED] || jrec_n[JREC_REFUSED] || jrec_n[JREC_NO_CLAIMS] ? 1 : 0;
     }
     for (int32_t c = 0; show && c < ncl; c++) {
         static const char *kn[] = { "%ret" };
@@ -374,7 +444,7 @@ int main(int argc, char **argv) {
         char err[200]; err[0] = 0;
         if (check) {
             JObl *o; int32_t n;
-            if (!jgen_func(&m, f, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
+            if (!jgen_func(&m, f, irmod, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
                 fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; continue;
             }
             HK *nh = realloc(hk, sizeof *hk * (size_t)(nhk + n + 1));
@@ -391,7 +461,7 @@ int main(int argc, char **argv) {
         Vra *V = vra_analyze(f);
         m = jmem_over(buf, cap);
         JObl *o; int32_t n;
-        if (!jgen_func(&m, f, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
+        if (!jgen_func(&m, f, irmod, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
             printf("%s %.*s: %s\n", stats ? "ERROR\t" : "# generator refused", (int)f->name->length, f->name->name, err);
             rc = 1; vra_free(V); continue;
         }

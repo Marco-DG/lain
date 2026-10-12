@@ -22,7 +22,7 @@ UNITS="src/frontends/lain/main.c src/tools/vra_driver.c src/tools/linearity_driv
        src/tools/test_definite_init.c src/tools/test_place.c src/tools/test_ir.c
        src/tools/test_octagon.c src/tools/test_judge_format.c src/tools/solve_vc.c src/tools/test_rank.c
        src/tools/test_judge_gen.c src/tools/judge_vc_driver.c
-       src/tools/test_judge_kernel.c src/tools/judge_check.c"
+       src/tools/test_judge_kernel.c src/tools/judge_check.c src/tools/test_judge_module.c"
 # The units compile in parallel (I.173), LAIN_GATE_JOBS at a time (default 4); each writes its
 # report to its own file, and the reports are read back in the order above.
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT

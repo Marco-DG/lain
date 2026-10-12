@@ -31,10 +31,11 @@ static IrType *slice_of(IrType *e) { IrType *t = ir_type_new(&A, IRT_SLICE); t->
 // Every VC of `f` as text, each checked to round-trip; NULL when the generator refuses the
 // function (its reason in `why` when given, else printed). `f`'s CFG must be finalized (once:
 // ir_finalize_cfg adds the edges again on each call).
+static IrFunc *gen_mod = NULL;   // the module the generator looks callees up in (none: every call unknown)
 static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, cl, ncl, only, &o, &n, err, sizeof err)) {
+    if (!jgen_func(&m, f, gen_mod, cl, ncl, only, &o, &n, err, sizeof err)) {
         if (why) strcpy(why, err); else printf("  generator refused: %s\n", err);
         return NULL;
     }
@@ -333,7 +334,7 @@ int main(void) {
         // the slots a proposer may claim about: both joins' fresh versions, the inner one first
         JMem m = jmem_over(region, sizeof region);
         JSlot *sl; int32_t ns; char err[200];
-        bool ok = jgen_slots(&m, f, &sl, &ns, err, sizeof err);
+        bool ok = jgen_slots(&m, f, gen_mod, &sl, &ns, err, sizeof err);
         CHECK(ok && ns == 2 && sl[0].blk == b3->id && sl[1].blk == b5->id && sl[0].key == s->id,
               "the slots are the two joins' versions of s, in reverse post-order (%d)", ok ? ns : -1);
         // what a caller asks for: the claims' obligations only, or one block's
@@ -394,7 +395,7 @@ int main(void) {
         // what a proposer may name at the header: s made there, u and y fixed there, ls not
         {   JMem m = jmem_over(region, sizeof region);
             int32_t keys[4] = { s->id, u->id, y->id, ls->id }; uint8_t kind[4]; char err[200];
-            bool ok = jgen_term_kinds(&m, f, b3->id, keys, 4, kind, err, sizeof err);
+            bool ok = jgen_term_kinds(&m, f, gen_mod, b3->id, keys, 4, kind, err, sizeof err);
             CHECK(ok && kind[0] == 2 && kind[1] == 1 && kind[2] == 1 && kind[3] == 0,
                   "term kinds at the header: s 2, u 1, y 1, ls 0 (got %d %d %d %d)", kind[0], kind[1], kind[2], kind[3]);
         }
@@ -468,9 +469,9 @@ int main(void) {
         IrInstr *a2 = ir_instr(f, IR_ADD, u32t, 2); a2->operands[0] = a1->result; a2->operands[1] = q3; a2->wrap = IR_WRAP_MODULAR; ir_emit(b0, a2);
         ir_set_ret(b0, a2->result);
         ir_finalize_cfg(f);
-        jgen_module = known ? rd : NULL;
+        gen_mod = known ? rd : NULL;
         char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
-        jgen_module = NULL;
+        gen_mod = NULL;
         // vc_of returns one buffer: each VC is copied out before the next is looked up
         char key[48], want[64], v1[1 << 12], v2[1 << 12], v3[1 << 12];
         IrValue *qs[3] = { q1, q2, q3 }; char *vs[3] = { v1, v2, v3 };
@@ -541,7 +542,7 @@ int main(void) {
         ir_set_ret(b0, q);
         ir_finalize_cfg(f);
         f->src_file = NULL;
-        jgen_module = mn;
+        gen_mod = mn;
         char *t = gen_with(f, &c, 1, JGEN_ALL, NULL);
         char key[32], want[96];
         snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, q));
@@ -566,7 +567,7 @@ int main(void) {
             ir_finalize_cfg(g);
             JClaim c8; memset(&c8, 0, sizeof c8);
             c8.blk = JCLAIM_RET; c8.fn = n8; c8.nt = 2; c8.key[0] = JKEY_RET; c8.coef[0] = 1; c8.key[1] = pn->id; c8.coef[1] = -1;
-            jgen_module = n8;
+            gen_mod = n8;
             t = gen_with(g, &c8, 1, JGEN_ALL, NULL);
             snprintf(key, sizeof key, "bb%d.%d divzero", g->entry->id, idx_of(g->entry, q2));
             dz = t ? vc_of(t, key) : "";
@@ -591,7 +592,7 @@ int main(void) {
             n8->entry->term.unchecked = true; n8->ret_type = u8t;
             IrValue *wide = ir_add_param(n8, u32t, nm("w"));
             n8->entry->term.cond = wide;                     // return w as u8, waived: it wraps
-            jgen_module = mn;
+            gen_mod = mn;
             for (int k = 0; k < 6; k++) {
                 if (k == 4) { n8->entry->term.unchecked = false; n8->entry->term.cond = pn; n8->ret_type = slice_of(u8t); }
                 mn->incomplete = k == 5;
@@ -602,7 +603,7 @@ int main(void) {
             }
             mn->incomplete = false;
         }
-        jgen_module = NULL;
+        gen_mod = NULL;
     }
     // a RECURSIVE function's return claim is a fact at its own call: down(n) returns n below 8, else
     // down(n - 8); `ret <= 7` is owed at the second return assuming itself of the call's result
@@ -618,9 +619,9 @@ int main(void) {
         ir_finalize_cfg(dn);
         JClaim c; memset(&c, 0, sizeof c);
         c.blk = JCLAIM_RET; c.fn = dn; c.nt = 1; c.key[0] = JKEY_RET; c.coef[0] = 1; c.rhs = 7;
-        jgen_module = dn;
+        gen_mod = dn;
         char *t = gen_with(dn, &c, 1, JGEN_POST, NULL);
-        jgen_module = NULL;
+        gen_mod = NULL;
         char key[32], want[64];
         snprintf(key, sizeof key, "bb%d.%d post", b2->id, nins(b2));
         const char *p2 = t ? vc_of(t, key) : "";
@@ -692,9 +693,9 @@ int main(void) {
         (void)sn; (void)un; (void)c2; (void)q;
         ir_set_ret(b0, y);                                           // an i32 returned as a u8
         ir_finalize_cfg(f);
-        jgen_module = take;
+        gen_mod = take;
         char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
-        jgen_module = NULL;
+        gen_mod = NULL;
         char key[48];
         #define HAS(pt, kind, ord) (snprintf(key, sizeof key, " bb%d.%d " kind " %d\n", b0->id, (pt), (ord)), t && strstr(t, key))
         CHECK(HAS(at[0], "narrow.lo", 0) && HAS(at[0], "narrow.hi", 0), "an i33 stored in an i32 owes both sides:\n%s", t ? t : "");

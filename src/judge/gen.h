@@ -154,6 +154,7 @@ enum { JV_ENTRY, JV_STORE, JV_JOIN, JV_HEAD, JV_HAVOC };
 typedef struct { int kind; int32_t cell, blk, idx; IrValue *stored; IrType *slot; bool unchecked; } JVer;
 typedef struct {
     JMem *m; IrFunc *f; char *err; size_t errcap;
+    IrFunc *mod;                   // the module: where callees are looked up (NULL: every call is unknown)
     int32_t nb, nv;
     IrBlock **blk;                 // by block id
     int32_t *rpo, nrpo, *rpoix;    // reverse post-order; rpoix[id] = position, -1 unreached
@@ -349,11 +350,10 @@ static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, 
 // element store, checked, changes only its element, which is no cell; one through an unchecked
 // index may write anywhere in its root.
 enum { JR_NONE, JR_LOCAL, JR_BORROWED, JR_LEAKED };
-static IrFunc *jgen_module = NULL;        // where callees are looked up; none: every call is unknown
 
-static IrFunc *jg_callee(IrInstr *i) {
+static IrFunc *jg_callee(const JG *g, IrInstr *i) {
     if (i->op != IR_CALL || !i->aux.callee) return NULL;
-    for (IrFunc *c = jgen_module; c; c = c->next)
+    for (IrFunc *c = g->mod; c; c = c->next)
         if (c->name && c->name->length == i->aux.callee->length &&
             !memcmp(c->name->name, i->aux.callee->name, (size_t)c->name->length)) return c;
     return NULL;
@@ -438,7 +438,7 @@ static void jg_changes(JG *g, IrInstr *i) {
     }
     if (i->op == IR_OPAQUE) { if (i->aux.opaque.writes) jg_havoc_class(g, JR_BORROWED); return; }
     if (i->op != IR_CALL) return;
-    IrFunc *cf = jg_callee(i);
+    IrFunc *cf = jg_callee(g, i);
     int first = i->aux.callee ? 0 : 1;                         // an indirect call's op[0] is its callee
     IrParam *pp = cf ? cf->params : NULL;
     bool raw = false;
@@ -1137,7 +1137,7 @@ static void jb_state(JB *B, int32_t x) {
         // result for the returned value and each argument for its parameter, where the argument
         // lands exactly (its landing obligation, owed at this call, licenses it)
         case IR_CALL: {
-            IrFunc *h = jg_callee(d);
+            IrFunc *h = jg_callee(g, d);
             if (!h || !jg_same_module(h, g->f)) break;
             for (int32_t ci = 0; ci < g->ncl && !B->fail; ci++) {
                 const JClaim *c = &g->cl[ci];
@@ -1745,7 +1745,7 @@ static bool jg_obligations(JG *g, JObls *L) {
                     // (VRA's, I.188), which states at least what the function it holds assumes
                     // (I.187), where the interpreter lands into that function's own
                     if (i->aux.callee) {
-                        IrFunc *h = jg_callee(i);
+                        IrFunc *h = jg_callee(g, i);
                         int a = 0;
                         for (IrParam *pp = h ? h->params : NULL; pp && a < i->n_operands; pp = pp->next, a++)
                             if (pp->value && !jg_land(g, L, i, b->id, k, i->operands[a], pp->value->type, i->unchecked, a)) return false;
@@ -1917,10 +1917,10 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
 // claims' at that block only. `cl` are the module's claims (untrusted: see the header): f's cut points and
 // returns, and its same-module callees' returns. False with `err` on an IR the generator does not
 // read (a phi), a claim it cannot state and owe, or a region that is full.
-static bool jgen_func(JMem *m, IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
+static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t only,
                       JObl **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
-    g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
+    g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
     *out = NULL; *nout = 0;
     if (!f || !f->entry || f->is_extern) return g.ncl == 0 || jg_fail(&g, "a claim on a function without a body");
@@ -1936,9 +1936,9 @@ static bool jgen_func(JMem *m, IrFunc *f, const JClaim *cl, int32_t ncl, int32_t
 // versions a claim can be about: every forward join's fresh version of an integer cell, and every
 // loop header's (`head`), in reverse post-order, so a block's forward predecessors come first.
 // (JSlot is format.h's.)
-static bool jgen_slots(JMem *m, IrFunc *f, JSlot **out, int32_t *nout, char *err, size_t errcap) {
+static bool jgen_slots(JMem *m, IrFunc *f, IrFunc *mod, JSlot **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
-    g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
+    g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     *out = NULL; *nout = 0;
     if (!f || !f->entry || f->is_extern) return true;
     if (!jg_structure(&g) || !jg_cells(&g)) return false;
@@ -1965,9 +1965,9 @@ static bool jgen_slots(JMem *m, IrFunc *f, JSlot **out, int32_t *nout, char *err
 // The other terms a claim at block `blk` may relate a version to (as slots: key and type): every
 // integer cell, and every integer value a comparison inside blk's loop (or in blk, at a join) tests
 // that is fixed at blk. A constant is a bound's business, not a term's.
-static bool jgen_terms(JMem *m, IrFunc *f, int32_t blk, JSlot **out, int32_t *nout, char *err, size_t errcap) {
+static bool jgen_terms(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, JSlot **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
-    g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
+    g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     *out = NULL; *nout = 0;
     if (!f || !f->entry || f->is_extern) return true;
     if (!jg_structure(&g) || !jg_cells(&g)) return false;
@@ -2003,10 +2003,10 @@ static bool jgen_terms(JMem *m, IrFunc *f, int32_t blk, JSlot **out, int32_t *no
 // cell's version, or a value fixed at blk), 2 when it is moreover a version blk makes afresh (a
 // claim must name one). A candidate from elsewhere (VRA's header states) is filtered by it, since
 // a claim the generator cannot state is refused with the whole function.
-static bool jgen_term_kinds(JMem *m, IrFunc *f, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
+static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
                             char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
-    g.m = m; g.f = f; g.err = err; g.errcap = errcap; err[0] = 0;
+    g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     for (int32_t i = 0; i < n; i++) kind[i] = 0;
     if (!f || !f->entry || f->is_extern) return true;
     if (!jg_structure(&g) || !jg_cells(&g)) return false;
@@ -2023,12 +2023,12 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, int32_t blk, const int32_t *keys
 
 // ── the generator offered to an UNTRUSTED proposer (format.h's JudgeGen) ─────────────────────
 // Each call works in the caller's region from its start, so an answer lives until the next call.
-typedef struct { char *buf; size_t cap; } JGenOffer;
+typedef struct { char *buf; size_t cap; IrFunc *mod; } JGenOffer;
 static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
                           JClaimVc **out, int32_t *nout, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     JObl *o; int32_t n;
-    if (!jgen_func(&m, f, cl, ncl, only, &o, &n, err, errcap)) return false;
+    if (!jgen_func(&m, f, x->mod, cl, ncl, only, &o, &n, err, errcap)) return false;
     JClaimVc *v = JMEM_NEW(&m, JClaimVc, n ? n : 1);
     if (!v) { snprintf(err, errcap, "out of memory"); return false; }
     for (int32_t i = 0; i < n; i++) { v[i].vc = o[i].vc; v[i].claim = o[i].claim; }
@@ -2037,16 +2037,16 @@ static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t
 }
 static bool jgo_slots(void *ctx, struct IrFunc *f, JSlot **out, int32_t *nout, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
-    return jgen_slots(&m, f, out, nout, err, errcap);
+    return jgen_slots(&m, f, x->mod, out, nout, err, errcap);
 }
 static bool jgo_terms(void *ctx, struct IrFunc *f, int32_t blk, JSlot **out, int32_t *nout, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
-    return jgen_terms(&m, f, blk, out, nout, err, errcap);
+    return jgen_terms(&m, f, x->mod, blk, out, nout, err, errcap);
 }
 static bool jgo_term_kinds(void *ctx, struct IrFunc *f, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
                            char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
-    return jgen_term_kinds(&m, f, blk, keys, n, kind, err, errcap);
+    return jgen_term_kinds(&m, f, x->mod, blk, keys, n, kind, err, errcap);
 }
 static JudgeGen jgen_offer(JGenOffer *x) {
     JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
