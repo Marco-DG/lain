@@ -129,6 +129,45 @@ static void expect_lex(const char *name, Path *ps, int npaths, const char **name
     if (!ok) fails++;
 }
 
+// PE.7: every relation lia_relations proposes must not rise on any path, at every point of the
+// box the path allows; and the one the loop is written for must be among them.
+static bool rel_holds(const Path *ps, int npaths, const LRel *r, const int *pre, const int *post, int B, long *pts) {
+    for (int k = 0; k < npaths; k++) {
+        const Path *p = &ps[k]; int64_t z[8]; int nv = p->nv;
+        for (int v = 0; v < nv; v++) z[v] = -B;
+        for (;;) {
+            if (holds(p, z)) {
+                int64_t d = r->ct * (z[post[r->t]] - z[pre[r->t]]) + r->cj * (z[post[r->j]] - z[pre[r->j]]);
+                if (d > 0) return false;
+                (*pts)++;
+            }
+            int v = 0;
+            while (v < nv && ++z[v] > B) { z[v] = -B; v++; }
+            if (v == nv) break;
+        }
+    }
+    return true;
+}
+static void expect_rel(const char *name, Path *ps, int npaths, const char **names, const int *pre, const int *post, int np,
+                       int want_t, int want_j, int64_t want_ct, int64_t want_cj) {
+    const JVc *vcs[4];
+    for (int k = 0; k < npaths; k++) vcs[k] = to_vc(&ps[k], names);
+    JWork lim = { 100000, 4096, 4096 };
+    LRel out[16];
+    int32_t n = lia_relations(vcs, npaths, pre, post, np, lim, region, sizeof region, out, 16);
+    bool ok = true, found = want_t < 0; long pts = 0;
+    for (int32_t i = 0; i < n; i++) {
+        if (!rel_holds(ps, npaths, &out[i], pre, post, 9, &pts)) ok = false;
+        if (out[i].t == want_t && out[i].j == want_j && out[i].ct == want_ct && out[i].cj == want_cj) found = true;
+    }
+    for (int32_t i = 0; want_t < 0 && i < n; i++) if (out[i].j == want_j) ok = false;   // never as the counter
+    printf("  %-58s %s ", name, ok && found ? "ok" : "WRONG");
+    for (int32_t i = 0; i < n; i++)
+        printf(" [%+lld*%s %+lld*%s]", (long long)out[i].ct, names[pre[out[i].t]], (long long)out[i].cj, names[pre[out[i].j]]);
+    printf("  (checked at %ld points)\n", pts);
+    if (!(ok && found)) fails++;
+}
+
 int main(void) {
     printf("── ranking functions (src/solver/rank.h) ──\n");
     {   // while i < n { i = i + 1 }:  z = (i, n, i')
@@ -180,6 +219,46 @@ int main(void) {
         row(&p[1], (int64_t[]){ 0, 0, -1, 0, 0 }, 0, 0);
         int pre[] = { 0, 1, 2 }, post[] = { 3, 4, 2 };
         expect("nested countdown (needs a lexicographic ranking)", p, 2, nm, pre, post, 3, false);
+    }
+    printf("── relations a loop keeps (PE.7) ──\n");
+    {   // for i < n { s = s + e }, e in [1, 3]:  z = (s, i, n, e, s', i')
+        const char *nm[] = { "s", "i", "n", "e", "s'", "i'" }; Path p = { .nv = 6 };
+        row(&p, (int64_t[]){ 0, 1, -1, 0, 0, 0 }, 0, -1);
+        row(&p, (int64_t[]){ 0, 0, 0, -1, 0, 0 }, 0, -1); row(&p, (int64_t[]){ 0, 0, 0, 1, 0, 0 }, 0, 3);
+        row(&p, (int64_t[]){ -1, 0, 0, -1, 1, 0 }, 1, 0); row(&p, (int64_t[]){ 0, -1, 0, 0, 0, 1 }, 1, 1);
+        int pre[] = { 0, 1, 2 }, post[] = { 4, 5, 2 };
+        expect_rel("running total s += e, e in [1,3], i += 1: s - 3*i", &p, 1, nm, pre, post, 3, 0, 1, 1, -3);
+    }
+    {   // the Zune loop, scaled: days falls by 4 (leap) or 3 while year rises by 1:  z = (days, year, days', year')
+        const char *nm[] = { "days", "year", "days'", "year'" }; Path p[2] = { { .nv = 4 }, { .nv = 4 } };
+        row(&p[0], (int64_t[]){ -1, 0, 0, 0 }, 0, -5); row(&p[0], (int64_t[]){ -1, 0, 1, 0 }, 1, -4); row(&p[0], (int64_t[]){ 0, -1, 0, 1 }, 1, 1);
+        row(&p[1], (int64_t[]){ -1, 0, 0, 0 }, 0, -4); row(&p[1], (int64_t[]){ -1, 0, 1, 0 }, 1, -3); row(&p[1], (int64_t[]){ 0, -1, 0, 1 }, 1, 1);
+        int pre[] = { 0, 1 }, post[] = { 2, 3 };
+        expect_rel("Zune, scaled: days -= 4 | 3, year += 1: 3*year + days", p, 2, nm, pre, post, 2, 1, 0, 3, 1);
+    }
+    {   // a counter that rises on one path and falls on the other: no relation with it
+        const char *nm[] = { "s", "j", "s'", "j'" }; Path p[2] = { { .nv = 4 }, { .nv = 4 } };
+        row(&p[0], (int64_t[]){ -1, 0, 1, 0 }, 1, 1); row(&p[0], (int64_t[]){ 0, -1, 0, 1 }, 1, 1);
+        row(&p[1], (int64_t[]){ -1, 0, 1, 0 }, 1, 1); row(&p[1], (int64_t[]){ 0, -1, 0, 1 }, 1, -1);
+        int pre[] = { 0, 1 }, post[] = { 2, 3 };
+        expect_rel("j += 1 | j -= 1: never a relation's counter", p, 2, nm, pre, post, 2, -1, 1, 0, 0);
+    }
+    {   // a total that rises by up to 7 beside a counter stepping by 2: 2*s - 7*i
+        const char *nm[] = { "s", "i", "e", "s'", "i'" }; Path p = { .nv = 5 };
+        row(&p, (int64_t[]){ 0, 0, -1, 0, 0 }, 0, 0); row(&p, (int64_t[]){ 0, 0, 1, 0, 0 }, 0, 7);
+        row(&p, (int64_t[]){ -1, 0, -1, 1, 0 }, 1, 0); row(&p, (int64_t[]){ 0, -1, 0, 0, 1 }, 1, 2);
+        int pre[] = { 0, 1 }, post[] = { 3, 4 };
+        expect_rel("s += e, e in [0,7], i += 2: 2*s - 7*i", &p, 1, nm, pre, post, 2, 0, 1, 2, -7);
+    }
+    {   // two paths: i += 2 while s rises by at most 1, or i += 3 while s rises by up to 5: the ratio
+        // 2*5/3 is fractional and must round UP (2*s - 4*i; -3*i would rise by 1 on the second path)
+        const char *nm[] = { "s", "i", "e", "s'", "i'" }; Path p[2] = { { .nv = 5 }, { .nv = 5 } };
+        row(&p[0], (int64_t[]){ 0, 0, -1, 0, 0 }, 0, 0); row(&p[0], (int64_t[]){ 0, 0, 1, 0, 0 }, 0, 1);
+        row(&p[0], (int64_t[]){ -1, 0, -1, 1, 0 }, 1, 0); row(&p[0], (int64_t[]){ 0, -1, 0, 0, 1 }, 1, 2);
+        row(&p[1], (int64_t[]){ 0, 0, -1, 0, 0 }, 0, 0); row(&p[1], (int64_t[]){ 0, 0, 1, 0, 0 }, 0, 5);
+        row(&p[1], (int64_t[]){ -1, 0, -1, 1, 0 }, 1, 0); row(&p[1], (int64_t[]){ 0, -1, 0, 0, 1 }, 1, 3);
+        int pre[] = { 0, 1 }, post[] = { 3, 4 };
+        expect_rel("i += 2 (s +<= 1) | i += 3 (s +<= 5): 2*s - 4*i, rounded up", p, 2, nm, pre, post, 2, 0, 1, 2, -4);
     }
     printf("── lexicographic ranking functions ──\n");
     {   // the nested countdown: (i, j)

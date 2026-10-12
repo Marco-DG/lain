@@ -233,4 +233,84 @@ static LRankLex lia_rank_lex(const JVc *const *paths, int32_t npaths, const int3
     return R;
 }
 
+// ── PE.7: two-variable relations a loop keeps (delta synthesis) ───────────────────────────────
+// A running total s that rises by at most b_k on path k, beside a counter j that changes by a
+// nonzero constant d_k of ONE sign on every path, keeps L*s + c*j from rising when
+//     L*b_k + c*d_k <= 0  on every path k.
+// With j rising (d_k > 0) that is c = -ceil(max_k L*b_k/d_k), `s - 30*i` for s += a[i] with a[i] in
+// [5, 30]; with j falling (d_k < 0, a measure) c = +ceil(max_k L*b_k/|d_k|), `365*year + days` for
+// the Zune loop, where days falls by 365 or 366 while year rises by 1. L is the least |d_k|, which
+// makes both exact when the counter's step is one constant. A lower bound is the same with -s and
+// the most s can FALL. Each answer is a candidate shape only: the finder computes its bound at the
+// loop's entry and Houdini keeps it only if the judge's VCs show it inductive, so nothing here is
+// believed and a wrong delta costs a refused candidate.
+typedef struct { int32_t t, j; int64_t ct, cj; } LRel;     // ct*x_t + cj*x_j does not rise (ct may be < 0)
+
+// The least and greatest value of post - pre on one path, by lia_maximize; false when either is
+// unbounded, the path is empty, or a budget ran out.
+static bool rk_delta(const JVc *P, int32_t pre, int32_t post, JWork limit, void *mem, size_t size,
+                     int64_t *lo, int64_t *hi) {
+    if (pre == post) { *lo = *hi = 0; return true; }
+    for (int side = 0; side < 2; side++) {                    // 0: max(post - pre), 1: max(pre - post)
+        JTerm t[2]; int32_t a = pre < post ? pre : post, b = pre < post ? post : pre;
+        int64_t ca = (a == post) == (side == 0) ? 1 : -1;
+        t[0].var = a; rk_int(&t[0].coef, ca);
+        t[1].var = b; rk_int(&t[1].coef, -ca);
+        LMax X = lia_maximize(P, t, 2, limit, mem, size);
+        if (X.k != LIA_MAX_BOUND) return false;
+        LSol N; memset(&N, 0, sizeof N);
+        LSi v = ls_from_j(&N, &X.b);
+        if (N.cap || v > INT64_MAX / 4 || v < INT64_MIN / 4) return false;
+        if (side == 0) *hi = (int64_t)v; else *lo = -(int64_t)v;
+    }
+    return true;
+}
+static int64_t rk_ceil_div(int64_t a, int64_t b) { return a / b + ((a % b != 0) && ((a > 0) == (b > 0))); }   // b > 0
+
+// Every (t, j) relation of this kind over the pairs of a loop's back-edge paths (sharing one
+// variable list, as lia_rank's), at most `cap` into `out`. The deltas are asked once per pair and path.
+static int32_t lia_relations(const JVc *const *paths, int32_t npaths, const int32_t *pre, const int32_t *post,
+                             int32_t npairs, JWork limit, void *mem, size_t size, LRel *out, int32_t cap) {
+    if (npairs < 2 || npaths < 1 || npaths > 64 || npairs > 64 || !rk_check_paths(paths, npaths)) return 0;
+    int64_t lo[64][64], hi[64][64]; bool ok[64];
+    for (int32_t i = 0; i < npairs; i++) {
+        ok[i] = true;
+        for (int32_t k = 0; k < npaths && ok[i]; k++)
+            ok[i] = rk_delta(paths[k], pre[i], post[i], limit, mem, size, &lo[i][k], &hi[i][k]);
+    }
+    int32_t n = 0;
+    for (int32_t j = 0; j < npairs; j++) {
+        if (!ok[j]) continue;
+        int sgn = 0; int64_t L = 0; bool exact = true;              // j: a nonzero constant of one sign
+        for (int32_t k = 0; k < npaths && exact; k++) {
+            if (lo[j][k] != hi[j][k] || lo[j][k] == 0) { exact = false; break; }
+            int sk = lo[j][k] > 0 ? 1 : -1;
+            if (sgn && sk != sgn) exact = false;
+            sgn = sk;
+            int64_t m = lo[j][k] > 0 ? lo[j][k] : -lo[j][k];
+            if (!L || m < L) L = m;
+        }
+        if (!exact || L > (1 << 20)) continue;
+        for (int32_t t = 0; t < npairs; t++) {
+            if (t == j || !ok[t]) continue;
+            for (int up = 1; up >= 0; up--) {                       // an upper bound on t, then a lower one
+                int64_t worst = INT64_MIN;                          // max_k ceil(L * b_k / |d_k|), b_k the rise of (+/-)t
+                for (int32_t k = 0; k < npaths; k++) {
+                    int64_t b = up ? hi[t][k] : -lo[t][k], d = lo[j][k] > 0 ? lo[j][k] : -lo[j][k];
+                    if (b > INT64_MAX / L || b < INT64_MIN / L) { worst = INT64_MAX; break; }
+                    int64_t q = rk_ceil_div(L * b, d);
+                    if (q > worst) worst = q;
+                }
+                if (worst <= 0 || worst == INT64_MAX || worst > (1 << 20)) continue;   // t never rises (or no use)
+                if (n == cap) return n;
+                out[n].t = t; out[n].j = j;
+                out[n].ct = up ? L : -L;
+                out[n].cj = sgn > 0 ? -worst : worst;
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
 #endif // LAIN_SOLVER_RANK_H
