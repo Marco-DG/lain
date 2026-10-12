@@ -44,6 +44,9 @@ typedef struct
                                     // not a wholesale switchover: the analyses are ready to be
                                     // authoritative, the backend is not.
     const char* target_triple;      // --target=<triple>, NULL = host
+    bool        judge_shadow;       // --judge=shadow: the proof engine's judge beside VRA, every
+                                    // disagreement reported (src/analysis/judge_shadow.h); no
+                                    // verdict changes
 } Args;
 
 // ★ ONE TABLE OF FLAGS (I.90). The usage screen and the unknown-option message were two lists
@@ -61,6 +64,8 @@ static const LainFlag lain_flags[] = {
                                              " every discharged proof is checked as it is used" },
     { "--check-invariants",      NULL,       "with --interpret: also check that the range analysis's state at"
                                              " each block contains the running program's" },
+    { "--judge=",                "shadow",   "also run the proof engine's judge beside the range analysis and"
+                                             " report, on stderr, every check where the two disagree; no verdict changes" },
     { "--dump-ast",              NULL,       "print the AST after parsing" },
     { "--dump-niche",            NULL,       "print the niche layout decision for every enum" },
     { "--dump-effects",          NULL,       "print each function's inferred effect row" },
@@ -178,6 +183,13 @@ static Args args_parse(int argc, char** argv)
             args.interpret = true;
         } else if (strcmp(argv[i], "--check-invariants") == 0) {
             args.interpret = true; args.check_invariants = true;
+        } else if (strcmp(argv[i], "--judge=shadow") == 0) {
+            args.judge_shadow = true;
+        } else if (strncmp(argv[i], "--judge=", 8) == 0) {
+            // `authority` comes with phase 4; a mode this compiler does not have is refused, never
+            // read as `shadow` or ignored
+            fprintf(stderr, "lain: unknown --judge mode '%s' (this compiler has: shadow)\n", argv[i] + 8);
+            exit(EXIT_FAILURE);
         } else if (strncmp(argv[i], "--backend=", 10) == 0) {   // IGNORED-FLAG (readme_gate reads this)
             // Accepted and ignored: there is one backend. Kept as a no-op rather than an
             // error so a script pinned to `--backend=ir` still runs.

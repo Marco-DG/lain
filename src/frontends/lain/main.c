@@ -24,6 +24,7 @@
 #include "analysis/report.h"
 #include "ir/emit_c.h"
 #include "ir/interp.h"   // --interpret: the IR's semantics, executable (DECIDE-W step 1)
+#include "analysis/judge_shadow.h"   // --judge=shadow: the proof engine's judge beside VRA (PE.6)
 #include "static_eval.h"  // DECIDE-W step 2: module constants computed at compile time
 #include "analysis/containment.h"   // --check-invariants: the analysis's states against a real run
 
@@ -283,6 +284,9 @@ int main(int argc, char **argv) {
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
         ir_diag_excerpt = NULL; ir_diag_mark = NULL;
+        // --judge=shadow (PE.6): the judge on the same module, every disagreement with VRA reported;
+        // on refused programs too, which is where a replacement prover's wrong facts would matter
+        if (args.judge_shadow) judge_shadow_module(mod);
         // --dump-effects: the IR's row (I.143), for what this file defines and the instances it
         // made of generic functions defined elsewhere, after the analyses that decide DIVERGE.
         if (args.dump_effects)
