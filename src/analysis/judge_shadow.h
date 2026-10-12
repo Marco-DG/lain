@@ -30,7 +30,9 @@
 typedef struct {
     IrFunc *fn; IrInstr *at; IrBlock *blk; int32_t idx;
     JRecordKind k;
-    char cls;                     // 'B' bounds, 'D' division by zero, 'O' overflow/narrowing, 'P' precondition
+    char cls;                     // 'B' bounds, 'D' division by zero, 'O' overflow/narrowing, 'V' TYPE_MIN / -1,
+                                  // 'P' precondition,
+                                  // 'S' a slice's length bound (objsize), '?' a claim's VC or other
     bool used;                    // matched to a VRA check
     char id[200];                 // "fn irhash point kind ordinal", as §3 prints it
 } JshRec;
@@ -40,8 +42,10 @@ static char jsh_class(const char *kind) {
     if (!kind) return '?';
     if (!strncmp(kind, "bounds", 6)) return 'B';
     if (!strcmp(kind, "divzero") || !strcmp(kind, "nonzero")) return 'D';
-    if (!strncmp(kind, "narrow", 6) || !strcmp(kind, "shift") || !strcmp(kind, "divovf")) return 'O';
+    if (!strcmp(kind, "divovf")) return 'V';
+    if (!strncmp(kind, "narrow", 6) || !strcmp(kind, "shift")) return 'O';
     if (!strncmp(kind, "assert", 6)) return 'P';
+    if (!strcmp(kind, "objsize")) return 'S';      // VRA has no such check: always judge-extra, shown when unproved
     return '?';
 }
 static void jsh_sink(void *ctx, const JRecord *r) {
@@ -100,13 +104,15 @@ static void jsh_hdr_sink(void *ctx, IrFunc *f, int bid, const VraRel *r, int n) 
 }
 
 // ── the comparison ───────────────────────────────────────────────────────────────────────────
-// The class of a VRA check: an overflow check at a division is TYPE_MIN / -1 or the quotient's
-// landing, both of class 'O' on the judge's side.
+// The class of a VRA check. An overflow check at a division is one of two: TYPE_MIN / -1 itself
+// (shift 3, the judge's divovf), or the landing of the quotient (VRA files a RETURNED quotient's
+// narrowing at the division, the judge at the return: jsh_vra_at maps it back). Pairing both with
+// both made one unproved record count against the other check.
 static char jsh_vra_class(const VraCheck *c) {
     switch (c->kind) {
         case VRA_BOUNDS: return 'B';
         case VRA_DIVZERO: return 'D';
-        case VRA_OVERFLOW: return 'O';
+        case VRA_OVERFLOW: return c->shift == 3 ? 'V' : 'O';
         case VRA_PRECOND: return 'P';
         default: return 0;
     }
@@ -129,7 +135,7 @@ static const char *jsh_kind_name(JRecordKind k) {
 
 // Run the judge on `mod` and report against VRA, on stderr.
 static void judge_shadow_module(IrFunc *mod) {
-    long long n_chk = 0, agree_p = 0, agree_r = 0, vra_only = 0, judge_only = 0, judge_only_c = 0, unowed = 0, term = 0;
+    long long n_chk = 0, agree_p = 0, agree_r = 0, vra_only = 0, judge_only = 0, judge_only_c = 0, unowed = 0, outside = 0, term = 0;
     long long extra = 0, extra_p = 0;
     // 1. VRA's header states for the finder, from a VRA pass of each function
     jsh_nhdr = 0;
@@ -174,9 +180,12 @@ static void judge_shadow_module(IrFunc *mod) {
             char cc = jsh_vra_class(c);
             if (!cc) continue;
             n_chk++;
-            int seen = 0, proved = 0; JRecordKind worst = JREC_PROVED;
+            int seen = 0, proved = 0, out = 0; JRecordKind worst = JREC_PROVED;
             for (int64_t j = 0; j < R.n; j++) {
                 JshRec *q = &R.r[j];
+                // an `outside` record carries no kind of its own: the judge says the place is beyond
+                // what it can state, which is not the same as owing nothing there
+                if (q->fn == f && q->k == JREC_OUTSIDE && c->at && jsh_vra_at(V, q) == c->at) { q->used = true; out++; continue; }
                 if (q->fn != f || q->cls != cc) continue;
                 // a return of a value with no defining instruction (a parameter, `return a`): VRA
                 // files its landing with no instruction, at the return's position, so it is keyed
@@ -187,8 +196,16 @@ static void judge_shadow_module(IrFunc *mod) {
                 q->used = true; seen++;
                 if (q->k == JREC_PROVED) proved++; else worst = q->k;
             }
-            const char *cls = cc == 'B' ? "bounds" : cc == 'D' ? "division-by-zero" : cc == 'O' ? "overflow" : "precondition";
+            const char *cls = cc == 'B' ? "bounds" : cc == 'D' ? "division-by-zero" : cc == 'O' ? "overflow"
+                            : cc == 'V' ? "TYPE_MIN / -1" : "precondition";
             const char *art = cc == 'O' ? "an" : "a";
+            if (!seen && out) {
+                outside++;
+                fprintf(stderr, "judge-shadow: outside %.*s Ln %lld, Col %lld: %s %s check (VRA %s) is beyond what the judge states\n",
+                        (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, art, cls,
+                        c->ok ? "proves it" : "refuses it");
+                continue;
+            }
             if (!seen) {
                 unowed++;
                 fprintf(stderr, "judge-shadow: unowed %.*s Ln %lld, Col %lld: %s %s check (VRA %s) has no obligation\n",
@@ -220,9 +237,9 @@ static void judge_shadow_module(IrFunc *mod) {
     }
     if (ran)
         fprintf(stderr, "judge-shadow: %lld VRA checks: %lld agree (%lld proved, %lld refused), %lld vra-only, %lld judge-only (%lld conditional), "
-                        "%lld unowed; %lld judge-extra (%lld proved); %lld termination checks not judged yet; records: "
+                        "%lld unowed, %lld outside; %lld judge-extra (%lld proved); %lld termination checks not judged yet; records: "
                         "%lld proved, %lld not-implied, %lld outside, %lld budget, %lld capacity, %lld solver-bug, %lld uncertified\n",
-                n_chk, agree_p + agree_r, agree_p, agree_r, vra_only, judge_only, judge_only_c, unowed, extra, extra_p, term,
+                n_chk, agree_p + agree_r, agree_p, agree_r, vra_only, judge_only, judge_only_c, unowed, outside, extra, extra_p, term,
                 R.kinds[JREC_PROVED], R.kinds[JREC_NOT_IMPLIED], R.kinds[JREC_OUTSIDE], R.kinds[JREC_BUDGET],
                 R.kinds[JREC_CAPACITY], R.kinds[JREC_SOLVER_BUG], R.kinds[JREC_UNCERTIFIED]);
     free(R.r); free(jc.last); free(buf); free(work);
