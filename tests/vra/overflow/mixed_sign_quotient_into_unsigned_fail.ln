@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// I.198: a `/` of an i8 by a u16 has the u16's type (spec 07, integer rank), and -7 / 3 = -2 does
+// not fit it. The quotient is now computed exactly in i64 and lands in u16 checked, so this is
+// refused. It compiled before (VRA read the unsigned division's result as non-negative), printed
+// 21843 natively, and --interpret stopped with PROOF FAILED at the division.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func nz(x u16) u16 {
+    if x == 0 { return 1 }
+    return x
+}
+func f(x i8, d u16) u16 {
+    return x / nz(d)
+}
+func main() i32 effects io {
+    libc_printf("%d\n", f(-7, 3) as i32)
+    return 0
+}

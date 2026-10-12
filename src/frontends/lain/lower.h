@@ -2685,6 +2685,45 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
             if (ir_cmp_op(e->as.binary_expr.op, sgn, &cmp))
                 return ir_cmp_value(c, e->as.binary_expr.op, x, y, ir_nonneg_lit(L), ir_nonneg_lit(R), sgn);
             if (ir_bin_op(e->as.binary_expr.op, sgn, &op, &wrap)) {
+                // ★ A DIVISION OR REMAINDER OF MIXED SIGNEDNESS IS COMPUTED IN i64 (I.198). The IR's
+                // `/` and `%` are exact on the operands' values (interp.h treats SDIV and UDIV
+                // alike), and their C spelling `v0 / v1` is not: C converts an int32_t beside a
+                // uint32_t to unsigned, so `-100 / nz(d)` with nz returning u32 printed 1431655732
+                // natively where VRA, the judge and the interpreter all had -33, and an index
+                // proven from that quotient read outside its array. (`+ - *` agree modulo 2^N and
+                // `%` below 64 bits was already widened by the branch below; `/` was not.) Each
+                // operand extends by its own signedness; a u64 converts to i64 under the ordinary
+                // checked conversion, owed like any other. One operand is then non-negative, so
+                // TYPE_MIN / -1 cannot arise, and the result lands in the expression's type under
+                // the operator's own policy (`/%` wraps, `/|` clamps, `/` is checked). A signed side
+                // that cannot be negative (a literal, or non-negative by construction, as the mixed
+                // comparison reads it: ir_cmp_nonneg) converts to unsigned unchanged, and C's own
+                // spelling is right: `(lo + hi) / 2` keeps its unsigned division.
+                if ((op == IR_SDIV || op == IR_UDIV || op == IR_SREM || op == IR_UREM) &&
+                    ty && ty->kind == IRT_INT && ty->bits <= 64 && x && y && x->type && y->type &&
+                    x->type->kind == IRT_INT && y->type->kind == IRT_INT && x->type->is_signed != y->type->is_signed &&
+                    !(x->type->is_signed ? (ir_nonneg_lit(L) || ir_cmp_nonneg(c, x, 0))
+                                         : (ir_nonneg_lit(R) || ir_cmp_nonneg(c, y, 0)))) {
+                    IrType *w64 = ir_type_int(c->a, 64, true);
+                    IrValue *xy[2] = { x, y };
+                    for (int k = 0; k < 2; k++) {
+                        IrType *ot = xy[k]->type;
+                        if (ot->bits == 64 && ot->is_signed) continue;
+                        IrInstr *cv = ir_instr(c->f, IR_CAST, w64, 1); cv->operands[0] = xy[k];
+                        cv->aux.cast_kind = ot->bits < 64 ? (ot->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT) : IR_CAST_BITCAST;
+                        cv->wrap = IR_WRAP_CHECK; cv->unchecked = c->unsafe;
+                        ir_emit(c->cur, cv); xy[k] = cv->result;
+                    }
+                    IrOp sop = (op == IR_SDIV || op == IR_UDIV) ? IR_SDIV : IR_SREM;
+                    IrValue *rw = ir_binop(c->f, c->cur, sop, xy[0], xy[1], w64);
+                    c->cur->instrs_tail->unchecked = c->unsafe;
+                    if (ty->bits == 64 && ty->is_signed) return rw;
+                    IrInstr *ct = ir_instr(c->f, IR_CAST, ty, 1); ct->operands[0] = rw;
+                    ct->aux.cast_kind = ty->bits < 64 ? IR_CAST_TRUNC : IR_CAST_BITCAST;
+                    ct->wrap = wrap; ct->unchecked = c->unsafe;
+                    ir_emit(c->cur, ct);
+                    return ct->result;
+                }
                 // DECIDE-M: a SIGNED remainder never overflows mathematically, but C's `%` is
                 // undefined at TYPE_MIN % -1 (because TYPE_MIN / -1 is). Below 64 bits it is
                 // computed in i64, where that case is an ordinary 0, and narrowed back — exact,

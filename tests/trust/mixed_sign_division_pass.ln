@@ -1,0 +1,40 @@
+// I.198: a `/` or `%` whose operands differ in signedness is exact on their values, as the analyses
+// and the interpreter compute it. C converts an int32_t beside a uint32_t to unsigned, so
+// `-100 / nz(d)` with nz returning u32 printed 1431655732 natively, and `pick` below, whose index
+// is proven in [0, 30] from the quotient, read far outside `t`. Such an operation is now computed
+// in i64, each operand extended by its own signedness; a signed side that cannot be negative keeps
+// C's spelling. Run natively (ASan + UBSan) against the line below and with --interpret.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func nz(x u32) u32 {
+    if x == 0 { return 1 }
+    return x
+}
+func nz16(x u16) u16 {
+    if x == 0 { return 1 }
+    return x
+}
+func pick(x i32 >= -30 and <= 0, d u32) u8 {
+    var t u8[31] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    q = x / nz(d)
+    return t[q + 30]
+}
+func quo(x i32, d u32) i64 {
+    return (x / nz(d)) as% i64
+}
+func rem(x i32, d u32) i64 {
+    return (x % nz(d)) as% i64
+}
+func quo64(x i64, d u32) i64 {
+    return (x / nz(d)) as% i64
+}
+func wrapq(x i32, d u16) i32 {
+    return x /% nz16(d)
+}
+func main() i32 effects io {
+    libc_printf("%d\n", pick(-30, 3) as i32)
+    libc_printf("%lld %lld\n", quo(-100, 3), rem(-100, 3))
+    libc_printf("%lld\n", quo(-2147483647 - 1, 4294967295))
+    libc_printf("%lld %lld\n", quo64(-100, 7), quo64(-9223372036854775807 - 1, 4294967295))
+    libc_printf("%d\n", wrapq(-100, 3))
+    return 0
+}

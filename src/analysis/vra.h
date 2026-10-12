@@ -3428,6 +3428,11 @@ static void vra_check_narrow(Vra *V, Octagon *W, IrValue *val, IrType *target,
     // right only when the value is an arithmetic result narrowed back to its declared type.
     if (!c.ok && !c.accum && !c.shift && !c.refine) {
         IrInstr *d = (val->id >= 0 && val->id < V->nvar) ? V->def[val->id] : NULL;
+        // through a conversion the lowering made (a widening, or I.198's landing of a mixed-sign
+        // quotient), not one the source wrote: what lands is still the arithmetic's result
+        for (int k = 0; k < 4 && d && d->op == IR_CAST && !d->source_as && d->n_operands >= 1 && d->operands[0] &&
+                        d->operands[0]->id >= 0 && d->operands[0]->id < V->nvar; k++)
+            d = V->def[d->operands[0]->id];
         bool arith = d && ((d->op >= IR_ADD && d->op <= IR_NEG) || d->op == IR_SHL);
         if (at && at->op == IR_CAST && at->source_as) c.narrow = 1;
         else if (!arith)                              c.narrow = 2;
