@@ -31,13 +31,14 @@
 
 typedef struct { JWork lim; } JudgeLimits;   // the solver's budget per VC (§3: pivot, node, leaf)
 // The untrusted callbacks. `solve` answers one VC within `lim` (format.h's JAnswer); its answer
-// lives until its next call. `propose` hands over the module's claims (it may keep them until its
-// next call; the judge copies them), false when it failed (the judge then reports that, and judges
-// with no claims). Either may be NULL: no solver proves nothing; no proposer proposes nothing.
+// lives until its next call. `propose` hands over the module's claims and its ranking claims (it
+// may keep them until its next call; the judge copies them), false when it failed (the judge then
+// reports that, and judges with no claims). Either may be NULL: no solver proves nothing; no
+// proposer proposes nothing, and a loop owed termination with no ranking claim is `outside`.
 typedef struct {
     void *ctx;
     bool (*solve)(void *ctx, const JVc *vc, JWork lim, JAnswer *out);
-    bool (*propose)(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout);
+    bool (*propose)(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk);
 } JudgeCalls;
 
 typedef enum {
@@ -157,16 +158,25 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
     char why[256];
     // 1. the claims
     JClaim *cl = NULL; int32_t ncl = 0;
+    JRank *rk = NULL; int32_t nrk = 0;                    // ranking claims: owed, never facts
     if (calls && calls->propose) {
         JGenOffer offer = { gbuf, gcap, mod };
         JudgeGen gen = jgen_offer(&offer);
         JClaim *pc = NULL; int32_t pn = 0;
-        if (!calls->propose(calls->ctx, mod, &gen, &pc, &pn)) {
+        JRank *pr = NULL; int32_t prn = 0;
+        if (!calls->propose(calls->ctx, mod, &gen, &pc, &pn, &pr, &prn)) {
+            // a proposer that failed hands over nothing: neither its claims nor its ranks
             JRecord r; memset(&r, 0, sizeof r); r.k = JREC_NO_CLAIMS; r.reason = "the proposer failed: the module is judged with no claims";
             sink(sink_ctx, &r);
-        } else if (pn > 0 && pc) {
-            if (!(cl = JMEM_NEW(region, JClaim, pn))) { snprintf(err, errcap, "the judge's region is full"); return false; }
-            memcpy(cl, pc, sizeof *cl * (size_t)pn); ncl = pn;
+        } else {
+            if (pn > 0 && pc) {
+                if (!(cl = JMEM_NEW(region, JClaim, pn))) { snprintf(err, errcap, "the judge's region is full"); return false; }
+                memcpy(cl, pc, sizeof *cl * (size_t)pn); ncl = pn;
+            }
+            if (prn > 0 && pr) {
+                if (!(rk = JMEM_NEW(region, JRank, prn))) { snprintf(err, errcap, "the judge's region is full"); return false; }
+                memcpy(rk, pr, sizeof *rk * (size_t)prn); nrk = prn;
+            }
         }
     }
     // 2. the claims certified: each VC every claim owes, in every function
@@ -175,7 +185,7 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
         if (f->is_extern || !f->entry) continue;
         char *mark = region->cur;
         JObl *o; int32_t n;
-        if (!jgen_func(region, f, mod, cl, ncl, JGEN_CLAIMS, &o, &n, why, sizeof why)) {
+        if (!jgen_func(region, f, mod, cl, ncl, NULL, 0, JGEN_CLAIMS, &o, &n, why, sizeof why)) {
             snprintf(ubuf, sizeof ubuf, "the generator refuses the claims in %.*s: %s", (int)f->name->length, f->name->name, why);
             unstable = ubuf; break;
         }
@@ -197,7 +207,7 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
         if (f->is_extern || !f->entry) continue;
         char *mark = region->cur;
         JObl *o; int32_t n;
-        if (!jgen_func(region, f, mod, unstable ? NULL : cl, unstable ? 0 : ncl, JGEN_ALL, &o, &n, why, sizeof why)) {
+        if (!jgen_func(region, f, mod, unstable ? NULL : cl, unstable ? 0 : ncl, rk, nrk, JGEN_ALL, &o, &n, why, sizeof why)) {
             JRecord r; memset(&r, 0, sizeof r); r.k = JREC_REFUSED; r.fn = f;
             char *rs = JMEM_NEW(region, char, strlen(why) + 1);
             if (!rs) { snprintf(err, errcap, "the judge's region is full"); return false; }

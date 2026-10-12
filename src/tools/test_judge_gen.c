@@ -32,10 +32,11 @@ static IrType *slice_of(IrType *e) { IrType *t = ir_type_new(&A, IRT_SLICE); t->
 // function (its reason in `why` when given, else printed). `f`'s CFG must be finalized (once:
 // ir_finalize_cfg adds the edges again on each call).
 static IrFunc *gen_mod = NULL;   // the module the generator looks callees up in (none: every call unknown)
+static const JRank *gen_rk = NULL; static int32_t gen_nrk = 0;   // the ranking claims gen_with owes
 static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, gen_mod, cl, ncl, only, &o, &n, err, sizeof err)) {
+    if (!jgen_func(&m, f, gen_mod, cl, ncl, gen_rk, gen_nrk, only, &o, &n, err, sizeof err)) {
         if (why) strcpy(why, err); else printf("  generator refused: %s\n", err);
         return NULL;
     }
@@ -369,7 +370,7 @@ int main(void) {
         bad[1].c = claim1(b2, u, 1, 9); bad[1].why = "about no version its block makes afresh";
         bad[2].c = claim1(b2, s, 1, 9); bad[2].c.nt = 2; bad[2].c.key[1] = ls->id; bad[2].c.coef[1] = -1;
         bad[2].why = "not a cell or a value fixed at its block";      // ls is made in the loop, after b2
-        bad[3].c = claim1(b2, s, 1, 9); bad[3].c.nt = 3; bad[3].why = "other than one or two terms";
+        bad[3].c = claim1(b2, s, 1, 9); bad[3].c.nt = JCLAIM_MAXT + 1; bad[3].why = "of more than it may have";
         bad[4].c = claim1(b2, s, 1, 9); bad[4].c.nt = 2; bad[4].c.key[1] = s->id; bad[4].c.coef[1] = 1;
         bad[4].why = "naming one term twice";
         bad[5].c = claim1(b2, y, 1, 9); bad[5].why = "about no version its block makes afresh";
@@ -381,12 +382,14 @@ int main(void) {
             CHECK(!t && strstr(why, bad[k].why), "claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
             free(t);
         }
-        JClaim good[4];
+        JClaim good[5];
         good[0] = claim1(b2, s, 1, 9);                                // at the join
         good[1] = claim1(b3, s, 1, 100);                              // at the loop header
         good[2] = claim1(b2, s, 1, 0); good[2].nt = 2; good[2].key[1] = y->id; good[2].coef[1] = -1;   // s - y, y a parameter
         good[3] = claim1(b3, s, 1, 0); good[3].nt = 2; good[3].key[1] = u->id; good[3].coef[1] = -1;  // s - u, u not written
-        for (int k = 0; k < 4; k++) {
+        good[4] = claim1(b3, s, 1, 0); good[4].nt = 3; good[4].key[1] = u->id; good[4].coef[1] = -1;  // s - u - y: three terms
+        good[4].key[2] = y->id; good[4].coef[2] = -1;
+        for (int k = 0; k < 5; k++) {
             char why[200] = "";
             char *t = gen_with(f, &good[k], 1, JGEN_ALL, why);
             CHECK(t != NULL, "claim %d is accepted: got \"%s\"", k, why);
@@ -399,7 +402,7 @@ int main(void) {
             CHECK(ok && kind[0] == 2 && kind[1] == 1 && kind[2] == 1 && kind[3] == 0,
                   "term kinds at the header: s 2, u 1, y 1, ls 0 (got %d %d %d %d)", kind[0], kind[1], kind[2], kind[3]);
         }
-        printf("  claims refused: at the entry, no fresh version, a term not fixed, three terms, one twice\n");
+        printf("  claims refused: at the entry, no fresh version, a term not fixed, five terms, one twice\n");
         // 15. a claim at a loop header is owed on the entry edge (`inv.entry`) and on the back edge
         // (`inv.keep`), where the header's own claim, about its previous entry, is a hypothesis
         {   char *t = gen_with(f, &good[1], 1, JGEN_CLAIMS, NULL);
@@ -1007,6 +1010,106 @@ int main(void) {
         }
     }
     printf("  a vector: a scalar amount and a scalar divisor owed, per-lane ones outside\n");
+    // 31. a loop's termination: `i = 0; while i < n { i = i + 1 }`. With no ranking claim it is
+    // `outside` (a function that may diverge owes nothing); with f = n - i, on the back edge
+    // `rank.fall` (it falls by 1) and `rank.bound` (it is >= 0 where the trip is taken); a tuple
+    // whose second component falls also owes the first `rank.keep`; a claim the generator cannot
+    // state, or one that leaves the back edge out, refuses the function
+    {   IrFunc *f = ir_func_new(&A, nm("g31"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u32t, nm("n"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u32t)); ir_set_br(b0, b1);
+        IrValue *li = ir_load(f, b1, i, u32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, li, n), b2, b3);
+        IrValue *li2 = ir_load(f, b2, i, u32t);
+        ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li2, ir_const_int(f, b2, 1, u32t), u32t));
+        ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, u32t));
+        ir_finalize_cfg(f);
+        CHECK(b1->is_loop_header, "b1 heads the loop");
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && strstr(t, "outside no ranking function proposed for this loop") && !strstr(t, "rank."),
+              "no ranking claim: the loop's termination is outside:\n%s", t ? t : "");
+        free(t);
+        f->may_diverge = true;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && !strstr(t, "no ranking function"), "a function that may diverge owes no termination:\n%s", t ? t : "");
+        free(t);
+        f->may_diverge = false;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.ncomp = 1; r.nt = 2; r.key[0] = i->id; r.key[1] = n->id;
+        r.coef[0][0] = -1; r.coef[0][1] = 1; r.c0[0] = 0;                 // f = n - i
+        r.nedge = 1; r.from[0] = b2->id; r.fall[0] = 0;
+        gen_rk = &r; gen_nrk = 1;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        char key[48], hv[48], want[160];
+        snprintf(hv, sizeof hv, "%%s%d@head.bb%d", i->id, b1->id);
+        snprintf(key, sizeof key, "bb%d.%d rank.fall 0", b2->id, nins(b2));
+        const char *vf = t ? vc_of(t, key) : "";
+        const char *g = strstr(vf, "goal ");
+        CHECK(g && strstr(g, hv) && strstr(g, "<= -1") && !strstr(g, "%v"), "rank.fall: n - i falls by 1, n cancelling:\n%s", vf);
+        snprintf(key, sizeof key, "bb%d.%d rank.bound 0", b2->id, nins(b2));
+        const char *vb = t ? vc_of(t, key) : "";
+        g = strstr(vb, "goal ");
+        snprintf(want, sizeof want, "-1*%%v%d", n->id);
+        CHECK(g && strstr(g, hv) && strstr(g, want) && strstr(g, "<= 0"), "rank.bound: i - n <= 0 where the trip is taken:\n%s", vb);
+        CHECK(strstr(vb, "guard bb"), "the bound has the edge's guard:\n%s", vb);
+        CHECK(t && !strstr(t, "no ranking function") && !strstr(t, "rank.keep"), "one component: no keep, no outside:\n%s", t ? t : "");
+        free(t);
+        // a tuple (0, n - i): the first keeps, the second falls
+        JRank r2 = r; r2.ncomp = 2;
+        r2.coef[0][0] = 0; r2.coef[0][1] = 0; r2.c0[0] = 0;
+        r2.coef[1][0] = -1; r2.coef[1][1] = 1; r2.c0[1] = 0; r2.fall[0] = 1;
+        gen_rk = &r2;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && count(t, "rank.keep 0") == 1 && count(t, "rank.fall 1") == 1 && count(t, "rank.bound 1") == 1 && !strstr(t, "rank.fall 0"),
+              "a tuple falling at 1: keep 0, fall 1, bound 1:\n%s", t ? t : "");
+        free(t);
+        // refused: the back edge left out, a component out of range, an edge that is no back
+        // edge, a term made in the loop, two claims at one header, a claim naming no function
+        struct { JRank r; int n; const char *why; } bad[6];
+        for (int k = 0; k < 6; k++) { bad[k].r = r; bad[k].n = 1; }
+        bad[0].r.nedge = 0; bad[0].why = "a back edge the ranking claim does not name";
+        bad[1].r.fall[0] = 1; bad[1].why = "falling component out of range";
+        bad[2].r.from[0] = b0->id; bad[2].why = "no back edge of its loop";
+        bad[3].r.key[1] = li2->id; bad[3].why = "not a cell or a value fixed at its header";
+        bad[4].n = 2; bad[4].why = "two ranking claims at one loop header";
+        bad[5].r.fn = NULL; bad[5].why = "a ranking claim with no function";
+        for (int k = 0; k < 6; k++) {
+            JRank two[2] = { bad[k].r, bad[k].r };
+            gen_rk = two; gen_nrk = bad[k].n;
+            char why[200] = "";
+            t = gen_with(f, NULL, 0, JGEN_ALL, why);
+            CHECK(!t && strstr(why, bad[k].why), "ranking claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
+            free(t);
+        }
+        gen_rk = NULL; gen_nrk = 0;
+        // 32. the paths a proposer is offered: the entry edge (no `pre`) and the back edge, each
+        // with the header's version of i before and after; a block that heads no loop has none
+        {   JMem m = jmem_over(region, sizeof region);
+            JPaths P; char err[200];
+            bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+            CHECK(ok && !P.refused && P.n == 2, "two edges into the header (got %d, %s)", ok ? P.n : -1, ok ? (P.refused ? P.refused : "") : err);
+            for (int32_t k = 0; ok && k < P.n; k++) {
+                const JPath *p = &P.p[k];
+                CHECK(p->npairs == 1 && p->pairs[0].key == i->id, "one pair, i's (path %d)", k);
+                if (p->npairs != 1) continue;
+                const JPathPair *q = &p->pairs[0];
+                if (p->back) {
+                    CHECK(p->from == b2->id && q->pre >= 0 && q->post >= 0 && q->pre != q->post, "the back edge: i before and after differ");
+                    CHECK(q->pre < p->vc->nvars && strstr(p->vc->vars[q->pre], "@head"), "pre is the header's version");
+                    bool guard = false;
+                    for (int32_t h = 0; h < p->vc->nhyps; h++) if (strstr(p->vc->hyps[h].origin, "guard")) guard = true;
+                    CHECK(guard, "the back edge's path has the header's guard");
+                } else CHECK(p->from == b0->id && q->pre == -1 && q->post >= 0, "the entry edge: no pre, i's value at entry");
+            }
+            m = jmem_over(region, sizeof region);
+            ok = jgen_paths(&m, f, gen_mod, NULL, 0, b2->id, &P, err, sizeof err);
+            CHECK(ok && P.refused && strstr(P.refused, "not a loop header"), "b2 heads no loop");
+        }
+    }
+    printf("  a loop's termination: outside without a ranking claim, keep, fall and bound with one, and the paths\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

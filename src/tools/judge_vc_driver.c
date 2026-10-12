@@ -378,8 +378,9 @@ static bool jj_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     if (c->corrupt && out->k == J_ANS_CERT) { bool done = false; jj_corrupt(&out->cert.body, &done); }
     return true;
 }
-static bool jj_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout) {
+static bool jj_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk) {
     JjCtx *c = ctx;
+    *rk = NULL; *nrk = 0;                // ranking claims: none proposed yet (the finder's, PE.5)
     c->F->gen = gen; c->F->mod = mod;
     *out = finder_propose(c->F, nout);
     return !c->F->oom;                   // a NULL for want of memory is not "no claims"
@@ -505,7 +506,7 @@ int main(int argc, char **argv) {
         char err[200]; err[0] = 0;
         if (check) {
             JObl *o; int32_t n;
-            if (!jgen_func(&m, f, irmod, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
+            if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, JGEN_ALL, &o, &n, err, sizeof err)) {
                 fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; continue;
             }
             HK *nh = realloc(hk, sizeof *hk * (size_t)(nhk + n + 1));
@@ -522,7 +523,7 @@ int main(int argc, char **argv) {
         Vra *V = vra_analyze(f);
         m = jmem_over(buf, cap);
         JObl *o; int32_t n;
-        if (!jgen_func(&m, f, irmod, cl, ncl, JGEN_ALL, &o, &n, err, sizeof err)) {
+        if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, JGEN_ALL, &o, &n, err, sizeof err)) {
             printf("%s %.*s: %s\n", stats ? "ERROR\t" : "# generator refused", (int)f->name->length, f->name->name, err);
             rc = 1; vra_free(V); continue;
         }

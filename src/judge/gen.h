@@ -52,7 +52,7 @@
 // whoever proposes claims must have every claim's VCs implied, or drop the claim and generate again.
 //
 // Not stated yet, each costing precision only: element cells; a raw pointer's pointee (its loads
-// are fresh variables); a loop invariant no claim proposes, or of three terms or more; another
+// are fresh variables); a loop invariant no claim proposes, or of five terms or more; another
 // module's callee's contract; an ABI layout's size; a product of two variables (`outside`). The
 // obligations mirror VRA's final pass for bounds, division, overflow, integer casts, shifts, bit
 // counts, landings (P2.3) and ASSERTs (P2.6), so the two can be compared obligation by obligation.
@@ -73,7 +73,7 @@
 // about (the remainder of x / c is x - c*q).
 typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; } JRecipe;
 
-// A claim at a cut point, `sum(coef * term) <= rhs`, over one or two terms by value id: a cell's
+// A claim at a cut point, `sum(coef * term) <= rhs`, over one to four terms by value id: a cell's
 // ALLOCA id is the version the cell has as block `blk` is entered, any other id that integer value.
 // One term at least is a version the block makes afresh, so it is a join or a loop header, and it
 // is not the function's entry, the one block entered with no edge to owe the claim on
@@ -946,7 +946,7 @@ static bool jg_lands_exact(const IrType *from, const IrType *to, bool waived) {
 }
 // The claims about a version a join or a header makes, stated where the version is: VC-wide, or
 // inside the current disjunct when the version is local to its path. Each once per place (a claim
-// of two terms is reached from either).
+// of several terms is reached from each).
 static void jb_claims(JB *B, const JVer *v) {
     JG *g = B->g;
     int32_t at = B->jS >= 0 ? B->dgen : -1;
@@ -957,7 +957,7 @@ static void jb_claims(JB *B, const JVer *v) {
         for (int k = 0; k < c->nt; k++) if (g->cell[c->key[k]] == v->cell) about = true;
         if (!about) continue;
         B->cst[ci] = at;
-        JLT t[2];
+        JLT t[JCLAIM_MAXT];
         for (int k = 0; k < c->nt; k++) {
             t[k].var = jb_term(B, c->key[k], g->instate + (size_t)c->blk * (size_t)g->ncells);
             t[k].c = c->coef[k];
@@ -1945,7 +1945,15 @@ static bool jg_term_ok(JG *g, int32_t b, int32_t key) {
     return d >= 0 && d != b && jg_dominates(g, d, b);
 }
 // Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
-// A return claim of h: one or two terms, the returned value among them and any other an integer
+// Its terms: one to `max`, no key twice (a sum names each term once).
+static bool jg_claim_shape(JG *g, const int32_t *key, int32_t nt, int32_t max) {
+    if (nt < 1 || nt > max) return jg_fail(g, "a claim of no terms, or of more than it may have");
+    for (int32_t i = 0; i < nt; i++)
+        for (int32_t j = i + 1; j < nt; j++)
+            if (key[i] == key[j]) return jg_fail(g, "a claim naming one term twice");
+    return true;
+}
+// A return claim of h: its terms, the returned value among them and any other an integer
 // parameter of h; h returns an integer, and every return lands exactly (a wrapping return would
 // make the value a caller sees another than the one the claim is owed about).
 static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
@@ -1953,8 +1961,7 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
     if (!h || h->is_extern || !jg_is_int(h->ret_type)) return jg_fail(g, "a return claim on a function returning no integer");
     // lowered with a construct dropped, the IR is not the function: it could return anything
     if (h->incomplete) return jg_fail(g, "a return claim on a function lowered incompletely");
-    if (c->nt < 1 || c->nt > 2) return jg_fail(g, "a claim of other than one or two terms");
-    if (c->nt == 2 && c->key[0] == c->key[1]) return jg_fail(g, "a claim naming one term twice");
+    if (!jg_claim_shape(g, c->key, c->nt, JCLAIM_MAXT)) return false;
     if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
     bool ret = false;
     for (int k = 0; k < c->nt; k++) {
@@ -1987,8 +1994,7 @@ static bool jg_claims_ok(JG *g) {
         // a header (the `made` rule below)
         if (c->blk < 0 || c->blk >= g->nb || !g->blk[c->blk] || g->rpoix[c->blk] < 0 || c->blk == g->f->entry->id)
             return jg_fail(g, "a claim not at a block entered by edges only");
-        if (c->nt < 1 || c->nt > 2) return jg_fail(g, "a claim of other than one or two terms");
-        if (c->nt == 2 && c->key[0] == c->key[1]) return jg_fail(g, "a claim naming one term twice");
+        if (!jg_claim_shape(g, c->key, c->nt, JCLAIM_MAXT)) return false;
         if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
         bool made = false;
         for (int k = 0; k < c->nt; k++) {
@@ -2017,7 +2023,7 @@ static bool jg_post_obligations(JG *g, JObls *L, int32_t ci) {
         int32_t n = 0;
         for (IrInstr *i = b->instrs; i; i = i->next) n++;
         JB B = jb_begin(g, b->id, n, -1);
-        JLT t[2]; JCons goal;
+        JLT t[JCLAIM_MAXT]; JCons goal;
         for (int k = 0; k < c->nt; k++) {
             t[k].var = jb_val(&B, c->key[k] == JKEY_RET ? b->term.cond : jg_value(g, c->key[k]));
             t[k].c = c->coef[k];
@@ -2048,7 +2054,7 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
             for (IrInstr *i = P->instrs; i; i = i->next) n++;
             JB B = jb_begin(g, P->id, n, -1);
             B.to = H->id;
-            JLT t[2]; JCons goal;
+            JLT t[JCLAIM_MAXT]; JCons goal;
             for (int k = 0; k < c->nt; k++) {
                 t[k].var = jb_term(&B, c->key[k], g->outstate + (size_t)P->id * (size_t)g->ncells);
                 t[k].c = c->coef[k];
@@ -2063,13 +2069,102 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
     return true;
 }
 
+// ── RANKING claims: a loop's termination ────────────────────────────────────────────────────
+// An edge P -> H into loop header H is a BACK edge when P comes no earlier in reverse post-order.
+static bool jg_back_edge(const JG *g, int32_t P, int32_t H) { return g->rpoix[P] >= g->rpoix[H]; }
+// Component j of ranking claim r over the terms' variables before (pre) and after (post) a trip:
+// what 0, `rank.keep`, f(post) - f(pre) <= 0; 1, `rank.fall`, f(post) - f(pre) <= -1; 2,
+// `rank.bound`, f(pre) >= 0, as -c.pre <= c0. A term fixed at the header is one variable in both.
+static bool jg_rank_goal(JB *B, const JRank *r, int32_t j, const int32_t *pre, const int32_t *post, int what, JCons *goal) {
+    JLT t[2 * JRANK_MAXT]; int n = 0;
+    for (int32_t i = 0; i < r->nt; i++) {
+        if (r->coef[j][i] == 0) continue;
+        if (what != 2) { t[n].var = post[i]; t[n].c = r->coef[j][i]; n++; }
+        t[n].var = pre[i]; t[n].c = -r->coef[j][i]; n++;
+    }
+    return jb_cons(B, t, n, J_LE, what == 0 ? 0 : what == 1 ? -1 : r->c0[j], goal);
+}
+// A loop's termination is owed where VRA owes it (vra.h, D-44): at every loop header, unless the
+// function declares `diverge` and the loop has no written measure. With a ranking claim at the
+// header, on each back edge P -> H at the end of P, the edge's condition and the header's claims
+// about its previous entry facts (as for `inv.keep`), with j* the component the claim says falls
+// there: `rank.keep` for each component before j*, `rank.fall` and `rank.bound` for j*. That is
+// a lexicographic ranking function (ADFG): each trip lowers the tuple, which is bounded below where
+// it falls. With none, `outside`: the judge proves no termination it is not shown. A ranking claim
+// the generator cannot state, or one that leaves a back edge out, refuses the function.
+static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
+    const __int128 big = (__int128)1 << 66;
+    // a ranking claim names its function: a block id alone means a block in every function
+    for (int32_t k = 0; k < nrk; k++) if (!rk[k].fn) return jg_fail(g, "a ranking claim with no function");
+    for (int32_t r0 = 0; r0 < g->nrpo; r0++) {
+        IrBlock *H = g->blk[g->rpo[r0]];
+        if (!H->is_loop_header || (g->f->may_diverge && !H->has_measure)) continue;
+        const JRank *r = NULL;
+        for (int32_t k = 0; k < nrk; k++) {
+            if (rk[k].blk != H->id || rk[k].fn != g->f) continue;
+            if (r) return jg_fail(g, "two ranking claims at one loop header");
+            r = &rk[k];
+        }
+        if (!r) { if (!jg_outside(g, L, NULL, H->id, 0, "no ranking function proposed for this loop")) return false; continue; }
+        if (r->ncomp < 1 || r->ncomp > JRANK_MAXC || r->nedge < 0 || r->nedge > JRANK_MAXE)
+            return jg_fail(g, "a ranking claim of no components, or of more than it may have");
+        if (!jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
+        for (int32_t i = 0; i < r->nt; i++)
+            if (!jg_term_ok(g, H->id, r->key[i])) return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
+        for (int32_t j = 0; j < r->ncomp; j++) {
+            if (r->c0[j] > big || r->c0[j] < -big) return jg_fail(g, "a ranking claim's constant out of range");
+            for (int32_t i = 0; i < r->nt; i++)
+                if (r->coef[j][i] > big || r->coef[j][i] < -big) return jg_fail(g, "a ranking claim's coefficient out of range");
+        }
+        for (int32_t e = 0; e < r->nedge; e++) {
+            if (r->fall[e] < 0 || r->fall[e] >= r->ncomp) return jg_fail(g, "a ranking claim's falling component out of range");
+            bool is = false;
+            for (IrEdge *pe = H->preds; pe; pe = pe->next)
+                if (pe->block->id == r->from[e] && g->rpoix[r->from[e]] >= 0 && jg_back_edge(g, r->from[e], H->id)) is = true;
+            if (!is) return jg_fail(g, "a ranking claim names an edge that is no back edge of its loop");
+            for (int32_t e2 = 0; e2 < e; e2++) if (r->from[e2] == r->from[e]) return jg_fail(g, "a ranking claim names one back edge twice");
+        }
+        for (IrEdge *pe = H->preds; pe; pe = pe->next) {
+            IrBlock *P = pe->block;
+            if (g->rpoix[P->id] < 0 || !jg_back_edge(g, P->id, H->id)) continue;
+            bool again = false;
+            for (IrEdge *e2 = H->preds; e2 != pe; e2 = e2->next) if (e2->block == P) again = true;
+            if (again) continue;
+            int32_t e = -1;
+            for (int32_t k = 0; k < r->nedge; k++) if (r->from[k] == P->id) e = k;
+            if (e < 0) return jg_fail(g, "a back edge the ranking claim does not name");
+            int32_t np = 0;
+            for (IrInstr *i = P->instrs; i; i = i->next) np++;
+            int32_t fall = r->fall[e];
+            for (int32_t j = 0; j <= fall; j++)
+                for (int what = j < fall ? 0 : 1; what <= (j < fall ? 0 : 2); what++) {
+                    JB B = jb_begin(g, P->id, np, -1);
+                    B.to = H->id;
+                    int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
+                    for (int32_t i = 0; i < r->nt; i++) {
+                        pre[i] = jb_term(&B, r->key[i], g->instate + (size_t)H->id * (size_t)g->ncells);
+                        post[i] = jb_term(&B, r->key[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
+                    }
+                    JCons goal;
+                    if (B.fail || !jg_rank_goal(&B, r, j, pre, post, what, &goal)) return jg_fail(g, "out of memory building a ranking VC");
+                    JObl *o = jg_push(g, L);
+                    const char *kind = what == 0 ? "rank.keep" : what == 1 ? "rank.fall" : "rank.bound";
+                    if (!o || !jb_finish(&B, NULL, kind, j, &goal, o)) return jg_fail(g, "out of memory building a VC");
+                    o->to = H; o->claim = -1;                // an obligation: a ranking claim is never a fact
+                }
+        }
+    }
+    return true;
+}
+
 // The obligations of `f`, their VCs in `m`: with `only` JGEN_ALL, every obligation and every
 // claim's; JGEN_CLAIMS, the claims' only; JGEN_POST, f's return claims' only; a block id, the
-// claims' at that block only. `cl` are the module's claims (untrusted: see the header): f's cut points and
+// claims' at that block only. `rk` are the module's ranking claims, owed with the obligations (a
+// loop's termination). `cl` are the module's claims (untrusted: see the header): f's cut points and
 // returns, and its same-module callees' returns. False with `err` on an IR the generator does not
 // read (a phi), a claim it cannot state and owe, or a region that is full.
-static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t only,
-                      JObl **out, int32_t *nout, char *err, size_t errcap) {
+static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JRank *rk, int32_t nrk,
+                      int32_t only, JObl **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
@@ -2079,6 +2174,7 @@ static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t
     JObls L; memset(&L, 0, sizeof L);
     if (only == JGEN_ALL && !jg_obligations(&g, &L)) return false;
     if (!jg_claim_obligations(&g, &L, only)) return false;
+    if (only == JGEN_ALL && !jg_rank_obligations(&g, &L, rk, rk ? nrk : 0)) return false;
     *out = L.o; *nout = L.n;
     return true;
 }
@@ -2172,6 +2268,61 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const 
     return true;
 }
 
+// For whoever proposes ranking functions and loop relations (untrusted; PE.5, PE.7): every edge
+// into loop header `header` as the generator states it with the claims `cl` (on a back edge the
+// header's claims about its previous entry are facts, as for `inv.keep`), and for each version the
+// header makes, its variable at the previous entry (-1 on an edge from before the loop) and the one
+// the edge ends with. The goal of each path's VC is 0 <= 0 and means nothing. `refused` says why a
+// header has no paths; false with `err` when the generator refuses the function.
+static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
+                       char *err, size_t errcap) {
+    JG g; memset(&g, 0, sizeof g);
+    g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
+    g.cl = cl; g.ncl = cl ? ncl : 0;
+    memset(out, 0, sizeof *out);
+    if (!f || !f->entry || f->is_extern) { out->refused = "a function without a body"; return true; }
+    if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
+    if (!jg_loop_header(&g, header)) { out->refused = "not a loop header"; return true; }
+    IrBlock *H = g.blk[header];
+    int32_t nk = 0, *keys = JG_NEW(&g, int32_t, g.ncells ? g.ncells : 1);
+    int32_t np = 0;
+    for (IrEdge *e = H->preds; e; e = e->next) np++;
+    JPath *P = JG_NEW(&g, JPath, np ? np : 1);
+    if (!keys || !P) return jg_fail(&g, "out of memory");
+    for (int32_t c = 0; c < g.ncells; c++) {
+        int32_t jv = g.instate[(size_t)header * (size_t)g.ncells + (size_t)c];
+        if (jv >= 0 && g.ver[jv].blk == header && g.ver[jv].kind == JV_HEAD && jg_is_int(g.ver[jv].slot)) keys[nk++] = g.cellv[c]->id;
+    }
+    int32_t n = 0;
+    for (IrEdge *e = H->preds; e; e = e->next) {
+        IrBlock *Pb = e->block;
+        if (g.rpoix[Pb->id] < 0) continue;
+        bool again = false;
+        for (IrEdge *e2 = H->preds; e2 != e; e2 = e2->next) if (e2->block == Pb) again = true;
+        if (again) continue;
+        bool back = jg_back_edge(&g, Pb->id, header);
+        int32_t ni = 0;
+        for (IrInstr *i = Pb->instrs; i; i = i->next) ni++;
+        JB B = jb_begin(&g, Pb->id, ni, -1);
+        B.to = header;
+        JPathPair *pp = JG_NEW(&g, JPathPair, nk ? nk : 1);
+        if (B.fail || !pp) return jg_fail(&g, "out of memory");
+        for (int32_t k = 0; k < nk; k++) {
+            pp[k].key = keys[k];
+            pp[k].post = jb_term(&B, keys[k], g.outstate + (size_t)Pb->id * (size_t)g.ncells);
+            pp[k].pre = back ? jb_term(&B, keys[k], g.instate + (size_t)header * (size_t)g.ncells) : -1;
+        }
+        JLT none[1]; JCons goal; JObl o;
+        JVc *vc = JG_NEW(&g, JVc, 1);
+        if (B.fail || !vc || !jb_cons(&B, none, 0, J_LE, 0, &goal) || !jb_finish(&B, NULL, "path", 0, &goal, &o))
+            return jg_fail(&g, "out of memory building a path");
+        *vc = o.vc;
+        P[n].vc = vc; P[n].back = back; P[n].from = Pb->id; P[n].pairs = pp; P[n].npairs = nk; n++;
+    }
+    out->p = P; out->n = n;
+    return true;
+}
+
 // ── the generator offered to an UNTRUSTED proposer (format.h's JudgeGen) ─────────────────────
 // Each call works in the caller's region from its start, so an answer lives until the next call.
 typedef struct { char *buf; size_t cap; IrFunc *mod; } JGenOffer;
@@ -2179,7 +2330,7 @@ static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t
                           JClaimVc **out, int32_t *nout, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     JObl *o; int32_t n;
-    if (!jgen_func(&m, f, x->mod, cl, ncl, only, &o, &n, err, errcap)) return false;
+    if (!jgen_func(&m, f, x->mod, cl, ncl, NULL, 0, only, &o, &n, err, errcap)) return false;
     JClaimVc *v = JMEM_NEW(&m, JClaimVc, n ? n : 1);
     if (!v) { snprintf(err, errcap, "out of memory"); return false; }
     for (int32_t i = 0; i < n; i++) { v[i].vc = o[i].vc; v[i].claim = o[i].claim; }
@@ -2199,8 +2350,14 @@ static bool jgo_term_kinds(void *ctx, struct IrFunc *f, int32_t blk, const int32
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_term_kinds(&m, f, x->mod, blk, keys, n, kind, err, errcap);
 }
+static bool jgo_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
+                      char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    return jgen_paths(&m, f, x->mod, cl, ncl, header, out, err, errcap);
+}
 static JudgeGen jgen_offer(JGenOffer *x) {
     JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
+    g.paths = jgo_paths;
     return g;
 }
 

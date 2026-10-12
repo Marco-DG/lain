@@ -79,8 +79,9 @@ static bool jsh_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     *out = lia_solve(vc, lim, c->work, c->wcap);
     return true;
 }
-static bool jsh_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout) {
+static bool jsh_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk) {
     JshCtx *c = ctx;
+    *rk = NULL; *nrk = 0;                           // ranking claims: none proposed yet (the finder's, PE.5)
     c->F->gen = gen; c->F->mod = mod;
     free(c->last);
     c->last = *out = finder_propose(c->F, nout);

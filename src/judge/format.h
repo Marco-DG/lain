@@ -88,15 +88,37 @@ typedef struct {
 // (judge_interfaces §8; the proposer is src/solver/finder.h). The IR's types are opaque here.
 struct IrFunc; struct IrType;
 // A claim at a cut point (blk >= 0: a forward join or a loop header), `sum(coef * term) <= rhs`
-// over one or two terms by value id (a cell's ALLOCA id is its version at the block); or a RETURN
-// claim (blk JCLAIM_RET) over the value returned (JKEY_RET) and integer parameters. `fn` is the
-// claim's function. gen.h states and owes them; nothing here is believed.
-enum { JCLAIM_RET = -1, JKEY_RET = -2 };
-typedef struct { int32_t blk, nt; int32_t key[2]; __int128 coef[2]; __int128 rhs; struct IrFunc *fn; } JClaim;
+// over one to JCLAIM_MAXT terms by value id (a cell's ALLOCA id is its version at the block); or a
+// RETURN claim (blk JCLAIM_RET) over the value returned (JKEY_RET) and integer parameters. `fn` is
+// the claim's function. gen.h states and owes them; nothing here is believed.
+enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
+typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs; struct IrFunc *fn; } JClaim;
+// A RANKING claim at a loop header: a tuple of components f_j = sum coef[j][i] * term_i + c0[j]
+// over terms by value id (a cell is its version at the header; any other value dominates it, so
+// its value before and after a trip is one). On each back edge, named by its predecessor `from`,
+// the components before fall[e] do not rise and component fall[e] falls by at least 1 while it is
+// non-negative (lexicographic, ADFG). It is never a hypothesis: gen.h owes it on every back edge
+// (`rank.keep`, `rank.fall`, `rank.bound`), and a loop of a function that must terminate with none
+// is `outside`. A back edge it does not list refuses it.
+enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8 };
+typedef struct {
+    int32_t blk, ncomp, nt, nedge;
+    int32_t key[JRANK_MAXT];
+    __int128 coef[JRANK_MAXC][JRANK_MAXT], c0[JRANK_MAXC];
+    int32_t from[JRANK_MAXE]; int8_t fall[JRANK_MAXE];
+    struct IrFunc *fn;
+} JRank;
 // A version a claim can be about: a join's or a loop header's (`head`) fresh version of a cell.
 typedef struct { int32_t blk, key; const struct IrType *type; bool head; } JSlot;
 // A VC a claim owes, and which claim (an index into the set it was generated with).
 typedef struct { JVc vc; int32_t claim; } JClaimVc;
+// One edge into a loop header as the generator states it (its VC's hypotheses; the goal means
+// nothing), and the header's versions: for each, `pre` is its variable at the header's previous
+// entry (-1 on an edge from before the loop) and `post` the one the edge ends with, both in THIS
+// path's variables. `key` is the version's cell, so one key names one quantity on every path.
+typedef struct { int32_t key, pre, post; } JPathPair;
+typedef struct { const JVc *vc; bool back; int32_t from; const JPathPair *pairs; int32_t npairs; } JPath;
+typedef struct { const JPath *p; int32_t n; const char *refused; } JPaths;
 // What a claim VC generation covers: every claim's VCs and every obligation (ALL), the claims'
 // only (CLAIMS), the function's return claims' only (POST), or a block id's claims only.
 enum { JGEN_ALL = -1, JGEN_CLAIMS = -2, JGEN_POST = -3 };
@@ -110,6 +132,9 @@ typedef struct {
     bool (*terms)(void *ctx, struct IrFunc *f, int32_t blk, JSlot **out, int32_t *nout, char *err, uint32_t errcap);
     bool (*term_kinds)(void *ctx, struct IrFunc *f, int32_t blk, const int32_t *keys, int32_t n, uint8_t *kind,
                        char *err, uint32_t errcap);
+    // the edges into loop header `header`, with the claims `cl` as the generator states them
+    bool (*paths)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
+                  char *err, uint32_t errcap);
 } JudgeGen;
 
 #endif // LAIN_JUDGE_FORMAT_H

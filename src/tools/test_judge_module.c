@@ -35,8 +35,8 @@ static IrType *u32t;
 
 // ── the stub callbacks ──────────────────────────────────────────────────────────────────────
 enum { S_HONEST, S_CORRUPT, S_GOAL_MODEL, S_HYP_MODEL, S_BUDGET };
-typedef struct { int mode; int propose; JClaim claim; } Stub;
-enum { P_NONE, P_CLAIM, P_FAIL };
+typedef struct { int mode; int propose; JClaim claim; JRank rank[2]; int32_t nrank; } Stub;
+enum { P_NONE, P_CLAIM, P_FAIL, P_RANK };
 static JInt jv(int64_t v) { JInt x; memset(&x, 0, sizeof x); uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v; x.neg = v < 0; while (u) { x.limb[x.n++] = (uint32_t)u; u >>= 32; } return x; }
 static JInt model_vals[64];
 static void corrupt(JSteps *b, bool *done) {          // the first combination anywhere: a sign byte 2
@@ -63,10 +63,11 @@ static bool stub_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     }
     return true;
 }
-static bool stub_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *n) {
+static bool stub_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *n, JRank **rk, int32_t *nrk) {
     Stub *s = ctx; (void)mod; (void)gen;
+    *rk = s->nrank ? s->rank : NULL; *nrk = s->nrank;
     if (s->propose == P_FAIL) return false;
-    if (s->propose == P_CLAIM) { *out = &s->claim; *n = 1; } else { *out = NULL; *n = 0; }
+    if (s->propose == P_CLAIM) { *out = &s->claim; *n = 1; } else { *out = NULL; *n = 0; }      // P_RANK: ranks only
     return true;
 }
 // ── the records, as text, in order ─────────────────────────────────────────────────────────
@@ -143,13 +144,49 @@ int main(void) {
     CHECK(run(f, &s, true, sizeof region, err), "judges: %s", err);
     CHECK(nrec[JREC_UNCERTIFIED] == 2 && nrec[JREC_PROVED] + nrec[JREC_NOT_IMPLIED] <= 1 && strstr(recs, "is not certified"),
           "a false claim makes every obligation uncertified, naming the claim's VC:\n%s", recs);
-    s.claim.rhs = 4294967295; s.claim.nt = 3;                              // a claim the generator refuses
+    s.claim.rhs = 4294967295; s.claim.nt = JCLAIM_MAXT + 1;                // a claim the generator refuses
     CHECK(run(f, &s, true, sizeof region, err) && nrec[JREC_UNCERTIFIED] == 2 && strstr(recs, "refuses the claims"), "a claim the generator refuses, likewise:\n%s", recs);
     s.claim.nt = 1; s.propose = P_FAIL;
     CHECK(run(f, &s, true, sizeof region, err), "judges: %s", err);
     CHECK(nrec[JREC_NO_CLAIMS] == 1 && !strncmp(recs, "no-claims", 9) && nrec[JREC_PROVED] == 1 && nrec[JREC_NOT_IMPLIED] == 1,
           "a proposer that fails is said, and the module judged without claims:\n%s", recs);
     s.propose = P_NONE;
+
+    printf("── a loop's termination ──\n");
+    // h(n): i = 0; while i < n { i = i + 1 }. Owed termination: `outside` with no ranking claim,
+    // both VCs proved with n - i, and a ranking claim that rises is not implied, with a model
+    IrFunc *h = ir_func_new(&A, nm("h"), u32t, IR_FUNC_PURE);
+    IrValue *hn = ir_add_param(h, u32t, nm("n"));
+    IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h), *h3 = ir_new_block(h);
+    IrValue *hi = ir_alloca(h, h0, u32t);
+    ir_store(h, h0, hi, ir_const_int(h, h0, 0, u32t)); ir_set_br(h0, h1);
+    ir_set_br_cond(h1, ir_icmp(h, h1, IR_CMP_ULT, ir_load(h, h1, hi, u32t), hn), h2, h3);
+    ir_store(h, h2, hi, ir_binop(h, h2, IR_ADD, ir_load(h, h2, hi, u32t), ir_const_int(h, h2, 1, u32t), u32t));
+    ir_set_br(h2, h1);
+    ir_set_ret(h3, ir_const_int(h, h3, 0, u32t));
+    ir_finalize_cfg(h);
+    CHECK(run(h, &s, true, sizeof region, err) && nrec[JREC_OUTSIDE] == 1 && strstr(recs, "no ranking function"), "no ranking claim: outside:\n%s", recs);
+    s.propose = P_RANK; s.nrank = 1;
+    memset(&s.rank[0], 0, sizeof s.rank[0]);
+    s.rank[0].blk = h1->id; s.rank[0].fn = h; s.rank[0].ncomp = 1; s.rank[0].nt = 2;
+    s.rank[0].key[0] = hi->id; s.rank[0].key[1] = hn->id; s.rank[0].coef[0][0] = -1; s.rank[0].coef[0][1] = 1;   // n - i
+    s.rank[0].nedge = 1; s.rank[0].from[0] = h2->id; s.rank[0].fall[0] = 0;
+    int hp = 0;
+    for (IrInstr *i = h2->instrs; i; i = i->next) hp++;
+    char rf[48], rb[48];
+    snprintf(rf, sizeof rf, "proved bb%d.%d rank.fall", h2->id, hp); snprintf(rb, sizeof rb, "proved bb%d.%d rank.bound", h2->id, hp);
+    CHECK(run(h, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(nrec[JREC_OUTSIDE] == 0 && strstr(recs, rf) && strstr(recs, rb) && !strstr(recs, "not-implied") && nrec[JREC_UNCERTIFIED] == 0,
+          "n - i: rank.fall and rank.bound proved:\n%s", recs);
+    s.propose = P_FAIL;                                                    // a failed proposer's ranks are dropped
+    CHECK(run(h, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(nrec[JREC_NO_CLAIMS] == 1 && nrec[JREC_OUTSIDE] == 1 && !strstr(recs, "rank."), "a proposer that fails hands over no ranks:\n%s", recs);
+    s.propose = P_RANK;
+    s.rank[0].coef[0][0] = 1; s.rank[0].coef[0][1] = 0;                    // i: rises, never falls
+    CHECK(run(h, &s, true, sizeof region, err), "judges: %s", err);
+    snprintf(rf, sizeof rf, "not-implied bb%d.%d rank.fall", h2->id, hp);
+    CHECK(strstr(recs, rf) && nrec[JREC_NOT_IMPLIED] == 1 && nrec[JREC_SOLVER_BUG] == 0, "a ranking claim that rises: rank.fall not implied:\n%s", recs);
+    s.propose = P_NONE; s.nrank = 0;
 
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
