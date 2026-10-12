@@ -1476,6 +1476,11 @@ static bool ir_cmp_op(TokenKind t, bool sgn, IrCmp *c) {
 static bool ir_nonneg_lit(Expr *e) {
     return e && e->kind == EXPR_LITERAL && e->as.literal_expr.value >= 0;
 }
+// Does integer type t hold every value of integer type s?
+static bool ir_int_holds(const IrType *t, const IrType *s) {
+    if (t->is_signed == s->is_signed) return t->bits >= s->bits;
+    return t->is_signed && t->bits > s->bits;
+}
 static int ir_cbits(IrType *t) { return t->bits <= 8 ? 8 : t->bits <= 16 ? 16 : t->bits <= 32 ? 32 : 64; }
 // The instruction defining v, when v was just computed in the block being lowered.
 static IrInstr *ir_cmp_def(LowerCtx *c, IrValue *v) {
@@ -2699,11 +2704,23 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                 // that cannot be negative (a literal, or non-negative by construction, as the mixed
                 // comparison reads it: ir_cmp_nonneg) converts to unsigned unchanged, and C's own
                 // spelling is right: `(lo + hi) / 2` keeps its unsigned division.
-                if ((op == IR_SDIV || op == IR_UDIV || op == IR_SREM || op == IR_UREM) &&
+                // ★ ...and so is a `&`, `|` or `^` of mixed signedness into a SIGNED type that cannot
+                // hold every value of both operands (I.199). The IR's bitwise result is exact in a
+                // signed type and wraps in an unsigned one (interp.h), and two values of a signed
+                // type combine inside it, but `x & d` on an i8 and a u8 is an i8, and -128 & 255 =
+                // 128 does not fit one. Nothing owed that: VRA and the judge read a bitwise result as
+                // always fitting, the interpreter stopped with PROOF FAILED, and the C stored 128 in
+                // an int8_t. Computed in i64 and landed checked, the landing is owed like any other.
+                // (In 64 bits the IR's operation is on the two's complement bits, as C's is, and its
+                // result always fits.)
+                bool divrem = op == IR_SDIV || op == IR_UDIV || op == IR_SREM || op == IR_UREM;
+                bool bitw = op == IR_AND || op == IR_OR || op == IR_XOR;
+                if ((divrem || bitw) &&
                     ty && ty->kind == IRT_INT && ty->bits <= 64 && x && y && x->type && y->type &&
                     x->type->kind == IRT_INT && y->type->kind == IRT_INT && x->type->is_signed != y->type->is_signed &&
-                    !(x->type->is_signed ? (ir_nonneg_lit(L) || ir_cmp_nonneg(c, x, 0))
-                                         : (ir_nonneg_lit(R) || ir_cmp_nonneg(c, y, 0)))) {
+                    (bitw ? ty->is_signed && ty->bits < 64 && !(ir_int_holds(ty, x->type) && ir_int_holds(ty, y->type))
+                          : !(x->type->is_signed ? (ir_nonneg_lit(L) || ir_cmp_nonneg(c, x, 0))
+                                                 : (ir_nonneg_lit(R) || ir_cmp_nonneg(c, y, 0))))) {
                     IrType *w64 = ir_type_int(c->a, 64, true);
                     IrValue *xy[2] = { x, y };
                     for (int k = 0; k < 2; k++) {
@@ -2714,7 +2731,7 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         cv->wrap = IR_WRAP_CHECK; cv->unchecked = c->unsafe;
                         ir_emit(c->cur, cv); xy[k] = cv->result;
                     }
-                    IrOp sop = (op == IR_SDIV || op == IR_UDIV) ? IR_SDIV : IR_SREM;
+                    IrOp sop = bitw ? op : (op == IR_SDIV || op == IR_UDIV) ? IR_SDIV : IR_SREM;
                     IrValue *rw = ir_binop(c->f, c->cur, sop, xy[0], xy[1], w64);
                     c->cur->instrs_tail->unchecked = c->unsafe;
                     if (ty->bits == 64 && ty->is_signed) return rw;

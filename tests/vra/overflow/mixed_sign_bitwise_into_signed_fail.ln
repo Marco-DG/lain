@@ -1,0 +1,14 @@
+// EXPECT: [E086]
+// I.199: `x & d` on an i8 and a u8 is an i8 (spec 07: the operand of higher rank, here the left),
+// and its value is exact in a signed type: -128 & 255 = 128 does not fit. It compiled on 10ab2fa,
+// since a bitwise result was read as always fitting; the native program printed -128 (C stored 128
+// in an int8_t) and --interpret stopped with PROOF FAILED. The `&` is now computed in i64 and lands
+// in i8 checked.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func f(x i8, d u8) i8 {
+    return x & d
+}
+func main() i32 effects io {
+    libc_printf("%d\n", f(-128, 255) as i32)
+    return 0
+}

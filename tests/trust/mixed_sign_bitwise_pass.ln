@@ -1,0 +1,15 @@
+// I.199, the allowed side: a `&`, `|` or `^` of an i8 and a u8 into an i8 is accepted where both
+// operands are proven to fit an i8, and an unsigned result wraps as the IR defines it, so mixing
+// signedness there owes nothing. Run natively (ASan + UBSan) against the line below and with
+// --interpret.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func both(x i8, d u8 <= 127) i8 {
+    return (x & d) | (x ^ d)
+}
+func wide(x i8, d u16) u16 {
+    return x | d
+}
+func main() i32 effects io {
+    libc_printf("%d %d %d\n", both(-128, 127) as i32, both(-7, 3) as i32, wide(-1, 0) as i32)
+    return 0
+}

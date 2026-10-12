@@ -8,7 +8,8 @@
 # the safety promise was violated — an UNSOUND bug.
 #
 # One program in three divides across SIGNEDNESS (I.198): a dividend and a divisor of two random
-# integer types, through `/ % /% /|`, over each type's edge values. Its oracle is the VALUE: the
+# integer types, through `/ % /% /|` (and `& | ^`, whose value is exact in a signed type, I.199),
+# over each type's edge values. Its oracle is the VALUE: the
 # native output must equal `lain --interpret`'s, since C converts an int32_t beside a uint32_t to
 # unsigned and a quotient can be wrong without trapping (MISCOMPILE), and --interpret must not stop
 # on a proof (UNSOUND). `mixed=` counts the accepted ones, so a zero there says nothing.
@@ -30,7 +31,7 @@ for ((i=0; i<N; i++)); do
     if [ $((RANDOM % 3)) -eq 0 ]; then                                # across signedness (I.198)
         A=${TYPES[$((RANDOM % 8))]}; B=${TYPES[$((RANDOM % 8))]}
         [ "${A:0:1}" = "${B:0:1}" ] && B=$([ "${A:0:1}" = i ] && echo u || echo i)${B:1}
-        mops=("/" "%" "/%" "/|"); mop=${mops[$((RANDOM % 4))]}
+        mops=("/" "%" "/%" "/|" "&" "|" "^"); mop=${mops[$((RANDOM % 7))]}
         src="$SC/m_$i.ln"
         { echo 'extern func libc_printf(fmt *u8, ...) i32 effects io'
           echo "func dv(x $A, d $B) i64 {"; echo '    if d != 0 {'; echo "        return (x $mop d) as% i64"
@@ -52,7 +53,7 @@ for ((i=0; i<N; i++)); do
         nat=$(timeout 5 "$SC/m_$i" 2>"$SC/me_$i"); rc=$?
         itp=$(timeout 30 $LAIN "$src" --interpret 2>"$SC/mi_$i")
         if grep -q 'PROOF FAILED' "$SC/mi_$i" || [ $rc -ne 0 ]; then
-            echo "UNSOUND (accepted mixed-sign division fails): $src  $A $mop $B rc=$rc"; sed -n 1p "$SC/mi_$i" "$SC/me_$i"
+            echo "UNSOUND (accepted mixed-sign operation fails): $src  $A $mop $B rc=$rc"; sed -n 1p "$SC/mi_$i" "$SC/me_$i"
             unsound=$((unsound+1))
         elif [ "$nat" != "$itp" ]; then
             echo "MISCOMPILE (native != --interpret): $src  $A $mop $B"

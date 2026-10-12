@@ -1768,6 +1768,23 @@ static bool vra_divrem_sign_unknown(Vra *V, Octagon *W, IrInstr *ins) {
     vra_range(V, W, ins->operands[1], &blo, &bhi);
     return alo < 0 || blo < 0;
 }
+// ── A BITWISE RESULT STAYS IN ITS OPERANDS' SIGNED WIDTH (I.199) ──────────────────────────
+// Two values of the signed k-bit range are their k-bit patterns sign-extended, and `&`, `|` and `^`
+// of sign-extended patterns are sign-extended: the result is in [-2^(k-1), 2^(k-1) - 1] for the
+// least k that holds both operands. The lowering computes a mixed-sign bitwise op into a narrower
+// signed type in i64 and lands it checked; this is what proves that landing when the operands fit.
+static void vra_bitwise_signed_closure(Vra *V, Octagon *W, IrInstr *ins, int r) {
+    int64_t lo[2], hi[2];
+    oct_close(W);
+    vra_range(V, W, ins->operands[0], &lo[0], &hi[0]);
+    vra_range(V, W, ins->operands[1], &lo[1], &hi[1]);
+    int k = 1;
+    for (int s = 0; s < 2; s++)
+        while (k < 64 && (lo[s] < -((int64_t)1 << (k - 1)) || hi[s] > ((int64_t)1 << (k - 1)) - 1)) k++;
+    if (k >= 64) return;
+    oct_add_lb(W, r, -((int64_t)1 << (k - 1)));
+    oct_add_ub(W, r, ((int64_t)1 << (k - 1)) - 1);
+}
 // ── THE SAME ELEMENT, READ TWICE (I.164) ─────────────────────────────────────────────────
 // `if days <= tab[month] { break }` then `days = days - tab[month]` reads tab[month] through two
 // loads, and month through two more, so the guard's fact `days > L1` said nothing of `L2`: the
@@ -2249,6 +2266,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 oct_add_lb(W, r, 0);
                 vra_add_diff_le(V, W, r, y, 0);                 // r <= y
             }
+            vra_bitwise_signed_closure(V, W, ins, r);
             break;
         }
         case IR_OR: case IR_XOR: {
@@ -2269,7 +2287,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                 int64_t cap = bits >= 63 ? INT64_MAX : (int64_t)(((uint64_t)1 << bits) - 1);
                 oct_add_lb(W, r, ins->op == IR_OR ? (alo > blo ? alo : blo) : 0);
                 oct_add_ub(W, r, cap);
-            }
+            } else vra_bitwise_signed_closure(V, W, ins, r);
             break;
         }
         case IR_UDIV: {  // x / b  — in any defined exec (b > 0, x ≥ 0)
