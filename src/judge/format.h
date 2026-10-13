@@ -106,13 +106,17 @@ typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MA
 // is `outside`. A back edge it does not list refuses it.
 // At blk JRANK_ENTRY it is a function's measure for its recursion: one component over its integer
 // parameters (or their slices' lengths) at entry, owed at every call that may close a cycle
-// through it (`rec.fall`, `rec.bound`); its edges are unused.
-enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8, JRANK_ENTRY = -1 };
+// through it (`rec.fall`, `rec.bound`); its edges are not read. The calls `le` lists, each by its
+// block and instruction index, owe only that the callee's measure not rise (`rec.le`); over the
+// whole component the calls listed must close no cycle (spec 12), or the claim is refused. A loop's
+// ranking claim lists none.
+enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8, JRANK_MAXL = 16, JRANK_ENTRY = -1 };
 typedef struct {
     int32_t blk, ncomp, nt, nedge;
     int32_t key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT];             // as a claim's terms
     __int128 coef[JRANK_MAXC][JRANK_MAXT], c0[JRANK_MAXC];
     int32_t from[JRANK_MAXE]; int8_t fall[JRANK_MAXE];
+    int32_t nle, le_blk[JRANK_MAXL], le_idx[JRANK_MAXL];      // at JRANK_ENTRY: the calls owed `<=`
     struct IrFunc *fn;
 } JRank;
 // A version a claim can be about: a join's or a loop header's (`head`) fresh version of a cell.
@@ -124,8 +128,16 @@ typedef struct { JVc vc; int32_t claim; } JClaimVc;
 // entry (-1 on an edge from before the loop) and `post` the one the edge ends with, both in THIS
 // path's variables. `key` is the version's cell, so one key names one quantity on every path; `tk`
 // JTERM_LEN for a slice cell, whose quantity is its length.
+// A CALL's path (call_paths) is the facts at a call: `from` and `at` its block and instruction
+// index (as a recursion measure lists a call), `callee` the function it reaches, `pairs` the
+// callee's parameters (pre: at the caller's entry when the call is a self-call, else -1; post: the
+// argument), and `entry` the caller's own parameters at its entry (pre; post -1). A loop's path has
+// at -1, callee NULL and no entry.
 typedef struct { int32_t key, pre, post; uint8_t tk; } JPathPair;
-typedef struct { const JVc *vc; bool back; int32_t from; const JPathPair *pairs; int32_t npairs; } JPath;
+typedef struct {
+    const JVc *vc; bool back; int32_t from; const JPathPair *pairs; int32_t npairs;
+    int32_t at; const struct IrFunc *callee; const JPathPair *entry; int32_t nentry;
+} JPath;
 typedef struct { const JPath *p; int32_t n; const char *refused; } JPaths;
 // What a claim VC generation covers: every claim's VCs and every obligation (ALL), the claims'
 // only (CLAIMS), the function's return claims' only (POST), or a block id's claims only.

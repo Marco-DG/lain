@@ -1068,15 +1068,16 @@ int main(void) {
         free(t);
         // refused: the back edge left out, a component out of range, an edge that is no back
         // edge, a term made in the loop, two claims at one header, a claim naming no function
-        struct { JRank r; int n; const char *why; } bad[6];
-        for (int k = 0; k < 6; k++) { bad[k].r = r; bad[k].n = 1; }
+        struct { JRank r; int n; const char *why; } bad[7];
+        for (int k = 0; k < 7; k++) { bad[k].r = r; bad[k].n = 1; }
         bad[0].r.nedge = 0; bad[0].why = "a back edge the ranking claim does not name";
         bad[1].r.fall[0] = 1; bad[1].why = "falling component out of range";
         bad[2].r.from[0] = b0->id; bad[2].why = "no back edge of its loop";
         bad[3].r.key[1] = li2->id; bad[3].why = "not a cell or a value fixed at its header";
         bad[4].n = 2; bad[4].why = "two ranking claims at one loop header";
         bad[5].r.fn = NULL; bad[5].why = "a ranking claim with no function";
-        for (int k = 0; k < 6; k++) {
+        bad[6].r.nle = 1; bad[6].why = "a loop's ranking claim lists calls";
+        for (int k = 0; k < 7; k++) {
             JRank two[2] = { bad[k].r, bad[k].r };
             gen_rk = two; gen_nrk = bad[k].n;
             char why[200] = "";
@@ -1087,12 +1088,14 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0;
         // 32. the paths a proposer is offered: the entry edge (no `pre`) and the back edge, each
         // with the header's version of i before and after; a block that heads no loop has none
-        {   JMem m = jmem_over(region, sizeof region);
+        {   memset(region, 0x5a, sizeof region);                                // the region is not zeroed
+            JMem m = jmem_over(region, sizeof region);
             JPaths P; char err[200];
             bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
             CHECK(ok && !P.refused && P.n == 2, "two edges into the header (got %d, %s)", ok ? P.n : -1, ok ? (P.refused ? P.refused : "") : err);
             for (int32_t k = 0; ok && k < P.n; k++) {
                 const JPath *p = &P.p[k];
+                CHECK(p->at == -1 && !p->callee && !p->entry && p->nentry == 0, "a loop's path names no call (path %d)", k);
                 CHECK(p->npairs == 1 && p->pairs[0].key == i->id, "one pair, i's (path %d)", k);
                 if (p->npairs != 1) continue;
                 const JPathPair *q = &p->pairs[0];
@@ -1431,6 +1434,9 @@ int main(void) {
             CHECK(ok && !P.refused && P.n == 1 && P.p[0].npairs == 1 && P.p[0].pairs[0].key == n->id &&
                   P.p[0].pairs[0].pre >= 0 && P.p[0].pairs[0].post >= 0 && P.p[0].pairs[0].pre != P.p[0].pairs[0].post,
                   "one call path: n at entry, n - 1 at the call (%d paths)", ok ? P.n : -1);
+            CHECK(ok && P.n == 1 && P.p[0].callee == f && P.p[0].from == b2->id && P.p[0].at == ci && P.p[0].nentry == 1 &&
+                  P.p[0].entry[0].key == n->id && P.p[0].entry[0].pre == P.p[0].pairs[0].pre && P.p[0].entry[0].post == -1,
+                  "the call named (callee f, at bb%d.%d) and the caller's n at entry", b2->id, ci);
         }
         // p and q call each other
         IrFunc *pf = ir_func_new(&A, nm("p36"), u32t, IR_FUNC_PURE), *qf = ir_func_new(&A, nm("q36"), u32t, IR_FUNC_PURE);
@@ -1478,6 +1484,145 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  a recursion's termination: rec.fall and rec.bound at each call on the cycle, outside where unmeasured\n");
+    // 37. spec 12's CUT: a(n) -> b(n - 1) past `n == 0`, b(n) -> h(n) (a helper) and c(n), c(n) ->
+    // a(n - 1) past `n == 0`; s(n) -> s(n - 1) on its own; the measure n each. With no call listed,
+    // `rec.fall` at every call (b -> c too); b -> c listed, `rec.le` there (n - n <= 0) and the
+    // others fall; a -> b and b -> c listed, c -> a cuts the cycle. Refused: every call of the cycle
+    // listed (each member), s's self-call listed (a cycle of one; the others unaffected), z's call
+    // through its own address listed (no direct call), a listed helper off the cycle, an index no
+    // instruction, a count of listed calls out of range: each refuses b and a (the cut is the
+    // component's). A measure's edges are not read: the finder fills them as for a loop
+    {   IrFunc *fa = ir_func_new(&A, nm("a37"), u32t, IR_FUNC_PURE), *fb = ir_func_new(&A, nm("b37"), u32t, IR_FUNC_PURE),
+               *fc = ir_func_new(&A, nm("c37"), u32t, IR_FUNC_PURE), *fh = ir_func_new(&A, nm("h37"), u32t, IR_FUNC_PURE),
+               *fs = ir_func_new(&A, nm("s37"), u32t, IR_FUNC_PURE);
+        IrFunc *fall[3] = { fa, fc, fs }; const char *callee[3] = { "b37", "a37", "s37" };
+        IrValue *pn[5]; IrBlock *cb[5]; int cix[5];                      // a, c, s; then b's to h, to c
+        for (int w = 0; w < 3; w++) {
+            IrFunc *h = fall[w];
+            pn[w] = ir_add_param(h, u32t, nm("n"));
+            IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+            ir_set_br_cond(h0, ir_icmp(h, h0, IR_CMP_EQ, pn[w], ir_const_int(h, h0, 0, u32t)), h1, h2);
+            ir_set_ret(h1, ir_const_int(h, h1, 0, u32t));
+            IrValue *hm = ir_binop(h, h2, IR_SUB, pn[w], ir_const_int(h, h2, 1, u32t), u32t);
+            cix[w] = nins(h2); cb[w] = h2;
+            ir_set_ret(h2, mk_call(h, h2, callee[w], hm, u32t));
+            ir_finalize_cfg(h);
+        }
+        pn[3] = pn[4] = ir_add_param(fb, u32t, nm("n"));
+        cb[3] = cb[4] = fb->entry;
+        cix[3] = nins(fb->entry); (void)mk_call(fb, fb->entry, "h37", pn[3], u32t);
+        cix[4] = nins(fb->entry); ir_set_ret(fb->entry, mk_call(fb, fb->entry, "c37", pn[4], u32t));
+        ir_finalize_cfg(fb);
+        ir_set_ret(fh->entry, ir_add_param(fh, u32t, nm("x")));
+        ir_finalize_cfg(fh);
+        IrType *fnt = ir_type_new(&A, IRT_FUNC); fnt->elem = u32t;           // z(n) calls itself through &z
+        IrFunc *fz = ir_func_new(&A, nm("z37"), u32t, IR_FUNC_PURE);
+        IrValue *zn = ir_add_param(fz, u32t, nm("n"));
+        IrValue *zr = ir_func_ref(fz, fz->entry, nm("z37"), fnt);
+        int zci = nins(fz->entry);
+        IrInstr *zc = ir_instr(fz, IR_CALL, u32t, 2); zc->operands[0] = zr; zc->operands[1] = zn; ir_emit(fz->entry, zc);
+        ir_set_ret(fz->entry, zc->result);
+        ir_finalize_cfg(fz);
+        fa->next = fb; fb->next = fc; fc->next = fh; fh->next = fs; fs->next = fz; gen_mod = fa;
+        JRank r4[4]; memset(r4, 0, sizeof r4);
+        IrFunc *of[4] = { fa, fb, fc, fs }; IrValue *ov[4] = { pn[0], pn[3], pn[1], pn[2] };
+        for (int w = 0; w < 4; w++) { r4[w].blk = JRANK_ENTRY; r4[w].fn = of[w]; r4[w].ncomp = 1; r4[w].nt = 1; r4[w].key[0] = ov[w]->id; r4[w].coef[0][0] = 1;
+                                      r4[w].nedge = 1; r4[w].from[0] = cb[w < 3 ? w : 2]->id; }   // as the finder fills them: not read
+        gen_rk = r4; gen_nrk = 4;
+        char key[48], why[200];
+        #define AT(i) (snprintf(key, sizeof key, "bb%d.%d", cb[i]->id, cix[i]), key)
+        char *t = gen_with(fb, NULL, 0, JGEN_ALL, NULL);
+        snprintf(why, sizeof why, "%s rec.fall 0", AT(4));
+        CHECK(t && strstr(t, why) && !strstr(t, "rec.le") && !strstr(t, "outside"), "no call listed: b -> c falls:\n%s", t ? t : "");
+        free(t);
+        r4[1].nle = 1; r4[1].le_blk[0] = cb[4]->id; r4[1].le_idx[0] = cix[4];        // b -> c listed
+        t = gen_with(fb, NULL, 0, JGEN_ALL, NULL);
+        snprintf(why, sizeof why, "%s rec.le 0", AT(4));
+        const char *vl = t ? vc_of(t, why) : "", *g = strstr(vl, "goal ");
+        CHECK(g && !strncmp(g, "goal 0 <= 0\n", 12) && !strstr(t, "rec.fall") && strstr(t, "rec.bound"),
+              "b -> c listed: rec.le, n - n <= 0, and rec.bound:\n%s", t ? t : "");
+        free(t);
+        for (int w = 0; w < 2; w++) {
+            t = gen_with(w ? fc : fa, NULL, 0, JGEN_ALL, NULL);
+            snprintf(why, sizeof why, "%s rec.fall 0", AT(w));
+            CHECK(t && strstr(t, why) && !strstr(t, "rec.le"), "%s still falls, the cut accepted:\n%s", w ? "c" : "a", t ? t : "");
+            free(t);
+        }
+        r4[0].nle = 1; r4[0].le_blk[0] = cb[0]->id; r4[0].le_idx[0] = cix[0];        // and a -> b: c -> a cuts
+        t = gen_with(fa, NULL, 0, JGEN_ALL, NULL);
+        snprintf(why, sizeof why, "%s rec.le 0", AT(0));
+        CHECK(t && strstr(t, why), "a -> b and b -> c listed, c -> a falls: accepted:\n%s", t ? t : "");
+        free(t);
+        {   JMem jm = jmem_over(region, sizeof region);                     // a's call path names b
+            JPaths P; char err[200];
+            bool ok = jgen_call_paths(&jm, fa, gen_mod, NULL, 0, &P, err, sizeof err);
+            CHECK(ok && !P.refused && P.n == 1 && P.p[0].callee == fb && P.p[0].from == cb[0]->id && P.p[0].at == cix[0] &&
+                  P.p[0].npairs == 1 && P.p[0].pairs[0].key == pn[3]->id && P.p[0].pairs[0].pre == -1 && P.p[0].pairs[0].post >= 0 &&
+                  P.p[0].nentry == 1 && P.p[0].entry[0].key == pn[0]->id && P.p[0].entry[0].pre >= 0 &&
+                  P.p[0].entry[0].pre != P.p[0].pairs[0].post && P.p[0].entry[0].post == -1,
+                  "a -> b's path: callee b, at bb%d.%d, b's n as the argument, a's n at entry", cb[0]->id, cix[0]);
+            ok = jgen_call_paths(&jm, fb, gen_mod, NULL, 0, &P, err, sizeof err);
+            CHECK(ok && P.n == 1 && P.p[0].callee == fc && P.p[0].at == cix[4], "b's one path is its call to c, not h's");
+        }
+        {   // u(x, n) -> v(n), v(n) -> u(n, n): the caller's parameters are not the callee's (value
+            // ids are per function: a's n and b's n above are both value 0)
+            IrFunc *fu = ir_func_new(&A, nm("u37"), u32t, IR_FUNC_PURE), *fv = ir_func_new(&A, nm("v37"), u32t, IR_FUNC_PURE);
+            IrValue *ux = ir_add_param(fu, u32t, nm("x")), *un = ir_add_param(fu, u32t, nm("n")), *vn = ir_add_param(fv, u32t, nm("n"));
+            ir_set_ret(fu->entry, mk_call(fu, fu->entry, "v37", un, u32t));
+            IrInstr *vc = ir_instr(fv, IR_CALL, u32t, 2); vc->aux.callee = nm("u37"); vc->operands[0] = vn; vc->operands[1] = vn;
+            ir_emit(fv->entry, vc); ir_set_ret(fv->entry, vc->result);
+            ir_finalize_cfg(fu); ir_finalize_cfg(fv);
+            fu->next = fv;
+            JMem jm = jmem_over(region, sizeof region); JPaths P; char err[200];
+            bool ok = jgen_call_paths(&jm, fu, fu, NULL, 0, &P, err, sizeof err);
+            CHECK(ok && P.n == 1 && P.p[0].callee == fv && P.p[0].npairs == 1 && P.p[0].nentry == 2 &&
+                  P.p[0].entry[0].key == ux->id && P.p[0].entry[1].key == un->id && P.p[0].pairs[0].post == P.p[0].entry[1].pre,
+                  "u -> v(n): v's one parameter, u's two at entry, the argument u's n");
+        }
+        r4[2].nle = 1; r4[2].le_blk[0] = cb[1]->id; r4[2].le_idx[0] = cix[1];        // and c -> a: no cut
+        for (int w = 0; w < 3; w++) {
+            why[0] = 0;
+            t = gen_with(of[w], NULL, 0, JGEN_ALL, why);
+            CHECK(!t && strstr(why, "close a cycle"), "every call listed: member %d refused: got \"%s\"", w, why);
+            free(t);
+        }
+        r4[0].nle = r4[2].nle = 0;
+        r4[3].nle = 1; r4[3].le_blk[0] = cb[2]->id; r4[3].le_idx[0] = cix[2];        // s's self-call listed
+        why[0] = 0; t = gen_with(fs, NULL, 0, JGEN_ALL, why);
+        CHECK(!t && strstr(why, "close a cycle"), "a self-call listed is a cycle of one: got \"%s\"", why);
+        free(t);
+        t = gen_with(fa, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t != NULL, "s's list does not touch a's component");
+        free(t);
+        r4[3].nle = 0;
+        JRank rz; memset(&rz, 0, sizeof rz);                                 // z's call through &z listed
+        rz.blk = JRANK_ENTRY; rz.fn = fz; rz.ncomp = 1; rz.nt = 1; rz.key[0] = zn->id; rz.coef[0][0] = 1;
+        rz.nle = 1; rz.le_blk[0] = fz->entry->id; rz.le_idx[0] = zci;
+        gen_rk = &rz; gen_nrk = 1;
+        why[0] = 0; t = gen_with(fz, NULL, 0, JGEN_ALL, why);
+        CHECK(!t && strstr(why, "not a direct call that may close its cycle"), "a call through a pointer listed: got \"%s\"", why);
+        free(t);
+        gen_rk = r4; gen_nrk = 4;
+        struct { int blk, idx, nle; const char *why; } bad[4] = {
+            { cb[3]->id, cix[3], 1, "not a direct call that may close its cycle" },             // b -> h
+            { cb[3]->id, 99, 1, "not a direct call that may close its cycle" },
+            { cb[4]->id, cix[4], JRANK_MAXL + 1, "listed calls out of range" },
+            { cb[4]->id, cix[4], -1, "listed calls out of range" },
+        };
+        for (int k = 0; k < 4; k++) {
+            JRank keep = r4[1];
+            r4[1].le_blk[0] = bad[k].blk; r4[1].le_idx[0] = bad[k].idx; r4[1].nle = bad[k].nle;
+            for (int w = 0; w < 2; w++) {                                        // b's own, then a's
+                why[0] = 0; t = gen_with(w ? fa : fb, NULL, 0, JGEN_ALL, why);
+                CHECK(!t && strstr(why, bad[k].why), "bad list %d refuses %s (%s): got \"%s\"", k, w ? "a" : "b", bad[k].why, why);
+                free(t);
+            }
+            r4[1] = keep;
+        }
+        #undef AT
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  spec 12's cut: rec.le at the calls a measure lists, which must close no cycle\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

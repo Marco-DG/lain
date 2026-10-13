@@ -35,7 +35,7 @@ static IrType *u32t;
 
 // ── the stub callbacks ──────────────────────────────────────────────────────────────────────
 enum { S_HONEST, S_CORRUPT, S_GOAL_MODEL, S_HYP_MODEL, S_BUDGET };
-typedef struct { int mode; int propose; JClaim claim; JRank rank[2]; int32_t nrank; } Stub;
+typedef struct { int mode; int propose; JClaim claim; JRank rank[3]; int32_t nrank; } Stub;
 enum { P_NONE, P_CLAIM, P_FAIL, P_RANK };
 static JInt jv(int64_t v) { JInt x; memset(&x, 0, sizeof x); uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v; x.neg = v < 0; while (u) { x.limb[x.n++] = (uint32_t)u; u >>= 32; } return x; }
 static JInt model_vals[64];
@@ -269,6 +269,44 @@ int main(void) {
     snprintf(rf, sizeof rf, "not-implied bb%d.%d rec.fall", r2->id, rci);
     CHECK(run(rf_, &s, true, sizeof region, err), "judges: %s", err);
     CHECK(strstr(recs, rf) && nrec[JREC_SOLVER_BUG] == 0, "2 - n: rec.fall not implied:\n%s", recs);
+    s.propose = P_NONE; s.nrank = 0;
+
+    // spec 12's CUT, judged: a(n) -> b(n - 1) and c(n) -> a(n - 1) past `n == 0`, b(n) -> c(n), the
+    // measure n each. With no call listed, b -> c's rec.fall is not implied (n - n <= -1); with it
+    // listed, rec.le there, and all proved (a's and c's n - 1 owe narrow.lo and .hi besides); with
+    // every call listed, all three refused
+    IrFunc *cf[3]; IrValue *cn[3]; IrBlock *cbk[3]; int cci[3];
+    const char *cnm[3] = { "a", "b", "c" }, *cto[3] = { "b", "c", "a" };
+    for (int w = 0; w < 3; w++) {
+        IrFunc *h = cf[w] = ir_func_new(&A, nm(cnm[w]), u32t, IR_FUNC_PURE);
+        cn[w] = ir_add_param(h, u32t, nm("n"));
+        IrValue *arg = cn[w]; IrBlock *at = h->entry;
+        if (w != 1) {                                                      // a and c: n - 1 past n == 0
+            IrBlock *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+            ir_set_br_cond(h->entry, ir_icmp(h, h->entry, IR_CMP_EQ, cn[w], ir_const_int(h, h->entry, 0, u32t)), h1, h2);
+            ir_set_ret(h1, ir_const_int(h, h1, 0, u32t));
+            arg = ir_binop(h, h2, IR_SUB, cn[w], ir_const_int(h, h2, 1, u32t), u32t); at = h2;
+        }
+        cci[w] = 0; for (IrInstr *i = at->instrs; i; i = i->next) cci[w]++;
+        IrInstr *c = ir_instr(h, IR_CALL, u32t, 1); c->aux.callee = nm(cto[w]); c->operands[0] = arg; ir_emit(at, c);
+        ir_set_ret(at, c->result); cbk[w] = at;
+        ir_finalize_cfg(h);
+    }
+    cf[0]->next = cf[1]; cf[1]->next = cf[2];
+    s.propose = P_RANK; s.nrank = 3;
+    memset(s.rank, 0, sizeof s.rank);
+    for (int w = 0; w < 3; w++) { s.rank[w].blk = JRANK_ENTRY; s.rank[w].fn = cf[w]; s.rank[w].ncomp = 1; s.rank[w].nt = 1; s.rank[w].key[0] = cn[w]->id; s.rank[w].coef[0][0] = 1; }
+    snprintf(rf, sizeof rf, "not-implied bb%d.%d rec.fall", cbk[1]->id, cci[1]);
+    CHECK(run(cf[0], &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, rf) && nrec[JREC_NOT_IMPLIED] == 1 && nrec[JREC_PROVED] == 9, "no call listed: b -> c does not fall:\n%s", recs);
+    s.rank[1].nle = 1; s.rank[1].le_blk[0] = cbk[1]->id; s.rank[1].le_idx[0] = cci[1];
+    snprintf(rf, sizeof rf, "proved bb%d.%d rec.le", cbk[1]->id, cci[1]);
+    CHECK(run(cf[0], &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, rf) && nrec[JREC_PROVED] == 10 &&
+          nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] + nrec[JREC_REFUSED] == 0, "b -> c listed: the cut holds, all proved:\n%s", recs);
+    for (int w = 0; w < 3; w += 2) { s.rank[w].nle = 1; s.rank[w].le_blk[0] = cbk[w]->id; s.rank[w].le_idx[0] = cci[w]; }
+    CHECK(run(cf[0], &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(nrec[JREC_REFUSED] == 3 && nrec[JREC_PROVED] == 0 && strstr(recs, "close a cycle"), "every call listed: the three refused:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
 
     printf("── a function the generator refuses, a region too small ──\n");
