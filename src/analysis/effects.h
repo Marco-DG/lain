@@ -22,6 +22,8 @@ static bool ireff_name_is(const IrName *n, const char *s, int len) {
 static IrEffect ir_effects(IrFunc *f, IrFunc *mod);   // fwd (recursion)
 
 // A function's DIRECT effects: its own calls, panics, allocations, and (semantic) divergence.
+// --judge=authority: DIVERGE from the effect row, with no engine's verdict (see ir_effects_direct)
+static bool ir_effects_row_only = false;
 static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
     IrEffect e = 0;
     for (IrBlock *b=f->blocks; b; b=b->next)
@@ -115,6 +117,15 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
     // DIRECTLY (not the func-gated VRA_TERMINATION obligation), so it applies to procs too.
     // The answer a top-level analysis already left on the function (vra.h, vra_loops_summary),
     // when there is one — the same analysis, not a second run of it.
+    // --judge=authority (PE.10): from the ROW alone. An accepted program has every loop obligation
+    // proved, and a loop is owed unless its function declares `diverge` and it carries no written
+    // measure (D-44); a refused program emits no C. So a loop ends unless it is one of those.
+    if (ir_effects_row_only) {
+        if (f->may_diverge)
+            for (IrBlock *b = f->blocks; b; b = b->next)
+                if (b->is_loop_header && !b->has_measure) { e |= IR_EFFECT_DIVERGE; break; }
+        return e;
+    }
     if (f->vra_loops_summary) {
         if (f->vra_loops_summary == 2) e |= IR_EFFECT_DIVERGE;
         return e;
@@ -141,6 +152,9 @@ static IrEffect ir_effects(IrFunc *f, IrFunc *mod) {
     if (f->is_extern)          return f->has_declared_row ? f->declared_row : IR_EFFECT_TOP;
     if (f->effects_done)       return f->effects;
     if (f->effects_in_progress) {
+        // --judge=authority: a recursion is owed unless the row says `diverge` and no `decreasing`
+        // is written, so in an accepted program it ends unless it is that one (the loop rule above)
+        if (ir_effects_row_only) return (f->may_diverge && !f->has_decreasing) ? IR_EFFECT_DIVERGE : 0u;
         // 3.4: a recursion cycle is DIVERGE only if no parameter is a WELL-FOUNDED MEASURE.
         // Ask the octagon: does some parameter strictly shrink at every self-call and stay
         // bounded below? A binary search or a tree walk does, and was being called divergent

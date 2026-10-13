@@ -123,7 +123,7 @@ shadow=$("$ROOT/lain" spin.ln --judge=shadow -o g.c 2>&1)
 echo "$shadow" | grep -q '\[E011\]' || { echo "2e: E011 lost: $shadow"; exit 1; }
 echo "$shadow" | grep -qE "1 recursions' termination among them \(0 proved by both, 0 by the judge only\)" \
     && ! echo "$shadow" | grep -q '^judge-shadow: judge-only .* recursion terminates' || { echo "2e: a recursion with a non-falling call proved: $shadow"; exit 1; }
-out=$("$ROOT/lain" ok.ln --judge=authority -o c.c 2>&1); rc=$?
-[ $rc -ne 0 ] && echo "$out" | grep -q "unknown --judge mode 'authority'" || { echo "3: --judge=authority not refused ($rc): $out"; exit 1; }
+out=$("$ROOT/lain" ok.ln --judge=bogus -o c.c 2>&1); rc=$?
+[ $rc -ne 0 ] && echo "$out" | grep -q "unknown --judge mode 'bogus'" || { echo "3: --judge=bogus not refused ($rc): $out"; exit 1; }
 [ ! -e c.c ] || { echo "3: C written under an unknown mode"; exit 1; }
 exit 0

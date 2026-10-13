@@ -25,6 +25,7 @@
 #include "ir/emit_c.h"
 #include "ir/interp.h"   // --interpret: the IR's semantics, executable (DECIDE-W step 1)
 #include "analysis/judge_shadow.h"   // --judge=shadow: the proof engine's judge beside VRA (PE.6)
+#include "analysis/judge_authority.h"   // --judge=authority: the judge decides (PE.10)
 #include "static_eval.h"  // DECIDE-W step 2: module constants computed at compile time
 #include "analysis/containment.h"   // --check-invariants: the analysis's states against a real run
 
@@ -239,6 +240,9 @@ int main(int argc, char **argv) {
         ir_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
         // DECIDE-W step 2: a module constant that calls a function is computed now, by the
         // program's own semantics, and becomes a literal before the module is lowered for real.
+        // --judge=authority (PE.10): DIVERGE is read from the effect row, before static evaluation
+        // asks for it (effects.h, ir_effects_row_only)
+        if (args.judge_authority) ir_effects_row_only = true;
         { static Arena se_arena; se_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
           if (ir_static_eval_module(program, args.filename, &se_arena)) { sema_destroy(); return 1; } }
         IrFunc *mod = ir_lower_module(program, &ir_arena);
@@ -273,6 +277,17 @@ int main(int argc, char **argv) {
         }
         if (ir_emit_refuse_opaque(mod, args.filename)) { sema_destroy(); return 1; }
         int found = 0;
+        // --judge=authority (PE.10): the judge runs once on the module, and its records, not VRA's
+        // checks, are each function's numeric and termination findings (report.h's hook). A compiler
+        // bug it reports (a refused function, a certificate it cannot check, unstable claims) refuses
+        // the program as an internal error: nothing it has not proved is emitted.
+        if (args.judge_authority) {
+            if (!judge_authority_run(mod)) {
+                fprintf(stderr, "internal error: the judge: %s; refusing to emit\n", jau_internal);
+                sema_destroy(); return 70;
+            }
+            ir_report_numeric_hook = judge_authority_report;
+        }
         for (IrFunc *f = mod; f; f = f->next) {
             if (f->is_extern) continue;
             // The source excerpt reads the main file's text, so only a function defined there
@@ -296,6 +311,7 @@ int main(int argc, char **argv) {
                 for (MonoInst *mi = g_mono_insts; !here && mi; mi = mi->next) if (mi->inst == sd) here = true;
                 if (here) ir_dump_effects_row(f, mod);
             }
+        if (args.judge_authority && jau_internal[0]) { sema_destroy(); return 70; }   // a compiler bug, not a verdict
         if (found) { sema_destroy(); return 1; }
         if (ir_require_verdicts(mod)) { sema_destroy(); return 70; }
         if (args.interpret) {             // run it instead of emitting it; the status is the program's

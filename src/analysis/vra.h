@@ -146,6 +146,11 @@ typedef struct {
     // fails — so the engine has to carry the distinction to be normatively right.
     bool     had_measure;
     bool     measure_mismatch;   // I.74: the loop ends, but not by the WRITTEN measure
+    uint8_t  judge_measure;      // --judge=authority: the written measure's part that failed, 1 its
+                                 // fall, 2 its bound, 3 its definedness, 4 that it does not grow
+                                 // at a call off the cut (report.h names which; VRA leaves it 0)
+    bool     by_judge;           // --judge=authority made this verdict: report.h gives the judge's
+                                 // advice, never VRA's account of its own search
     // A VRA_OVERFLOW check about a SHIFT: 1 = the amount is not provably in [0, width-1],
     // 2 = a signed left shift may carry a bit into/through the sign. Both are UB in the C the
     // backend emits, and each needs its own sentence. (3 to 5 are the division and unsigned

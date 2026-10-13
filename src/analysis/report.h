@@ -39,6 +39,297 @@ static void ir_diag(const char *file, isize line, isize col, const char *code, c
     else if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
 }
 
+// One unproved check, as its diagnostic: the code, the message, and the notes. `V` is the analysis
+// the check came from, for the source names of a loop's witness (I.165, I.200); NULL when the check
+// was made from a judge's record (--judge=authority), which carries no witness. 1 when printed.
+static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
+    int n = 0;
+    switch (c->kind) {
+        case VRA_BOUNDS:
+            ir_diag(file, c->line, c->col, "E085",
+                    c->has_len ? "index is not provably within bounds"
+                               : "index is not provably within bounds (no length is known here)");
+            n++; break;
+        case VRA_OVERFLOW:
+            if (c->accum) {
+                // B1 computed all of this in order to fail. Saying only "not provably free
+                // of overflow" leaves the user to guess which of three things to change,
+                // on a loop they wrote in the obvious way.
+                ir_diag(file, c->line, c->col, "E086",
+                        "this running total can overflow the type it is stored in");
+                fprintf(stderr, "       it starts in [%lld, %lld] and each iteration adds "
+                                "between %lld and %lld\n",
+                        (long long)c->accum_s0lo, (long long)c->accum_s0hi,
+                        (long long)c->accum_dlo, (long long)c->accum_dhi);
+                if (c->accum_T < 0)
+                    fprintf(stderr, "       and the loop has no bounded trip count, so the "
+                                    "total has no bound at all\n");
+                else
+                    fprintf(stderr, "       over up to %lld iterations\n",
+                            (long long)c->accum_T);
+                fprintf(stderr,
+                    "       bound any ONE of the three and this proves:\n"
+                    "         the count    a length with a refinement, e.g. "
+                    "`f(a i32[n], n usize < 4096)`\n"
+                    "         the element  a narrower element type, or a refinement on it\n"
+                    "         the total    a wider accumulator, widening the addend too\n"
+                    "       or say which arithmetic you meant: `+%%` wraps, `+|` saturates\n");
+            } else if (c->shift == 1) {
+                ir_diag(file, c->line, c->col, "E086",
+                        "shift amount is not provably within the operand's width (valid 0..width-1)");
+            } else if (c->shift == 3) {
+                ir_diag(file, c->line, c->col, "E086",
+                        "signed division may overflow — TYPE_MIN / -1 is undefined at this width; "
+                        "prove the dividend is not TYPE_MIN or the divisor is not -1, or say what "
+                        "you mean: `/%` wraps (MIN), `/|` saturates (MAX)");
+            } else if (c->shift == 5) {
+                ir_diag(file, c->line, c->col, "E086",
+                        "the quotient TYPE_MIN / -1 does not fit here (a divisor that is not 0 "
+                        "may still be -1); prove the dividend is not TYPE_MIN or the divisor is "
+                        "not -1 (e.g. `b > 0`), or say what you mean: `/%` wraps (MIN), `/|` "
+                        "saturates (MAX)");
+            } else if (c->shift == 4) {
+                ir_diag(file, c->line, c->col, "E086",
+                        "unsigned left shift may lose bits — the result may not fit the left "
+                        "operand's type; prove it fits, or say you mean to discard them: `<<%` wraps");
+            } else if (c->shift == 6) {
+                ir_diag(file, c->line, c->col, "E086",
+                        "this float is not provably a number whose integral part fits the "
+                        "integer type, and converting any other float is undefined");
+                fprintf(stderr,
+                    "       a float's range is read from a constant or from comparisons that "
+                    "guard it, e.g. `if x >= 0.0 and x < 256.0`\n"
+                    "       or say what you mean: `as|` clamps (a NaN becomes 0), `as?` takes "
+                    "its `else` arm\n");
+            } else if (c->shift == 2) {
+                ir_diag(file, c->line, c->col, "E086",
+                        "signed left shift may overflow — a bit can reach the sign (`1 << 31` on an i32 is UB)");
+            } else if (c->refine) {
+                char msg[200];
+                if (c->refine == 2)
+                    snprintf(msg, sizeof msg, "this value is not provably different from %lld, "
+                             "which the refined type it lands in excludes", (long long)c->ref_ne);
+                else
+                    snprintf(msg, sizeof msg, "this value is not provably within [%lld, %lld]%s, "
+                             "the refinement of the type it lands in",
+                             (long long)c->ref_lo, (long long)c->ref_hi,
+                             c->refine == 3 ? " (and not the excluded value)" : "");
+                ir_diag(file, c->line, c->col, "E086", msg);
+            } else if (c->narrow) {
+                // The target's range from its width: a u64's top is 2^64 - 1, which the
+                // analysis's int64_t bounds cannot hold and must not print as INT64_MAX. No
+                // type name: the IR's u64 may be the source's usize.
+                char rng[64], msg[240];
+                int nb = c->nar_bits < 1 ? 1 : c->nar_bits > 64 ? 64 : c->nar_bits;
+                if (c->nar_signed)
+                    snprintf(rng, sizeof rng, "[%lld, %lld]",
+                             nb == 64 ? (long long)INT64_MIN : -(1LL << (nb - 1)),
+                             nb == 64 ? (long long)INT64_MAX : (1LL << (nb - 1)) - 1);
+                else
+                    snprintf(rng, sizeof rng, "[0, %llu]",
+                             nb == 64 ? (unsigned long long)UINT64_MAX : (1ULL << nb) - 1);
+                if (c->narrow == 1)
+                    snprintf(msg, sizeof msg, "this `as` may lose the value: it is not provably "
+                             "within %s, the range of its target type; `as%%` wraps, `as|` "
+                             "clamps", rng);
+                else
+                    snprintf(msg, sizeof msg, "this value is not provably within %s, the range "
+                             "of the type it lands in", rng);
+                ir_diag(file, c->line, c->col, "E086", msg);
+            } else {
+                ir_diag(file, c->line, c->col, "E086",
+                        "arithmetic is not provably free of overflow");
+            }
+            n++; break;
+        case VRA_DIVZERO:
+            if (c->bitcount)
+                ir_diag(file, c->line, c->col, "E015",
+                        "the argument of @ctz/@clz is not provably non-zero (counting the zero bits of 0 is undefined)");
+            else
+                ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");
+            n++; break;
+        case VRA_PRECOND:
+            if (c->diag == 86)
+                ir_diag(file, c->line, c->col, "E086",
+                        "return value cannot be proven to satisfy the function's return refinement");
+            else if (c->diag == 121)
+                ir_diag(file, c->line, c->col, "E121",
+                        "a struct field invariant is not proven here — an index field (`pos usize in 0..src.len`) must stay below its container's length, and a relation between fields (`pos <= src.len`, `len <= cap`) must hold; both at construction and after every write to either field. A cursor that may rest at the END of its container, or start on an empty one, is `pos usize in 0..=src.len` (or `pos usize <= src.len`); `in 0..src.len` is an index, always below the length");
+            else if (c->diag == 85)
+                ir_diag(file, c->line, c->col, "E085",
+                        "the length of this runtime-sized array is not provably non-negative: `var a T[n]` allocates n elements on the stack, so test `n >= 0` (or use an unsigned length) first");
+            else if (c->diag == 1085)
+                ir_diag(file, c->line, c->col, "E085",
+                        "the length of this runtime-sized array is not provably small enough: its size in bytes, n * sizeof(element), would wrap around. Bound n first (`if n > LIMIT { ... }`)");
+            else if (c->diag == 2085)             // the judge's objsize (--judge=authority): VRA has no such check
+                ir_diag(file, c->line, c->col, "E085",
+                        "this slice's length is not provably small enough for an object: its size in bytes would wrap around. A slice of T holds at most ISIZE_MAX / sizeof(T) elements");
+            else if (c->diag == 87)
+                ir_diag(file, c->line, c->col, "E087",
+                        "argument does not satisfy the parameter's sized-slice constraint");
+            else if (c->diag == 137)
+                ir_diag(file, c->line, c->col, "E137",
+                        "this call cannot be checked against the callee's parameter refinement: its right-hand side is something the call site cannot evaluate (a call, a cast), so the callee would assume a fact nobody established. Write it with literals, constants and parameters");
+            else if (c->diag == 135)
+                ir_diag(file, c->line, c->col, "E135",
+                        "a [noreturn] function can return here — every path must end in a panic, a call that does not return, or a loop that does not end (with `effects diverge`)");
+            else
+                ir_diag(file, c->line, c->col, "E012", "a required precondition is not established here");
+            n++; break;
+        case VRA_TERMINATION:
+            // One obligation, two arguments, two codes — the identity a user already knows.
+            // E082 is a loop whose measure does not decrease; E011 is a `func` whose
+            // recursion has no well-founded ranking. Both come from the sovereign engine
+            // now; both used to come from src/sema/.
+            if (c->recursion) {
+                // Annex B, normatively: E011 is a self-recursion for which NO measure can
+                // be inferred; a measure that is present and fails is E082. The engine
+                // carries the source fact (`IrFunc.has_decreasing`) so it can tell them
+                // apart rather than picking one and being wrong about half the programs.
+                // the judge, a WRITTEN measure (I.206): which part of it failed at this call
+                if (c->by_judge && c->had_measure && c->judge_measure) {
+                    ir_diag(file, c->line, c->col, "E082",
+                            c->judge_measure == 1 ? "the `decreasing` measure written is not provably smaller at this call than at the caller's entry"
+                          : c->judge_measure == 4 ? "the `decreasing` measure written may be larger at this call than at the caller's entry"
+                          : c->judge_measure == 2 ? "the `decreasing` measure written is not provably at least 0 where this call is made"
+                          : "the `decreasing` measure written is not provably well-defined here: its arithmetic may overflow at this call");
+                    // spec 12: a self-call is its own cycle, so it falls; a cycle through several
+                    // functions asks only that no call grow it and that it fall on every way round
+                    if (c->mutual)
+                        fprintf(stderr, "       write a quantity that never grows at a call back into the recursion "
+                                        "and falls on every way round, or drop the clause\n");
+                    else
+                        fprintf(stderr, "       write the quantity that falls at every self-call, or drop the clause\n");
+                    n++; break;
+                }
+                ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
+                        c->via_pointer
+                          ? "this call through a function pointer can reach its own function "
+                            "again, and no ranking over the cycle can be inferred"
+                          : c->mutual
+                          ? "this call closes a mutual-recursion cycle, and no ranking over the "
+                            "cycle can be inferred"
+                          : c->had_measure
+                          ? "the `decreasing` measure is not provably well-founded here"
+                          : "this recursion is not provably terminating");
+                // the JUDGE decided (--judge=authority): its advice, not VRA's account of VRA's search
+                // (one parameter per function, its 16-function cap), which did not make this verdict
+                if (c->by_judge && c->mutual)
+                    fprintf(stderr, "       no measure was found that is at least 0 and does not grow at any call "
+                                    "around this cycle, falling on every way round it;\n"
+                                    "       write one with `decreasing` on each function of the cycle, or write "
+                                    "`effects diverge` to say it may not terminate\n");
+                else if (c->by_judge)
+                    fprintf(stderr, "       no measure was found that is at least 0 and falls at every self-call; "
+                                    "guard the base case, name one with `decreasing`,\n"
+                                    "       or write `effects diverge` to say it may not terminate\n");
+                // a limit of the SEARCH is not a missing measure: say which (Documentation, spec 12)
+                else if (c->mutual && c->cycle_cap == 1)
+                    fprintf(stderr, "       the cycle has %d functions, and this implementation's search ranks cycles "
+                                    "of at most %d: a limit of the search, not of the program\n", c->cycle_n, CERT_SCC_MAX);
+                else if (c->mutual && c->cycle_cap == 2)
+                    fprintf(stderr, "       the cycle has more than %d calls between its functions, and this "
+                                    "implementation's search ranks no larger one: a limit of the search, not of the program\n", VRA_CYC_CALLS);
+                else if (c->mutual && c->cycle_cap == 3)
+                    fprintf(stderr, "       a function on the cycle has more than 64 parameters, and this implementation's "
+                                    "search ranks no such cycle: a limit of the search, not of the program\n");
+                else if (c->mutual && c->cycle_cap == 4)
+                    fprintf(stderr, "       the search for a ranking over the cycle ran out of its budget: a limit of the "
+                                    "search, not of the program\n");
+                else if (c->mutual)
+                    fprintf(stderr,
+                        "       the engine ranks a cycle by one parameter per function: no call "
+                        "in the cycle may make it grow,\n"
+                        "       and every way round the cycle must make it fall; give the cycle "
+                        "such a measure, at least 0, or write `effects diverge`\n");
+                else
+                fprintf(stderr, "       a function is total by default, so some parameter has "
+                                "to shrink toward a base case on every self-call\n"
+                                "       the engine looks for one that strictly decreases "
+                                "AND is bounded below (`>= 0`, or an unsigned type)\n"
+                                "       name it with `decreasing <param>`, guard the base "
+                                "case, or write `effects diverge` to say it may not "
+                                "terminate\n");
+            } else {
+                // Annex B again, and the same rule as the recursive case above: E011 is a
+                // loop "whose measure is neither given nor inferable", E082 one whose
+                // measure is PRESENT and fails. `IrBlock.has_measure` carries whether the
+                // programmer wrote `decreasing` — recorded at PARSE time, because sema's
+                // inference installs its candidate in the same AST field and by lowering
+                // the two are indistinguishable.
+                if (c->judge_measure && !c->measure_mismatch) {
+                    // --judge=authority: which part of the WRITTEN measure the judge could not show
+                    ir_diag(file, c->line, c->col, "E082", c->judge_measure == 1
+                            ? "the `decreasing` measure written does not provably fall on every iteration"
+                            : "the `decreasing` measure written is not provably at least 0 where the loop runs");
+                    fprintf(stderr, "       write the quantity that falls (for a counter rising "
+                                    "toward a bound, `bound - counter`), or drop the clause\n");
+                } else
+                if (c->measure_mismatch) {
+                    // I.74: the loop DOES end, by a measure the engine found; the one written
+                    // is the claim that is wrong, and was accepted unread until now.
+                    ir_diag(file, c->line, c->col, "E082",
+                            "this loop ends, but not by the `decreasing` measure written: it "
+                            "does not fall on every iteration");
+                    fprintf(stderr, "       write the quantity that falls (for a counter rising "
+                                    "toward a bound, `bound - counter`), or drop the clause\n");
+                } else
+                ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
+                        c->had_measure
+                          ? "the `decreasing` measure is not provably well-founded here"
+                          : "this loop is not provably terminating, and no measure could "
+                            "be inferred");
+                // I.165: the path on which the counter does not move, and (I.200) where it
+                // goes on the others: "`days` falls toward 365", "`i` rises toward `n`". The
+                // path is shown as its tests' source lines, each with what it decided, so
+                // nobody has to look up a line number; a function from another file, which has
+                // no excerpt, names them inline instead.
+                if (V && c->wit_counter && c->wit_n > 0 && !c->had_measure) {
+                    char nm[64]; vra_src_expr(V, c->wit_counter, nm, sizeof nm, 0);
+                    char bd[64] = "", bq[72] = "the loop's bound";
+                    const char *verb = "moves";
+                    if (c->wit_bound) {
+                        vra_src_expr(V, c->wit_bound, bd, sizeof bd, 0);
+                        if (bd[0] && bd[0] != '%' && bd[0] != '?') {
+                            int bid = c->wit_bound->id;
+                            bool num = bid >= 0 && bid < V->nvar && V->cknown[bid];
+                            snprintf(bq, sizeof bq, num ? "%s" : "`%s`", bd);
+                            verb = c->wit_rising ? "rises" : "falls";
+                        }
+                    }
+                    if (ir_diag_mark) {
+                        fprintf(stderr, "       `%s` %s toward %s on some paths through the loop, but not on this one:\n", nm, verb, bq);
+                        int w = 1;
+                        for (int j = 0; j < c->wit_n; j++) {
+                            int d = 1; for (int64_t t = c->wit_line[j]; t >= 10; t /= 10) d++;
+                            if (d > w) w = d;
+                        }
+                        fprintf(stderr, " %*s |\n", w, "");
+                        for (int j = 0; j < c->wit_n; j++)
+                            ir_diag_mark(c->wit_line[j], c->wit_col[j], c->wit_true[j] ? "true" : "false", w,
+                                         j == 0 || c->wit_line[j] != c->wit_line[j - 1]);
+                    } else {
+                        fprintf(stderr, "       `%s` %s toward %s on some paths through the loop, but not on the one where\n      ", nm, verb, bq);
+                        for (int j = 0; j < c->wit_n; j++)
+                            fprintf(stderr, "%s the test at Ln %lld, Col %lld is %s", j == 0 ? "" : (j == c->wit_n - 1 ? " and" : ","),
+                                    (long long)c->wit_line[j], (long long)c->wit_col[j], c->wit_true[j] ? "true" : "false");
+                        fprintf(stderr, "\n");
+                    }
+                }
+            }
+            n++; break;
+    }
+    return n;
+}
+
+// --judge=authority (PE.10): when set, the numeric obligations of a function are reported from the
+// judge's records (analysis/judge_authority.h) and VRA's checks are not read. VRA still runs here
+// for the borrow pass's disjointness queries (phase D), until those are owed as asserts.
+// VRA's analysis of the function is passed for the DESCRIPTION of a check (a loop's witness, a
+// running total's numbers, the range a value lands in) where VRA has a check at the same place: the
+// judge decides whether anything is reported, VRA's record only says it in the same words.
+static int (*ir_report_numeric_hook)(IrFunc *f, const char *file, Vra *V) = NULL;
+
 // Run every sovereign analysis over one function and print what it finds.
 // Returns the number of ERRORS (warnings and notes do not count).
 // `mod` is passed EXPLICITLY rather than read from bor_loan_mod: borrow_analyze_mod sets that
@@ -120,6 +411,12 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     borrow_free(B);
 
     if (!numeric) return n;   // NOT judged: the numeric obligations were never reported
+    if (ir_report_numeric_hook) {               // the judge decides (--judge=authority)
+        n += ir_report_numeric_hook(f, file, V);
+        vra_free(V);
+        f->judged = true;
+        return n;
+    }
     // ★ A CONSEQUENCE IS NOT A SECOND ERROR (I.159). A running total in a loop that may not end has
     // no bound because the loop has no trip count, so Zune 30's ConvertDays, which hangs on the
     // last day of a leap year, was reported as two E086 on `year = year + 1` and then the E011
@@ -141,243 +438,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
         if (c->ok) continue;                       // proved check-free: nothing to say
         if (c->kind == VRA_OVERFLOW && c->accum && c->accum_T < 0 && c->loop1 > 0 && noterm && noterm[c->loop1])
             continue;                              // a consequence of its loop's E011 (I.159, I.205)
-        switch (c->kind) {
-            case VRA_BOUNDS:
-                ir_diag(file, c->line, c->col, "E085",
-                        c->has_len ? "index is not provably within bounds"
-                                   : "index is not provably within bounds (no length is known here)");
-                n++; break;
-            case VRA_OVERFLOW:
-                if (c->accum) {
-                    // B1 computed all of this in order to fail. Saying only "not provably free
-                    // of overflow" leaves the user to guess which of three things to change,
-                    // on a loop they wrote in the obvious way.
-                    ir_diag(file, c->line, c->col, "E086",
-                            "this running total can overflow the type it is stored in");
-                    fprintf(stderr, "       it starts in [%lld, %lld] and each iteration adds "
-                                    "between %lld and %lld\n",
-                            (long long)c->accum_s0lo, (long long)c->accum_s0hi,
-                            (long long)c->accum_dlo, (long long)c->accum_dhi);
-                    if (c->accum_T < 0)
-                        fprintf(stderr, "       and the loop has no bounded trip count, so the "
-                                        "total has no bound at all\n");
-                    else
-                        fprintf(stderr, "       over up to %lld iterations\n",
-                                (long long)c->accum_T);
-                    fprintf(stderr,
-                        "       bound any ONE of the three and this proves:\n"
-                        "         the count    a length with a refinement, e.g. "
-                        "`f(a i32[n], n usize < 4096)`\n"
-                        "         the element  a narrower element type, or a refinement on it\n"
-                        "         the total    a wider accumulator, widening the addend too\n"
-                        "       or say which arithmetic you meant: `+%%` wraps, `+|` saturates\n");
-                } else if (c->shift == 1) {
-                    ir_diag(file, c->line, c->col, "E086",
-                            "shift amount is not provably within the operand's width (valid 0..width-1)");
-                } else if (c->shift == 3) {
-                    ir_diag(file, c->line, c->col, "E086",
-                            "signed division may overflow — TYPE_MIN / -1 is undefined at this width; "
-                            "prove the dividend is not TYPE_MIN or the divisor is not -1, or say what "
-                            "you mean: `/%` wraps (MIN), `/|` saturates (MAX)");
-                } else if (c->shift == 5) {
-                    ir_diag(file, c->line, c->col, "E086",
-                            "the quotient TYPE_MIN / -1 does not fit here (a divisor that is not 0 "
-                            "may still be -1); prove the dividend is not TYPE_MIN or the divisor is "
-                            "not -1 (e.g. `b > 0`), or say what you mean: `/%` wraps (MIN), `/|` "
-                            "saturates (MAX)");
-                } else if (c->shift == 4) {
-                    ir_diag(file, c->line, c->col, "E086",
-                            "unsigned left shift may lose bits — the result may not fit the left "
-                            "operand's type; prove it fits, or say you mean to discard them: `<<%` wraps");
-                } else if (c->shift == 6) {
-                    ir_diag(file, c->line, c->col, "E086",
-                            "this float is not provably a number whose integral part fits the "
-                            "integer type, and converting any other float is undefined");
-                    fprintf(stderr,
-                        "       a float's range is read from a constant or from comparisons that "
-                        "guard it, e.g. `if x >= 0.0 and x < 256.0`\n"
-                        "       or say what you mean: `as|` clamps (a NaN becomes 0), `as?` takes "
-                        "its `else` arm\n");
-                } else if (c->shift == 2) {
-                    ir_diag(file, c->line, c->col, "E086",
-                            "signed left shift may overflow — a bit can reach the sign (`1 << 31` on an i32 is UB)");
-                } else if (c->refine) {
-                    char msg[200];
-                    if (c->refine == 2)
-                        snprintf(msg, sizeof msg, "this value is not provably different from %lld, "
-                                 "which the refined type it lands in excludes", (long long)c->ref_ne);
-                    else
-                        snprintf(msg, sizeof msg, "this value is not provably within [%lld, %lld]%s, "
-                                 "the refinement of the type it lands in",
-                                 (long long)c->ref_lo, (long long)c->ref_hi,
-                                 c->refine == 3 ? " (and not the excluded value)" : "");
-                    ir_diag(file, c->line, c->col, "E086", msg);
-                } else if (c->narrow) {
-                    // The target's range from its width: a u64's top is 2^64 - 1, which the
-                    // analysis's int64_t bounds cannot hold and must not print as INT64_MAX. No
-                    // type name: the IR's u64 may be the source's usize.
-                    char rng[64], msg[240];
-                    int nb = c->nar_bits < 1 ? 1 : c->nar_bits > 64 ? 64 : c->nar_bits;
-                    if (c->nar_signed)
-                        snprintf(rng, sizeof rng, "[%lld, %lld]",
-                                 nb == 64 ? (long long)INT64_MIN : -(1LL << (nb - 1)),
-                                 nb == 64 ? (long long)INT64_MAX : (1LL << (nb - 1)) - 1);
-                    else
-                        snprintf(rng, sizeof rng, "[0, %llu]",
-                                 nb == 64 ? (unsigned long long)UINT64_MAX : (1ULL << nb) - 1);
-                    if (c->narrow == 1)
-                        snprintf(msg, sizeof msg, "this `as` may lose the value: it is not provably "
-                                 "within %s, the range of its target type; `as%%` wraps, `as|` "
-                                 "clamps", rng);
-                    else
-                        snprintf(msg, sizeof msg, "this value is not provably within %s, the range "
-                                 "of the type it lands in", rng);
-                    ir_diag(file, c->line, c->col, "E086", msg);
-                } else {
-                    ir_diag(file, c->line, c->col, "E086",
-                            "arithmetic is not provably free of overflow");
-                }
-                n++; break;
-            case VRA_DIVZERO:
-                if (c->bitcount)
-                    ir_diag(file, c->line, c->col, "E015",
-                            "the argument of @ctz/@clz is not provably non-zero (counting the zero bits of 0 is undefined)");
-                else
-                    ir_diag(file, c->line, c->col, "E015", "divisor is not provably non-zero");
-                n++; break;
-            case VRA_PRECOND:
-                if (c->diag == 86)
-                    ir_diag(file, c->line, c->col, "E086",
-                            "return value cannot be proven to satisfy the function's return refinement");
-                else if (c->diag == 121)
-                    ir_diag(file, c->line, c->col, "E121",
-                            "a struct field invariant is not proven here — an index field (`pos usize in 0..src.len`) must stay below its container's length, and a relation between fields (`pos <= src.len`, `len <= cap`) must hold; both at construction and after every write to either field. A cursor that may rest at the END of its container, or start on an empty one, is `pos usize in 0..=src.len` (or `pos usize <= src.len`); `in 0..src.len` is an index, always below the length");
-                else if (c->diag == 85)
-                    ir_diag(file, c->line, c->col, "E085",
-                            "the length of this runtime-sized array is not provably non-negative: `var a T[n]` allocates n elements on the stack, so test `n >= 0` (or use an unsigned length) first");
-                else if (c->diag == 1085)
-                    ir_diag(file, c->line, c->col, "E085",
-                            "the length of this runtime-sized array is not provably small enough: its size in bytes, n * sizeof(element), would wrap around. Bound n first (`if n > LIMIT { ... }`)");
-                else if (c->diag == 87)
-                    ir_diag(file, c->line, c->col, "E087",
-                            "argument does not satisfy the parameter's sized-slice constraint");
-                else if (c->diag == 137)
-                    ir_diag(file, c->line, c->col, "E137",
-                            "this call cannot be checked against the callee's parameter refinement: its right-hand side is something the call site cannot evaluate (a call, a cast), so the callee would assume a fact nobody established. Write it with literals, constants and parameters");
-                else if (c->diag == 135)
-                    ir_diag(file, c->line, c->col, "E135",
-                            "a [noreturn] function can return here — every path must end in a panic, a call that does not return, or a loop that does not end (with `effects diverge`)");
-                else
-                    ir_diag(file, c->line, c->col, "E012", "a required precondition is not established here");
-                n++; break;
-            case VRA_TERMINATION:
-                // One obligation, two arguments, two codes — the identity a user already knows.
-                // E082 is a loop whose measure does not decrease; E011 is a `func` whose
-                // recursion has no well-founded ranking. Both come from the sovereign engine
-                // now; both used to come from src/sema/.
-                if (c->recursion) {
-                    // Annex B, normatively: E011 is a self-recursion for which NO measure can
-                    // be inferred; a measure that is present and fails is E082. The engine
-                    // carries the source fact (`IrFunc.has_decreasing`) so it can tell them
-                    // apart rather than picking one and being wrong about half the programs.
-                    ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
-                            c->via_pointer
-                              ? "this call through a function pointer can reach its own function "
-                                "again, and no ranking over the cycle can be inferred"
-                              : c->mutual
-                              ? "this call closes a mutual-recursion cycle, and no ranking over the "
-                                "cycle can be inferred"
-                              : c->had_measure
-                              ? "the `decreasing` measure is not provably well-founded here"
-                              : "this recursion is not provably terminating");
-                    // a limit of the SEARCH is not a missing measure: say which (Documentation, spec 12)
-                    if (c->mutual && c->cycle_cap == 1)
-                        fprintf(stderr, "       the cycle has %d functions, and this implementation's search ranks cycles "
-                                        "of at most %d: a limit of the search, not of the program\n", c->cycle_n, CERT_SCC_MAX);
-                    else if (c->mutual && c->cycle_cap == 2)
-                        fprintf(stderr, "       the cycle has more than %d calls between its functions, and this "
-                                        "implementation's search ranks no larger one: a limit of the search, not of the program\n", VRA_CYC_CALLS);
-                    else if (c->mutual && c->cycle_cap == 3)
-                        fprintf(stderr, "       a function on the cycle has more than 64 parameters, and this implementation's "
-                                        "search ranks no such cycle: a limit of the search, not of the program\n");
-                    else if (c->mutual && c->cycle_cap == 4)
-                        fprintf(stderr, "       the search for a ranking over the cycle ran out of its budget: a limit of the "
-                                        "search, not of the program\n");
-                    else if (c->mutual)
-                        fprintf(stderr,
-                            "       the engine ranks a cycle by one parameter per function: no call "
-                            "in the cycle may make it grow,\n"
-                            "       and every way round the cycle must make it fall; give the cycle "
-                            "such a measure, at least 0, or write `effects diverge`\n");
-                    else
-                    fprintf(stderr, "       a function is total by default, so some parameter has "
-                                    "to shrink toward a base case on every self-call\n"
-                                    "       the engine looks for one that strictly decreases "
-                                    "AND is bounded below (`>= 0`, or an unsigned type)\n"
-                                    "       name it with `decreasing <param>`, guard the base "
-                                    "case, or write `effects diverge` to say it may not "
-                                    "terminate\n");
-                } else {
-                    // Annex B again, and the same rule as the recursive case above: E011 is a
-                    // loop "whose measure is neither given nor inferable", E082 one whose
-                    // measure is PRESENT and fails. `IrBlock.has_measure` carries whether the
-                    // programmer wrote `decreasing` — recorded at PARSE time, because sema's
-                    // inference installs its candidate in the same AST field and by lowering
-                    // the two are indistinguishable.
-                    if (c->measure_mismatch) {
-                        // I.74: the loop DOES end, by a measure the engine found; the one written
-                        // is the claim that is wrong, and was accepted unread until now.
-                        ir_diag(file, c->line, c->col, "E082",
-                                "this loop ends, but not by the `decreasing` measure written: it "
-                                "does not fall on every iteration");
-                        fprintf(stderr, "       write the quantity that falls (for a counter rising "
-                                        "toward a bound, `bound - counter`), or drop the clause\n");
-                    } else
-                    ir_diag(file, c->line, c->col, c->had_measure ? "E082" : "E011",
-                            c->had_measure
-                              ? "the `decreasing` measure is not provably well-founded here"
-                              : "this loop is not provably terminating, and no measure could "
-                                "be inferred");
-                    // I.165: the path on which the counter does not move, and (I.200) where it
-                    // goes on the others: "`days` falls toward 365", "`i` rises toward `n`". The
-                    // path is shown as its tests' source lines, each with what it decided, so
-                    // nobody has to look up a line number; a function from another file, which has
-                    // no excerpt, names them inline instead.
-                    if (c->wit_counter && c->wit_n > 0 && !c->had_measure) {
-                        char nm[64]; vra_src_expr(V, c->wit_counter, nm, sizeof nm, 0);
-                        char bd[64] = "", bq[72] = "the loop's bound";
-                        const char *verb = "moves";
-                        if (c->wit_bound) {
-                            vra_src_expr(V, c->wit_bound, bd, sizeof bd, 0);
-                            if (bd[0] && bd[0] != '%' && bd[0] != '?') {
-                                int bid = c->wit_bound->id;
-                                bool num = bid >= 0 && bid < V->nvar && V->cknown[bid];
-                                snprintf(bq, sizeof bq, num ? "%s" : "`%s`", bd);
-                                verb = c->wit_rising ? "rises" : "falls";
-                            }
-                        }
-                        if (ir_diag_mark) {
-                            fprintf(stderr, "       `%s` %s toward %s on some paths through the loop, but not on this one:\n", nm, verb, bq);
-                            int w = 1;
-                            for (int j = 0; j < c->wit_n; j++) {
-                                int d = 1; for (int64_t t = c->wit_line[j]; t >= 10; t /= 10) d++;
-                                if (d > w) w = d;
-                            }
-                            fprintf(stderr, " %*s |\n", w, "");
-                            for (int j = 0; j < c->wit_n; j++)
-                                ir_diag_mark(c->wit_line[j], c->wit_col[j], c->wit_true[j] ? "true" : "false", w,
-                                             j == 0 || c->wit_line[j] != c->wit_line[j - 1]);
-                        } else {
-                            fprintf(stderr, "       `%s` %s toward %s on some paths through the loop, but not on the one where\n      ", nm, verb, bq);
-                            for (int j = 0; j < c->wit_n; j++)
-                                fprintf(stderr, "%s the test at Ln %lld, Col %lld is %s", j == 0 ? "" : (j == c->wit_n - 1 ? " and" : ","),
-                                        (long long)c->wit_line[j], (long long)c->wit_col[j], c->wit_true[j] ? "true" : "false");
-                            fprintf(stderr, "\n");
-                        }
-                    }
-                }
-                n++; break;
-        }
+        n += ir_report_check(file, V, c);
     }
     free(noterm);
     vra_free(V);
