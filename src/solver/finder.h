@@ -130,9 +130,20 @@ static bool cand_push(JCand **cd, int32_t *n, int32_t *cap, int32_t blk, int32_t
     if (k1 >= 0) { c->c.key[1] = k1; c->c.coef[1] = c1; c->tb += c1 > 0 ? r1.hi : -r1.lo; }
     return true;
 }
+// The slice whose length VRA's variable `vid` is (an IR_SLICE_LEN's result), its id; -1 otherwise.
+static int32_t fd_len_of(IrFunc *f, int32_t vid, const IrType **lt) {
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            if (i->result && i->result->id == vid) {
+                if (i->op != IR_SLICE_LEN || i->n_operands < 1 || !i->operands[0]) return -1;
+                *lt = i->result->type;
+                return i->operands[0]->id;
+            }
+    return -1;
+}
 static bool same_form(const JClaim *a, const JClaim *b) {
     if (a->blk != b->blk || a->nt != b->nt) return false;
-    for (int k = 0; k < a->nt; k++) if (a->key[k] != b->key[k] || a->coef[k] != b->coef[k]) return false;
+    for (int k = 0; k < a->nt; k++) if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k]) return false;
     return true;
 }
 // Houdini over the module's claims cl[0..nc): each function's claim VCs (its cut points' and its
@@ -712,27 +723,45 @@ static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, 
             }
         }
     }
-    // VRA's relations at this header
+    // VRA's relations at this header. VRA names a slice's length by the value an IR_SLICE_LEN
+    // computed (`hi <= %3` with %3 = a.len before the loop); the generator names it len(<slice>)
+    // (jb_len), so such a variable becomes that JTERM_LEN term, or the relation would have no
+    // term the proposer can name and `hi <= a.len` (a binary search's bound) was never proposed.
     for (int h = 0; head && h < F->nhdr; h++) {
         if (F->hdr[h].f != f || F->hdr[h].bid != H || F->hdr[h].n == 0) continue;
-        int32_t *keys = malloc(sizeof *keys * (size_t)F->hdr[h].n * 2);
-        uint8_t *kind = malloc((size_t)F->hdr[h].n * 2);
-        if (!keys || !kind) { free(keys); free(kind); goto oom; }
-        for (int r = 0; r < F->hdr[h].n; r++) { keys[2 * r] = F->hdr[h].r[r].a; keys[2 * r + 1] = F->hdr[h].r[r].b >= 0 ? F->hdr[h].r[r].b : F->hdr[h].r[r].a; }
-        if (!F->gen->term_kinds(F->gen->ctx, f, H, keys, NULL, F->hdr[h].n * 2, kind, err, (uint32_t)errcap)) { free(keys); free(kind); free(tm); return false; }
+        int32_t n2 = F->hdr[h].n * 2;
+        int32_t *keys = malloc(sizeof *keys * (size_t)n2);
+        uint8_t *kind = malloc((size_t)n2), *ktk = malloc((size_t)n2);
+        const IrType **lty = malloc(sizeof *lty * (size_t)n2);
+        if (!keys || !kind || !ktk || !lty) { free(keys); free(kind); free(ktk); free(lty); goto oom; }
+        for (int r = 0; r < F->hdr[h].n; r++) {
+            int32_t ab[2] = { F->hdr[h].r[r].a, F->hdr[h].r[r].b >= 0 ? F->hdr[h].r[r].b : F->hdr[h].r[r].a };
+            for (int q = 0; q < 2; q++) {
+                keys[2 * r + q] = ab[q]; ktk[2 * r + q] = JTERM_VALUE; lty[2 * r + q] = NULL;
+                const IrType *lt = NULL;
+                int32_t sv = fd_len_of(f, ab[q], &lt);
+                if (sv >= 0) { keys[2 * r + q] = sv; ktk[2 * r + q] = JTERM_LEN; lty[2 * r + q] = lt; }
+            }
+        }
+        if (!F->gen->term_kinds(F->gen->ctx, f, H, keys, ktk, n2, kind, err, (uint32_t)errcap)) { free(keys); free(kind); free(ktk); free(lty); free(tm); return false; }
         for (int r = 0; r < F->hdr[h].n; r++) {
             const FdRel *v = &F->hdr[h].r[r];
             if (!kind[2 * r] || !kind[2 * r + 1] || (kind[2 * r] != 2 && kind[2 * r + 1] != 2)) continue;
             if ((v->sa != 1 && v->sa != -1) || (v->b >= 0 && v->sb != 1 && v->sb != -1)) continue;
-            const IrType *ta = NULL, *tb = NULL;
-            for (int32_t t = 0; t < nt; t++) { if (tm[t].key == v->a) ta = tm[t].type; if (tm[t].key == v->b) tb = tm[t].type; }
-            for (int32_t k = i; k < j; k++) { if (sl[k].key == v->a) ta = sl[k].type; if (sl[k].key == v->b) tb = sl[k].type; }
+            int32_t ka = keys[2 * r], kb = v->b >= 0 ? keys[2 * r + 1] : -1;
+            const IrType *ta = lty[2 * r], *tb = v->b >= 0 ? lty[2 * r + 1] : NULL;
+            for (int32_t t = 0; t < nt; t++) { if (!ta && tm[t].key == v->a) ta = tm[t].type; if (!tb && tm[t].key == v->b) tb = tm[t].type; }
+            for (int32_t k = i; k < j; k++) { if (!ta && sl[k].key == v->a) ta = sl[k].type; if (!tb && sl[k].key == v->b) tb = sl[k].type; }
             if (!ta || (v->b >= 0 && !tb)) continue;         // a term whose type the proposer cannot name
             int32_t before = *ncd;
-            if (!cand_push(cd, ncd, ccd, H, v->a, v->sa, v->b, v->sb, ta, tb)) { free(keys); free(kind); goto oom; }
-            if (*ncd == before + 1) { (*cd)[before].fixed = true; (*cd)[before].c.rhs = v->c; }
+            if (!cand_push(cd, ncd, ccd, H, ka, v->sa, kb, v->sb, ta, tb)) { free(keys); free(kind); free(ktk); free(lty); goto oom; }
+            if (*ncd == before + 1) {
+                (*cd)[before].fixed = true; (*cd)[before].c.rhs = v->c;
+                (*cd)[before].c.tk[0] = ktk[2 * r];
+                if (kb >= 0) (*cd)[before].c.tk[1] = ktk[2 * r + 1];
+            }
         }
-        free(keys); free(kind);
+        free(keys); free(kind); free(ktk); free(lty);
     }
     // PE.7: the relations the loop keeps between its versions (and values fixed at it)
     if (head) {
