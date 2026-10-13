@@ -418,6 +418,47 @@ static void jrec_print(void *ctx, const JRecord *r) {
     printf("\n");
 }
 
+// --why: what a goal's value is made of, through the arithmetic the generator states, down to what
+// nothing states there (a load, a call, a parameter): `sub(load.element.local,const)`. A load is
+// named by its address: a local's slot, a field, an element of a local array or of another, a
+// pointer parameter's target.
+static IrInstr *why_def(IrFunc *f, int32_t id) {
+    for (IrBlock *bb = f->blocks; bb; bb = bb->next)
+        for (IrInstr *ii = bb->instrs; ii; ii = ii->next) if (ii->result && ii->result->id == id) return ii;
+    return NULL;
+}
+static void why_val(IrFunc *f, IrValue *v, int depth, char *b, size_t cap) {
+    if (strlen(b) + 64 >= cap) return;
+    IrInstr *d = v ? why_def(f, v->id) : NULL;
+    if (!d) { strcat(b, "param"); return; }
+    if (d->op == IR_LOAD) {
+        IrInstr *ad = d->n_operands ? why_def(f, d->operands[0]->id) : NULL;
+        const char *w = !ad ? "load.param-ptr" : ad->op == IR_ALLOCA ? "load.local" : ad->op == IR_FIELD_PTR ? "load.field" : "load.other";
+        if (ad && ad->op == IR_ELEM_PTR) {
+            IrInstr *bd = ad->n_operands ? why_def(f, ad->operands[0]->id) : NULL;
+            IrInstr *xd = ad->n_operands > 1 ? why_def(f, ad->operands[1]->id) : NULL;
+            bool k = xd && xd->op == IR_CONST;                 // a constant index, or a variable one
+            w = !bd ? (k ? "load.element.param.k" : "load.element.param.i") : bd->op == IR_ALLOCA ? (k ? "load.element.local.k" : "load.element.local.i")
+              : (k ? "load.element.k" : "load.element.i");
+        }
+        strcat(b, w);
+        return;
+    }
+    static const char *opn[] = { [IR_CONST]="const", [IR_CAST]="cast", [IR_ADD]="add", [IR_SUB]="sub", [IR_MUL]="mul",
+        [IR_SDIV]="div", [IR_UDIV]="div", [IR_SREM]="rem", [IR_UREM]="rem", [IR_NEG]="neg", [IR_AND]="and", [IR_OR]="or",
+        [IR_XOR]="xor", [IR_SHL]="shl", [IR_LSHR]="lshr", [IR_ASHR]="ashr", [IR_BNOT]="bnot", [IR_CTZ]="ctz", [IR_CLZ]="clz",
+        [IR_POPCOUNT]="popcount", [IR_SIZEOF]="sizeof", [IR_ALIGNOF]="alignof", [IR_ICMP]="icmp",
+        [IR_SLICE_LEN]="slice_len", [IR_CALL]="call", [IR_SUM_TAG]="sum_tag", [IR_SUM_PAYLOAD]="sum_payload",
+        [IR_VEC_MOVEMASK]="movemask", [IR_SEQ_EQ]="seq_eq" };
+    strcat(b, (size_t)d->op < sizeof opn / sizeof *opn && opn[d->op] ? opn[d->op] : "other-op");
+    bool arith = d->op == IR_ADD || d->op == IR_SUB || d->op == IR_MUL || d->op == IR_NEG || d->op == IR_CAST ||
+                 d->op == IR_SDIV || d->op == IR_UDIV || d->op == IR_SREM || d->op == IR_UREM || d->op == IR_AND ||
+                 d->op == IR_OR || d->op == IR_XOR || d->op == IR_SHL || d->op == IR_LSHR || d->op == IR_ASHR || d->op == IR_BNOT;
+    if (!arith || depth >= 4 || d->n_operands < 1) return;
+    strcat(b, "(");
+    for (int k = 0; k < d->n_operands; k++) { if (k) strcat(b, ","); why_val(f, d->operands[k], depth + 1, b, cap); }
+    strcat(b, ")");
+}
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s <file.ln> [--smt | --stats | --why | --check-hyps] [--no-claims]\n", argv[0]); return 2; }
     bool smt = false, stats = false, check = false, why = false, claims = true, show = false, finder = true, judge = false, corrupt = false, cover = false;
@@ -546,34 +587,17 @@ int main(int argc, char **argv) {
                 printf("%s %s %s %s %s\t", o[i].vc.id.fn, o[i].vc.id.irhash, o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal);
                 for (int t = 0; t < o[i].vc.goal.nt; t++) {
                     int32_t x = o[i].vc.goal.t[t].var;
-                    const char *what = "?";
-                    if (o[i].vkind[x] == 2 || o[i].vkind[x] == 4) what = "len";
+                    char what[512] = "";
+                    if (o[i].vkind[x] == 2 || o[i].vkind[x] == 4) strcpy(what, "len");
                     else if (o[i].vkind[x] == 1) {
                         const char *nmx = o[i].vc.vars[x];
-                        what = strstr(nmx, "@head") ? "version.head" : strstr(nmx, "@join") ? "version.join"
-                             : strstr(nmx, "@entry") ? "version.entry" : "version.store";
+                        strcpy(what, strstr(nmx, "@head") ? "version.head" : strstr(nmx, "@join") ? "version.join"
+                                   : strstr(nmx, "@entry") ? "version.entry" : "version.store");
+                        IrInstr *sd = o[i].vaux && o[i].vaux[x] >= 0 ? why_def(f, o[i].vaux[x]) : NULL;
+                        if (sd && sd->result) { strcat(what, ":"); why_val(f, sd->result, 1, what, sizeof what); }
                     } else {
-                        IrInstr *d = NULL;
-                        for (IrBlock *bb = f->blocks; bb && !d; bb = bb->next)
-                            for (IrInstr *ii = bb->instrs; ii; ii = ii->next)
-                                if (ii->result && ii->result->id == o[i].vkey[x]) { d = ii; break; }
-                        static const char *opn[] = { [IR_CONST]="const", [IR_CAST]="cast", [IR_ADD]="add", [IR_SUB]="sub", [IR_MUL]="mul",
-                            [IR_SDIV]="div", [IR_UDIV]="div", [IR_SREM]="rem", [IR_UREM]="rem", [IR_NEG]="neg", [IR_AND]="and", [IR_OR]="or",
-                            [IR_XOR]="xor", [IR_SHL]="shl", [IR_LSHR]="lshr", [IR_ASHR]="ashr", [IR_BNOT]="bnot", [IR_CTZ]="ctz", [IR_CLZ]="clz",
-                            [IR_POPCOUNT]="popcount", [IR_SIZEOF]="sizeof", [IR_ALIGNOF]="alignof", [IR_ICMP]="icmp", [IR_LOAD]="load",
-                            [IR_SLICE_LEN]="slice_len", [IR_CALL]="call", [IR_SUM_TAG]="sum_tag", [IR_SUM_PAYLOAD]="sum_payload",
-                            [IR_VEC_MOVEMASK]="movemask", [IR_SEQ_EQ]="seq_eq" };
-                        if (!d) what = "param";
-                        else if ((size_t)d->op < sizeof opn / sizeof *opn && opn[d->op]) what = opn[d->op];
-                        else what = "other-op";
-                        if (d && d->op == IR_LOAD) {
-                            IrInstr *ad = NULL; IrValue *a0 = d->operands[0];
-                            for (IrBlock *bb = f->blocks; bb && !ad; bb = bb->next)
-                                for (IrInstr *ii = bb->instrs; ii; ii = ii->next)
-                                    if (ii->result == a0) { ad = ii; break; }
-                            what = !ad ? "load.param-ptr" : ad->op == IR_ALLOCA ? "load.escaped-local" : ad->op == IR_FIELD_PTR ? "load.field"
-                                 : ad->op == IR_ELEM_PTR ? "load.element" : "load.other";
-                        }
+                        IrInstr *d = why_def(f, o[i].vkey[x]);
+                        if (d && d->result) why_val(f, d->result, 0, what, sizeof what); else strcpy(what, "param");
                     }
                     printf("%s%s", t ? "," : "", what);
                 }
