@@ -2094,6 +2094,57 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  element cells: a constant index is a cell, a store through any other index refreshes its array\n");
+    // 44. a PRODUCT of two variables between its corners, from the operands' static ranges (a
+    // constant's value; through a cast whose source's range fits its type, the source's; else
+    // the type's): (0) cast(y i32):i64 * cast(x i32):i64, `*?`'s shape: hull [-2^62 + 2^31, 2^62],
+    // owed and stated; (1) i32 * i32 into i32: the corners leave i32, outside; (2) cast(u8):u16 *
+    // cast(u8):u16: [0, 65025], owed; (3) cast(u64):i64 * cast(i32):i64: the u64 range does not fit
+    // i64, so i64's is used, and the corners leave it: outside; (4) the same as (0) WRAPPING:
+    // nothing owed, no hull; (5) a constant factor: the linear row, no hull; (6) case 2 with one
+    // u8 made by a WRAPPING cast from an i8: its range is u8's [0, 255], never the i8's
+    IrType *i8x = ir_type_int(&A, 8, true), *u16t = ir_type_int(&A, 16, false);
+    for (int c = 0; c < 7; c++) {
+        IrType *X = c == 1 ? i32t : c == 2 || c == 6 ? u8t : c == 3 ? u64t : i32t;
+        IrType *R = c == 1 ? i32t : c == 2 || c == 6 ? u16t : i64t;
+        IrFunc *f = ir_func_new(&A, nm("m44"), R, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, c == 6 ? i8x : X, nm("x")), *y = ir_add_param(f, c == 3 ? i32t : X, nm("y"));
+        IrBlock *b0 = f->entry;
+        IrValue *xs = x;
+        if (c == 6) { IrInstr *w = ir_instr(f, IR_CAST, u8t, 1); w->operands[0] = x; w->wrap = IR_WRAP_MODULAR; ir_emit(b0, w); xs = w->result; }
+        IrValue *xw = xs, *yw = y;
+        if (c != 1 && c != 5) {
+            IrInstr *cx = ir_instr(f, IR_CAST, R, 1); cx->operands[0] = xs; ir_emit(b0, cx); xw = cx->result;
+            IrInstr *cy = ir_instr(f, IR_CAST, R, 1); cy->operands[0] = y; ir_emit(b0, cy); yw = cy->result;
+        }
+        if (c == 5) { xw = ir_const_int(f, b0, 3, i32t); yw = y; }
+        IrValue *p = ir_binop(f, b0, IR_MUL, xw, yw, R);
+        if (c == 4) g_last_instr(b0)->wrap = IR_WRAP_MODULAR;
+        // case 4 divides by its product, so the product's facts are stated in the divisor's VC
+        ir_set_ret(b0, c == 4 ? ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 100, R), p, R) : p);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), lo[96], hi[96], hn[48];
+        snprintf(hn, sizeof hn, "def %%v%d mul.hull", p->id);
+        const char *wantlo = c == 0 ? "4611686016279904256" : "0", *wanthi = c == 0 ? "4611686018427387904" : "65025";
+        snprintf(lo, sizeof lo, "%s : -1*%%v%d <= %s\n", hn, p->id, wantlo);
+        snprintf(hi, sizeof hi, "%s : 1*%%v%d <= %s\n", hn, p->id, wanthi);
+        int n = idx_of(b0, p); char key[48]; snprintf(key, sizeof key, "bb%d.%d narrow.hi 0", b0->id, n);
+        const char *v = t ? vc_of(t, key) : "";
+        switch (c) {
+            case 0: case 2: case 6:
+                CHECK(strstr(v, lo) && strstr(v, hi) && !strstr(t, "atom.mul"), "case %d: owed, the hull stated:\n%s", c, t ? t : ""); break;
+            case 1: case 3:
+                CHECK(t && strstr(t, "outside atom.mul: a product of two variables whose corners leave its type") && !strstr(t, "mul.hull"),
+                      "case %d: the corners leave the type, outside:\n%s", c, t ? t : ""); break;
+            default: {
+                char pv[24]; snprintf(pv, sizeof pv, "%%v%d", p->id);
+                CHECK(t && !strstr(t, "mul.hull") && !strstr(t, "atom.mul") && (c != 4 || strstr(t, pv)),
+                      "case %d: no hull (case 4's product in a VC):\n%s", c, t ? t : ""); break; }
+        }
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a product of two variables: between its corners, outside where they leave its type\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

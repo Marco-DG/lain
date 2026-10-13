@@ -964,6 +964,33 @@ static bool jg_const_at(JG *g, IrValue *v, __int128 *c, int depth) {
     *c = jg_const(d); return true;
 }
 static bool jg_const_of(JG *g, IrValue *v, __int128 *c) { return jg_const_at(g, v, c, 0); }
+static bool jg_mul_ok(__int128 a, __int128 b, __int128 *out);
+// A value's STATIC range: a constant's value; through a cast whose source's static range lies in
+// its result type (the value kept under any mode a cast has), the source's; else its type's (a
+// refinement included, as every type fact). False where none is known.
+static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
+    __int128 c;
+    if (jg_const_of(g, v, &c)) { r->lo = r->hi = c; r->has_ne = false; return true; }
+    if (!v || !v->type || !jg_range(v->type, r)) return false;
+    IrInstr *d = v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
+    JRange s;
+    if (depth < 4 && d && d->op == IR_CAST && d->n_operands >= 1 && jg_is_int(d->operands[0]->type) &&
+        jg_static_range(g, d->operands[0], &s, depth + 1) && s.lo >= r->lo && s.hi <= r->hi) *r = s;
+    r->has_ne = false;
+    return true;
+}
+// A PRODUCT of two variables lies between its corners: x in [a, b] and y in [c, d] put x * y in
+// [min, max] of a*c, a*d, b*c, b*d (`2 *? y` widens to i64, where two i32 ranges' corners fit).
+// From the operands' static ranges; false where a corner is past what jg_mul_ok computes.
+static bool jg_mul_hull(JG *g, const IrInstr *d, JRange *h) {
+    JRange a, b; __int128 p[4];
+    if (d->n_operands < 2 || !jg_static_range(g, d->operands[0], &a, 0) || !jg_static_range(g, d->operands[1], &b, 0)) return false;
+    if (!jg_mul_ok(a.lo, b.lo, &p[0]) || !jg_mul_ok(a.lo, b.hi, &p[1]) || !jg_mul_ok(a.hi, b.lo, &p[2]) ||
+        !jg_mul_ok(a.hi, b.hi, &p[3])) return false;
+    h->lo = h->hi = p[0]; h->has_ne = false;
+    for (int k = 1; k < 4; k++) { if (p[k] < h->lo) h->lo = p[k]; if (p[k] > h->hi) h->hi = p[k]; }
+    return true;
+}
 static bool jg_uns(const IrType *t) { return t && (t->kind == IRT_BOOL || (t->kind == IRT_INT && !t->is_signed)); }
 
 // A claim's term as a VC variable: a cell is its version in `row` (a block's entry state, or the
@@ -1146,13 +1173,16 @@ static void jb_state(JB *B, int32_t x) {
             break;
         case IR_MUL: {
             if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) break;
-            for (int k = 0; k < 2; k++) {
+            bool lin = false;
+            for (int k = 0; k < 2 && !lin; k++) {
                 IrValue *o = d->operands[1 - k]; __int128 kc;
                 if (!jg_const_of(g, d->operands[k], &kc) || !jg_is_int(o->type)) continue;
                 t[0].var = jb_val(B, o); t[0].c = kc;
                 jb_def(B, x, t, 1, jb_str(B, "def %%v%lld mul", id, 0, 0));
-                break;
+                lin = true;
             }
+            JRange h;                                          // two variables: between the corners
+            if (!lin && jg_mul_hull(g, d, &h)) jb_range(B, x, &h, jb_str(B, "def %%v%lld mul.hull", id, 0, 0));
             break;
         }
         case IR_CAST:
@@ -1960,7 +1990,13 @@ static bool jg_obligations(JG *g, JObls *L) {
                     if (i->op == IR_MUL) {
                         __int128 kc;                           // as jb states the product: one constant factor
                         bool c0 = jg_const_of(g, i->operands[0], &kc), c1 = jg_const_of(g, i->operands[1], &kc);
-                        if (!c0 && !c1) { if (!jg_outside(g, L, i, b->id, k, "narrow.lo", "atom.mul: a product of two variables has no lemma in step A")) return false; break; }
+                        // two variables: owed where the corners of their static ranges lie in the type
+                        // (its narrowing then follows from them), else outside
+                        JRange h;
+                        if (!c0 && !c1 && (!jg_mul_hull(g, i, &h) || h.lo < rr.lo || h.hi > rr.hi)) {
+                            if (!jg_outside(g, L, i, b->id, k, "narrow.lo", "atom.mul: a product of two variables whose corners leave its type")) return false;
+                            break;
+                        }
                     }
                     JNarrowArg lo = { rr.lo, false, i->result }, hi = { rr.hi, true, i->result };
                     if (!jg_goal(g, L, i, b->id, k, i->result->id, "narrow.lo", 0, jgk_narrow, &lo)) return false;

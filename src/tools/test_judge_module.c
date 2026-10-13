@@ -438,6 +438,22 @@ int main(void) {
               "element cells, case %d:\n%s", c, recs);
     }
 
+    // a PRODUCT of two variables, `y *? x`'s shape: cast(y i32):i64 * cast(x i32):i64, its narrowing
+    // in i64 proved from the corners of the operands' i32 ranges
+    {   IrType *mi32 = ir_type_int(&A, 32, true), *mi64 = ir_type_int(&A, 64, true);
+        IrFunc *mf = ir_func_new(&A, nm("mq"), mi64, IR_FUNC_PURE);
+        IrValue *mx = ir_add_param(mf, mi32, nm("x")), *my = ir_add_param(mf, mi32, nm("y"));
+        IrBlock *mb = mf->entry;
+        IrInstr *cx = ir_instr(mf, IR_CAST, mi64, 1); cx->operands[0] = mx; ir_emit(mb, cx);
+        IrInstr *cy = ir_instr(mf, IR_CAST, mi64, 1); cy->operands[0] = my; ir_emit(mb, cy);
+        ir_set_ret(mb, ir_binop(mf, mb, IR_MUL, cx->result, cy->result, mi64));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, "proved bb0.2 narrow.lo") && strstr(recs, "proved bb0.2 narrow.hi") &&
+              nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] == 0, "y *? x's product: its narrowing in i64 proved:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
