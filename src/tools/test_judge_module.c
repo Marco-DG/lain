@@ -196,7 +196,8 @@ int main(void) {
     IrValue *wi = ir_alloca(w, w0, u8t);
     ir_store(w, w0, wi, ir_const_int(w, w0, 0, u8t)); ir_set_br(w0, w1);
     ir_set_br_cond(w1, ir_icmp(w, w1, IR_CMP_ULT, ir_load(w, w1, wi, u8t), wn), w2, w3);
-    IrValue *ws = ir_binop(w, w2, IR_ADD, ir_load(w, w2, wi, u8t), ir_const_int(w, w2, 1, u8t), u8t);
+    IrValue *wone = ir_const_int(w, w2, 1, ir_type_int(&A, 32, true));     // an i32 literal, as lowering makes it
+    IrValue *ws = ir_binop(w, w2, IR_ADD, ir_load(w, w2, wi, u8t), wone, u8t);
     w2->instrs_tail->wrap = IR_WRAP_MODULAR;
     ir_store(w, w2, wi, ws); ir_set_br(w2, w1);
     ir_set_ret(w3, ir_const_int(w, w3, 0, u32t));

@@ -985,14 +985,20 @@ static int64_t jg_len_max(const IrType *st) {
 // A WRAPPING x + y or x - y (`+%`, `-%`, or unsigned arithmetic inside `unsafe`): the interpreter
 // computes s = x +- y exactly and lands it once in the result's w bits (ii_settle, it_wrap), so the
 // result is s - k*2^w for the one k that puts it in the result's range. Over the operands' type
-// ranges (facts, licensed by their own obligations) s lies in [slo, shi], which leaves at most three
-// k; with the result's own range that disjunction pins it. Not inside a disjunct (a disjunct holds
-// no disjunction), and nothing when the result is not an integer of at most 64 bits.
+// ranges (facts, licensed by their own obligations; a constant's range is its value) s lies in
+// [slo, shi], which leaves at most three k; with the result's own range that disjunction pins it.
+// Not inside a disjunct (a disjunct holds no disjunction), and nothing when the result is not an
+// integer of at most 64 bits.
 static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
     JRange ra, rb, rr;
     const IrType *rt = d->result ? d->result->type : NULL;
     if (B->jS >= 0 || !rt || rt->kind != IRT_INT || rt->bits < 1 || rt->bits > 64) return;
     if (!jg_range(d->operands[0]->type, &ra) || !jg_range(d->operands[1]->type, &rb)) return;
+    // a constant operand's range is its value: `i +% 1` on a u8 has an i32 literal, whose type
+    // range alone would leave thousands of k (Main Compiler Work)
+    __int128 cv;
+    if (jg_const_of(B->g, d->operands[0], &cv)) ra.lo = ra.hi = cv;
+    if (jg_const_of(B->g, d->operands[1], &cv)) rb.lo = rb.hi = cv;
     rr.lo = jg_width_lo(rt); rr.hi = jg_width_hi(rt);
     __int128 M = (__int128)1 << rt->bits;
     __int128 slo = d->op == IR_ADD ? ra.lo + rb.lo : ra.lo - rb.hi, shi = d->op == IR_ADD ? ra.hi + rb.hi : ra.hi - rb.lo;

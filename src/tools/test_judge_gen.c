@@ -1243,6 +1243,25 @@ int main(void) {
             free(t);
         }
     }
+    // ...and a constant operand's range is its value: `i +% 1` on a u8 lowers its 1 as an i32
+    // literal, whose type range alone leaves thousands of k (Main Compiler Work)
+    {   IrType *i32c = ir_type_int(&A, 32, true);
+        IrFunc *f = ir_func_new(&A, nm("g34c"), u8t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, u8t, nm("x"));
+        IrBlock *b0 = f->entry;
+        IrValue *one = ir_const_int(f, b0, 1, i32c);
+        IrValue *r = ir_binop(f, b0, IR_ADD, x, one, u8t);
+        b0->instrs_tail->wrap = IR_WRAP_MODULAR;
+        IrValue *hundred = ir_const_int(f, b0, 100, u8t);
+        ir_set_ret(b0, ir_binop(f, b0, IR_UDIV, hundred, r, u8t));
+        char *t = gen_text(f);
+        const char *vd = t ? vc_of(t, "divzero") : "";
+        const char *h = strstr(vd, ".wrap : or {");
+        int bars = 0;
+        for (const char *q = h; q && *q && *q != '\n'; q++) if (*q == '|') bars++;
+        CHECK(h && bars == 1 && strstr(h, "= -256"), "u8 +%% an i32 literal 1: two cases, by the constant's value:\n%s", vd);
+        free(t);
+    }
     printf("  a wrapping add or sub: the exact result less k*2^w, in its few cases\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
