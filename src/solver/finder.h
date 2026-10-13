@@ -185,7 +185,7 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc) {
 #define FD_MAXFLAT 32
 #define FD_MAXEDGES 64                      // a recursion cycle's calls, ranked jointly (fd_rank_cycle)
 typedef struct { JCons c; int32_t *v; } FdCons;              // a constraint over a raw path's variables
-typedef struct { bool disj; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size
+typedef struct { bool disj, claim; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size; claim: a kept claim's
 typedef struct { int32_t nv, *val, nh; FdHyp *h; int32_t from, *pre, *post; } FdRaw;
 typedef struct {
     char *mem, *cur, *end;
@@ -368,7 +368,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
         for (int32_t h = 0; h < v->nhyps; h++) {
             const JHyp *hy = &v->hyps[h];
             FdHyp *o = &w->h[h];
-            o->disj = hy->disj;
+            o->disj = hy->disj; o->claim = hy->origin && !strncmp(hy->origin, "claim", 5);
             if (!hy->disj) { if (!fd_copy_cons(L, &hy->cons, &o->c)) return false; continue; }
             int32_t tot = 0;
             for (int32_t d = 0; d < hy->ndis; d++) tot += hy->dis[d].nc;
@@ -503,7 +503,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             int32_t m = 0; rest = ch;
             for (int32_t h = 0; h < w->nh; h++) {
                 FdHyp *o = &w->h[h];
-                if (!o->disj) { hy[m].origin = "path"; if (!fd_map_cons(L, &o->c.c, map, &hy[m].cons)) return false; m++; continue; }
+                if (!o->disj) { hy[m].origin = o->claim ? "path claim" : "path"; if (!fd_map_cons(L, &o->c.c, map, &hy[m].cons)) return false; m++; continue; }
                 if (skip[h]) continue;                       // a dropped disjunction: the path, weakened
                 int32_t pick = rest % o->nd; rest /= o->nd;
                 int32_t z = 0;
@@ -571,6 +571,7 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (!sl || !on) return false;
     // pass 0: the quantity alone, its paths cut to the facts that touch it (its step and its
     // guard); pass 1: alone, two rounds out; pass 2: with the values fixed at the header
+    int32_t base_pairs = 2 * L->npk + (L->npairs - L->npk);   // the pairs' and fixed values' variables
     for (int32_t pass = 0; pass < 3; pass++)
     for (int32_t q = 0; q < L->npk; q++) {
         if (pass == 2 && L->npairs == L->npk) break;       // no value fixed at the header to add
@@ -581,8 +582,23 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         for (int32_t k = 0; k < np && ok; k++) {
             JVc *v = fd_bump(L, sizeof *v); JHyp *h = fd_bump(L, sizeof(JHyp) * (size_t)(L->full[k]->nhyps ? L->full[k]->nhyps : 1));
             if (!v || !h) { ok = false; break; }
-            memcpy(h, L->full[k]->hyps, sizeof(JHyp) * (size_t)L->full[k]->nhyps);
-            *v = *L->full[k]; v->hyps = h; v->nhyps = fd_slice_on(L, h, L->full[k]->nhyps, L->nv, on, pass == 0 ? 1 : 2);
+            int32_t nh0 = 0;
+            for (int32_t x = 0; x < L->full[k]->nhyps; x++) {
+                const JHyp *src = &L->full[k]->hyps[x];
+                // the quantity alone (passes 0 and 1): a claim relating it to ANOTHER quantity of the
+                // header (a table cell, a fixed value) says nothing its own measure reads, and a
+                // loop reading a 12-entry table carries hundreds of them (convert_days' month loop)
+                if (pass < 2 && src->origin && !strcmp(src->origin, "path claim")) {
+                    bool other = false;
+                    for (int32_t t = 0; t < src->cons.nt && !other; t++) {
+                        int32_t vv = src->cons.t[t].var;
+                        other = vv < base_pairs && vv != 2 * q && vv != 2 * q + 1;
+                    }
+                    if (other) continue;
+                }
+                h[nh0++] = *src;
+            }
+            *v = *L->full[k]; v->hyps = h; v->nhyps = fd_slice_on(L, h, nh0, L->nv, on, pass == 0 ? 1 : 2);
             bool dup = false;
             for (int32_t z = 0; z < ns && !dup; z++) dup = sedge[z] == L->edge[k] && fd_same_path(sl[z], v);
             if (dup) continue;
