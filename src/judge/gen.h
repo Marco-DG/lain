@@ -938,6 +938,21 @@ static void jb_range(JB *B, int32_t x, const JRange *r, const char *origin) {
         }
     }
 }
+// or { c[0, n0) | c[n0, n0 + n1) }, each a conjunction; nothing inside a disjunct (it cannot
+// hold a disjunction)
+static void jb_or2(JB *B, const char *origin, const JCons *c, int n0, int n1) {
+    if (B->jS >= 0) return;
+    JHyp *h = jb_hyp(B, origin);
+    if (!h) return;
+    h->disj = true; h->ndis = 2;
+    if (!(h->dis = JG_NEW(B->g, JConj, 2))) { B->fail = true; return; }
+    for (int d = 0; d < 2; d++) {
+        int n = d == 0 ? n0 : n1;
+        if (!(h->dis[d].c = JG_NEW(B->g, JCons, n))) { B->fail = true; return; }
+        h->dis[d].nc = n;
+        memcpy(h->dis[d].c, c + (d == 0 ? 0 : n0), sizeof *c * (size_t)n);
+    }
+}
 static void jb_type(JB *B, int32_t x, const IrType *ty, const char *what, long long id) {
     JRange r; char tn[64];
     if (!jg_range(ty, &r)) return;
@@ -1507,7 +1522,16 @@ static void jb_state(JB *B, int32_t x) {
             if (!jg_const_of(g, d->operands[1], &c)) {           // a variable divisor: between bounds
                 JRange h;
                 bool dv = d->op == IR_SDIV || d->op == IR_UDIV;
-                if (jg_divrem_hull(g, d, &h)) jb_range(B, x, &h, jb_str(B, dv ? "def %%v%lld div.hull" : "def %%v%lld rem.hull", id, 0, 0));
+                const char *o = jb_str(B, dv ? "def %%v%lld div.hull" : "def %%v%lld rem.hull", id, 0, 0);
+                if (jg_divrem_hull(g, d, &h)) jb_range(B, x, &h, o);
+                // a remainder below its divisor itself (`i % s.len < s.len`): an unsigned one always
+                // (its divisor is nonzero where it completes), a signed one where x >= 0 and y >= 1
+                JRange ra, rb;
+                if (!dv && jg_static_range(g, d->operands[0], &ra, 0) && jg_static_range(g, d->operands[1], &rb, 0) &&
+                    (d->op == IR_UREM || (ra.lo >= 0 && rb.lo >= 1))) {
+                    t[0].var = x; t[0].c = 1; t[1].var = jb_val(B, d->operands[1]); t[1].c = -1;
+                    jb_atom(B, o, t, 2, J_LE, -1);
+                }
                 break;
             }
             if (c == 0) break;
@@ -1561,9 +1585,20 @@ static void jb_state(JB *B, int32_t x) {
         case IR_AND: {
             __int128 c; int ci = -1;
             for (int k = 0; k < 2 && ci < 0; k++) if (d->n_operands >= 2 && jg_const_of(g, d->operands[k], &c) && c >= 0) ci = k;
-            if (ci < 0) {                                      // two variables: between bounds
-                JRange h;
-                if (jg_op_range(g, d, &h, -1)) jb_range(B, x, &h, jb_str(B, "def %%v%lld and.hull", id, 0, 0));
+            if (ci < 0) {                                      // two variables: between bounds, and at most
+                JRange h, ra;                                  // each operand that is >= 0 (`x & (len - 1)`);
+                const char *o = jb_str(B, "def %%v%lld and.hull", id, 0, 0);   // one not >= 0 by its
+                if (jg_op_range(g, d, &h, -1)) jb_range(B, x, &h, o);    // static range: y <= -1, or
+                for (int k = 0; k < 2 && d->n_operands >= 2; k++) {      // 0 <= x & y <= y
+                    int32_t y = jb_val(B, d->operands[k]);
+                    t[0].var = x; t[0].c = 1; t[1].var = y; t[1].c = -1;
+                    if (jg_static_range(g, d->operands[k], &ra, 0) && ra.lo >= 0) { jb_atom(B, o, t, 2, J_LE, 0); continue; }
+                    JCons c3[3]; JLT u[1];
+                    u[0].var = y; u[0].c = 1;  if (!jb_cons(B, u, 1, J_LE, -1, &c3[0])) break;
+                    u[0].var = x; u[0].c = -1; if (!jb_cons(B, u, 1, J_LE, 0, &c3[1])) break;
+                    if (!jb_cons(B, t, 2, J_LE, 0, &c3[2])) break;
+                    jb_or2(B, o, c3, 1, 2);
+                }
                 break;
             }
             const char *o = jb_str(B, "def %%v%lld and", id, 0, 0);
@@ -1810,6 +1845,13 @@ static bool jb_has(JB *B, IrValue *v) {
     if (d && d->op == IR_SLICE_LEN && d->n_operands >= 1 && d->operands[0] &&
         d->operands[0]->id >= 0 && d->operands[0]->id < B->g->nv) {
         int32_t sv = d->operands[0]->id;
+        // named as jb_len names it: a load of a slice cell's STORE version is the slice stored
+        for (int hop = 0; hop < 64 && B->g->loadver[sv] >= 0; hop++) {
+            JVer *ver = &B->g->ver[B->g->loadver[sv]];
+            if (ver->kind != JV_STORE || !ver->stored || !ver->stored->type || ver->stored->type->kind != IRT_SLICE ||
+                ver->stored->id < 0 || ver->stored->id >= B->g->nv) break;
+            sv = ver->stored->id;
+        }
         return B->vlen[sv] >= 0 || (B->g->loadver[sv] >= 0 && B->vlenv[B->g->loadver[sv]] >= 0);
     }
     return false;

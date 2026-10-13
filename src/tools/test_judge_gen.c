@@ -2582,6 +2582,65 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a constant table: its element at a constant index, one of them at any other\n");
+    // 53. (0) a slot holding a slice made over n: a guard `5 < a.len`, read through a load of the
+    // slot, is about the length a bound names through ANOTHER load of it (both the stored slice's,
+    // as jb_len names them): the guard joins the bound's VC; (1) x & (y - 1) over u64: at most y - 1;
+    // (2) x % y over u64: below y; (3) x % y over i32, x >= 0 and y >= 1: below y; with no fact
+    // where (4) neither, (5) only y >= 1, (6) only x >= 0 is known; (7) x & y over i32: only
+    // where an operand is >= 0, a disjunction: y <= -1, or 0 <= x & y <= y (8)
+    // x / y over u64 with y >= 1: none (100 / 2 is 50)
+    {   IrType *slu8 = ir_type_new(&A, IRT_SLICE); slu8->elem = u8t;
+        IrFunc *f = ir_func_new(&A, nm("v53"), u8t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u64t, nm("n"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+        IrValue *slot = ir_alloca(f, b0, slu8);
+        IrValue *data = ir_alloca_dyn(f, b0, u8t, n);
+        IrInstr *mk = ir_instr(f, IR_MAKE_SLICE, slu8, 2); mk->operands[0] = data; mk->operands[1] = n; ir_emit(b0, mk);
+        ir_store(f, b0, slot, mk->result);
+        IrValue *ln = ir_slice_len(f, b0, ir_load(f, b0, slot, slu8));
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, ir_const_int(f, b0, 5, u64t), ln), b1, b2);
+        IrValue *sd = ir_slice_data(f, b1, ir_load(f, b1, slot, slu8), u8t);
+        IrValue *ep = ir_elem_ptr(f, b1, sd, ir_const_int(f, b1, 5, u64t), u8t);
+        ir_set_ret(b1, ir_load(f, b1, ep, u8t));
+        ir_set_ret(b2, ir_const_int(f, b2, 0, u8t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        const char *vb = t ? vc_of(t, " bounds.hi 0") : "";
+        CHECK(strstr(vb, "guard bb0->bb") != NULL, "case 0: the guard on a.len joins the bound's VC:\n%s", vb);
+        free(t);
+    }
+    for (int c = 1; c < 9; c++) {
+        IrType *T = c <= 2 || c == 8 ? u64t : i32t;
+        IrFunc *f = ir_func_new(&A, nm("r53"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x")), *y = ir_add_param(f, T, nm("y"));
+        IrBlock *b0 = f->entry;
+        if (c == 3 || c == 6) ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, x, ir_const_int(f, b0, 0, T)));
+        if (c == 3 || c == 5 || c == 8) ir_assume(f, b0, ir_icmp(f, b0, c == 8 ? IR_CMP_UGE : IR_CMP_SGE, y, ir_const_int(f, b0, 1, T)));
+        IrValue *m = c == 1 ? ir_binop(f, b0, IR_SUB, y, ir_const_int(f, b0, 1, T), T) : y;
+        bool isand = c == 1 || c == 7;
+        IrValue *r = ir_binop(f, b0, isand ? IR_AND : c == 2 ? IR_UREM : c == 8 ? IR_UDIV : IR_SREM, x, m, T);
+        ir_set_ret(b0, ir_binop(f, b0, c <= 2 || c == 8 ? IR_UDIV : IR_SDIV, ir_const_int(f, b0, 100, T), r, T));
+        int at = nins(b0) - 1;
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), want[96], key[48];
+        snprintf(want, sizeof want, "%s : 1*%%v%d + -1*%%v%d <= %s", isand ? "and.hull" : c == 8 ? "div.hull" : "rem.hull", r->id, m->id, isand ? "0" : "-1");
+        snprintf(key, sizeof key, " bb0.%d divzero 0", at);
+        const char *vz = t ? vc_of(t, key) : "";
+        bool has = c <= 3;
+        CHECK(*vz && !!strstr(vz, want) == has, "case %d: %s%s:\n%s", c, has ? "" : "no ", want, vz);
+        if (c == 7) {                                          // y <= -1 or x & y <= y, both ways
+            char w2[96];
+            snprintf(w2, sizeof w2, "and.hull : or { 1*%%v%d <= -1 | -1*%%v%d <= 0 , 1*%%v%d + -1*%%v%d <= 0 }", m->id, r->id, r->id, m->id);
+            CHECK(strstr(vz, w2) != NULL, "case 7: %s:\n%s", w2, vz);
+            snprintf(w2, sizeof w2, "and.hull : or { 1*%%v%d <= -1 | -1*%%v%d <= 0 , 1*%%v%d + -1*%%v%d <= 0 }", x->id, r->id, r->id, x->id);
+            CHECK(strstr(vz, w2) != NULL, "case 7: %s:\n%s", w2, vz);
+        }
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a slice slot's length one variable for relevance; and and remainder below their operands\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

@@ -565,6 +565,42 @@ int main(void) {
         CHECK(ln && !strncmp(ln, c ? "not-implied " : "proved ", c ? 12 : 7), "table, case %d:\n%s", c, recs);
     }
 
+    // a remainder below its divisor: `if s.len > 0 { return s[i % s.len] }` proves its bound
+    {   IrType *mu8 = ir_type_int(&A, 8, false), *mu64 = ir_type_int(&A, 64, false);
+        IrType *msl = ir_type_new(&A, IRT_SLICE); msl->elem = mu8;
+        IrFunc *mf = ir_func_new(&A, nm("modix"), mu8, IR_FUNC_PURE);
+        IrValue *ms = ir_add_param(mf, msl, nm("s")), *mi = ir_add_param(mf, mu64, nm("i"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf);
+        IrValue *ml = ir_slice_len(mf, m0, ms);
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_UGT, ml, ir_const_int(mf, m0, 0, mu64)), m1, m2);
+        IrValue *ml1 = ir_slice_len(mf, m1, ms);
+        IrValue *mx = ir_binop(mf, m1, IR_UREM, mi, ml1, mu64);
+        ir_set_ret(m1, ir_load(mf, m1, ir_elem_ptr(mf, m1, ir_slice_data(mf, m1, ms, mu8), mx, mu8), mu8));
+        ir_set_ret(m2, ir_const_int(mf, m2, 0, mu8));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, "proved bb1.3 bounds.hi") && nrec[JREC_NOT_IMPLIED] == 0, "s[i %% s.len] in bounds:\n%s", recs);
+    }
+
+    // the lowest set bit cleared: `if x > 0 { r = x & (x - 1); 100 / (x - r) }` over i32, where
+    // x - 1 may be negative by its type alone
+    {   IrType *mi32 = ir_type_int(&A, 32, true);
+        IrFunc *mf = ir_func_new(&A, nm("lowbit"), mi32, IR_FUNC_PURE);
+        IrValue *mx = ir_add_param(mf, mi32, nm("x"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf);
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_SGT, mx, ir_const_int(mf, m0, 0, mi32)), m1, m2);
+        IrValue *ms = ir_binop(mf, m1, IR_SUB, mx, ir_const_int(mf, m1, 1, mi32), mi32);
+        IrValue *mr = ir_binop(mf, m1, IR_AND, mx, ms, mi32);
+        IrValue *md = ir_binop(mf, m1, IR_SUB, mx, mr, mi32);
+        ir_set_ret(m1, ir_binop(mf, m1, IR_SDIV, ir_const_int(mf, m1, 100, mi32), md, mi32));
+        ir_set_ret(m2, ir_const_int(mf, m2, 0, mi32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, " divzero") && !strstr(recs, "divzero not") && nrec[JREC_NOT_IMPLIED] == 0, "x - (x & (x - 1)) nonzero:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
