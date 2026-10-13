@@ -452,6 +452,8 @@ int main(int argc, char **argv) {
     Arena ea = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     if (ir_static_eval_module(prog, path, &ea)) { fprintf(stderr, "static evaluation failed\n"); return 1; }
     IrFunc *irmod = ir_lower_module(prog, &ia);
+    static IrCallGraph drv_cg;                                 // the module's call graph, built once (recursion)
+    if (!ir_cg_build(&drv_cg, irmod)) { fprintf(stderr, "out of memory building the call graph\n"); return 1; }
     vra_mod = irmod;
     size_t cap = (size_t)1 << 28, hcap = (size_t)1 << 26;
     char *buf = malloc(cap), *hbuf = malloc(hcap);
@@ -514,7 +516,7 @@ int main(int argc, char **argv) {
         char err[200]; err[0] = 0;
         if (check) {
             JObl *o; int32_t n;
-            if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, JGEN_ALL, &o, &n, err, sizeof err)) {
+            if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
                 fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; continue;
             }
             HK *nh = realloc(hk, sizeof *hk * (size_t)(nhk + n + 1));
@@ -531,7 +533,7 @@ int main(int argc, char **argv) {
         Vra *V = vra_analyze(f);
         m = jmem_over(buf, cap);
         JObl *o; int32_t n;
-        if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, JGEN_ALL, &o, &n, err, sizeof err)) {
+        if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
             printf("%s %.*s: %s\n", stats ? "ERROR\t" : "# generator refused", (int)f->name->length, f->name->name, err);
             rc = 1; vra_free(V); continue;
         }

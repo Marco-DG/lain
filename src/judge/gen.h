@@ -65,6 +65,7 @@
 #include <stdio.h>
 #include "ir/ir.h"
 #include "ir/layout.h"     // SIZEOF's fixed sizes: a TRUSTED input (P2.4), the emitter's own decision
+#include "ir/callgraph.h"  // the module's call graph and its recursion components: the set VRA reads
 #include "judge/format.h"
 #include "judge/mem.h"
 
@@ -1548,10 +1549,20 @@ static JObl *jg_push(JG *g, JObls *L) {
     }
     JObl *o = &L->o[L->n++]; memset(o, 0, sizeof *o); return o;
 }
-static bool jg_outside(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, const char *why) {
+// An obligation the generator cannot state, `why`; its id names the KIND it stands for, as a VC's
+// does (jb_finish), so a record says which rule went unjudged and an authority maps it to a code.
+static bool jg_outside(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, const char *kind, const char *why) {
     JObl *o = jg_push(g, L);
     if (!o) return jg_fail(g, "out of memory");
     o->at = at; o->blk = g->blk[blk]; o->idx = idx; o->outside = why; o->claim = -1;
+    char pt[48], hs[24];
+    snprintf(pt, sizeof pt, "bb%lld.%lld", (long long)blk, (long long)idx);
+    snprintf(hs, sizeof hs, "%08llx", (long long)g->hash);
+    char *fn = JG_NEW(g, char, (size_t)g->f->name->length + 1), *ps = JG_NEW(g, char, strlen(pt) + 1), *hh = JG_NEW(g, char, strlen(hs) + 1);
+    if (!fn || !ps || !hh) return jg_fail(g, "out of memory");
+    memcpy(fn, g->f->name->name, (size_t)g->f->name->length); fn[g->f->name->length] = 0;
+    strcpy(ps, pt); strcpy(hh, hs);
+    o->vc.id.fn = fn; o->vc.id.irhash = hh; o->vc.id.point = ps; o->vc.id.kind = kind; o->vc.id.ordinal = "0";
     return true;
 }
 // One goal: a VC whose goal is `sum(t) op rhs`, built by `mk` over a fresh builder.
@@ -1782,9 +1793,9 @@ static bool jg_obligations(JG *g, JObls *L) {
                         if (j->op == IR_MAKE_SLICE && j->n_operands >= 1 && j->operands[0] == i->result) sub = true;
                     if (sub) break;
                     JBoundArg a; jg_bound_arg(g, i, &a);
-                    if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "an index that is not an integer")) return false; break; }
+                    if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "bounds.lo", "an index that is not an integer")) return false; break; }
                     if (!jg_goal(g, L, i, b->id, k, -1, "bounds.lo", 0, jgk_bounds_lo, NULL)) return false;
-                    if (a.clen < 0 && !a.slice) { if (!jg_outside(g, L, i, b->id, k, "no length is known for the base (a shape or a shared-term cancellation)")) return false; break; }
+                    if (a.clen < 0 && !a.slice) { if (!jg_outside(g, L, i, b->id, k, "bounds.hi", "no length is known for the base (a shape or a shared-term cancellation)")) return false; break; }
                     if (!jg_goal(g, L, i, b->id, k, -1, "bounds.hi", 0, jgk_bounds_hi, &a)) return false;
                     break;
                 }
@@ -1798,20 +1809,20 @@ static bool jg_obligations(JG *g, JObls *L) {
                     // length (jg_slice_whole).
                     if (i->n_operands < 2 || !i->result) break;
                     IrValue *n = i->operands[1];
-                    if (!jg_is_int(n->type)) { if (!jg_outside(g, L, i, b->id, k, "a slice length that is not an integer")) return false; break; }
+                    if (!jg_is_int(n->type)) { if (!jg_outside(g, L, i, b->id, k, "objsize", "a slice length that is not an integer")) return false; break; }
                     if (!jg_goal(g, L, i, b->id, k, -1, "objsize", 0, jgk_objsize, NULL)) return false;
                     if (i->unchecked) break;
                     if (n->type->is_signed && !jg_goal(g, L, i, b->id, k, -1, "bounds.lo", 1, jgk_slice_n, NULL)) return false;
                     IrValue *dv = i->operands[0];
                     IrInstr *ep = dv && dv->id >= 0 && dv->id < g->nv ? g->def[dv->id] : NULL;
                     if (!ep || ep->op != IR_ELEM_PTR || ep->n_operands < 2) {
-                        if (!jg_slice_whole(g, i) && !jg_outside(g, L, i, b->id, k, "a slice over data whose length the generator does not know")) return false;
+                        if (!jg_slice_whole(g, i) && !jg_outside(g, L, i, b->id, k, "bounds.hi", "a slice over data whose length the generator does not know")) return false;
                         break;
                     }
-                    if (!jg_is_int(ep->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "a subslice start that is not an integer")) return false; break; }
+                    if (!jg_is_int(ep->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "bounds.lo", "a subslice start that is not an integer")) return false; break; }
                     JSliceArg sa; sa.lo = ep->operands[1]; sa.n = n; jg_bound_arg(g, ep, &sa.a);
                     if (!jg_goal(g, L, i, b->id, k, -1, "bounds.lo", 0, jgk_slice_lo, &sa)) return false;
-                    if (sa.a.clen < 0 && !sa.a.slice) { if (!jg_outside(g, L, i, b->id, k, "no length is known for the subslice's base")) return false; break; }
+                    if (sa.a.clen < 0 && !sa.a.slice) { if (!jg_outside(g, L, i, b->id, k, "bounds.hi", "no length is known for the subslice's base")) return false; break; }
                     if (!jg_goal(g, L, i, b->id, k, -1, "bounds.hi", 0, jgk_slice_hi, &sa)) return false;
                     break;
                 }
@@ -1823,7 +1834,7 @@ static bool jg_obligations(JG *g, JObls *L) {
                     const IrType *dvt = i->operands[0]->type;
                     if (dvt && dvt->kind == IRT_VECTOR) {
                         if (!dvt->elem || dvt->elem->kind != IRT_INT) break;
-                        if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "a divisor given per lane")) return false; break; }
+                        if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "divzero", "a divisor given per lane")) return false; break; }
                         if (!jg_goal(g, L, i, b->id, k, -1, "divzero", 0, jgk_divzero, NULL)) return false;
                         break;
                     }
@@ -1831,7 +1842,7 @@ static bool jg_obligations(JG *g, JObls *L) {
                     if (!jg_goal(g, L, i, b->id, k, -1, "divzero", 0, jgk_divzero, NULL)) return false;
                     if (i->wrap != IR_WRAP_CHECK) break;             // `/%` and `/|` define the result
                     JDivOwe dw;
-                    if (!jg_div_result(i, &dw)) { if (!jg_outside(g, L, i, b->id, k, "a division whose result is not an integer of at most 64 bits")) return false; break; }
+                    if (!jg_div_result(i, &dw)) { if (!jg_outside(g, L, i, b->id, k, "divovf", "a division whose result is not an integer of at most 64 bits")) return false; break; }
                     if (dw.min && !jg_goal(g, L, i, b->id, k, -1, "divovf", 0, jgk_divovf, &dw.mval)) return false;
                     JNarrowArg dl = { dw.rlo, false, i->operands[0] }, dh = { dw.rhi, true, i->operands[0] };
                     if (dw.lo && !jg_goal(g, L, i, b->id, k, -1, "divovf", 1, jgk_narrow, &dl)) return false;
@@ -1847,7 +1858,7 @@ static bool jg_obligations(JG *g, JObls *L) {
                     if (i->op == IR_MUL) {
                         bool c0 = i->operands[0] && g->def[i->operands[0]->id] && g->def[i->operands[0]->id]->op == IR_CONST;
                         bool c1 = i->operands[1] && g->def[i->operands[1]->id] && g->def[i->operands[1]->id]->op == IR_CONST;
-                        if (!c0 && !c1) { if (!jg_outside(g, L, i, b->id, k, "atom.mul: a product of two variables has no lemma in step A")) return false; break; }
+                        if (!c0 && !c1) { if (!jg_outside(g, L, i, b->id, k, "narrow.lo", "atom.mul: a product of two variables has no lemma in step A")) return false; break; }
                     }
                     JNarrowArg lo = { rr.lo, false, i->result }, hi = { rr.hi, true, i->result };
                     if (!jg_goal(g, L, i, b->id, k, i->result->id, "narrow.lo", 0, jgk_narrow, &lo)) return false;
@@ -1860,7 +1871,7 @@ static bool jg_obligations(JG *g, JObls *L) {
                     if (!i->result->type || i->result->type->kind != IRT_INT) break;
                     if (!jg_is_int(i->operands[0]->type)) {
                         if (i->operands[0]->type && i->operands[0]->type->kind == IRT_FLOAT)
-                            if (!jg_outside(g, L, i, b->id, k, "a float converted to an integer (F1 and F2 are a later step)")) return false;
+                            if (!jg_outside(g, L, i, b->id, k, "narrow.lo", "a float converted to an integer (F1 and F2 are a later step)")) return false;
                         break;
                     }
                     JRange rr;
@@ -1878,7 +1889,7 @@ static bool jg_obligations(JG *g, JObls *L) {
                     const IrType *vt = i->result->type;
                     if (vt->kind == IRT_VECTOR) {
                         if (!vt->elem || vt->elem->kind != IRT_INT) break;
-                        if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "a shift amount given per lane")) return false; break; }
+                        if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "shift", "a shift amount given per lane")) return false; break; }
                         JNarrowArg vlo = { 0, false, i->operands[1] }, vhi = { vt->elem->bits - 1, true, i->operands[1] };
                         if (!jg_goal(g, L, i, b->id, k, -1, "shift", 0, jgk_narrow, &vlo)) return false;
                         if (!jg_goal(g, L, i, b->id, k, -1, "shift", 1, jgk_narrow, &vhi)) return false;
@@ -2248,7 +2259,7 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             memset(&mr, 0, sizeof mr);
             mr.blk = H->id; mr.fn = g->f; mr.ncomp = 1;
             if (!H->measure_val || !jg_measure_lin(g, H, H->measure_val, 1, &mr, 0)) {
-                if (!jg_outside(g, L, NULL, H->id, 0, "a written measure the generator cannot read as a sum")) return false;
+                if (!jg_outside(g, L, NULL, H->id, 0, "measure.fall", "a written measure the generator cannot read as a sum")) return false;
                 continue;
             }
             for (IrEdge *pe = H->preds; pe; pe = pe->next) {
@@ -2257,13 +2268,13 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                 bool again = false;
                 for (int32_t e2 = 0; e2 < mr.nedge; e2++) if (mr.from[e2] == P->id) again = true;
                 if (again) continue;
-                if (mr.nedge == JRANK_MAXE) { if (!jg_outside(g, L, NULL, H->id, 0, "a written measure on a loop of too many back edges")) return false; measure = false; break; }
+                if (mr.nedge == JRANK_MAXE) { if (!jg_outside(g, L, NULL, H->id, 0, "measure.fall", "a written measure on a loop of too many back edges")) return false; measure = false; break; }
                 mr.from[mr.nedge] = P->id; mr.fall[mr.nedge] = 0; mr.nedge++;
             }
             if (!measure) continue;
             r = &mr;                                           // a constant measure (no terms) cannot fall
         }
-        if (!r) { if (!jg_outside(g, L, NULL, H->id, 0, "no ranking function proposed for this loop")) return false; continue; }
+        if (!r) { if (!jg_outside(g, L, NULL, H->id, 0, "rank.fall", "no ranking function proposed for this loop")) return false; continue; }
         if (r->ncomp < 1 || r->ncomp > JRANK_MAXC || r->nedge < 0 || r->nedge > JRANK_MAXE)
             return jg_fail(g, "a ranking claim of no components, or of more than it may have");
         if (!(measure && r->nt == 0) && !jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
@@ -2316,14 +2327,113 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
     return true;
 }
 
+// ── RECURSION: a function's termination at the calls that may close a cycle through it ──────
+// Owed where VRA owes it (vra.h, D-44): a function on a recursion cycle of the module's call graph
+// (src/ir/callgraph.h, the set VRA reads too: a direct call to the callee named, an indirect one to
+// every address-taken function of its arity), unless it declares `diverge` and writes no
+// `decreasing`. Its measure is a ranking claim at its ENTRY (JRANK_ENTRY): one component over its
+// integer parameters, or their slices' lengths, as it was entered. At each call that may reach a
+// function of its component, under the facts at the call: the callee's measure at the call's
+// arguments falls below the caller's at entry (`rec.fall`), which is non-negative (`rec.bound`).
+// Every activation on the cycle then lowers a measure bounded below, read in Z as every fact is.
+// STRICTER than spec 12's cycle constraint for a component of two or more functions, which asks
+// `<=` at every call and `<` only on calls that cut every cycle (`a -> b(n - 1) -> c(n) -> a`):
+// sound, a lost acceptance until the proposer can mark the strict calls (a later link). A
+// call through a pointer that may close the cycle, or a member with no measure, is `outside` there.
+// A measure the generator cannot state (a term no parameter of its function, a second one for the
+// same function) refuses the function. No test of the function's KIND: every lowered body is a
+// `func`, and under authority the effect row's `diverge` is read from the row alone (Main Compiler
+// Work): an accepted program has every loop and recursion obligation of a function without it
+// proved, which holds only if this is owed at every function on a cycle the row does not exempt,
+// and an `outside` here refuses.
+static const JRank *jg_entry_rank(JG *g, const JRank *rk, int32_t nrk, const IrFunc *h, bool *bad) {
+    const JRank *r = NULL; *bad = false;
+    for (int32_t k = 0; k < nrk; k++) {
+        if (rk[k].blk != JRANK_ENTRY || rk[k].fn != h) continue;
+        if (r) { *bad = true; jg_fail(g, "two measures for one function's recursion"); return NULL; }
+        r = &rk[k];
+    }
+    if (!r) return NULL;
+    const __int128 big = (__int128)1 << 66;
+    bool ok = r->ncomp == 1 && r->nt >= 0 && r->nt <= JRANK_MAXT && r->c0[0] <= big && r->c0[0] >= -big;
+    for (int32_t i = 0; ok && i < r->nt; i++) {
+        int pk = jg_param_at(h, r->key[i]);
+        const IrParam *pp = h->params;
+        for (int q = 0; q < pk && pp; q++) pp = pp->next;
+        ok = pk >= 0 && pp && pp->value && jg_term_kind(pp->value->type, r->tk[i]) &&
+             r->coef[0][i] <= big && r->coef[0][i] >= -big;
+        for (int32_t j = 0; ok && j < i; j++) ok = r->key[j] != r->key[i] || r->tk[j] != r->tk[i];
+    }
+    if (!ok) { *bad = true; jg_fail(g, "a recursion's measure is not one component over its function's parameters"); return NULL; }
+    return r;
+}
+// The value of h's parameter `key` at the call `c` (an argument), or at h's own entry.
+static IrValue *jg_param_value(const IrFunc *h, int32_t key) {
+    for (IrParam *p = h->params; p; p = p->next) if (p->value && p->value->id == key) return p->value;
+    return NULL;
+}
+typedef struct { const JRank *r, *rt; const IrFunc *f, *t; int what; } JRecArg;
+static bool jgk_rec(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    JRecArg *a = arg; JLT t[2 * JRANK_MAXT]; int n = 0;
+    __int128 rhs = a->what == 0 ? -1 - a->rt->c0[0] + a->r->c0[0] : a->r->c0[0];
+    if (a->what == 0)                                           // the callee's measure at the arguments
+        for (int32_t i = 0; i < a->rt->nt; i++) {
+            if (a->rt->coef[0][i] == 0) continue;
+            int pk = jg_param_at(a->t, a->rt->key[i]);
+            // a direct call's arguments match its callee's parameters (the front end refuses a call
+            // of another arity), so this refusal is unreachable: kept, fail closed
+            if (pk < 0 || pk >= at->n_operands) return false;
+            IrValue *av = at->operands[pk];
+            t[n].var = a->rt->tk[i] == JTERM_LEN ? jb_len(B, av) : jb_val(B, av); t[n].c = a->rt->coef[0][i]; n++;
+        }
+    for (int32_t i = 0; i < a->r->nt; i++) {                    // less the caller's at its entry
+        if (a->r->coef[0][i] == 0) continue;
+        IrValue *pv = jg_param_value(a->f, a->r->key[i]);
+        if (!pv) return false;
+        t[n].var = a->r->tk[i] == JTERM_LEN ? jb_len(B, pv) : jb_val(B, pv); t[n].c = -a->r->coef[0][i]; n++;
+    }
+    return jb_cons(B, t, n, J_LE, rhs, goal);
+}
+static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, const IrCallGraph *cg) {
+    int kf = ir_cg_index(cg, g->f);
+    if (kf < 0 || !ir_cg_on_cycle(cg, kf) || (g->f->may_diverge && !g->f->has_decreasing)) return true;
+    bool bad;
+    const JRank *r = jg_entry_rank(g, rk, nrk, g->f, &bad);
+    if (bad) return false;
+    for (int32_t ri = 0; ri < g->nrpo; ri++) {
+        IrBlock *b = g->blk[g->rpo[ri]];
+        int32_t k = 0;
+        for (IrInstr *i = b->instrs; i; i = i->next, k++) {
+            if (i->op != IR_CALL) continue;
+            int tg[1];
+            int nt = ir_cg_call_targets(cg, kf, i, true, tg, 1);
+            if (nt == 0) continue;
+            if (!i->aux.callee) {
+                if (!jg_outside(g, L, i, b->id, k, "rec.fall", "a call through a pointer that may close a recursion")) return false;
+                continue;
+            }
+            const IrFunc *t = cg->idx[tg[0]];
+            const JRank *rt = t == g->f ? r : jg_entry_rank(g, rk, nrk, t, &bad);
+            if (bad) return false;
+            if (!r || !rt) { if (!jg_outside(g, L, i, b->id, k, "rec.fall", "no measure proposed for this recursion")) return false; continue; }
+            for (int what = 0; what < 2; what++) {
+                JRecArg a = { r, rt, g->f, t, what };
+                if (!jg_goal(g, L, i, b->id, k, -1, what == 0 ? "rec.fall" : "rec.bound", 0, jgk_rec, &a)) return false;
+            }
+        }
+    }
+    return true;
+}
+
 // The obligations of `f`, their VCs in `m`: with `only` JGEN_ALL, every obligation and every
 // claim's; JGEN_CLAIMS, the claims' only; JGEN_POST, f's return claims' only; a block id, the
 // claims' at that block only. `rk` are the module's ranking claims, owed with the obligations (a
-// loop's termination). `cl` are the module's claims (untrusted: see the header): f's cut points and
+// loop's termination, and at JRANK_ENTRY a recursion's). `cg` is the module's call graph, built once
+// by the caller (NULL: the generator builds its own, a cost per function). `cl` are the module's claims (untrusted: see the header): f's cut points and
 // returns, and its same-module callees' returns. False with `err` on an IR the generator does not
 // read (a phi), a claim it cannot state and owe, or a region that is full.
 static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JRank *rk, int32_t nrk,
-                      int32_t only, JObl **out, int32_t *nout, char *err, size_t errcap) {
+                      const IrCallGraph *cg, int32_t only, JObl **out, int32_t *nout, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
@@ -2334,6 +2444,13 @@ static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t
     if (only == JGEN_ALL && !jg_obligations(&g, &L)) return false;
     if (!jg_claim_obligations(&g, &L, only)) return false;
     if (only == JGEN_ALL && !jg_rank_obligations(&g, &L, rk, rk ? nrk : 0)) return false;
+    if (only == JGEN_ALL) {                                    // a recursion's, on the module's call graph
+        IrCallGraph own; memset(&own, 0, sizeof own);
+        if (!cg && !ir_cg_build(&own, mod ? mod : f)) return jg_fail(&g, "out of memory building the call graph");
+        bool ok = jg_rec_obligations(&g, &L, rk, rk ? nrk : 0, cg ? cg : &own);
+        ir_cg_free(&own);
+        if (!ok) return false;
+    }
     *out = L.o; *nout = L.n;
     return true;
 }
@@ -2487,6 +2604,65 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
     return true;
 }
 
+// For whoever proposes a recursion's measure (untrusted; the finder): f's DIRECT calls that may
+// close a cycle through it, each as the facts at the call (the goal 0 <= 0, meaning nothing) with,
+// per integer or slice parameter of the callee, its variable at f's entry (f being the callee;
+// else -1) and the argument's at the call. `from` is the call's block. A call through a pointer is
+// left out (the generator owes it `outside`).
+static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, JPaths *out,
+                            char *err, size_t errcap) {
+    JG g; memset(&g, 0, sizeof g);
+    g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
+    g.cl = cl; g.ncl = cl ? ncl : 0;
+    memset(out, 0, sizeof *out);
+    if (!f || !f->entry || f->is_extern) { out->refused = "a function without a body"; return true; }
+    if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
+    IrCallGraph cg; memset(&cg, 0, sizeof cg);
+    if (!ir_cg_build(&cg, mod ? mod : f)) return jg_fail(&g, "out of memory building the call graph");
+    int kf = ir_cg_index(&cg, f);
+    if (kf < 0 || !ir_cg_on_cycle(&cg, kf)) { ir_cg_free(&cg); out->refused = "not on a recursion cycle"; return true; }
+    int32_t cap = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next) for (IrInstr *i = b->instrs; i; i = i->next) if (i->op == IR_CALL) cap++;
+    JPath *P = JG_NEW(&g, JPath, cap ? cap : 1);
+    if (!P) { ir_cg_free(&cg); return jg_fail(&g, "out of memory"); }
+    int32_t n = 0;
+    for (int32_t ri = 0; ri < g.nrpo; ri++) {
+        IrBlock *b = g.blk[g.rpo[ri]];
+        int32_t k = 0;
+        for (IrInstr *i = b->instrs; i; i = i->next, k++) {
+            int tg[1];
+            if (i->op != IR_CALL || !i->aux.callee || ir_cg_call_targets(&cg, kf, i, true, tg, 1) == 0) continue;
+            const IrFunc *t = cg.idx[tg[0]];
+            int32_t np = 0;
+            for (IrParam *p = t->params; p; p = p->next) np++;
+            JPathPair *pp = JG_NEW(&g, JPathPair, np ? np : 1);
+            JB B = jb_begin(&g, b->id, k, -1);
+            if (!pp || B.fail) { ir_cg_free(&cg); return jg_fail(&g, "out of memory"); }
+            int32_t q = 0, pos = 0;
+            for (IrParam *p = t->params; p; p = p->next, pos++) {
+                if (!p->value || pos >= i->n_operands) continue;
+                uint8_t tk = jg_is_int(p->value->type) ? JTERM_VALUE : p->value->type && p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
+                if (tk > JTERM_LEN) continue;
+                IrValue *av = i->operands[pos];
+                pp[q].key = p->value->id; pp[q].tk = tk;
+                pp[q].post = tk == JTERM_LEN ? jb_len(&B, av) : jb_val(&B, av);
+                pp[q].pre = t == f ? (tk == JTERM_LEN ? jb_len(&B, p->value) : jb_val(&B, p->value)) : -1;
+                q++;
+            }
+            JLT none[1]; JCons goal; JObl o;
+            JVc *vc = JG_NEW(&g, JVc, 1);
+            if (B.fail || !vc || !jb_cons(&B, none, 0, J_LE, 0, &goal) || !jb_finish(&B, i, "call", 0, &goal, &o)) {
+                ir_cg_free(&cg); return jg_fail(&g, "out of memory building a call's path");
+            }
+            *vc = o.vc;
+            P[n].vc = vc; P[n].back = true; P[n].from = b->id; P[n].pairs = pp; P[n].npairs = q; n++;
+        }
+    }
+    ir_cg_free(&cg);
+    out->p = P; out->n = n;
+    return true;
+}
+
 // ── the generator offered to an UNTRUSTED proposer (format.h's JudgeGen) ─────────────────────
 // Each call works in the caller's region from its start, so an answer lives until the next call.
 typedef struct { char *buf; size_t cap; IrFunc *mod; } JGenOffer;
@@ -2494,7 +2670,7 @@ static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t
                           JClaimVc **out, int32_t *nout, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     JObl *o; int32_t n;
-    if (!jgen_func(&m, f, x->mod, cl, ncl, NULL, 0, only, &o, &n, err, errcap)) return false;
+    if (!jgen_func(&m, f, x->mod, cl, ncl, NULL, 0, NULL, only, &o, &n, err, errcap)) return false;
     JClaimVc *v = JMEM_NEW(&m, JClaimVc, n ? n : 1);
     if (!v) { snprintf(err, errcap, "out of memory"); return false; }
     for (int32_t i = 0; i < n; i++) { v[i].vc = o[i].vc; v[i].claim = o[i].claim; }
@@ -2519,9 +2695,13 @@ static bool jgo_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_paths(&m, f, x->mod, cl, ncl, header, out, err, errcap);
 }
+static bool jgo_call_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, JPaths *out, char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    return jgen_call_paths(&m, f, x->mod, cl, ncl, out, err, errcap);
+}
 static JudgeGen jgen_offer(JGenOffer *x) {
     JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
-    g.paths = jgo_paths;
+    g.paths = jgo_paths; g.call_paths = jgo_call_paths;
     return g;
 }
 

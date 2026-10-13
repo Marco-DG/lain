@@ -185,7 +185,7 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
         if (f->is_extern || !f->entry) continue;
         char *mark = region->cur;
         JObl *o; int32_t n;
-        if (!jgen_func(region, f, mod, cl, ncl, NULL, 0, JGEN_CLAIMS, &o, &n, why, sizeof why)) {
+        if (!jgen_func(region, f, mod, cl, ncl, NULL, 0, NULL, JGEN_CLAIMS, &o, &n, why, sizeof why)) {
             snprintf(ubuf, sizeof ubuf, "the generator refuses the claims in %.*s: %s", (int)f->name->length, f->name->name, why);
             unstable = ubuf; break;
         }
@@ -202,15 +202,19 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
         }
         region->cur = mark;                                   // the claims' VCs are not kept
     }
-    // 3. every function's obligations, its VCs given back once its records are out
+    // 3. every function's obligations, its VCs given back once its records are out; the module's
+    // call graph built once (a recursion's obligations read it), or each function builds its own
+    IrCallGraph cg; memset(&cg, 0, sizeof cg);
+    bool have_cg = ir_cg_build(&cg, mod);
     for (IrFunc *f = mod; f; f = f->next) {
         if (f->is_extern || !f->entry) continue;
         char *mark = region->cur;
         JObl *o; int32_t n;
-        if (!jgen_func(region, f, mod, unstable ? NULL : cl, unstable ? 0 : ncl, rk, nrk, JGEN_ALL, &o, &n, why, sizeof why)) {
+        if (!jgen_func(region, f, mod, unstable ? NULL : cl, unstable ? 0 : ncl, rk, nrk, have_cg ? &cg : NULL, JGEN_ALL,
+                       &o, &n, why, sizeof why)) {
             JRecord r; memset(&r, 0, sizeof r); r.k = JREC_REFUSED; r.fn = f;
             char *rs = JMEM_NEW(region, char, strlen(why) + 1);
-            if (!rs) { snprintf(err, errcap, "the judge's region is full"); return false; }
+            if (!rs) { ir_cg_free(&cg); snprintf(err, errcap, "the judge's region is full"); return false; }
             strcpy(rs, why); r.reason = rs;
             sink(sink_ctx, &r);
             region->cur = mark;
@@ -229,6 +233,7 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
         }
         region->cur = mark;
     }
+    ir_cg_free(&cg);
     return true;
 }
 

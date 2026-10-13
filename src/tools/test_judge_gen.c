@@ -36,7 +36,7 @@ static const JRank *gen_rk = NULL; static int32_t gen_nrk = 0;   // the ranking 
 static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, gen_mod, cl, ncl, gen_rk, gen_nrk, only, &o, &n, err, sizeof err)) {
+    if (!jgen_func(&m, f, gen_mod, cl, ncl, gen_rk, gen_nrk, NULL, only, &o, &n, err, sizeof err)) {
         if (why) strcpy(why, err); else printf("  generator refused: %s\n", err);
         return NULL;
     }
@@ -1359,6 +1359,125 @@ int main(void) {
         b1->has_measure = false; b1->measure_val = NULL;
     }
     printf("  a written measure: owed as written, the proposal not read, outside where it is no sum\n");
+    // 36. a RECURSION's termination, at the calls that may close a cycle (callgraph.h): f(n) calls
+    // f(n - 1) past `n == 0`. With no measure, outside at the call; with the measure n, `rec.fall`
+    // ((n - 1) - n <= -1) and `rec.bound` (n >= 0); nothing where the function may diverge unless it
+    // wrote `decreasing`; refused: a second measure, a term no parameter; p and q calling each other
+    // owe at each call, outside where either has no measure; a call through a pointer that may close
+    // the cycle is outside; the paths a proposer is offered
+    {   IrFunc *f = ir_func_new(&A, nm("f36"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u32t, nm("n"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_EQ, n, ir_const_int(f, b0, 0, u32t)), b1, b2);
+        ir_set_ret(b1, ir_const_int(f, b1, 0, u32t));
+        IrValue *m = ir_binop(f, b2, IR_SUB, n, ir_const_int(f, b2, 1, u32t), u32t);
+        (void)mk_call(f, b2, "h36", n, u32t);                                // a helper off the cycle: owes nothing
+        int ci = nins(b2);
+        IrValue *r = mk_call(f, b2, "f36", m, u32t);
+        ir_set_ret(b2, r);
+        ir_finalize_cfg(f);
+        IrFunc *hh = ir_func_new(&A, nm("h36"), u32t, IR_FUNC_PURE);
+        IrValue *hp = ir_add_param(hh, u32t, nm("x"));
+        ir_set_ret(hh->entry, hp);
+        ir_finalize_cfg(hh);
+        f->next = hh;
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && count(t, "outside no measure proposed for this recursion") == 1 && !strstr(t, "rec."), "no measure: outside at the call:\n%s", t ? t : "");
+        free(t);
+        JRank rr; memset(&rr, 0, sizeof rr);
+        rr.blk = JRANK_ENTRY; rr.fn = f; rr.ncomp = 1; rr.nt = 1; rr.key[0] = n->id; rr.coef[0][0] = 1;   // n
+        gen_rk = &rr; gen_nrk = 1;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        char key[48], want[96];
+        snprintf(key, sizeof key, "bb%d.%d rec.fall 0", b2->id, ci);
+        const char *vf = t ? vc_of(t, key) : "", *g = strstr(vf, "goal ");
+        snprintf(want, sizeof want, "-1*%%v%d", n->id);
+        char want2[32]; snprintf(want2, sizeof want2, "1*%%v%d ", m->id);
+        CHECK(g && strstr(g, want) && strstr(g, want2) && strstr(g, "<= -1"), "rec.fall: (n - 1) - n <= -1, the argument less the parameter:\n%s", vf);
+        snprintf(key, sizeof key, "bb%d.%d rec.bound 0", b2->id, ci);
+        const char *vb = t ? vc_of(t, key) : "";
+        g = strstr(vb, "goal ");
+        CHECK(g && strstr(g, want) && strstr(g, "<= 0") && strstr(vb, "def "), "rec.bound: n >= 0, under the call's facts:\n%s", vb);
+        CHECK(t && !strstr(t, "outside no measure"), "with a measure, no outside:\n%s", t ? t : "");
+        free(t);
+        f->may_diverge = true;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && !strstr(t, "rec.") && !strstr(t, "recursion"), "a function that may diverge owes nothing:\n%s", t ? t : "");
+        free(t);
+        f->has_decreasing = true;
+        t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && strstr(t, "rec.fall"), "...unless it wrote `decreasing` (D-44):\n%s", t ? t : "");
+        free(t);
+        f->may_diverge = false; f->has_decreasing = false;
+        struct { JRank r; int n; const char *why; } bad[3];
+        for (int k = 0; k < 3; k++) { bad[k].r = rr; bad[k].n = 1; }
+        bad[0].n = 2; bad[0].why = "two measures for one function's recursion";
+        bad[1].r.key[0] = m->id; bad[1].why = "not one component over its function's parameters";
+        bad[2].r.ncomp = 2; bad[2].why = "not one component over its function's parameters";
+        for (int k = 0; k < 3; k++) {
+            JRank two[2] = { bad[k].r, bad[k].r };
+            gen_rk = two; gen_nrk = bad[k].n;
+            char why[200] = "";
+            t = gen_with(f, NULL, 0, JGEN_ALL, why);
+            CHECK(!t && strstr(why, bad[k].why), "recursion measure %d is refused (%s): got \"%s\"", k, bad[k].why, why);
+            free(t);
+        }
+        // the paths: one call, n's pair, before at entry and after as the argument
+        {   gen_rk = NULL; gen_nrk = 0;
+            JMem jm = jmem_over(region, sizeof region);
+            JPaths P; char err[200];
+            bool ok = jgen_call_paths(&jm, f, gen_mod, NULL, 0, &P, err, sizeof err);
+            CHECK(ok && !P.refused && P.n == 1 && P.p[0].npairs == 1 && P.p[0].pairs[0].key == n->id &&
+                  P.p[0].pairs[0].pre >= 0 && P.p[0].pairs[0].post >= 0 && P.p[0].pairs[0].pre != P.p[0].pairs[0].post,
+                  "one call path: n at entry, n - 1 at the call (%d paths)", ok ? P.n : -1);
+        }
+        // p and q call each other
+        IrFunc *pf = ir_func_new(&A, nm("p36"), u32t, IR_FUNC_PURE), *qf = ir_func_new(&A, nm("q36"), u32t, IR_FUNC_PURE);
+        IrFunc *fs[2] = { pf, qf }; IrValue *ps[2]; IrBlock *cb[2]; int cix[2];
+        for (int w = 0; w < 2; w++) {
+            IrFunc *h = fs[w];
+            ps[w] = ir_add_param(h, u32t, nm("n"));
+            IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+            ir_set_br_cond(h0, ir_icmp(h, h0, IR_CMP_EQ, ps[w], ir_const_int(h, h0, 0, u32t)), h1, h2);
+            ir_set_ret(h1, ir_const_int(h, h1, 0, u32t));
+            IrValue *hm = ir_binop(h, h2, IR_SUB, ps[w], ir_const_int(h, h2, 1, u32t), u32t);
+            cix[w] = nins(h2); cb[w] = h2;
+            ir_set_ret(h2, mk_call(h, h2, w ? "p36" : "q36", hm, u32t));
+            ir_finalize_cfg(h);
+        }
+        pf->next = qf; gen_mod = pf;
+        JRank pr[2]; memset(pr, 0, sizeof pr);
+        for (int w = 0; w < 2; w++) { pr[w].blk = JRANK_ENTRY; pr[w].fn = fs[w]; pr[w].ncomp = 1; pr[w].nt = 1; pr[w].key[0] = ps[w]->id; pr[w].coef[0][0] = 1; }
+        gen_rk = pr; gen_nrk = 1;                                // p's measure only
+        for (int w = 0; w < 2; w++) {
+            t = gen_with(fs[w], NULL, 0, JGEN_ALL, NULL);
+            CHECK(t && count(t, "outside no measure proposed for this recursion") == 1, "%s: the other's measure missing, outside:\n%s", w ? "q" : "p", t ? t : "");
+            free(t);
+        }
+        gen_nrk = 2;
+        for (int w = 0; w < 2; w++) {
+            t = gen_with(fs[w], NULL, 0, JGEN_ALL, NULL);
+            snprintf(key, sizeof key, "bb%d.%d rec.fall 0", cb[w]->id, cix[w]);
+            CHECK(t && strstr(t, key) && !strstr(t, "outside no measure"), "%s: both measures, rec.fall at the call:\n%s", w ? "q" : "p", t ? t : "");
+            free(t);
+        }
+        // a call through a pointer that may close the cycle: z takes its own address
+        IrType *fnt = ir_type_new(&A, IRT_FUNC); fnt->elem = u32t;
+        IrFunc *z = ir_func_new(&A, nm("z36"), u32t, IR_FUNC_PURE);
+        IrValue *zn = ir_add_param(z, u32t, nm("n"));
+        IrBlock *z0 = z->entry;
+        IrValue *fr = ir_func_ref(z, z0, nm("z36"), fnt);
+        IrInstr *ic = ir_instr(z, IR_CALL, u32t, 2); ic->operands[0] = fr; ic->operands[1] = zn; ir_emit(z0, ic);
+        ir_set_ret(z0, ic->result);
+        ir_finalize_cfg(z);
+        gen_mod = z; gen_rk = NULL; gen_nrk = 0;
+        t = gen_with(z, NULL, 0, JGEN_ALL, NULL);
+        CHECK(t && strstr(t, "outside a call through a pointer that may close a recursion"), "an indirect call on the cycle: outside:\n%s", t ? t : "");
+        free(t);
+        gen_mod = NULL;
+    }
+    printf("  a recursion's termination: rec.fall and rec.bound at each call on the cycle, outside where unmeasured\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

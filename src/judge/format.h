@@ -104,7 +104,10 @@ typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MA
 // non-negative (lexicographic, ADFG). It is never a hypothesis: gen.h owes it on every back edge
 // (`rank.keep`, `rank.fall`, `rank.bound`), and a loop of a function that must terminate with none
 // is `outside`. A back edge it does not list refuses it.
-enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8 };
+// At blk JRANK_ENTRY it is a function's measure for its recursion: one component over its integer
+// parameters (or their slices' lengths) at entry, owed at every call that may close a cycle
+// through it (`rec.fall`, `rec.bound`); its edges are unused.
+enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8, JRANK_ENTRY = -1 };
 typedef struct {
     int32_t blk, ncomp, nt, nedge;
     int32_t key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT];             // as a claim's terms
@@ -141,6 +144,10 @@ typedef struct {
     // the edges into loop header `header`, with the claims `cl` as the generator states them
     bool (*paths)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
                   char *err, uint32_t errcap);
+    // f's calls that may close a recursion cycle through it: per direct one, the facts at the call,
+    // and per parameter of the callee its variable at f's entry (when f is the callee) and the
+    // argument's at the call
+    bool (*call_paths)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, JPaths *out, char *err, uint32_t errcap);
 } JudgeGen;
 
 #endif // LAIN_JUDGE_FORMAT_H

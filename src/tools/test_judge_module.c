@@ -180,7 +180,8 @@ int main(void) {
           "n - i: rank.fall and rank.bound proved:\n%s", recs);
     s.propose = P_FAIL;                                                    // a failed proposer's ranks are dropped
     CHECK(run(h, &s, true, sizeof region, err), "judges: %s", err);
-    CHECK(nrec[JREC_NO_CLAIMS] == 1 && nrec[JREC_OUTSIDE] == 1 && !strstr(recs, "rank."), "a proposer that fails hands over no ranks:\n%s", recs);
+    CHECK(nrec[JREC_NO_CLAIMS] == 1 && nrec[JREC_OUTSIDE] == 1 && strstr(recs, "rank.fall no ranking function") && !strstr(recs, "rank.bound"),
+          "a proposer that fails hands over no ranks:\n%s", recs);
     s.propose = P_RANK;
     s.rank[0].coef[0][0] = 1; s.rank[0].coef[0][1] = 0;                    // i: rises, never falls
     CHECK(run(h, &s, true, sizeof region, err), "judges: %s", err);
@@ -242,6 +243,32 @@ int main(void) {
     snprintf(rf, sizeof rf, "not-implied bb%d.%d measure.fall", m2->id, mp);
     CHECK(run(hm, &s, true, sizeof region, err), "judges: %s", err);
     CHECK(strstr(recs, rf) && nrec[JREC_SOLVER_BUG] == 0, "decreasing i, which rises: measure.fall not implied:\n%s", recs);
+    s.propose = P_NONE; s.nrank = 0;
+
+    // a RECURSION: r(n) calls r(n - 1) past `n == 0`. With the measure n, rec.fall and rec.bound
+    // proved; with 2 - n, which rises as n falls, rec.fall not implied; with none, outside
+    IrFunc *rf_ = ir_func_new(&A, nm("r"), u32t, IR_FUNC_PURE);
+    IrValue *rn = ir_add_param(rf_, u32t, nm("n"));
+    IrBlock *r0 = rf_->entry, *r1 = ir_new_block(rf_), *r2 = ir_new_block(rf_);
+    ir_set_br_cond(r0, ir_icmp(rf_, r0, IR_CMP_EQ, rn, ir_const_int(rf_, r0, 0, u32t)), r1, r2);
+    ir_set_ret(r1, ir_const_int(rf_, r1, 0, u32t));
+    IrValue *rm = ir_binop(rf_, r2, IR_SUB, rn, ir_const_int(rf_, r2, 1, u32t), u32t);
+    int rci = 0;
+    for (IrInstr *i = r2->instrs; i; i = i->next) rci++;
+    IrInstr *rc = ir_instr(rf_, IR_CALL, u32t, 1); rc->aux.callee = nm("r"); rc->operands[0] = rm; ir_emit(r2, rc);
+    ir_set_ret(r2, rc->result);
+    ir_finalize_cfg(rf_);
+    CHECK(run(rf_, &s, true, sizeof region, err) && strstr(recs, "rec.fall no measure proposed"), "no measure: outside:\n%s", recs);
+    s.propose = P_RANK; s.nrank = 1;
+    memset(&s.rank[0], 0, sizeof s.rank[0]);
+    s.rank[0].blk = JRANK_ENTRY; s.rank[0].fn = rf_; s.rank[0].ncomp = 1; s.rank[0].nt = 1; s.rank[0].key[0] = rn->id; s.rank[0].coef[0][0] = 1;
+    snprintf(rf, sizeof rf, "proved bb%d.%d rec.fall", r2->id, rci); snprintf(rb, sizeof rb, "proved bb%d.%d rec.bound", r2->id, rci);
+    CHECK(run(rf_, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, rf) && strstr(recs, rb) && nrec[JREC_OUTSIDE] == 0, "the measure n: proved:\n%s", recs);
+    s.rank[0].coef[0][0] = -1; s.rank[0].c0[0] = 2;                        // 2 - n: rises as n falls
+    snprintf(rf, sizeof rf, "not-implied bb%d.%d rec.fall", r2->id, rci);
+    CHECK(run(rf_, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, rf) && nrec[JREC_SOLVER_BUG] == 0, "2 - n: rec.fall not implied:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
 
     printf("── a function the generator refuses, a region too small ──\n");
