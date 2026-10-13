@@ -65,6 +65,16 @@ static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, ch
 }
 static char *gen_text(IrFunc *f) { ir_finalize_cfg(f); return gen_with(f, NULL, 0, JGEN_ALL, NULL); }
 static IrInstr *g_last_instr(IrBlock *b) { IrInstr *l = b->instrs; while (l && l->next) l = l->next; return l; }
+// Is a version named by `prefix` (".../bbB." and then its index) stated EQUAL to its stored value,
+// " :" right after its name? A waived landing's wrap relation reads "... wrap :" instead.
+static bool plain_store(const char *vc, const char *prefix) {
+    for (const char *p = vc; (p = strstr(p, prefix)); p++) {
+        const char *q = p + strlen(prefix);
+        while (*q && *q != ' ') q++;
+        if (!strncmp(q, " :", 2)) return true;
+    }
+    return false;
+}
 static int nins(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
 static int count(const char *all, const char *key) { int n = 0; for (const char *p = all; (p = strstr(p, key)); p++) n++; return n; }
 static IrValue *mk_call(IrFunc *f, IrBlock *b, const char *callee, IrValue *arg, IrType *rt) {
@@ -225,7 +235,8 @@ int main(void) {
         free(t);
         printf("  a cast to bool is not an equality, a cast from bool is\n");
     }
-    // 8. a store inside `unsafe` that narrows wraps, so its version is not the value stored
+    // 8. a store inside `unsafe` that narrows wraps, so its version is not the value stored: it is
+    // that value wrapped into the slot (`... wrap`, x = v - k*2^8 within u8)
     for (int k = 0; k < 2; k++) {
         IrFunc *f = ir_func_new(&A, nm(k ? "g10" : "g9"), u8t, IR_FUNC_PURE);
         IrValue *v = ir_add_param(f, i32t, nm("v"));
@@ -236,7 +247,8 @@ int main(void) {
         ir_set_ret(b0, ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 10, u8t), ir_load(f, b0, s, u8t), u8t));
         char *t = gen_text(f);
         const char *dz = t ? vc_of(t, "divzero") : "";
-        if (k == 0) CHECK(!strstr(dz, "store %s"), "an unchecked narrowing store states no equality:\n%s", dz);
+        if (k == 0) CHECK(!plain_store(dz, "store %s") && strstr(dz, " wrap : "),
+                          "an unchecked narrowing store states no equality, but its wrap into u8:\n%s", dz);
         else        CHECK(strstr(dz, "store %s"), "a checked one does (its landing is an obligation):\n%s", dz);
         free(t);
     }
@@ -741,7 +753,7 @@ int main(void) {
             snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, fq[k]));
             char vcbuf[1 << 12]; snprintf(vcbuf, sizeof vcbuf, "%s", t ? vc_of(t, key) : "");
             snprintf(want, sizeof want, "store %%s%d.0@bb%d.", sc[k]->id, b0->id);
-            CHECK(!!strstr(vcbuf, want) == (k == 0), "a field constructed %s is %sthe value:\n%s", k ? "waived" : "checked", k ? "not " : "", vcbuf);
+            CHECK(plain_store(vcbuf, want) == (k == 0), "a field constructed %s is %sthe value:\n%s", k ? "waived" : "checked", k ? "not " : "", vcbuf);
         }
         #undef HAS
         free(t);
@@ -2296,6 +2308,52 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  a reference binding: a slot stored once with an address is that address where it dominates\n");
+    // 48. a WAIVED narrowing wraps, as it_wrap makes it: x = v - k*2^w within the type's width, k a
+    // fresh integer. (0) an unchecked cast i16 -> i8 (k*256); (1) a `%` cast u64 -> u32 (k*2^32); (2)
+    // a `|` cast clamps: nothing; (3) a checked cast: the plain `def ... cast`; (4) an unchecked
+    // store of an i16 into an i8 slot: the version wraps; (5) an unchecked SIGNED i8 + i8 in an i9
+    // cannot leave it: exact; (6) an unchecked i32 + i32 in an i32 may: nothing
+    {   IrType *i16t = ir_type_int(&A, 16, true), *i9t = ir_type_int(&A, 9, true), *u32w = ir_type_int(&A, 32, false);
+        for (int c = 0; c < 7; c++) {
+            IrType *S = c == 1 ? u64t : c >= 5 ? (c == 5 ? i8x : i32t) : i16t;
+            IrType *D = c == 1 ? u32w : c == 5 ? i9t : c == 6 ? i32t : i8x;
+            IrFunc *f = ir_func_new(&A, nm("w48"), i32t, IR_FUNC_PURE);
+            IrValue *a = ir_add_param(f, S, nm("a")), *b2 = ir_add_param(f, S, nm("b"));
+            IrBlock *b0 = f->entry;
+            IrValue *r; IrInstr *ri;
+            if (c <= 3) {
+                ri = ir_instr(f, IR_CAST, D, 1); ri->operands[0] = a; ir_emit(b0, ri); r = ri->result;
+                if (c == 0) ri->unchecked = true;
+                if (c == 1) ri->wrap = IR_WRAP_MODULAR;
+                if (c == 2) ri->wrap = IR_WRAP_SATURATE;
+            } else if (c == 4) {
+                IrValue *slot = ir_alloca(f, b0, i8x);
+                ir_store(f, b0, slot, a); b0->instrs_tail->unchecked = true;
+                r = ir_load(f, b0, slot, i8x);
+            } else {
+                r = ir_binop(f, b0, IR_ADD, a, b2, D); g_last_instr(b0)->unchecked = true;
+            }
+            IrInstr *wd = ir_instr(f, IR_CAST, i32t, 1); wd->operands[0] = r; ir_emit(b0, wd);     // widen, then divide
+            ir_set_ret(b0, ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 100, i32t), wd->result, i32t));
+            ir_finalize_cfg(f);
+            gen_mod = f;
+            char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), want[128];
+            const char *vz = t ? vc_of(t, " divzero 0") : "";
+            switch (c) {
+                case 0: case 1:
+                    snprintf(want, sizeof want, "def %%v%d cast.wrap : 1*%%v%d + -1*%%v%d + %s*wrap.%%v%d = 0", r->id, r->id, a->id, c ? "4294967296" : "256", r->id);
+                    CHECK(strstr(vz, want) && strstr(vz, c ? "cast.wrap : 1*" : "cast.wrap : -1*"), "case %d: the cast wraps:\n%s", c, vz); break;
+                case 2: snprintf(want, sizeof want, "def %%v%d cast", r->id); CHECK(*vz && !strstr(vz, want), "case 2: a clamp states nothing:\n%s", vz); break;
+                case 3: snprintf(want, sizeof want, "def %%v%d cast :", r->id); CHECK(strstr(vz, want) && !strstr(vz, "wrap"), "case 3: a checked cast is exact:\n%s", vz); break;
+                case 4: CHECK(strstr(vz, " wrap : ") && strstr(vz, "256*wrap.ver"), "case 4: the waived store wraps into its slot:\n%s", vz); break;
+                case 5: snprintf(want, sizeof want, "def %%v%d add :", r->id); CHECK(strstr(vz, want), "case 5: i8 + i8 in an i9 is exact:\n%s", vz); break;
+                default: snprintf(want, sizeof want, "def %%v%d add", r->id); CHECK(*vz && !strstr(vz, want), "case 6: i32 + i32 in an i32 states nothing:\n%s", vz); break;
+            }
+            free(t);
+        }
+        gen_mod = NULL;
+    }
+    printf("  a waived narrowing wraps: x = v - k*2^w within the width, k fresh\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

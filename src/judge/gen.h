@@ -1194,12 +1194,36 @@ static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
         jb_cons(B, t, 3, J_EQ, -(klo + k) * M, &h->dis[k].c[0]);
     }
 }
+// A value WRAPPED into an integer type of w <= 64 bits, as interp.h's it_wrap makes it (a `%` cast,
+// and an unchecked cast or landing that does not fit, I.60, I.185): x = v - k*2^w with x within
+// the type's width, k a fresh integer (its recipe (v - x) / 2^w for a run-time check). One case,
+// so it may stand inside a join's disjunct too; where v fits, k is 0.
+static void jb_wrapto(JB *B, int32_t x, int32_t xv, const IrType *t, const char *what, int32_t id, const char *origin) {
+    if (!t || t->kind != IRT_INT || t->bits < 1 || t->bits > 64) return;
+    __int128 M = (__int128)1 << t->bits;
+    JLT r[2]; r[0].var = xv; r[0].c = 1; r[1].var = x; r[1].c = -1;
+    int32_t k = jb_fresh(B, what, id, r, 2, M);                // `what` keeps a version's k apart from a value's
+    if (B->fail) return;
+    JLT u[3];
+    u[0].var = x; u[0].c = 1; u[1].var = xv; u[1].c = -1; u[2].var = k; u[2].c = M;
+    jb_atom(B, origin, u, 3, J_EQ, 0);                         // x - v + k*M = 0
+    JRange w; w.lo = jg_width_lo(t); w.hi = jg_width_hi(t); w.has_ne = false;
+    jb_range(B, x, &w, origin);
+}
 // The facts of one variable: its definition and its range.
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
     if (B->kind[x] == 1) {                                     // a cell's version
         JVer *v = &g->ver[B->key[x]];
         jb_type(B, x, v->slot, g->cname[v->cell], -1);
+        if (v->kind == JV_STORE && !jg_store_exact(v) && v->stored && v->stored->type &&   // an int one: waived
+            v->stored->type->kind == IRT_INT && v->slot && v->slot->kind == IRT_INT) {
+            // a waived landing that does not keep the value wraps it into the slot (ii_land)
+            char o[96]; snprintf(o, sizeof o, "store %s@bb%lld.%lld wrap", g->cname[v->cell], (long long)v->blk, (long long)v->idx);
+            char *os = JG_NEW(g, char, strlen(o) + 1);
+            if (os) strcpy(os, o); else B->fail = true;
+            if (os) jb_wrapto(B, x, jb_val(B, v->stored), v->slot, "wrap.ver", B->key[x], os);
+        }
         if (v->kind == JV_STORE && jg_store_exact(v)) {
             // the version is the value stored; a value of another type lands in the slot, and that
             // landing's obligation is the guarantee the slot's range above rests on
@@ -1277,7 +1301,13 @@ static void jb_state(JB *B, int32_t x) {
                 jb_wrap(B, x, d, id);                          // `+%`, `-%`, and unsigned arithmetic in `unsafe`
                 break;
             }
-            if (d->wrap != IR_WRAP_CHECK || d->unchecked) break;
+            if (d->wrap != IR_WRAP_CHECK) break;
+            if (d->unchecked) {                                // a SIGNED one in `unsafe`: exact only where
+                JRange ra, rb;                                 // its operands' static ranges keep it in its type
+                if (!jg_static_range(g, d->operands[0], &ra, 0) || !jg_static_range(g, d->operands[1], &rb, 0)) break;
+                __int128 slo = d->op == IR_ADD ? ra.lo + rb.lo : ra.lo - rb.hi, shi = d->op == IR_ADD ? ra.hi + rb.hi : ra.hi - rb.lo;
+                if (v->type->bits < 1 || v->type->bits > 64 || slo < jg_width_lo(v->type) || shi > jg_width_hi(v->type)) break;
+            }
             t[0].var = jb_val(B, d->operands[0]); t[0].c = 1;
             t[1].var = jb_val(B, d->operands[1]); t[1].c = d->op == IR_ADD ? 1 : -1;
             jb_def(B, x, t, 2, jb_str(B, d->op == IR_ADD ? "def %%v%lld add" : "def %%v%lld sub", id, 0, 0));
@@ -1303,8 +1333,12 @@ static void jb_state(JB *B, int32_t x) {
         }
         case IR_CAST:
             // into an integer only: a cast to bool is 1 for any nonzero value (§3's Q row)
-            if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 1 || !jg_is_int(d->operands[0]->type) ||
-                v->type->kind != IRT_INT) break;
+            if (d->n_operands < 1 || !jg_is_int(d->operands[0]->type) || v->type->kind != IRT_INT) break;
+            if (d->wrap == IR_WRAP_MODULAR || (d->wrap == IR_WRAP_CHECK && d->unchecked)) {   // it wraps (ii_cast)
+                jb_wrapto(B, x, jb_val(B, d->operands[0]), v->type, "wrap", id, jb_str(B, "def %%v%lld cast.wrap", id, 0, 0));
+                break;
+            }
+            if (d->wrap != IR_WRAP_CHECK) break;                // `as|` clamps: nothing stated
             t[0].var = jb_val(B, d->operands[0]); t[0].c = 1;
             jb_def(B, x, t, 1, jb_str(B, "def %%v%lld cast", id, 0, 0));
             break;

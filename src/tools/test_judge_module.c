@@ -479,6 +479,27 @@ int main(void) {
               "table read, case %d: the divisor %s:\n%s", c, c ? "may be 0" : "is nonzero", recs);
     }
 
+    // a WAIVED narrowing wraps exactly: y = 200 (i16), x = y as i8 unchecked is -56, so a[x + 60]
+    // in an i32[5] is a[4], in bounds; without the wrap row x is any i8
+    {   IrType *wi16 = ir_type_int(&A, 16, true), *wi8 = ir_type_int(&A, 8, true), *wi32 = ir_type_int(&A, 32, true), *wu64 = ir_type_int(&A, 64, false);
+        IrType *warr = ir_type_new(&A, IRT_ARRAY); warr->elem = wi32; warr->array_len = 5;
+        IrFunc *wf = ir_func_new(&A, nm("wrapped"), wi32, IR_FUNC_PURE);
+        IrBlock *w0 = wf->entry;
+        IrValue *wa = ir_alloca_array(wf, w0, warr);
+        for (int k = 0; k < 5; k++) ir_store(wf, w0, ir_elem_ptr(wf, w0, wa, ir_const_int(wf, w0, k, wu64), wi32), ir_const_int(wf, w0, k, wi32));
+        IrValue *wy = ir_alloca(wf, w0, wi16);
+        ir_store(wf, w0, wy, ir_const_int(wf, w0, 200, wi16));
+        IrInstr *wc = ir_instr(wf, IR_CAST, wi8, 1); wc->operands[0] = ir_load(wf, w0, wy, wi16); wc->unchecked = true; ir_emit(w0, wc);
+        IrInstr *ww = ir_instr(wf, IR_CAST, wi32, 1); ww->operands[0] = wc->result; ir_emit(w0, ww);
+        IrValue *wsum = ir_binop(wf, w0, IR_ADD, ww->result, ir_const_int(wf, w0, 60, wi32), wi32);
+        IrInstr *wx = ir_instr(wf, IR_CAST, wu64, 1); wx->operands[0] = wsum; ir_emit(w0, wx);
+        ir_set_ret(w0, ir_load(wf, w0, ir_elem_ptr(wf, w0, wa, wx->result, wi32), wi32));
+        ir_finalize_cfg(wf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(wf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] == 0 && strstr(recs, "bounds.hi"), "(200 as i8) + 60 indexes a[4]:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
