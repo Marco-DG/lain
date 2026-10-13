@@ -2468,6 +2468,68 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a join's disjuncts are its paths: inner joins and split conditions distributed\n");
+    // 51. BITWISE and SHIFT hulls from the static ranges, which now evaluate through every hulled
+    // operation: (0) x & y, x in [0, 10] and y any i32: [0, 10]; (1) x | y over u8: [0, 255]; (2)
+    // x ^ y, x in [-3, 5] and y in [-1, 2]: [-8, 7]; (3) x << k, x in [-3, 5], k in [0, 3]: [-24,
+    // 40]; (4) x << k unchecked: nothing; (5) ((x ^ 3) % 7) | 8 over u8, the or's operand a
+    // remainder's range: [8, 15]; (6) x << k, x in [-3, 5], k any i32: k in [0, 31] (its shift
+    // obligation), [-3 * 2^31, 5 * 2^31]; (7) x ^ y, x in [-3, 4] (4 needs the 4th bit) and y in
+    // [-1, 2]: [-8, 7], never [-4, 3]
+    for (int c = 0; c < 8; c++) {
+        IrType *T = c == 1 || c == 5 ? u8t : c == 2 || c == 7 ? i8x : i32t;
+        IrFunc *f = ir_func_new(&A, nm("b51"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x")), *y = ir_add_param(f, T, nm("y"));
+        IrBlock *b0 = f->entry;
+        static const int lo[8] = { 0, 0, -3, -3, -3, 0, -3, -3 }, hi[8] = { 10, 0, 5, 5, 5, 0, 5, 4 }, ylo[8] = { 0, 0, -1, 0, 0, 0, 0, -1 }, yhi[8] = { 0, 0, 2, 3, 3, 0, 0, 2 };
+        if (c != 1 && c != 5) {
+            ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, x, ir_const_int(f, b0, lo[c], T)));
+            ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SLE, x, ir_const_int(f, b0, hi[c], T)));
+            if (c >= 2 && c != 6) { ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, y, ir_const_int(f, b0, ylo[c], T)));
+                          ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SLE, y, ir_const_int(f, b0, yhi[c], T))); }
+        }
+        IrValue *p;
+        if (c == 5) {
+            IrValue *xr = ir_binop(f, b0, IR_XOR, x, ir_const_int(f, b0, 3, T), T);
+            IrValue *rm = ir_binop(f, b0, IR_UREM, xr, ir_const_int(f, b0, 7, T), T);
+            p = ir_binop(f, b0, IR_OR, rm, ir_const_int(f, b0, 8, T), T);
+        } else {
+            IrOp op = c == 0 ? IR_AND : c == 1 ? IR_OR : c == 2 || c == 7 ? IR_XOR : IR_SHL;
+            p = ir_binop(f, b0, op, x, y, T);
+            if (c == 4) g_last_instr(b0)->unchecked = true;
+        }
+        IrInstr *w = ir_instr(f, IR_CAST, i64t, 1); w->operands[0] = p; ir_emit(b0, w);
+        IrValue *q = ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 1000, i64t), w->result, i64t);
+        IrInstr *bk = ir_instr(f, IR_CAST, T, 1); bk->operands[0] = q; bk->unchecked = true; ir_emit(b0, bk);
+        ir_set_ret(b0, bk->result);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), wl[96], wh[96];
+        static const char *hn[8] = { "and.hull", "or.hull", "xor.hull", "shl.hull", "shl.hull", "or.hull", "shl.hull", "xor.hull" };
+        static const long long want[8][2] = { { 0, 10 }, { 0, 255 }, { -8, 7 }, { -24, 40 }, { 0, 0 }, { 8, 15 }, { -6442450944LL, 10737418240LL }, { -8, 7 } };
+        snprintf(wl, sizeof wl, "def %%v%d %s : -1*%%v%d <= %lld\n", p->id, hn[c], p->id, -want[c][0]);
+        snprintf(wh, sizeof wh, "def %%v%d %s : 1*%%v%d <= %lld\n", p->id, hn[c], p->id, want[c][1]);
+        if (c == 4) CHECK(t && !strstr(t, ".hull"), "case 4: an unchecked shift states nothing:\n%s", t ? t : "");
+        else CHECK(t && strstr(t, wl) && strstr(t, wh), "case %d: [%lld, %lld]:\n%s", c, want[c][0], want[c][1], t ? t : "");
+        free(t);
+    }
+    // a goal of constants: `if y > 3 { return x / D }`: D = 0 is false, so the guard (about y, not the
+    // goal) is pulled in; D = 4 is true and pulls in nothing
+    for (int c = 0; c < 2; c++) {
+        IrFunc *f = ir_func_new(&A, nm("k51"), i32t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, i32t, nm("x")), *y = ir_add_param(f, i32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SGT, y, ir_const_int(f, b0, 3, i32t)), b1, b2);
+        ir_set_ret(b1, ir_binop(f, b1, IR_SDIV, x, ir_const_int(f, b1, c ? 4 : 0, i32t), i32t));
+        ir_set_ret(b2, ir_const_int(f, b2, 0, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        const char *vz = t ? vc_of(t, " divzero 0") : "";
+        CHECK(*vz && !!strstr(vz, "guard") == (c == 0), "a %s constant goal %s the guard:\n%s", c ? "true" : "false", c ? "pulls in nothing, not" : "pulls in", vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  bitwise and shift hulls, and static ranges through every hulled operation\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

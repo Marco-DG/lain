@@ -109,6 +109,12 @@ typedef struct {
 } JObl;
 
 // ── JInt from a machine integer (the generator's side; the kernel has its own arithmetic) ──
+// A JInt the generator made (below 2^100) back as an integer.
+static __int128 jg_int_get(const JInt *x) {
+    unsigned __int128 m = 0;
+    for (int i = x->n - 1; i >= 0; i--) m = (m << 32) | x->limb[i];
+    return x->neg ? -(__int128)m : (__int128)m;
+}
 static void jg_int(JInt *x, __int128 v) {
     memset(x, 0, sizeof *x);
     unsigned __int128 m = v < 0 ? (unsigned __int128)0 - (unsigned __int128)v : (unsigned __int128)v;
@@ -763,7 +769,8 @@ typedef struct {
     // stated inside this disjunct, never as hypotheses of their own.
     int32_t jS; JCons *sink; int32_t nsink, csink; int32_t *dsc; int32_t dgen;
     int32_t to;                              // a claim's obligation: the edge's target block; else -1
-    int32_t *jhyp, *jblk, **jpred; int32_t njr, cjr;   // R7 hypotheses: index, join, disjuncts' predecessors
+    int32_t *jhyp, *jblk, **jpred; int32_t njr, cjr;
+    bool allrel;                   // a goal of no variable that is false: every dominating fact is about it   // R7 hypotheses: index, join, disjuncts' predecessors
     int32_t *cst;                            // per claim: -2 unstated, -1 VC-wide, else its disjunct
     bool fail;
 } JB;
@@ -1065,6 +1072,7 @@ static void jg_param_refine(JG *g, IrValue *v, JRange *r) {
 // its result type (the value kept under any mode a cast has), the source's; a parameter's type
 // narrowed by its refinement (jg_param_refine); else its type's (a refinement included, as every
 // type fact). False where none is known.
+static bool jg_op_range(JG *g, const IrInstr *d, JRange *h, int depth);
 static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
     __int128 c;
     if (jg_const_of(g, v, &c)) { r->lo = r->hi = c; r->has_ne = false; return true; }
@@ -1082,50 +1090,109 @@ static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
             if (hi < r->hi) r->hi = hi;
         }
     }
+    JRange h;                                                  // a product, quotient, shift, bit op: its hull
+    if (depth < 4 && d && jg_op_range(g, d, &h, depth)) {
+        if (h.lo > r->lo) r->lo = h.lo;
+        if (h.hi < r->hi) r->hi = h.hi;
+    }
     JRange s;
     if (depth < 4 && d && d->op == IR_CAST && d->n_operands >= 1 && jg_is_int(d->operands[0]->type) &&
         jg_static_range(g, d->operands[0], &s, depth + 1) && s.lo >= r->lo && s.hi <= r->hi) *r = s;
     r->has_ne = false;
     return true;
 }
-// A DIVISION or REMAINDER by a VARIABLE divisor, where it completes (the divisor nonzero, owed as
-// divzero; the quotient in range, owed as divovf), from the operands' static ranges x in [a, b], y
-// in [c, d]: |q| <= max|x| (|y| >= 1), and where y keeps one sign q lies between the corners a/c,
-// a/d, b/c, b/d (truncating division is monotone in each operand there); |r| < max|y| and |r| <=
-// max|x|, r of x's sign (C's remainder truncates toward zero).
-static bool jg_divrem_hull(JG *g, const IrInstr *d, JRange *h) {
-    JRange a, b;
-    if (d->n_operands < 2 || !jg_static_range(g, d->operands[0], &a, 0) || !jg_static_range(g, d->operands[1], &b, 0)) return false;
-    __int128 alo = a.lo < 0 ? -a.lo : a.lo, ahi = a.hi < 0 ? -a.hi : a.hi, mx = alo > ahi ? alo : ahi;
+// HULLS of one operation from its operands' ranges, each where the operation completes (a checked
+// one traps outside its type; a division's divisor is nonzero and its quotient in range, owed):
+// a PRODUCT between the corners a*c, a*d, b*c, b*d (false past jg_mul_ok);
+static bool jr_mul(const JRange *a, const JRange *b, JRange *h) {
+    __int128 p[4];
+    if (!jg_mul_ok(a->lo, b->lo, &p[0]) || !jg_mul_ok(a->lo, b->hi, &p[1]) || !jg_mul_ok(a->hi, b->lo, &p[2]) ||
+        !jg_mul_ok(a->hi, b->hi, &p[3])) return false;
+    h->lo = h->hi = p[0]; h->has_ne = false;
+    for (int k = 1; k < 4; k++) { if (p[k] < h->lo) h->lo = p[k]; if (p[k] > h->hi) h->hi = p[k]; }
+    return true;
+}
+// a QUOTIENT with |q| <= max|x| (|y| >= 1), and where y keeps one sign between the corners a/c,
+// a/d, b/c, b/d (truncating division is monotone in each operand there); a REMAINDER with |r| <
+// max|y|, |r| <= max|x| and x's sign (C's remainder truncates toward zero);
+static bool jr_divrem(bool div, const JRange *a, const JRange *b, JRange *h) {
+    __int128 alo = a->lo < 0 ? -a->lo : a->lo, ahi = a->hi < 0 ? -a->hi : a->hi, mx = alo > ahi ? alo : ahi;
     h->has_ne = false;
-    if (d->op == IR_SDIV || d->op == IR_UDIV) {
+    if (div) {
         h->lo = -mx; h->hi = mx;
-        if (b.lo > 0 || b.hi < 0) {
-            __int128 q[4] = { a.lo / b.lo, a.lo / b.hi, a.hi / b.lo, a.hi / b.hi }, lo = q[0], hi = q[0];
+        if (b->lo > 0 || b->hi < 0) {
+            __int128 q[4] = { a->lo / b->lo, a->lo / b->hi, a->hi / b->lo, a->hi / b->hi }, lo = q[0], hi = q[0];
             for (int k = 1; k < 4; k++) { if (q[k] < lo) lo = q[k]; if (q[k] > hi) hi = q[k]; }
             if (lo > h->lo) h->lo = lo;
             if (hi < h->hi) h->hi = hi;
         }
         return true;
     }
-    __int128 my = b.hi > -b.lo ? b.hi : -b.lo;
+    __int128 my = b->hi > -b->lo ? b->hi : -b->lo;
     if (my < 1) return false;
     __int128 k = my - 1 < mx ? my - 1 : mx;
-    h->lo = a.lo >= 0 ? 0 : -k; h->hi = a.hi <= 0 ? 0 : k;
+    h->lo = a->lo >= 0 ? 0 : -k; h->hi = a->hi <= 0 ? 0 : k;
     return true;
 }
+// a BITWISE and, or, xor, at the operands' two's complement width: where both are >= 0, an and in
+// [0, min(a.hi, b.hi)], an or in [max(a.lo, b.lo), 2^k - 1] and an xor in [0, 2^k - 1], 2^k the
+// least power above both; else each in the least [-2^k, 2^k - 1] holding both (the result is as
+// wide as its operands), an and with an operand >= 0 in [0, that operand's hi];
+static bool jr_bit(IrOp op, const JRange *a, const JRange *b, JRange *h) {
+    const __int128 top = (__int128)1 << 64;
+    h->has_ne = false;
+    if (a->lo >= 0 && b->lo >= 0) {
+        __int128 m = a->hi > b->hi ? a->hi : b->hi, p = 1;
+        while (p <= m && p < top) p <<= 1;
+        if (p <= m) return false;
+        if (op == IR_AND) { h->lo = 0; h->hi = a->hi < b->hi ? a->hi : b->hi; }
+        else if (op == IR_OR) { h->lo = a->lo > b->lo ? a->lo : b->lo; h->hi = p - 1; }
+        else { h->lo = 0; h->hi = p - 1; }
+        return true;
+    }
+    __int128 p = 1;
+    while ((a->lo < -p || a->hi > p - 1 || b->lo < -p || b->hi > p - 1) && p < top) p <<= 1;
+    if (a->lo < -p || a->hi > p - 1 || b->lo < -p || b->hi > p - 1) return false;
+    h->lo = -p; h->hi = p - 1;
+    if (op == IR_AND && a->lo >= 0) { h->lo = 0; h->hi = a->hi; }
+    else if (op == IR_AND && b->lo >= 0) { h->lo = 0; h->hi = b->hi; }
+    return true;
+}
+// a SHIFT LEFT under CHECK, n in [0, w) (its shift obligation): x * 2^n, within the product's
+// corners over x and [2^n.lo, 2^n.hi].
+static bool jr_shl(const JRange *a, const JRange *n, int w, JRange *h) {
+    __int128 nlo = n->lo < 0 ? 0 : n->lo, nhi = n->hi > w - 1 ? w - 1 : n->hi;
+    if (nlo > nhi || nhi > 62) return false;
+    JRange p2; p2.lo = (__int128)1 << nlo; p2.hi = (__int128)1 << nhi; p2.has_ne = false; p2.ne = 0;
+    return jr_mul(a, &p2, h);
+}
+// The hull of instruction d from its operands' static ranges (at `depth`): a checked product or
+// shift left, a division or remainder (checked, or unsigned), a bitwise and, or, xor. False where
+// none is stated.
+static bool jg_op_range(JG *g, const IrInstr *d, JRange *h, int depth) {
+    JRange a, b;
+    if (d->n_operands < 2 || !d->result || !d->result->type || d->result->type->kind != IRT_INT) return false;
+    bool chk = d->wrap == IR_WRAP_CHECK && !d->unchecked;
+    switch (d->op) {
+        case IR_MUL: case IR_SHL: if (!chk) return false; break;
+        case IR_SDIV: case IR_SREM: if (!chk) return false; break;
+        case IR_UDIV: case IR_UREM: case IR_AND: case IR_OR: case IR_XOR: break;
+        default: return false;
+    }
+    if (!jg_static_range(g, d->operands[0], &a, depth + 1) || !jg_static_range(g, d->operands[1], &b, depth + 1)) return false;
+    switch (d->op) {
+        case IR_MUL: return jr_mul(&a, &b, h);
+        case IR_SHL: return jr_shl(&a, &b, d->operands[0]->type && d->operands[0]->type->kind == IRT_INT ? d->operands[0]->type->bits : 0, h);
+        case IR_SDIV: case IR_UDIV: return jr_divrem(true, &a, &b, h);
+        case IR_SREM: case IR_UREM: return jr_divrem(false, &a, &b, h);
+        default: return jr_bit(d->op, &a, &b, h);
+    }
+}
+static bool jg_divrem_hull(JG *g, const IrInstr *d, JRange *h) { return jg_op_range(g, d, h, -1); }
 // A PRODUCT of two variables lies between its corners: x in [a, b] and y in [c, d] put x * y in
 // [min, max] of a*c, a*d, b*c, b*d (`2 *? y` widens to i64, where two i32 ranges' corners fit).
 // From the operands' static ranges; false where a corner is past what jg_mul_ok computes.
-static bool jg_mul_hull(JG *g, const IrInstr *d, JRange *h) {
-    JRange a, b; __int128 p[4];
-    if (d->n_operands < 2 || !jg_static_range(g, d->operands[0], &a, 0) || !jg_static_range(g, d->operands[1], &b, 0)) return false;
-    if (!jg_mul_ok(a.lo, b.lo, &p[0]) || !jg_mul_ok(a.lo, b.hi, &p[1]) || !jg_mul_ok(a.hi, b.lo, &p[2]) ||
-        !jg_mul_ok(a.hi, b.hi, &p[3])) return false;
-    h->lo = h->hi = p[0]; h->has_ne = false;
-    for (int k = 1; k < 4; k++) { if (p[k] < h->lo) h->lo = p[k]; if (p[k] > h->hi) h->hi = p[k]; }
-    return true;
-}
+static bool jg_mul_hull(JG *g, const IrInstr *d, JRange *h) { return jg_op_range(g, d, h, -1); }
 static bool jg_uns(const IrType *t) { return t && (t->kind == IRT_BOOL || (t->kind == IRT_INT && !t->is_signed)); }
 
 // A claim's term as a VC variable: a cell is its version in `row` (a block's entry state, or the
@@ -1416,6 +1483,11 @@ static void jb_state(JB *B, int32_t x) {
         // (I.179); SHL under CHECK is 2^k * x, its overflow its own obligation
         case IR_LSHR: case IR_ASHR: case IR_SHL: {
             __int128 k;
+            if (d->op == IR_SHL && d->n_operands >= 2 && !jg_const_of(g, d->operands[1], &k)) {   // by a variable
+                JRange h;
+                if (jg_op_range(g, d, &h, -1)) jb_range(B, x, &h, jb_str(B, "def %%v%lld shl.hull", id, 0, 0));
+                break;
+            }
             if (d->n_operands < 2 || !jg_const_of(g, d->operands[1], &k) || !jg_is_int(d->operands[0]->type)) break;
             const IrType *xt = d->operands[0]->type;
             int w = xt->kind == IRT_BOOL ? 1 : xt->bits;
@@ -1436,10 +1508,19 @@ static void jb_state(JB *B, int32_t x) {
         }
         // AND with a non-negative constant c: in [0, c] whatever x is (two's complement), and at
         // most x when x is unsigned (L-bit's exact half)
+        case IR_OR: case IR_XOR: {                             // between bounds from the static ranges
+            JRange h;
+            if (jg_op_range(g, d, &h, -1)) jb_range(B, x, &h, jb_str(B, d->op == IR_OR ? "def %%v%lld or.hull" : "def %%v%lld xor.hull", id, 0, 0));
+            break;
+        }
         case IR_AND: {
             __int128 c; int ci = -1;
             for (int k = 0; k < 2 && ci < 0; k++) if (d->n_operands >= 2 && jg_const_of(g, d->operands[k], &c) && c >= 0) ci = k;
-            if (ci < 0) break;
+            if (ci < 0) {                                      // two variables: between bounds
+                JRange h;
+                if (jg_op_range(g, d, &h, -1)) jb_range(B, x, &h, jb_str(B, "def %%v%lld and.hull", id, 0, 0));
+                break;
+            }
             const char *o = jb_str(B, "def %%v%lld and", id, 0, 0);
             t[0].var = x; t[0].c = -1; jb_atom(B, o, t, 1, J_LE, 0);
             t[0].var = x; t[0].c = 1;  jb_atom(B, o, t, 1, J_LE, c);
@@ -1885,7 +1966,7 @@ static void jb_facts(JB *B) {
         for (int32_t i = 0; i < nf; i++) {
             if (F[i].used) continue;
             IrInstr *ic = jg_cond_cmp(g, F[i].cv);
-            if (jg_cond_value(g, F[i].cv) < 0 &&                // a fixed one is about every VC
+            if (!B->allrel && jg_cond_value(g, F[i].cv) < 0 &&  // a fixed one is about every VC
                 (ic ? !jb_rel(B, ic->operands[0], 3) && !jb_rel(B, ic->operands[1], 3) : !jb_rel(B, F[i].cv, 3))) continue;
             F[i].used = true;
             if (jb_cond(B, F[i].cv, F[i].truth, F[i].origin)) more = true;
@@ -1893,7 +1974,7 @@ static void jb_facts(JB *B) {
         for (int32_t i = 0; i < nj && !B->fail; i++) {
             if (jused[i]) continue;
             jb_drain(B);
-            if (!jb_join_relevant(B, J[i])) continue;
+            if (!B->allrel && !jb_join_relevant(B, J[i])) continue;
             jused[i] = true;
             if (jb_join(B, J[i])) more = true;
         }
@@ -1914,6 +1995,20 @@ static JB jb_begin(JG *g, int32_t blk, int32_t idx, int32_t self) {
     return B;
 }
 static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *goal, JObl *o) {
+    // a goal of no variable holds only where its point is never reached (`return 5 /% 0` past a
+    // test the path cannot pass): every dominating fact and join is about it, not only those that
+    // name its variables. A true one (a path's 0 <= 0) needs none
+    if (goal) {                                                // its value where every variable is a constant
+        __int128 sum = 0; bool fixed = true;
+        for (int32_t i = 0; i < goal->nt && fixed; i++) {
+            int32_t v = goal->t[i].var; __int128 c;
+            IrValue *gv = B->kind[v] == 0 ? jg_value(B->g, B->key[v]) : NULL;
+            fixed = gv && jg_const_of(B->g, gv, &c) && goal->t[i].coef.n <= 1;   // |coef| < 2^32: no overflow
+            if (fixed) sum += c * jg_int_get(&goal->t[i].coef);
+        }
+        __int128 r = jg_int_get(&goal->rhs);
+        if (fixed) B->allrel = goal->op == J_LE ? !(sum <= r) : goal->op == J_EQ ? sum != r : sum == r;
+    }
     jb_facts(B);
     if (B->fail) return false;
     JG *g = B->g;

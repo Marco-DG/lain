@@ -519,6 +519,29 @@ int main(void) {
         CHECK(ln && !strncmp(ln, "proved ", 7), "the r = x path's x != 0 proves 100 / r:\n%s", recs);
     }
 
+    // a goal of CONSTANTS that is false holds only where its point is unreachable: `r = x << k` with
+    // x in [-3, 5] and k in [0, 3]; `if r > 40 { 5 / 0 }` is dead, so its divzero is proved; and a
+    // true one (`x / 4`) pulls in no fact at all
+    {   IrType *si8 = ir_type_int(&A, 8, true), *su8 = ir_type_int(&A, 8, false);
+        IrFunc *df = ir_func_new(&A, nm("dead"), si8, IR_FUNC_PURE);
+        IrValue *dx = ir_add_param(df, si8, nm("x")), *dk = ir_add_param(df, su8, nm("k"));
+        IrBlock *d0 = df->entry, *d1 = ir_new_block(df), *d2 = ir_new_block(df);
+        ir_assume(df, d0, ir_icmp(df, d0, IR_CMP_SGE, dx, ir_const_int(df, d0, -3, si8)));
+        ir_assume(df, d0, ir_icmp(df, d0, IR_CMP_SLE, dx, ir_const_int(df, d0, 5, si8)));
+        ir_assume(df, d0, ir_icmp(df, d0, IR_CMP_ULE, dk, ir_const_int(df, d0, 3, su8)));
+        IrInstr *ck = ir_instr(df, IR_CAST, si8, 1); ck->operands[0] = dk; ir_emit(d0, ck);
+        IrValue *dr = ir_binop(df, d0, IR_SHL, dx, ck->result, si8);
+        ir_set_br_cond(d0, ir_icmp(df, d0, IR_CMP_SGT, dr, ir_const_int(df, d0, 40, si8)), d1, d2);
+        ir_set_ret(d1, ir_binop(df, d1, IR_SDIV, ir_const_int(df, d1, 5, si8), ir_const_int(df, d1, 0, si8), si8));
+        ir_set_ret(d2, ir_binop(df, d2, IR_SDIV, dr, ir_const_int(df, d2, 4, si8), si8));
+        ir_finalize_cfg(df);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(df, &s, true, sizeof region, err), "judges: %s", err);
+        char want[48]; snprintf(want, sizeof want, "proved bb%d.", d1->id);
+        CHECK(strstr(recs, want) && strstr(strstr(recs, want), "divzero") && nrec[JREC_NOT_IMPLIED] == 0,
+              "the dead branch's 5 / 0 is never reached:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
