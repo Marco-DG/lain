@@ -56,6 +56,34 @@ LN
 shadow=$("$ROOT/lain" loop.ln --judge=shadow -o d.c 2>&1)
 echo "$shadow" | grep -qE "1 loops' termination among them \(1 proved by both, 0 by the judge only\)" \
     || { echo "2b: the loop's termination is not proved by both: $shadow"; exit 1; }
+# 2c. a loop bounded by a slice's LENGTH (a term of kind JTERM_LEN) and one stepped by a WRAPPING
+# add (the generator's wrap row, its cases flattened and the impossible one dropped; a u32 counter,
+# since the row takes a constant operand's range from its type, and a u8 `+% 1` then has too many)
+cat > loop2.ln <<'LN'
+func count(xs i32[]) i32 {
+    var i usize = 0
+    var c i32 = 0
+    while i < xs.len {
+        c = c +% 1
+        i = i + 1
+    }
+    return c
+}
+func up(n u32) i32 {
+    var i u32 = 0
+    while i < n {
+        i = i +% 1
+    }
+    return 0
+}
+func main() i32 {
+    var a i32[3] = [1, 2, 3]
+    return count(a) + up(9)
+}
+LN
+shadow=$("$ROOT/lain" loop2.ln --judge=shadow -o e.c 2>&1)
+echo "$shadow" | grep -qE "2 loops' termination among them \(2 proved by both, 0 by the judge only\)" \
+    || { echo "2c: a length-bounded or wrapping loop is not proved by both: $shadow"; exit 1; }
 out=$("$ROOT/lain" ok.ln --judge=authority -o c.c 2>&1); rc=$?
 [ $rc -ne 0 ] && echo "$out" | grep -q "unknown --judge mode 'authority'" || { echo "3: --judge=authority not refused ($rc): $out"; exit 1; }
 [ ! -e c.c ] || { echo "3: C written under an unknown mode"; exit 1; }

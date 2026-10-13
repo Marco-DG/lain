@@ -98,6 +98,9 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
         if (!H_->cons.t) return false; } while (0)
     #define RK_TERM(VAR, COEFP) do { JHyp *H_ = &hyps[nh]; JTerm *T_ = &H_->cons.t[H_->cons.nt++]; \
         T_->var = (VAR); T_->coef = *(COEFP); } while (0)
+    // a row is the region's last allocation until the next: once complete, its unused room goes
+    // back (RK_NEW reserves for the widest row, and most rows hold one or two terms)
+    #define RK_DONE() do { JHyp *H_ = &hyps[nh]; *cur = (char *)(H_->cons.t + (H_->cons.nt ? H_->cons.nt : 1)); nh++; } while (0)
     for (int32_t k = 0; k < npaths; k++) {
         if (!on[k]) continue;
         const JVc *P = paths[k];
@@ -105,7 +108,9 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
         for (int pass = 0; pass < 2; pass++) {              // 0: the decrease (mu), 1: the bound (nu)
             int32_t base = pass == 0 ? mu0[k] : nu0[k];
             for (int32_t v = 0; v < nv; v++) {               // sum_r M[r][v] y_r  +  sum_i s_i c_i  =  0
-                RK_NEW(J_EQ, 0);
+                char *undo = *cur;                           // an equation with no term gives its room back:
+                RK_NEW(J_EQ, 0);                             // the paths' shared list holds every path's own
+                                                             // variables, most absent from any one path
                 for (int32_t i = 0; i < npairs; i++) {
                     int64_t sg = (pre[i] == v ? 1 : 0) - (pass == 0 && post[i] == v ? 1 : 0);
                     if (sg) { JInt one; rk_int(&one, sg); RK_TERM(i, &one); }
@@ -114,7 +119,8 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
                     const JInt *a = rk_coef(&P->hyps[r].cons, v);
                     if (a && rk_nonzero(a)) RK_TERM(base + r, a);
                 }
-                if (hyps[nh].cons.nt > 0) nh++;              // an all-zero equation says nothing
+                if (hyps[nh].cons.nt > 0) RK_DONE();         // an all-zero equation says nothing
+                else *cur = undo;
             }
             // decrease: sum_r m_r mu_r <= -1, or + delta_k <= 0;  bound: sum_r m_r nu_r - c0 <= 0
             RK_NEW(J_LE, pass == 0 && !delta ? -1 : 0);
@@ -122,22 +128,23 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
             for (int32_t r = 0; r < P->nhyps; r++)
                 if (rk_nonzero(&P->hyps[r].cons.rhs)) RK_TERM(base + r, &P->hyps[r].cons.rhs);
             if (pass == 0 && delta) { JInt one; rk_int(&one, 1); RK_TERM(dl[k], &one); }
-            nh++;
+            RK_DONE();
             for (int32_t r = 0; r < P->nhyps; r++)          // an inequality row's multiplier: >= 0
                 if (P->hyps[r].cons.op == J_LE) {
                     RK_NEW(J_LE, 0);
                     JInt m1; rk_int(&m1, -1); RK_TERM(base + r, &m1);
-                    nh++;
+                    RK_DONE();
                 }
         }
         if (delta) {                                         // 0 <= delta_k <= 1
             JInt one, m1; rk_int(&one, 1); rk_int(&m1, -1);
-            RK_NEW(J_LE, 0); RK_TERM(dl[k], &m1); nh++;
-            RK_NEW(J_LE, 1); RK_TERM(dl[k], &one); nh++;
+            RK_NEW(J_LE, 0); RK_TERM(dl[k], &m1); RK_DONE();
+            RK_NEW(J_LE, 1); RK_TERM(dl[k], &one); RK_DONE();
         }
     }
     #undef RK_NEW
     #undef RK_TERM
+    #undef RK_DONE
     memset(lp, 0, sizeof *lp);
     lp->id = paths[0]->id; lp->vars = names; lp->nvars = nvars; lp->hyps = hyps; lp->nhyps = nh;
     lp->goal.op = J_LE; rk_int(&lp->goal.rhs, -1);            // `0 <= -1`: any model will do
