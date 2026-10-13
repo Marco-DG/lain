@@ -415,6 +415,29 @@ int main(void) {
               "written measure case %d (%s):\n%s", c, want, recs);
     }
 
+    // ELEMENT cells: `var a i32[4] = [10, 20, 30, 40]; return a[0] - 10` proves its narrowing (a[0]
+    // is the stored 10); with `a[i] = 7` between, a[0] is fresh and its narrow.lo is not implied
+    for (int c = 0; c < 2; c++) {
+        IrType *ai32 = ir_type_int(&A, 32, true), *u64e = ir_type_int(&A, 64, false);
+        IrType *arr = ir_type_new(&A, IRT_ARRAY); arr->elem = ai32; arr->array_len = 4;
+        IrFunc *ef = ir_func_new(&A, nm("el"), ai32, IR_FUNC_PURE);
+        IrValue *ei = ir_add_param(ef, u64e, nm("i"));
+        IrBlock *e0 = ef->entry;
+        IrValue *ea = ir_alloca_array(ef, e0, arr);
+        for (int k = 0; k < 4; k++)
+            ir_store(ef, e0, ir_elem_ptr(ef, e0, ea, ir_const_int(ef, e0, k, u64e), ai32), ir_const_int(ef, e0, 10 * (k + 1), ai32));
+        if (c) ir_store(ef, e0, ir_elem_ptr(ef, e0, ea, ei, ai32), ir_const_int(ef, e0, 7, ai32));
+        IrValue *e00 = ir_load(ef, e0, ir_elem_ptr(ef, e0, ea, ir_const_int(ef, e0, 0, ai32), ai32), ai32);
+        ir_set_ret(e0, ir_binop(ef, e0, IR_SUB, e00, ir_const_int(ef, e0, 10, ai32), ai32));
+        ir_finalize_cfg(ef);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(ef, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(c ? strstr(recs, "narrow.lo  %v") != NULL && strstr(strstr(recs, "narrow.lo  %v") - 30, "not-implied") != NULL &&
+                  strstr(recs, "@havoc") != NULL                // a[i] = 7 also owes i <= 3, not implied either
+                : nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] == 0 && nrec[JREC_PROVED] > 0,
+              "element cells, case %d:\n%s", c, recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

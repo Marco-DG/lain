@@ -175,6 +175,7 @@ typedef struct {
     int32_t *aroot;                // by value id: the root an attributable address is inside, or -1
     const char **apath;            // by value id: that address's field path (".1.0"; "" for the root)
     int32_t *iroot;                // by value id: the root an ELEMENT address is inside, or -1
+    const char **ipath;            // by value id: for an element address, the path of the array it indexes
     uint8_t *iunsafe;              // by value id: that element address came through an unchecked index
     uint8_t *rclass;               // by value id, for a root: JR_LOCAL, JR_BORROWED or JR_LEAKED
     int32_t *eff_cell; IrValue **eff_val; uint8_t *eff_unc; int32_t neff, eff_gen; int32_t *eff_stamp;  // jg_changes
@@ -324,9 +325,12 @@ static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, 
 // ── cells and their versions (P2.1) ─────────────────────────────────────────────────────────
 // A ROOT is a local slot (an ALLOCA of a fixed type, not a module table) or the pointee of a
 // parameter that is a CHECKED reference (a pointer type that is not raw). A CELL is a root and a
-// constant field path inside it whose leaf is an integer or a slice: `l.pos` through `l var Lexer`
-// is the parameter's root and path ".1". Every address an access names is ATTRIBUTABLE (the root,
-// or FIELD_PTRs from it), an ELEMENT address inside one (an ELEM_PTR from either), or neither.
+// constant field and element path inside it whose leaf is an integer or a slice: `l.pos` through
+// `l var Lexer` is the parameter's root and path ".1", `a[2]` of a local `i32[4]` path "[2]". Every
+// address an access names is ATTRIBUTABLE (the root, or FIELD_PTRs and ELEM_PTRs by a constant
+// index within a fixed array's length from it), an ELEMENT address inside one (an ELEM_PTR by any
+// other index, or a FIELD_PTR from one: it may name any element of the array it indexes), or
+// neither.
 //
 // A root's ESCAPE CLASS (P2.1) is read from every use of an address inside it: LOCAL when each is
 // an access (a LOAD's or a STORE's address) or forms another address inside it; BORROWED when some
@@ -352,9 +356,9 @@ static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, 
 // A call handed no reference to a root cannot write it: Lain has no stored references (E126) and
 // no mutable globals, and a `var` parameter's pointee is reachable by references only through its
 // exclusive borrow (E004, which binds references, not raw addresses). Those are TRUSTED premises,
-// as the translation table lists them; an extern's signature and effect row are believed. An
-// element store, checked, changes only its element, which is no cell; one through an unchecked
-// index may write anywhere in its root.
+// as the translation table lists them; an extern's signature and effect row are believed. A store
+// through an element address, checked, may change any cell of the array it indexes (its `ipath`);
+// one through an unchecked index may write anywhere in its root.
 enum { JR_NONE, JR_LOCAL, JR_BORROWED, JR_LEAKED };
 
 static IrFunc *jg_callee(const JG *g, IrInstr *i) {
@@ -371,13 +375,23 @@ static const IrType *jg_pointee(JG *g, int32_t id) {
     if (d->op == IR_ALLOCA) return d->aux.alloca_ty;
     if (d->op == IR_FIELD_PTR && d->result && d->result->type)
         return d->result->type->kind == IRT_PTR ? d->result->type->elem : d->result->type;   // an array field decays
+    if (d->op == IR_ELEM_PTR && d->result && d->result->type && d->result->type->kind == IRT_PTR)
+        return d->result->type->elem;
     return NULL;
+}
+static bool jg_const_of(JG *g, IrValue *v, __int128 *c);
+// An ELEM_PTR's index as a constant within the fixed array its base points at: its element is a
+// cell of that path (P2.1). Any other index names an element the judge cannot attribute.
+static bool jg_elem_const(JG *g, int32_t base, IrInstr *i, __int128 *k) {
+    const IrType *t = jg_pointee(g, base);
+    return i->n_operands >= 2 && t && t->kind == IRT_ARRAY && t->array_len > 0 && jg_const_of(g, i->operands[1], k) &&
+           *k >= 0 && *k < (__int128)t->array_len;
 }
 static bool jg_leaf(const IrType *t) { return t && (jg_is_int(t) || t->kind == IRT_SLICE); }
 // Does path `p` lie inside path `q` (q a prefix at a field boundary)?
 static bool jg_inside(const char *p, const char *q) {
     size_t n = strlen(q);
-    return !strncmp(p, q, n) && (p[n] == 0 || p[n] == '.');
+    return !strncmp(p, q, n) && (p[n] == 0 || p[n] == '.' || p[n] == '[');
 }
 static void jg_eff(JG *g, int32_t c, IrValue *val, bool unc) {
     if (g->eff_stamp[c] == g->eff_gen) return;                // one change per cell per instruction
@@ -413,6 +427,7 @@ static bool jg_carries_raw(const IrType *t, int depth) {
 }
 // The part of a stored value at a path below the store's own: a constructor's field, recursively.
 // A part lands in its field at its constructor, so `waived` becomes that constructor's (P2.3).
+// An ELEMENT of a stored value (a `[k]` step) is not stated: the part is unknown, a fresh version.
 static IrValue *jg_part(JG *g, IrValue *v, const char *rest, bool *waived) {
     while (*rest == '.') {
         IrInstr *d = v && v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
@@ -420,9 +435,10 @@ static IrValue *jg_part(JG *g, IrValue *v, const char *rest, bool *waived) {
         int k = atoi(rest + 1);
         if (k < 0 || k >= d->n_operands) return NULL;
         v = d->operands[k]; *waived = d->unchecked;
-        rest = strchr(rest + 1, '.'); if (!rest) rest = "";
+        rest++;
+        while (*rest >= '0' && *rest <= '9') rest++;           // past this step's field index
     }
-    return v;
+    return *rest ? NULL : v;
 }
 // The cells instruction `i` may change, into g->eff_*: each with the value a store makes it, or
 // NULL for a fresh version (P2.2's frame rule, as above).
@@ -437,8 +453,8 @@ static void jg_changes(JG *g, IrInstr *i) {
                 IrValue *part = jg_part(g, i->operands[1], g->cpath[c] + strlen(g->apath[a]), &waived);
                 jg_eff(g, c, part, waived);
             }
-        } else if (g->iroot[a] >= 0) {
-            if (g->iunsafe[a]) jg_havoc_root(g, g->iroot[a], "");
+        } else if (g->iroot[a] >= 0) {                        // any element of the array it indexes
+            jg_havoc_root(g, g->iroot[a], g->iunsafe[a] ? "" : g->ipath[a]);
         } else jg_havoc_rawable(g);
         return;
     }
@@ -456,7 +472,7 @@ static void jg_changes(JG *g, IrInstr *i) {
         bool readonly = pt && pt->kind == IRT_PTR && !pt->is_raw && !pt->ptr_mut;
         if (readonly) continue;
         if (g->aroot[o->id] >= 0) jg_havoc_root(g, g->aroot[o->id], g->apath[o->id]);
-        else if (g->iroot[o->id] >= 0 && g->iunsafe[o->id]) jg_havoc_root(g, g->iroot[o->id], "");
+        else if (g->iroot[o->id] >= 0) jg_havoc_root(g, g->iroot[o->id], g->iunsafe[o->id] ? "" : g->ipath[o->id]);
     }
     if (!cf || (cf->effects & IR_EFFECT_UNMODELLED_WRITE)) jg_havoc_class(g, JR_BORROWED);
     jg_havoc_class(g, JR_LEAKED);
@@ -466,9 +482,10 @@ static bool jg_cells(JG *g) {
     IrFunc *f = g->f;
     int32_t nv = g->nv;
     if (!(g->aroot = JG_NEW(g, int32_t, nv)) || !(g->apath = JG_NEW(g, const char *, nv)) ||
-        !(g->iroot = JG_NEW(g, int32_t, nv)) || !(g->iunsafe = JG_NEW(g, uint8_t, nv)) || !(g->rclass = JG_NEW(g, uint8_t, nv)))
+        !(g->iroot = JG_NEW(g, int32_t, nv)) || !(g->iunsafe = JG_NEW(g, uint8_t, nv)) || !(g->rclass = JG_NEW(g, uint8_t, nv)) ||
+        !(g->ipath = JG_NEW(g, const char *, nv)))
         return jg_fail(g, "out of memory");
-    for (int32_t i = 0; i < nv; i++) { g->aroot[i] = g->iroot[i] = -1; g->apath[i] = NULL; g->iunsafe[i] = 0; g->rclass[i] = JR_NONE; }
+    for (int32_t i = 0; i < nv; i++) { g->aroot[i] = g->iroot[i] = -1; g->apath[i] = g->ipath[i] = NULL; g->iunsafe[i] = 0; g->rclass[i] = JR_NONE; }
     // roots: checked reference parameters, then fixed local slots
     for (IrParam *p = f->params; p; p = p->next) {
         IrValue *v = p->value;
@@ -485,8 +502,11 @@ static bool jg_cells(JG *g) {
             }
             IrValue *b0 = i->n_operands >= 1 ? i->operands[0] : NULL;
             if (!b0 || b0->id < 0 || b0->id >= nv) continue;
-            if (i->op == IR_FIELD_PTR && g->aroot[b0->id] >= 0) {
-                char buf[24]; int n = snprintf(buf, sizeof buf, ".%lld", (long long)i->aux.field_idx);
+            __int128 kx;
+            if ((i->op == IR_FIELD_PTR && g->aroot[b0->id] >= 0) ||
+                (i->op == IR_ELEM_PTR && g->aroot[b0->id] >= 0 && jg_elem_const(g, b0->id, i, &kx))) {
+                char buf[48]; int n = i->op == IR_FIELD_PTR ? snprintf(buf, sizeof buf, ".%lld", (long long)i->aux.field_idx)
+                                                           : snprintf(buf, sizeof buf, "[%lld]", (long long)kx);
                 size_t m = strlen(g->apath[b0->id]);
                 char *pth = JG_NEW(g, char, m + (size_t)n + 1);
                 if (!pth) return jg_fail(g, "out of memory");
@@ -494,6 +514,7 @@ static bool jg_cells(JG *g) {
                 g->aroot[id] = g->aroot[b0->id]; g->apath[id] = pth;
             } else if ((i->op == IR_FIELD_PTR || i->op == IR_ELEM_PTR) && (g->aroot[b0->id] >= 0 || g->iroot[b0->id] >= 0)) {
                 g->iroot[id] = g->aroot[b0->id] >= 0 ? g->aroot[b0->id] : g->iroot[b0->id];
+                g->ipath[id] = g->aroot[b0->id] >= 0 ? g->apath[b0->id] : g->ipath[b0->id];
                 g->iunsafe[id] = g->iunsafe[b0->id] || (i->op == IR_ELEM_PTR && i->unchecked);
             }
         }

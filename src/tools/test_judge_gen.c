@@ -64,6 +64,7 @@ static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, ch
     return s;
 }
 static char *gen_text(IrFunc *f) { ir_finalize_cfg(f); return gen_with(f, NULL, 0, JGEN_ALL, NULL); }
+static IrInstr *g_last_instr(IrBlock *b) { IrInstr *l = b->instrs; while (l && l->next) l = l->next; return l; }
 static int nins(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
 static int count(const char *all, const char *key) { int n = 0; for (const char *p = all; (p = strstr(p, key)); p++) n++; return n; }
 static IrValue *mk_call(IrFunc *f, IrBlock *b, const char *callee, IrValue *arg, IrType *rt) {
@@ -2000,6 +2001,99 @@ int main(void) {
     }
     gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     printf("  a written function measure: owed as written, defined at both ends, outside where no sum\n");
+    // 43. ELEMENT cells (P2.1: a constant field AND element path): a local `a i32[4]` filled by
+    // constant-index stores (u64 indices) and read at a constant index (an i32 one): the load is
+    // the stored version, `%sR[0]`. Cases: (0) read a[0] back: its version is the store's, 10;
+    // (1) a store through a[i] in between: every element of a is fresh (havoc), so a[0] is no
+    // longer 10; (2) a[5], past the length: no cell, no version; (3) the store through a[i]
+    // UNCHECKED: fresh as well; (4) a[i]
+    // handed to a call as a mutable argument: a's elements fresh; then a STRUCT `s {n i32, arr
+    // i32[3]}`: (5) `s.arr[i] = 4` leaves s.n's stored 1 standing and makes s.arr[0] fresh; (6) a
+    // whole-struct store S(1, t) makes s.arr[0] fresh, never t's address (jg_part stops at `[k]`);
+    // (7) an array of structs, a[1].x: the cell `[1].0`; (8) case 5 with `s.arr[i]` UNCHECKED: it
+    // may write anywhere in s, so s.n is fresh too; (9) case 7 then `a[i].x = 5`: a field of an
+    // element at a variable index may be a[1].x, which is fresh; (10) a[-1]: no cell either
+    IrType *a4 = ir_type_new(&A, IRT_ARRAY); a4->elem = i32t; a4->array_len = 4;
+    IrType *a3 = ir_type_new(&A, IRT_ARRAY); a3->elem = i32t; a3->array_len = 3;
+    IrType *S43 = ir_type_new(&A, IRT_STRUCT);
+    S43->n_fields = 2; S43->fields = arena_push_many_aligned(&A, IrType *, 2); S43->fields[0] = i32t; S43->fields[1] = a3;
+    IrType *P43 = ir_type_new(&A, IRT_STRUCT);
+    P43->n_fields = 2; P43->fields = arena_push_many_aligned(&A, IrType *, 2); P43->fields[0] = i32t; P43->fields[1] = i32t;
+    IrType *ap = ir_type_new(&A, IRT_ARRAY); ap->elem = P43; ap->array_len = 2;
+    for (int c = 0; c < 11; c++) {
+        IrFunc *f = ir_func_new(&A, nm("e43"), i32t, IR_FUNC_PURE);
+        IrValue *ix = ir_add_param(f, u64t, nm("i"));
+        IrBlock *b0 = f->entry;
+        IrValue *got = NULL, *root = NULL, *tmp = NULL; const char *path = "";
+        if (c <= 4 || c == 10) {
+            root = ir_alloca_array(f, b0, a4);
+            for (int k = 0; k < 4; k++)
+                ir_store(f, b0, ir_elem_ptr(f, b0, root, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 10 * (k + 1), i32t));
+            if (c == 1 || c == 3) {
+                IrValue *ep = ir_elem_ptr(f, b0, root, ix, i32t);
+                if (c == 3) g_last_instr(b0)->unchecked = true;
+                ir_store(f, b0, ep, ir_const_int(f, b0, 7, i32t));
+            }
+            if (c == 4) {
+                IrType *vp = ir_type_new(&A, IRT_PTR); vp->elem = i32t; vp->ptr_mut = true;
+                IrFunc *callee = ir_func_new(&A, nm("touch43"), u32t, IR_FUNC_PURE);
+                ir_add_param(callee, vp, nm("p")); ir_set_ret(callee->entry, ir_const_int(callee, callee->entry, 0, u32t)); ir_finalize_cfg(callee);
+                f->next = callee;
+                (void)mk_call(f, b0, "touch43", ir_elem_ptr(f, b0, root, ix, i32t), u32t);
+            }
+            got = ir_load(f, b0, ir_elem_ptr(f, b0, root, ir_const_int(f, b0, c == 2 ? 5 : c == 10 ? -1 : 0, i32t), i32t), i32t);
+            path = c == 2 ? "[5]" : c == 10 ? "[-1]" : "[0]";
+        } else if (c <= 6 || c == 8) {
+            root = ir_alloca(f, b0, S43);
+            if (c == 6) {
+                IrValue *t = tmp = ir_alloca_array(f, b0, a3);
+                for (int k = 0; k < 3; k++) ir_store(f, b0, ir_elem_ptr(f, b0, t, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 5 + k, i32t));
+                IrInstr *sn = ir_instr(f, IR_STRUCT_NEW, S43, 2); sn->operands[0] = ir_const_int(f, b0, 1, i32t); sn->operands[1] = t; ir_emit(b0, sn);
+                ir_store(f, b0, root, sn->result);
+            } else {
+                ir_store(f, b0, ir_field_ptr(f, b0, root, 0, i32t), ir_const_int(f, b0, 1, i32t));
+                ir_store(f, b0, ir_elem_ptr(f, b0, ir_field_ptr(f, b0, root, 1, a3), ir_const_int(f, b0, 0, u64t), i32t), ir_const_int(f, b0, 5, i32t));
+                IrValue *ep = ir_elem_ptr(f, b0, ir_field_ptr(f, b0, root, 1, a3), ix, i32t);
+                if (c == 8) g_last_instr(b0)->unchecked = true;
+                ir_store(f, b0, ep, ir_const_int(f, b0, 4, i32t));
+            }
+            got = ir_load(f, b0, ir_elem_ptr(f, b0, ir_field_ptr(f, b0, root, 1, a3), ir_const_int(f, b0, 0, i32t), i32t), i32t);
+            path = ".1[0]";
+        } else {
+            root = ir_alloca_array(f, b0, ap);
+            IrValue *e1 = ir_elem_ptr(f, b0, root, ir_const_int(f, b0, 1, u64t), P43);
+            ir_store(f, b0, ir_field_ptr(f, b0, e1, 0, i32t), ir_const_int(f, b0, 3, i32t));
+            if (c == 9) ir_store(f, b0, ir_field_ptr(f, b0, ir_elem_ptr(f, b0, root, ix, P43), 0, i32t), ir_const_int(f, b0, 5, i32t));
+            got = ir_load(f, b0, ir_field_ptr(f, b0, ir_elem_ptr(f, b0, root, ir_const_int(f, b0, 1, i32t), P43), 0, i32t), i32t);
+            path = "[1].0";
+        }
+        IrValue *sn5 = c == 5 || c == 8 ? ir_load(f, b0, ir_field_ptr(f, b0, root, 0, i32t), i32t) : NULL;
+        IrValue *r = ir_binop(f, b0, IR_SUB, got, ir_const_int(f, b0, c == 7 ? 3 : c >= 5 ? 5 : 10, i32t), i32t);
+        if (sn5) r = ir_binop(f, b0, IR_ADD, r, sn5, i32t);
+        ir_set_ret(b0, r);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), cellnm[48], stored[96];
+        snprintf(cellnm, sizeof cellnm, "%%s%d%s@", root->id, path);
+        // the load's version is a store's (`@bb0.N`) defined equal to the constant stored
+        const char *v = t ? strstr(t, " narrow.hi 0") : NULL;
+        bool named = v && strstr(v, cellnm), fresh = v && strstr(v, "@havoc");
+        snprintf(stored, sizeof stored, "hyp h4 store %%s%d%s@", root->id, path);
+        char sn[48]; snprintf(sn, sizeof sn, "store %%s%d.0@bb", root->id);
+        char tn[24]; snprintf(tn, sizeof tn, "%%v%d ", tmp ? tmp->id : -1);
+        switch (c) {
+            case 0: case 7: CHECK(named && !fresh && strstr(v, stored), "case %d: the load is the stored version of %s:\n%s", c, cellnm, t ? t : ""); break;
+            case 1: case 3: case 4: CHECK(named && fresh, "case %d: a store or call through a[i] makes a[0] fresh:\n%s", c, t ? t : ""); break;
+            case 2: case 10: CHECK(t && !strstr(t, cellnm), "case %d: %s outside the length is no cell:\n%s", c, path, t ? t : ""); break;
+            case 5: CHECK(named && fresh && strstr(t, sn), "case 5: s.arr[i] makes s.arr[0] fresh, s.n keeps its store:\n%s", t ? t : ""); break;
+            case 8: CHECK(named && fresh && !strstr(t, sn), "case 8: an unchecked s.arr[i] makes s.n fresh too:\n%s", t ? t : ""); break;
+            case 9: CHECK(named && fresh, "case 9: a[i].x = 5 makes a[1].x fresh:\n%s", t ? t : ""); break;
+            default: CHECK(named && fresh && !strstr(t, tn), "case 6: s.arr[0] after S(1, t) is fresh, not t's address:\n%s", t ? t : ""); break;
+        }
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  element cells: a constant index is a cell, a store through any other index refreshes its array\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
