@@ -1071,10 +1071,47 @@ static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
     if (!v || !v->type || !jg_range(v->type, r)) return false;
     IrInstr *d = v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
     if (!d && jg_param_value(g->f, v->id) == v) jg_param_refine(g, v, r);
+    // a CHECKED +, - or unary - of static ranges: the exact interval, within its type (it traps outside)
+    if (depth < 4 && d && (d->op == IR_ADD || d->op == IR_SUB || d->op == IR_NEG) && d->wrap == IR_WRAP_CHECK && !d->unchecked) {
+        JRange a, b;
+        if (d->op == IR_NEG ? d->n_operands >= 1 && jg_static_range(g, d->operands[0], &a, depth + 1)
+                            : d->n_operands >= 2 && jg_static_range(g, d->operands[0], &a, depth + 1) && jg_static_range(g, d->operands[1], &b, depth + 1)) {
+            __int128 lo = d->op == IR_ADD ? a.lo + b.lo : d->op == IR_SUB ? a.lo - b.hi : -a.hi;
+            __int128 hi = d->op == IR_ADD ? a.hi + b.hi : d->op == IR_SUB ? a.hi - b.lo : -a.lo;
+            if (lo > r->lo) r->lo = lo;
+            if (hi < r->hi) r->hi = hi;
+        }
+    }
     JRange s;
     if (depth < 4 && d && d->op == IR_CAST && d->n_operands >= 1 && jg_is_int(d->operands[0]->type) &&
         jg_static_range(g, d->operands[0], &s, depth + 1) && s.lo >= r->lo && s.hi <= r->hi) *r = s;
     r->has_ne = false;
+    return true;
+}
+// A DIVISION or REMAINDER by a VARIABLE divisor, where it completes (the divisor nonzero, owed as
+// divzero; the quotient in range, owed as divovf), from the operands' static ranges x in [a, b], y
+// in [c, d]: |q| <= max|x| (|y| >= 1), and where y keeps one sign q lies between the corners a/c,
+// a/d, b/c, b/d (truncating division is monotone in each operand there); |r| < max|y| and |r| <=
+// max|x|, r of x's sign (C's remainder truncates toward zero).
+static bool jg_divrem_hull(JG *g, const IrInstr *d, JRange *h) {
+    JRange a, b;
+    if (d->n_operands < 2 || !jg_static_range(g, d->operands[0], &a, 0) || !jg_static_range(g, d->operands[1], &b, 0)) return false;
+    __int128 alo = a.lo < 0 ? -a.lo : a.lo, ahi = a.hi < 0 ? -a.hi : a.hi, mx = alo > ahi ? alo : ahi;
+    h->has_ne = false;
+    if (d->op == IR_SDIV || d->op == IR_UDIV) {
+        h->lo = -mx; h->hi = mx;
+        if (b.lo > 0 || b.hi < 0) {
+            __int128 q[4] = { a.lo / b.lo, a.lo / b.hi, a.hi / b.lo, a.hi / b.hi }, lo = q[0], hi = q[0];
+            for (int k = 1; k < 4; k++) { if (q[k] < lo) lo = q[k]; if (q[k] > hi) hi = q[k]; }
+            if (lo > h->lo) h->lo = lo;
+            if (hi < h->hi) h->hi = hi;
+        }
+        return true;
+    }
+    __int128 my = b.hi > -b.lo ? b.hi : -b.lo;
+    if (my < 1) return false;
+    __int128 k = my - 1 < mx ? my - 1 : mx;
+    h->lo = a.lo >= 0 ? 0 : -k; h->hi = a.hi <= 0 ? 0 : k;
     return true;
 }
 // A PRODUCT of two variables lies between its corners: x in [a, b] and y in [c, d] put x * y in
@@ -1352,9 +1389,16 @@ static void jb_state(JB *B, int32_t x) {
         // have wrapped, so it is stated nothing about.
         case IR_SDIV: case IR_UDIV: case IR_SREM: case IR_UREM: {
             __int128 c;
-            if (d->n_operands < 2 || !jg_const_of(g, d->operands[1], &c) || c == 0 || !jg_is_int(d->operands[0]->type)) break;
+            if (d->n_operands < 2 || !jg_is_int(d->operands[0]->type)) break;
             bool uns = jg_uns(d->operands[0]->type);
             if (!uns && (d->wrap != IR_WRAP_CHECK || d->unchecked)) break;
+            if (!jg_const_of(g, d->operands[1], &c)) {           // a variable divisor: between bounds
+                JRange h;
+                bool dv = d->op == IR_SDIV || d->op == IR_UDIV;
+                if (jg_divrem_hull(g, d, &h)) jb_range(B, x, &h, jb_str(B, dv ? "def %%v%lld div.hull" : "def %%v%lld rem.hull", id, 0, 0));
+                break;
+            }
+            if (c == 0) break;
             int32_t xv = jb_val(B, d->operands[0]);
             JLT r[2];
             if (d->op == IR_SDIV || d->op == IR_UDIV) {          // x is q = x, remainder fresh
