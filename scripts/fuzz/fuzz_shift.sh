@@ -12,7 +12,7 @@ LAIN=./lain
 SC="${TMPDIR:-/tmp}/fuzz_shift.$$"; mkdir -p "$SC"
 N="${1:-300}"
 RANDOM=${RANDOM_SEED:-$$}
-accepted=0; rejected=0; unsound=0; brokenc=0
+accepted=0; rejected=0; unsound=0; brokenc=0; hung=0
 
 for ((i=0; i<N; i++)); do
     ty=$([ $((RANDOM%2)) -eq 0 ] && echo i32 || echo u32)
@@ -56,13 +56,16 @@ EOF
         echo "BROKEN-C on accepted: $src"; brokenc=$((brokenc+1)); continue
     fi
     timeout 5 "$bin" >/dev/null 2>"$SC/e_$i"; rc=$?
-    if [ $rc -eq 124 ]; then continue; fi
+    # A run that times out is COUNTED and its stderr still read: UBSan reports and goes on, so a
+    # program can print its shift UB and then run past the limit, and skipping it silently threw that
+    # report away (a skip count is data). The generated loops are bounded, so a hang is itself news.
+    [ $rc -eq 124 ] && hung=$((hung+1))
     if grep -qiE "shift|cannot be represented|runtime error" "$SC/e_$i"; then
         echo "UNSOUND (accepted program shift-UB): $src"; sed -n '1,2p' "$SC/e_$i"
         unsound=$((unsound+1))
     fi
 done
-echo "fuzz_shift: gens=$N accepted=$accepted rejected=$rejected"
+echo "fuzz_shift: gens=$N accepted=$accepted rejected=$rejected hung=$hung"
 echo "  bugs:  broken-C=$brokenc  UNSOUND=$unsound"
 rm -rf "$SC"
 [ $((brokenc + unsound)) -eq 0 ]
