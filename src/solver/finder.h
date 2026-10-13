@@ -18,6 +18,7 @@
 #include "judge/format.h"
 #include "solver/lia.h"
 #include "solver/rank.h"                 // PE.5 ranking functions and PE.7 relations, over a loop's paths
+#include "ir/callgraph.h"                 // a recursion cycle's members, ranked jointly (fd_rank_cycle)
 
 // VRA's relation at a loop header (PE.4's sink: vra.h's VraRel, copied by whoever runs VRA):
 // sa*x[a] + sb*x[b] <= c, b < 0 for one term; and a header's converged state.
@@ -171,6 +172,7 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc) {
 // candidate, which costs precision only. Nothing here is believed: a ranking claim is owed on every
 // back edge, and a relation is a candidate Houdini keeps only if it is inductive.
 #define FD_MAXFLAT 32
+#define FD_MAXEDGES 64                      // a recursion cycle's calls, ranked jointly (fd_rank_cycle)
 typedef struct { JCons c; int32_t *v; } FdCons;              // a constraint over a raw path's variables
 typedef struct { bool disj; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size
 typedef struct { int32_t nv, *val, nh; FdHyp *h; int32_t from, *pre, *post; } FdRaw;
@@ -181,8 +183,10 @@ typedef struct {
     int32_t nv; const char **names;
     const JVc **paths; int32_t npaths, *edge;
     JVc **full;                             // each path before slicing, for a retry on fewer pairs
-    int32_t nedges, edges[JRANK_MAXE];
+    int32_t nedges, edges[FD_MAXEDGES];     // a loop's back edges (at most JRANK_MAXE), a cycle's calls
     int32_t npk;                            // the first npk pairs are the header's versions (cells)
+    bool dead;                              // every flattened path the solver refuted: no trip can
+                                            // run, and a constant measure falls on every one (c2)
 } FdLoop;
 static void *fd_bump(FdLoop *L, size_t n) {
     uintptr_t at = ((uintptr_t)L->cur + 15u) & ~(uintptr_t)15u;
@@ -297,6 +301,7 @@ static bool fd_same_path(const JVc *a, const JVc *b) {
 // as a back edge is from the header's versions to the edge's. Only SELF-recursion has a pre-state
 // for every pair (a call to another function of the cycle has none), so a cycle of several
 // functions builds nothing here: its measures must be found jointly (a later link).
+static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdLoop *L, int32_t maxedges);
 static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdLoop *L) {
     char err[200];
     memset(L, 0, sizeof *L);
@@ -308,10 +313,18 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
     if (entry ? !F->gen->call_paths || !F->gen->call_paths(F->gen->ctx, f, cl, ncl, &P, err, sizeof err)
               : !F->gen->paths || !F->gen->paths(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err)) return false;
     if (P.refused) return false;
+    return fd_loop_from(F, f, H, &P, L, JRANK_MAXE);
+}
+// ...from paths already in hand (the generator's, or a recursion cycle's built by fd_rank_cycle),
+// in L's region, at most `maxedges` of them
+static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdLoop *L, int32_t maxedges) {
+    char err[200];
+    const JPaths P = *Pp;
+    bool entry = H == JRANK_ENTRY;
     // 1. the back edges, copied out of the generator's region (the next call reuses it)
     int32_t nraw = 0;
     for (int32_t k = 0; k < P.n; k++) if (P.p[k].back) nraw++;
-    if (nraw == 0 || nraw > JRANK_MAXE) return false;
+    if (nraw == 0 || nraw > maxedges || nraw > FD_MAXEDGES) return false;
     FdRaw *raw = fd_bump(L, sizeof *raw * (size_t)nraw);
     int32_t npk = -1, *pk = NULL; uint8_t *pktk = NULL;
     if (!raw) return false;
@@ -402,7 +415,7 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
     L->edge = fd_bump(L, sizeof(int32_t) * FD_MAXFLAT);
     L->full = fd_bump(L, sizeof(JVc *) * FD_MAXFLAT);
     if (!L->paths || !L->edge || !L->full) return false;
-    int32_t local = base_local;
+    int32_t local = base_local, ndead = 0;
     for (int32_t k = 0; k < nraw; k++) {
         FdRaw *w = &raw[k];
         int32_t *map = fd_bump(L, sizeof(int32_t) * (size_t)(w->nv ? w->nv : 1));
@@ -506,7 +519,7 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
             // asked on the WHOLE path, before slicing: a wrap case's 2^w is a large constant, and
             // without it the case would look feasible and say nothing
             vc->goal.op = J_LE; vc->goal.nt = 0; fd_jint(&vc->goal.rhs, -1);
-            if (lia_solve(vc, F->lim, F->work, F->worksz).k == J_ANS_CERT) continue;
+            if (lia_solve(vc, F->lim, F->work, F->worksz).k == J_ANS_CERT) { ndead++; continue; }
             fd_jint(&vc->goal.rhs, 0);                       // 0 <= 0: nothing is asked of it
             JVc *fv = fd_bump(L, sizeof *fv); JHyp *fh = fd_bump(L, sizeof(JHyp) * (size_t)(m ? m : 1));
             if (!fv || !fh) return false;
@@ -519,6 +532,7 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
             L->paths[L->npaths] = vc; L->edge[L->npaths] = w->from; L->npaths++;
         }
     }
+    L->dead = L->npaths == 0 && ndead > 0;
     return L->npaths > 0;
 }
 static bool fd_i128(const JInt *x, __int128 *out) {
@@ -571,6 +585,7 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);
+    if (L->nedges > JRANK_MAXE) return false;
     out->blk = H; out->fn = f; out->nedge = L->nedges;
     for (int32_t e = 0; e < L->nedges; e++) out->from[e] = L->edges[e];
     LRank R1 = lia_rank(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz);
@@ -819,6 +834,216 @@ static bool ret_candidates(JFinder *F, IrFunc *f, JCand **cd, int32_t *ncd, int3
 // The module's claims, in ROUNDS (each under the claims the previous one verified only): every
 // function's cut-point candidates and return candidates, bounded, then Houdini over them all, since
 // a return claim may need its function's loop invariants and a loop a callee's return claim.
+
+// ── A RECURSION CYCLE OF SEVERAL FUNCTIONS, ranked jointly (spec 12; the judge's rec.*) ─────────
+// The judge owes, at every call between two functions of a component, that the callee's measure at
+// the arguments is at most the caller's at its entry (rec.le) or below it (rec.fall), the caller's
+// at least 0 (rec.bound), with the calls not strictly lowered closing no cycle. One measure per
+// member, each over its own parameters: so the search is ONE Farkas system over every call of the
+// component in the program-counter encoding. A slot per (member, parameter) and an indicator per
+// member; a call from member i to member j is a transition whose pre-state holds i's parameters at
+// its entry in i's slots, 1 in i's indicator, 0 elsewhere, and whose post-state holds the arguments
+// in j's slots, 1 in j's indicator, 0 elsewhere. A linear r over the slots is then, per member, a
+// measure of its own parameters (the indicator's coefficient its constant), and r(pre) - r(post) on
+// a call is exactly m_j(args) - m_i(entry) negated. The first round of the lexicographic search
+// (rk_build with a delta per path, lia_maximize over their sum) gives an r that rises on no call,
+// is at least 0 before every call, and falls on as many calls as it can: the calls it does not lower
+// are LISTED (rec.le), and the finder checks itself that they close no cycle, since a list the judge
+// refuses would refuse the function. Untrusted like everything here: the judge owes all of it.
+typedef struct { int32_t mem, callee, blk, idx; } FdCall;
+static bool fd_copy_str(FdLoop *L, const char *src, const char **dst) {
+    size_t n = src ? strlen(src) : 0;
+    char *d = fd_bump(L, n + 1);
+    if (!d) return false;
+    if (n) memcpy(d, src, n);
+    *dst = d; return true;
+}
+static bool fd_copy_jcons(FdLoop *L, const JCons *src, JCons *dst) {
+    *dst = *src; dst->t = fd_bump(L, sizeof(JTerm) * (size_t)(src->nt ? src->nt : 1));
+    if (!dst->t) return false;
+    if (src->nt) memcpy(dst->t, src->t, sizeof(JTerm) * (size_t)src->nt);
+    return true;
+}
+// `src`, out of the generator's region, with room for `xv` more variables and `xh` more hypotheses
+static bool fd_copy_vc(FdLoop *L, const JVc *src, int32_t xv, int32_t xh, JVc *dst) {
+    memset(dst, 0, sizeof *dst);
+    dst->id.fn = "cycle"; dst->id.irhash = "0"; dst->id.point = "call"; dst->id.kind = "call"; dst->id.ordinal = "0";
+    dst->vars = fd_bump(L, sizeof(char *) * (size_t)(src->nvars + xv + 1));
+    dst->hyps = fd_bump(L, sizeof(JHyp) * (size_t)(src->nhyps + xh + 1));
+    if (!dst->vars || !dst->hyps) return false;
+    for (int32_t v = 0; v < src->nvars; v++) if (!fd_copy_str(L, src->vars[v], &dst->vars[v])) return false;
+    dst->nvars = src->nvars;
+    for (int32_t h = 0; h < src->nhyps; h++) {
+        const JHyp *a = &src->hyps[h]; JHyp *b = &dst->hyps[h];
+        b->disj = a->disj; b->origin = "path";
+        if (!a->disj) { if (!fd_copy_jcons(L, &a->cons, &b->cons)) return false; continue; }
+        b->ndis = a->ndis; b->dis = fd_bump(L, sizeof(JConj) * (size_t)(a->ndis ? a->ndis : 1));
+        if (!b->dis) return false;
+        for (int32_t d = 0; d < a->ndis; d++) {
+            b->dis[d].nc = a->dis[d].nc; b->dis[d].c = fd_bump(L, sizeof(JCons) * (size_t)(a->dis[d].nc ? a->dis[d].nc : 1));
+            if (!b->dis[d].c) return false;
+            for (int32_t c = 0; c < a->dis[d].nc; c++) if (!fd_copy_jcons(L, &a->dis[d].c[c], &b->dis[d].c[c])) return false;
+        }
+    }
+    dst->nhyps = src->nhyps;
+    dst->goal.op = J_LE; dst->goal.nt = 0; fd_jint(&dst->goal.rhs, 0);
+    return true;
+}
+// a fresh variable `name` of vc, equal to variable `y` (y >= 0) or to the constant k (y < 0)
+static int32_t fd_fresh_eq(FdLoop *L, JVc *vc, const char *name, int32_t y, int64_t k) {
+    int32_t x = vc->nvars;
+    if (!fd_copy_str(L, name, &vc->vars[x])) return -1;
+    vc->nvars++;
+    JHyp *h = &vc->hyps[vc->nhyps++];
+    memset(h, 0, sizeof *h); h->origin = "slot"; h->cons.op = J_EQ;
+    h->cons.t = fd_bump(L, sizeof(JTerm) * 2);
+    if (!h->cons.t) return -1;
+    if (y >= 0) {                                    // x - y = 0, ascending: y < x always (x is the newest)
+        h->cons.t[0].var = y; fd_jint(&h->cons.t[0].coef, -1);
+        h->cons.t[1].var = x; fd_jint(&h->cons.t[1].coef, 1);
+        h->cons.nt = 2; fd_jint(&h->cons.rhs, 0);
+    } else {
+        h->cons.t[0].var = x; fd_jint(&h->cons.t[0].coef, 1);
+        h->cons.nt = 1; fd_jint(&h->cons.rhs, k);
+    }
+    return x;
+}
+// the parameter slots of member i: its integer parameters (JTERM_VALUE) and slices (JTERM_LEN), as
+// the generator's call paths name them
+static int32_t fd_cycle_slots(IrFunc *f, int32_t *key, uint8_t *tk, int32_t cap) {
+    int32_t n = 0;
+    for (IrParam *p = f->params; p; p = p->next) {
+        if (!p->value || !p->value->type) continue;
+        uint8_t t = p->value->type->kind == IRT_INT ? JTERM_VALUE : p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
+        if (t > JTERM_LEN) continue;
+        if (n == cap) return -1;
+        key[n] = p->value->id; tk[n] = t; n++;
+    }
+    return n;
+}
+#define FD_CYC_MAXM 64                               // the finder's own room, not a rule of the language
+#define FD_CYC_MAXS 192
+static bool fd_rank_cycle(JFinder *F, IrFunc **mem, int32_t m, const JClaim *cl, int32_t ncl, JRank *out) {
+    if (m < 2 || m > FD_CYC_MAXM || !F->gen->call_paths) return false;
+    FdLoop Lb, *L = &Lb; memset(L, 0, sizeof *L);
+    size_t cap = (size_t)1 << 23;
+    if (!(L->mem = malloc(cap))) { F->oom = true; return false; }
+    L->cur = L->mem; L->end = L->mem + cap;
+    bool ok = false;
+    char err[200];
+    // the slots: member i's parameters at sbase[i] .. sbase[i] + ns[i], its indicator at nslot + i
+    int32_t skey[FD_CYC_MAXS]; uint8_t stk[FD_CYC_MAXS]; int32_t sbase[FD_CYC_MAXM], ns[FD_CYC_MAXM], nslot = 0;
+    for (int32_t i = 0; i < m; i++) {
+        sbase[i] = nslot;
+        ns[i] = fd_cycle_slots(mem[i], skey + nslot, stk + nslot, FD_CYC_MAXS - nslot);
+        if (ns[i] < 0) goto out;
+        nslot += ns[i];
+    }
+    int32_t NP = nslot + m;
+    JPath *sp = fd_bump(L, sizeof(JPath) * FD_MAXEDGES);
+    FdCall *calls = fd_bump(L, sizeof(FdCall) * FD_MAXEDGES);
+    if (!sp || !calls) goto out;
+    int32_t nc = 0;
+    for (int32_t i = 0; i < m; i++) {
+        JPaths P;
+        if (!F->gen->call_paths(F->gen->ctx, mem[i], cl, ncl, &P, err, sizeof err) || P.refused) goto out;
+        for (int32_t k = 0; k < P.n; k++) {
+            const JPath *pp = &P.p[k];
+            int32_t j = 0;
+            while (j < m && mem[j] != pp->callee) j++;
+            if (j == m || nc == FD_MAXEDGES) goto out;          // a callee outside the list: not this component
+            JVc *vc = fd_bump(L, sizeof *vc);
+            JPathPair *pr = fd_bump(L, sizeof(JPathPair) * (size_t)NP);
+            if (!vc || !pr || !fd_copy_vc(L, pp->vc, 2 * NP, 2 * NP, vc)) goto out;
+            for (int32_t q = 0; q < NP; q++) {
+                char nm[32];
+                // pre: i's slot from i's entry, i's indicator 1, every other 0
+                int32_t y = -1; int64_t kk = 0;
+                if (q < nslot && q >= sbase[i] && q < sbase[i] + ns[i]) {
+                    for (int32_t z = 0; z < pp->nentry && y < 0; z++)
+                        if (pp->entry[z].key == skey[q] && pp->entry[z].tk == stk[q]) y = pp->entry[z].pre;
+                    if (y < 0) goto out;
+                } else if (q == nslot + i) kk = 1;
+                snprintf(nm, sizeof nm, "slot%d.pre", (int)q);
+                int32_t vpre = fd_fresh_eq(L, vc, nm, y, kk);
+                // post: j's slot from the argument, j's indicator 1, every other 0
+                y = -1; kk = 0;
+                if (q < nslot && q >= sbase[j] && q < sbase[j] + ns[j]) {
+                    for (int32_t z = 0; z < pp->npairs && y < 0; z++)
+                        if (pp->pairs[z].key == skey[q] && pp->pairs[z].tk == stk[q]) y = pp->pairs[z].post;
+                    if (y < 0) goto out;
+                } else if (q == nslot + j) kk = 1;
+                snprintf(nm, sizeof nm, "slot%d.post", (int)q);
+                int32_t vpost = fd_fresh_eq(L, vc, nm, y, kk);
+                if (vpre < 0 || vpost < 0) goto out;
+                pr[q].key = q; pr[q].tk = JTERM_VALUE; pr[q].pre = vpre; pr[q].post = vpost;
+            }
+            sp[nc].vc = vc; sp[nc].back = true; sp[nc].from = nc; sp[nc].pairs = pr; sp[nc].npairs = NP;
+            sp[nc].at = -1; sp[nc].callee = NULL; sp[nc].entry = NULL; sp[nc].nentry = 0;
+            calls[nc].mem = i; calls[nc].callee = j; calls[nc].blk = pp->from; calls[nc].idx = pp->at;
+            nc++;
+        }
+    }
+    if (nc == 0) goto out;
+    {   JPaths SP = { sp, nc, NULL };
+        if (!fd_loop_from(F, mem[0], JRANK_ENTRY, &SP, L, FD_MAXEDGES)) goto out; }
+    // the first round of the lexicographic search: rises on no call, >= 0 before each, falls on most
+    {   char *cur = (char *)F->work, *end = (char *)F->work + F->worksz / 4;
+        bool on[FD_MAXFLAT];
+        for (int32_t k = 0; k < L->npaths; k++) on[k] = true;
+        int32_t *dl = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)L->npaths);
+        JVc lp;
+        if (!dl || !rk_build(L->paths, L->npaths, on, L->pre, L->post, L->npairs, true, &cur, end, &lp, dl)) goto out;
+        JTerm *obj = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)L->npaths);
+        if (!obj) goto out;
+        int32_t nt = 0;
+        for (int32_t k = 0; k < L->npaths; k++) if (dl[k] >= 0) { obj[nt].var = dl[k]; fd_jint(&obj[nt].coef, 1); nt++; }
+        LMax X = lia_maximize(&lp, obj, nt, F->lim, cur, (size_t)((char *)F->work + F->worksz - cur));
+        if (X.k != LIA_MAX_BOUND || X.b.n == 0) goto out;
+        // a call is strict when every flattened path of it falls
+        bool strict[FD_MAXEDGES];
+        for (int32_t c = 0; c < nc; c++) strict[c] = true;
+        for (int32_t k = 0; k < L->npaths; k++) if (X.model.val[dl[k]].n == 0) strict[L->edge[k]] = false;
+        // the calls left unlowered must close no cycle among the members (a self-call is one)
+        int32_t indeg[FD_CYC_MAXM]; bool gone[FD_CYC_MAXM];
+        for (int32_t i = 0; i < m; i++) { indeg[i] = 0; gone[i] = false; }
+        for (int32_t c = 0; c < nc; c++) if (!strict[c]) indeg[calls[c].callee]++;
+        for (int32_t round = 0; round < m; round++) {       // Kahn: remove members no listed call enters
+            int32_t pick = -1;
+            for (int32_t i = 0; i < m && pick < 0; i++) if (!gone[i] && indeg[i] == 0) pick = i;
+            if (pick < 0) break;
+            gone[pick] = true;
+            for (int32_t c = 0; c < nc; c++) if (!strict[c] && calls[c].mem == pick) indeg[calls[c].callee]--;
+        }
+        for (int32_t i = 0; i < m; i++) if (!gone[i]) goto out;      // the listed calls close a cycle
+        // per member: its slots' coefficients, its indicator's plus the constant, its listed calls
+        __int128 c0g;
+        if (!fd_i128(&X.model.val[L->npairs], &c0g)) goto out;
+        for (int32_t i = 0; i < m; i++) {
+            JRank *r = &out[i]; memset(r, 0, sizeof *r);
+            r->blk = JRANK_ENTRY; r->fn = mem[i]; r->ncomp = 1;
+            __int128 ci;
+            if (!fd_i128(&X.model.val[nslot + i], &ci)) goto out;
+            r->c0[0] = ci + c0g;
+            for (int32_t q = sbase[i]; q < sbase[i] + ns[i]; q++) {
+                __int128 cq;
+                if (!fd_i128(&X.model.val[q], &cq)) goto out;
+                if (cq == 0) continue;
+                if (r->nt == JRANK_MAXT) goto out;
+                r->key[r->nt] = skey[q]; r->tk[r->nt] = stk[q]; r->coef[0][r->nt] = cq; r->nt++;
+            }
+            for (int32_t c = 0; c < nc; c++) if (!strict[c] && calls[c].mem == i) {
+                if (r->nle == JRANK_MAXL) goto out;
+                r->le_blk[r->nle] = calls[c].blk; r->le_idx[r->nle] = calls[c].idx; r->nle++;
+            }
+        }
+        ok = true;
+    }
+out:
+    free(L->mem);
+    return ok;
+}
+
 static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     IrFunc *mod = F->mod;
     char err[200];
@@ -898,7 +1123,16 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
         for (IrBlock *b = f->blocks; b; b = b->next) {
             if (!b->is_loop_header) continue;
             FdLoop L; JRank r;
-            bool got = fd_loop_build(F, f, b->id, as, nv, &L) && fd_rank(F, f, b->id, &L, &r);
+            bool built = fd_loop_build(F, f, b->id, as, nv, &L);
+            bool got = built && fd_rank(F, f, b->id, &L, &r);
+            if (!built && L.dead && L.nedges > 0 && L.nedges <= JRANK_MAXE) {
+                // no back edge can be taken (a constant guard, c2): the constant measure 0, which
+                // falls on every edge only because none runs; the judge owes it as any other
+                memset(&r, 0, sizeof r);
+                r.blk = b->id; r.fn = f; r.ncomp = 1; r.nedge = L.nedges;
+                for (int32_t e = 0; e < L.nedges; e++) { r.from[e] = L.edges[e]; r.fall[e] = 0; }
+                got = true;
+            }
             free(L.mem);
             if (!got) continue;
             JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
@@ -914,6 +1148,38 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
         JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
         if (!x) goto oom;
         F->rk = x; F->rk[F->nrk++] = r;
+    }
+    // ...and a cycle of several functions, jointly (fd_rank_cycle), over the module's components
+    {   IrCallGraph G; memset(&G, 0, sizeof G);
+        if (ir_cg_build(&G, mod)) {
+            bool *done = calloc((size_t)G.n + 1, 1);
+            if (!done) { ir_cg_free(&G); goto oom; }
+            for (int32_t k = 0; k < G.n; k++) {
+                if (done[k]) continue;
+                IrFunc *memb[FD_CYC_MAXM];
+                int32_t m = ir_cg_members(&G, k, memb, FD_CYC_MAXM);
+                for (int32_t q = 0; q < G.n; q++) if (G.comp[q] == G.comp[k]) done[q] = true;
+                if (m < 2 || m > FD_CYC_MAXM) continue;
+                bool body = true;
+                for (int32_t i = 0; i < m; i++) body = body && !memb[i]->is_extern && memb[i]->entry;
+                if (!body) continue;
+                JRank rr[FD_CYC_MAXM];
+                if (!fd_rank_cycle(F, memb, m, as, nv, rr)) continue;
+                int32_t w = 0;                               // a member's own entry rank, if any, gives way
+                for (int32_t r = 0; r < F->nrk; r++) {
+                    bool mine = false;
+                    for (int32_t i = 0; i < m; i++) mine |= F->rk[r].blk == JRANK_ENTRY && F->rk[r].fn == memb[i];
+                    if (!mine) F->rk[w++] = F->rk[r];
+                }
+                F->nrk = w;
+                JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + m));
+                if (!x) { free(done); ir_cg_free(&G); goto oom; }
+                F->rk = x;
+                for (int32_t i = 0; i < m; i++) F->rk[F->nrk++] = rr[i];
+            }
+            free(done);
+        }
+        ir_cg_free(&G);
     }
     F->kept += nv;
     *ncl = nv;
