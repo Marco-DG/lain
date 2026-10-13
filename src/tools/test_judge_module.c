@@ -542,6 +542,29 @@ int main(void) {
               "the dead branch's 5 / 0 is never reached:\n%s", recs);
     }
 
+    // a constant TABLE read by a variable index: `T = [4, 5, 6]; 100 / (T[i] - 3)` proved; with a 3
+    for (int c = 0; c < 2; c++) {
+        IrType *ti = ir_type_int(&A, 32, true), *tu = ir_type_int(&A, 64, false);
+        IrType *TA = ir_type_new(&A, IRT_ARRAY); TA->elem = ti; TA->array_len = 3;
+        IrData *td = arena_push_aligned(&A, IrData); memset(td, 0, sizeof *td);
+        td->type = TA; td->n = 3; td->vals = arena_push_many_aligned(&A, int64_t, 3);
+        td->vals[0] = 4; td->vals[1] = c ? 3 : 5; td->vals[2] = 6;
+        IrFunc *tf = ir_func_new(&A, nm("tab3"), ti, IR_FUNC_PURE);
+        IrValue *ti_ = ir_add_param(tf, tu, nm("i"));
+        IrBlock *t0 = tf->entry;
+        ir_assume(tf, t0, ir_icmp(tf, t0, IR_CMP_ULT, ti_, ir_const_int(tf, t0, 3, tu)));
+        IrValue *tb = ir_alloca_array(tf, t0, TA);
+        { IrInstr *l = t0->instrs; while (l->next) l = l->next; l->data = td; }
+        IrValue *tv = ir_load(tf, t0, ir_elem_ptr(tf, t0, tb, ti_, ti), ti);
+        ir_set_ret(t0, ir_binop(tf, t0, IR_SDIV, ir_const_int(tf, t0, 100, ti), ir_binop(tf, t0, IR_SUB, tv, ir_const_int(tf, t0, 3, ti), ti), ti));
+        ir_finalize_cfg(tf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(tf, &s, true, sizeof region, err), "judges: %s", err);
+        const char *dz = strstr(recs, " divzero"), *ln = dz;
+        while (ln && ln > recs && ln[-1] != '\n') ln--;
+        CHECK(ln && !strncmp(ln, c ? "not-implied " : "proved ", c ? 12 : 7), "table, case %d:\n%s", c, recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

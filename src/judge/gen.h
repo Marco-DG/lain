@@ -1298,6 +1298,50 @@ static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
         jb_cons(B, t, 3, J_EQ, -(klo + k) * M, &h->dis[k].c[0]);
     }
 }
+// A load from a module constant TABLE (an ALLOCA with data: the static read-only object whose
+// only writer is its initialiser, ir.h's seal) by a checked index: at a constant index k, the
+// element's value; at any other, where the table has at most JELEM_MAXN elements, the one the
+// index names (`or { i = k , v = vals[k] | ... }`, R7), else between its least and greatest.
+// An element is read by its type (a u64 above 2^63 is stored as a negative int64).
+static __int128 jg_table_val(const IrData *t, int32_t k) {
+    const IrType *e = t->type ? t->type->elem : NULL;
+    return e && e->kind == IRT_INT && !e->is_signed && e->bits == 64 ? (__int128)(uint64_t)t->vals[k] : (__int128)t->vals[k];
+}
+static void jb_table_load(JB *B, int32_t x, const IrInstr *ld, int32_t id) {
+    JG *g = B->g;
+    IrValue *a = ld->n_operands ? ld->operands[0] : NULL;
+    IrInstr *ep = a && a->id >= 0 && a->id < g->nv ? g->def[a->id] : NULL;
+    if (!ep || ep->op != IR_ELEM_PTR || ep->n_operands < 2 || ep->unchecked || !ep->operands[0]) return;
+    IrValue *bv = ep->operands[0];
+    IrInstr *ad = bv->id >= 0 && bv->id < g->nv ? g->def[bv->id] : NULL;
+    const IrData *t = ad && ad->op == IR_ALLOCA ? ad->data : NULL;
+    if (!t || t->n < 1 || !t->vals || !t->type || !t->type->elem || t->type->elem->kind != IRT_INT ||
+        !ld->result || !ld->result->type || ld->result->type->kind != IRT_INT) return;
+    __int128 k;
+    if (jg_const_of(g, ep->operands[1], &k)) {
+        if (k >= 0 && k < t->n) jb_defk(B, x, NULL, 0, jg_table_val(t, (int32_t)k), jb_str(B, "def %%v%lld table", id, 0, 0));
+        return;
+    }
+    if (t->n <= JELEM_MAXN && B->jS < 0) {
+        int32_t xi = jb_val(B, ep->operands[1]);
+        JHyp *h = jb_hyp(B, jb_str(B, "def %%v%lld table", id, 0, 0));
+        if (!h) return;
+        h->disj = true; h->ndis = t->n;
+        if (!(h->dis = JG_NEW(g, JConj, t->n))) { B->fail = true; return; }
+        for (int32_t q = 0; q < t->n && !B->fail; q++) {
+            JConj *cj = &h->dis[q];
+            cj->nc = 2;
+            if (!(cj->c = JG_NEW(g, JCons, 2))) { B->fail = true; return; }
+            JLT u[1];
+            u[0].var = xi; u[0].c = 1; jb_cons(B, u, 1, J_EQ, q, &cj->c[0]);
+            u[0].var = x; u[0].c = 1; jb_cons(B, u, 1, J_EQ, jg_table_val(t, q), &cj->c[1]);
+        }
+        return;
+    }
+    JRange r; r.lo = r.hi = jg_table_val(t, 0); r.has_ne = false; r.ne = 0;
+    for (int32_t q = 1; q < t->n; q++) { __int128 v = jg_table_val(t, q); if (v < r.lo) r.lo = v; if (v > r.hi) r.hi = v; }
+    jb_range(B, x, &r, jb_str(B, "def %%v%lld table", id, 0, 0));
+}
 // A value WRAPPED into an integer type of w <= 64 bits, as interp.h's it_wrap makes it (a `%` cast,
 // and an unchecked cast or landing that does not fit, I.60, I.185): x = v - k*2^w with x within
 // the type's width, k a fresh integer (its recipe (v - x) / 2^w for a run-time check). One case,
@@ -1383,7 +1427,8 @@ static void jb_state(JB *B, int32_t x) {
             break;
         case IR_LOAD: {                                        // a[i]: the element the index names (R7)
             JELoad *el = g->eload ? g->eload[id] : NULL;
-            if (!el || B->jS >= 0) break;                      // a disjunct holds no disjunction
+            if (!el) { jb_table_load(B, x, d, id); break; }
+            if (B->jS >= 0) break;                             // a disjunct holds no disjunction
             int32_t xi = jb_val(B, el->ix);
             JHyp *h = jb_hyp(B, jb_str(B, "def %%v%lld element", id, 0, 0));
             if (!h) break;

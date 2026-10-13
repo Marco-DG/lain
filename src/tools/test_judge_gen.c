@@ -2530,6 +2530,58 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  bitwise and shift hulls, and static ranges through every hulled operation\n");
+    // 52. a module constant TABLE (an ALLOCA with data, read-only): (0) T[1] of [44, 4, 255] (u8)
+    // is 4; (1) T[i] is one of the three, by i; (2) T[i] of 20 elements is between the least and the
+    // greatest; (3) T[0] of a u64 table holding 2^64 - 1 (stored as -1) is 18446744073709551615;
+    // (4) T[i] unchecked: nothing; (5) T[5], past its three: nothing; (6) T[i] on one path into a
+    // join, read past it: local to that path, no disjunction stated alone
+    for (int c = 0; c < 7; c++) {
+        int n = c == 2 ? 20 : 3;
+        IrType *E = c == 3 ? u64t : u8t, *AT = ir_type_new(&A, IRT_ARRAY); AT->elem = E; AT->array_len = n;
+        IrData *td = arena_push_aligned(&A, IrData); memset(td, 0, sizeof *td);
+        td->type = AT; td->n = n; td->vals = arena_push_many_aligned(&A, int64_t, n);
+        for (int k = 0; k < n; k++) td->vals[k] = c == 3 ? -1 : c == 2 ? 10 + k : (k == 0 ? 44 : k == 1 ? 4 : 255);
+        IrFunc *f = ir_func_new(&A, nm("t52"), E, IR_FUNC_PURE);
+        IrValue *ix = ir_add_param(f, u64t, nm("i"));
+        IrBlock *b0 = f->entry;
+        IrValue *tb = ir_alloca_array(f, b0, AT); g_last_instr(b0)->data = td;
+        IrBlock *at = b0, *b3 = NULL;
+        IrValue *cell = NULL;
+        if (c == 6) {
+            IrBlock *b1 = ir_new_block(f), *b2 = ir_new_block(f); b3 = ir_new_block(f);
+            cell = ir_alloca(f, b0, E);
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, ix, ir_const_int(f, b0, 2, u64t)), b1, b2);
+            ir_store(f, b2, cell, ir_const_int(f, b2, 7, E)); ir_set_br(b2, b3);
+            at = b1;
+        }
+        IrValue *idx = c == 0 ? ir_const_int(f, at, 1, u64t) : c == 3 ? ir_const_int(f, at, 0, u64t) : c == 5 ? ir_const_int(f, at, 5, u64t) : ix;
+        IrValue *ep = ir_elem_ptr(f, at, tb, idx, E);
+        if (c == 4) g_last_instr(at)->unchecked = true;
+        IrValue *v = ir_load(f, at, ep, E);
+        if (c == 6) {
+            ir_store(f, at, cell, v); ir_set_br(at, b3);
+            ir_set_ret(b3, ir_binop(f, b3, IR_UDIV, ir_const_int(f, b3, 100, E), ir_load(f, b3, cell, E), E));
+        } else ir_set_ret(b0, ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, E), v, E));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), want[96];
+        const char *vz = t ? vc_of(t, " divzero 0") : "";
+        switch (c) {
+            case 0: case 3: snprintf(want, sizeof want, "def %%v%d table : 1*%%v%d = %s", v->id, v->id, c ? "18446744073709551615" : "4");
+                    CHECK(strstr(vz, want), "case %d: the element's value:\n%s", c, vz); break;
+            case 1: snprintf(want, sizeof want, "def %%v%d table : or { 1*%%v%d = 0 , 1*%%v%d = 44 | 1*%%v%d = 1 , 1*%%v%d = 4 | 1*%%v%d = 2 , 1*%%v%d = 255 }",
+                             v->id, ix->id, v->id, ix->id, v->id, ix->id, v->id);
+                    CHECK(strstr(vz, want), "case 1: the element the index names:\n%s", vz); break;
+            case 2: snprintf(want, sizeof want, "def %%v%d table : 1*%%v%d <= 29", v->id, v->id);
+                    CHECK(strstr(vz, want) && strstr(vz, "table : -1*") && !strstr(vz, "or {"), "case 2: between 10 and 29:\n%s", vz); break;
+            case 6: snprintf(want, sizeof want, "def %%v%d table : or", v->id);
+                    CHECK(*vz && strstr(vz, "join bb") && !strstr(vz, want), "case 6: no disjunction alone:\n%s", vz); break;
+            default: CHECK(*vz && !strstr(vz, "table"), "case %d: nothing:\n%s", c, vz); break;
+        }
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a constant table: its element at a constant index, one of them at any other\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
