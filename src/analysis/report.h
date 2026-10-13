@@ -290,7 +290,20 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                               : c->had_measure
                               ? "the `decreasing` measure is not provably well-founded here"
                               : "this recursion is not provably terminating");
-                    if (c->mutual)
+                    // a limit of the SEARCH is not a missing measure: say which (Documentation, spec 12)
+                    if (c->mutual && c->cycle_cap == 1)
+                        fprintf(stderr, "       the cycle has %d functions, and this implementation's search ranks cycles "
+                                        "of at most %d: a limit of the search, not of the program\n", c->cycle_n, CERT_SCC_MAX);
+                    else if (c->mutual && c->cycle_cap == 2)
+                        fprintf(stderr, "       the cycle has more than %d calls between its functions, and this "
+                                        "implementation's search ranks no larger one: a limit of the search, not of the program\n", VRA_CYC_CALLS);
+                    else if (c->mutual && c->cycle_cap == 3)
+                        fprintf(stderr, "       a function on the cycle has more than 64 parameters, and this implementation's "
+                                        "search ranks no such cycle: a limit of the search, not of the program\n");
+                    else if (c->mutual && c->cycle_cap == 4)
+                        fprintf(stderr, "       the search for a ranking over the cycle ran out of its budget: a limit of the "
+                                        "search, not of the program\n");
+                    else if (c->mutual)
                         fprintf(stderr,
                             "       the engine ranks a cycle by one parameter per function: no call "
                             "in the cycle may make it grow,\n"

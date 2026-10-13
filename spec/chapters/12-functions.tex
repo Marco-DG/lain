@@ -144,8 +144,8 @@ func g(x i32) i32 {
 \end{constraint}
 
 \begin{note}
-  The search is bounded and fails closed: a component of more than 16 functions, or with more
-  than 256 calls among them, is refused.  One parameter per function is the whole measure, so a
+  An implementation may refuse a component beyond the capacity of its proof search, with a
+  diagnostic saying so.  One parameter per function is the whole measure, so a
   cycle that ends only by a sum of two parameters, or by a lexicographic pair, is refused; such a
   function states \lain{effects diverge}.  A self-recursive function on no cycle with another
   keeps the rule of \S\,\ref{sec:fn.termination}.  A call through a function pointer is, for

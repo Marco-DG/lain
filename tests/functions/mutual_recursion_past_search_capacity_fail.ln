@@ -1,0 +1,78 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: the cycle has 17 functions, and this implementation's search ranks cycles of at most 16
+// A cycle of 17 functions where every call falls (n - 1 on a u8 guarded by n == 0) HAS a measure,
+// n at every position. The range analysis's cycle search ranks at most 16 functions (CERT_SCC_MAX)
+// and refuses a larger cycle; the diagnostic must say that this is a limit of the search, not
+// that no measure exists (spec 12; Documentation, 2026-10-13).
+func f0(n u8) u8 {
+    if n == 0 { return 0 }
+    return f1(n - 1)
+}
+func f1(n u8) u8 {
+    if n == 0 { return 0 }
+    return f2(n - 1)
+}
+func f2(n u8) u8 {
+    if n == 0 { return 0 }
+    return f3(n - 1)
+}
+func f3(n u8) u8 {
+    if n == 0 { return 0 }
+    return f4(n - 1)
+}
+func f4(n u8) u8 {
+    if n == 0 { return 0 }
+    return f5(n - 1)
+}
+func f5(n u8) u8 {
+    if n == 0 { return 0 }
+    return f6(n - 1)
+}
+func f6(n u8) u8 {
+    if n == 0 { return 0 }
+    return f7(n - 1)
+}
+func f7(n u8) u8 {
+    if n == 0 { return 0 }
+    return f8(n - 1)
+}
+func f8(n u8) u8 {
+    if n == 0 { return 0 }
+    return f9(n - 1)
+}
+func f9(n u8) u8 {
+    if n == 0 { return 0 }
+    return f10(n - 1)
+}
+func f10(n u8) u8 {
+    if n == 0 { return 0 }
+    return f11(n - 1)
+}
+func f11(n u8) u8 {
+    if n == 0 { return 0 }
+    return f12(n - 1)
+}
+func f12(n u8) u8 {
+    if n == 0 { return 0 }
+    return f13(n - 1)
+}
+func f13(n u8) u8 {
+    if n == 0 { return 0 }
+    return f14(n - 1)
+}
+func f14(n u8) u8 {
+    if n == 0 { return 0 }
+    return f15(n - 1)
+}
+func f15(n u8) u8 {
+    if n == 0 { return 0 }
+    return f16(n - 1)
+}
+func f16(n u8) u8 {
+    if n == 0 { return 0 }
+    return f0(n - 1)
+}
+func main() i32 {
+    a = f0(5)
+    return 0
+}

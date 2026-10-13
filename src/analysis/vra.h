@@ -139,6 +139,8 @@ typedef struct {
     bool     recursion;
     bool     mutual;         // the recursion is a CYCLE through another function, not a self-call
     bool     via_pointer;    // ... or back to its own function through a function pointer (I.136)
+    uint8_t  cycle_cap;      // the cycle rule gave up at a limit of its SEARCH, not for want of a
+    int      cycle_n;        // measure: 1 functions (cycle_n of them), 2 calls, 3 parameters, 4 budget
     // Did the source write a `decreasing` clause? Annex B makes the CODE depend on it — E011
     // for a recursion with no inferable measure, E082 for one whose measure is present and
     // fails — so the engine has to carry the distinction to be normatively right.
@@ -5532,6 +5534,9 @@ static IrInstr *vra_self_call_site(IrFunc *f) {
 static bool vra_recursion_terminates(Vra *V, IrFunc *f);   // fwd — defined after the domain helpers
 static int  vra_cycle_members(IrFunc *f, IrFunc *mod, IrFunc **mem, int cap, IrInstr **site, bool *via_pointer);  // fwd
 static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMeasure *want);                       // fwd
+// Why its last call gave up, when it was a limit of the search (VraCheck.cycle_cap), else 0: a
+// diagnostic must say which, since "no ranking can be inferred" is false of a cycle that has one.
+static int vra_cycle_cap_last;
 
 // The function's entry state: each integer parameter's type interval, intersected with any
 // call-site binding. Factored out because the fixpoint now runs TWICE (see vpass) and pass 1
@@ -6449,6 +6454,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 }
             } else
             c.ok = m <= CERT_SCC_MAX && vra_cycle_terminates(vra_mod, mem, m, NULL);   // a larger cycle fails closed
+            if (!c.ok) { c.cycle_cap = m > CERT_SCC_MAX ? 1 : (uint8_t)vra_cycle_cap_last; c.cycle_n = m; }
             if (V->certifying && c.ok) {
                 CertMeasure *M = CERT_PUSH(V->cert->meas, V->cert->nmeas, V->cert->cmeas);
                 M->k = CERT_M_MUTUAL; strcpy(M->rule, "mutual");
@@ -7167,7 +7173,8 @@ static bool vra_cyc_search(VraCyc *C, int i) {
 // On success the positions are left in vra_last_scc_pos for the certificate. A component of one
 // function reaches here only through a function pointer (I.136); its direct self-calls are edges too.
 static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMeasure *want) {
-    if (!mem || m < 1 || m > CERT_SCC_MAX) return false;
+    vra_cycle_cap_last = 0;
+    if (!mem || m < 1 || m > CERT_SCC_MAX) { if (m > CERT_SCC_MAX) vra_cycle_cap_last = 1; return false; }
     if (want && want->nmem != m) return false;
     VraCyc *C = calloc(1, sizeof *C);
     if (!C) return false;
@@ -7175,6 +7182,7 @@ static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMea
     bool ok = false, guard_saved = vra_in_mutual_check;
     for (int i = 0; i < m; i++) {
         for (IrParam *p = mem[i]->params; p; p = p->next) C->np[i]++;
+        if (C->np[i] > 64) vra_cycle_cap_last = 3;
         if (C->np[i] == 0 || C->np[i] > 64) goto out;
         if (want && (!mem[i]->name || strlen(want->mem[i]) != (size_t)mem[i]->name->length ||
                      memcmp(want->mem[i], mem[i]->name->name, (size_t)mem[i]->name->length) ||
@@ -7190,7 +7198,7 @@ static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMea
               int j = 0;
               while (j < m && gi[j] != vra_cg.to[e]) j++;
               if (j == m) continue;                     // a call out of the component
-              if (C->ne >= VRA_CYC_CALLS) goto out;
+              if (C->ne >= VRA_CYC_CALLS) { vra_cycle_cap_last = 2; goto out; }
               IrInstr *ins = vra_cg.ecall[e];
               C->efrom[C->ne] = i; C->eto[C->ne] = j; C->ecall[C->ne] = ins;
               C->eshift[C->ne] = ins->aux.callee ? 0 : 1; C->ne++;
@@ -7206,7 +7214,10 @@ static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMea
         ok = true;
         for (int e = 0; e < C->ne && ok; e++) ok = vra_cyc_edge(C, e) != 1;
         ok = ok && vra_cyc_strict_acyclic(C);
-    } else ok = vra_cyc_search(C, 0);
+    } else {
+        ok = vra_cyc_search(C, 0);
+        if (!ok && C->budget < 0) vra_cycle_cap_last = 4;
+    }
     if (ok) { vra_last_scc_n = m; for (int i = 0; i < m; i++) vra_last_scc_pos[i] = C->pos[i]; }
 out:
     for (int i = 0; i < m; i++) if (C->V[i]) vra_free(C->V[i]);
