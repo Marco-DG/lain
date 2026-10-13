@@ -454,6 +454,31 @@ int main(void) {
               nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] == 0, "y *? x's product: its narrowing in i64 proved:\n%s", recs);
     }
 
+    // a LOAD by a variable index from a table of cells: `t = [31, 28, 31, 30]; 100 / (t[m] - 27)`
+    // proves its divisor nonzero (the value is one of the four); with 27 in the table it is not
+    for (int c = 0; c < 2; c++) {
+        IrType *ti32 = ir_type_int(&A, 32, true), *tu64 = ir_type_int(&A, 64, false);
+        IrType *tarr = ir_type_new(&A, IRT_ARRAY); tarr->elem = ti32; tarr->array_len = 4;
+        IrFunc *tf = ir_func_new(&A, nm("tab"), ti32, IR_FUNC_PURE);
+        IrValue *tm = ir_add_param(tf, tu64, nm("m"));
+        IrBlock *t0 = tf->entry;
+        ir_assume(tf, t0, ir_icmp(tf, t0, IR_CMP_ULT, tm, ir_const_int(tf, t0, 4, tu64)));
+        IrValue *ta = ir_alloca_array(tf, t0, tarr);
+        int vals[4] = { 31, c ? 27 : 28, 31, 30 };
+        for (int k = 0; k < 4; k++)
+            ir_store(tf, t0, ir_elem_ptr(tf, t0, ta, ir_const_int(tf, t0, k, tu64), ti32), ir_const_int(tf, t0, vals[k], ti32));
+        IrValue *tv = ir_load(tf, t0, ir_elem_ptr(tf, t0, ta, tm, ti32), ti32);
+        IrValue *td = ir_binop(tf, t0, IR_SUB, tv, ir_const_int(tf, t0, 27, ti32), ti32);
+        ir_set_ret(t0, ir_binop(tf, t0, IR_SDIV, ir_const_int(tf, t0, 100, ti32), td, ti32));
+        ir_finalize_cfg(tf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(tf, &s, true, sizeof region, err), "judges: %s", err);
+        const char *dz = strstr(recs, " divzero"), *ln = dz;    // its record line's first word
+        while (ln && ln > recs && ln[-1] != '\n') ln--;
+        CHECK(ln && !strncmp(ln, c ? "not-implied " : "proved ", c ? 12 : 7),
+              "table read, case %d: the divisor %s:\n%s", c, c ? "may be 0" : "is nonzero", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

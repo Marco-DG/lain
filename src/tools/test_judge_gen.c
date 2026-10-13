@@ -2192,6 +2192,62 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a parameter's refinement: the prologue's assumes narrow its static range\n");
+    // 46. a LOAD a[i] by a variable index from an array whose every element is a cell: the value
+    // is the element the index names, `or { i = 0 , v = a[0] | ... }` over its length: (0) a local
+    // i32[4] filled by constant stores; (1) a[3] never stored at a constant index: no cell, so
+    // nothing; (2) the index unchecked: nothing; (3) an i32[17], past JELEM_MAXN: nothing; (4) the
+    // load on one path into a join, read past it: local to that path, nothing stated alone; (5)
+    // `a[j] = 9` before it: the disjunction names the elements' fresh versions
+    {   IrType *a17 = ir_type_new(&A, IRT_ARRAY); a17->elem = i32t; a17->array_len = 17;
+        for (int c = 0; c < 6; c++) {
+            IrFunc *f = ir_func_new(&A, nm("v46"), i32t, IR_FUNC_PURE);
+            IrValue *ix = ir_add_param(f, u64t, nm("i")), *jx = ir_add_param(f, u64t, nm("j"));
+            IrBlock *b0 = f->entry, *b1 = NULL, *b2 = NULL, *b3 = NULL, *at = b0;
+            IrType *AT = c == 3 ? a17 : a4;
+            int len = c == 3 ? 17 : 4;
+            IrValue *root = ir_alloca_array(f, b0, AT);
+            for (int k = 0; k < len; k++)
+                if (!(c == 1 && k == 3)) ir_store(f, b0, ir_elem_ptr(f, b0, root, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 30 + k, i32t));
+            if (c == 5) ir_store(f, b0, ir_elem_ptr(f, b0, root, jx, i32t), ir_const_int(f, b0, 9, i32t));
+            if (c == 4) {
+                b1 = ir_new_block(f); b2 = ir_new_block(f); b3 = ir_new_block(f);
+                ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, jx, ir_const_int(f, b0, 5, u64t)), b1, b2);
+                at = b1;
+            }
+            IrValue *ep = ir_elem_ptr(f, at, root, ix, i32t);
+            if (c == 2) g_last_instr(at)->unchecked = true;
+            IrValue *v = ir_load(f, at, ep, i32t);
+            IrValue *q;
+            if (c == 4) {
+                IrValue *cell = ir_alloca(f, b0, i32t);
+                ir_store(f, b1, cell, v); ir_set_br(b1, b3);
+                ir_store(f, b2, cell, ir_const_int(f, b2, 40, i32t)); ir_set_br(b2, b3);
+                q = ir_binop(f, b3, IR_SDIV, ir_const_int(f, b3, 100, i32t), ir_load(f, b3, cell, i32t), i32t);
+                ir_set_ret(b3, q);
+            } else {
+                q = ir_binop(f, at, IR_SDIV, ir_const_int(f, at, 100, i32t), v, i32t);
+                ir_set_ret(at, q);
+            }
+            ir_finalize_cfg(f);
+            gen_mod = f;
+            char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), hn[48];
+            snprintf(hn, sizeof hn, "def %%v%d element : or {", v->id);
+            const char *vz = t ? vc_of(t, " divzero 0") : "", *h = strstr(vz, hn);
+            if (c == 0 || c == 5) {
+                bool ok = h != NULL;
+                for (int k = 0; ok && k < 4; k++) {                  // disjunct k: i = k and v = a[k]'s version
+                    char want[96];
+                    snprintf(want, sizeof want, "1*%%v%d = %d , 1*%%v%d + -1*%%s%d[%d]@%s", ix->id, k, v->id, root->id, k, c == 5 ? "havoc" : "bb");
+                    ok = strstr(h, want) != NULL;
+                    if (!ok) printf("  missing disjunct %s\n", want);
+                }
+                CHECK(ok, "case %d: the element the index names:\n%s", c, vz);
+            } else CHECK(t && !strstr(t, " element : "), "case %d: no element fact:\n%s", c, t ? t : "");
+            free(t);
+        }
+        gen_mod = NULL;
+    }
+    printf("  a variable-index load: the element the index names, as a disjunction over the cells\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

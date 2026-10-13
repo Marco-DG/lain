@@ -183,6 +183,7 @@ typedef struct {
     int32_t *instate;              // by block id * ncells: the version at the block's entry
     int32_t *outstate;             // by block id * ncells: the version at the block's exit
     int32_t *loadver;              // by value id: the version a LOAD reads, or -1
+    struct JELoad **eload;         // by value id: a LOAD through a variable index into cells, or NULL
     uint8_t *inloop;               // by header id * nb: block in the header's natural loop
     uint8_t *writes;               // by header id * ncells: the loop stores the cell
     uint32_t hash;
@@ -310,6 +311,32 @@ static bool jg_structure(JG *g) {
     return true;
 }
 
+// A LOAD through a CHECKED variable index into a fixed array of at most JELEM_MAXN elements, each
+// a cell: the version each element has at the load, and the index. The value read is one of them,
+// the one the index names (jb_state's IR_LOAD row): the load runs only where its bounds hold.
+enum { JELEM_MAXN = 16 };
+typedef struct JELoad { int32_t n; int32_t ver[JELEM_MAXN]; IrValue *ix; } JELoad;
+static const IrType *jg_pointee(JG *g, int32_t id);
+static JELoad *jg_elem_load(JG *g, IrValue *a, const int32_t *o) {
+    IrInstr *d = g->def[a->id];
+    if (!d || d->op != IR_ELEM_PTR || d->n_operands < 2 || !d->operands[0] || d->unchecked || g->iunsafe[a->id]) return NULL;
+    IrValue *base = d->operands[0];
+    if (base->id < 0 || base->id >= g->nv || g->aroot[base->id] < 0) return NULL;
+    const IrType *t = jg_pointee(g, base->id);
+    if (!t || t->kind != IRT_ARRAY || t->array_len < 1 || t->array_len > JELEM_MAXN) return NULL;
+    JELoad *el = JG_NEW(g, JELoad, 1);
+    if (!el) return NULL;
+    el->n = (int32_t)t->array_len; el->ix = d->operands[1];
+    for (int32_t k = 0; k < el->n; k++) {
+        char pth[256]; snprintf(pth, sizeof pth, "%s[%lld]", g->apath[base->id], (long long)k);
+        int32_t c = -1;
+        for (int32_t c2 = 0; c2 < g->ncells && c < 0; c2++)
+            if (g->croot[c2] == g->aroot[base->id] && !strcmp(g->cpath[c2], pth)) c = c2;
+        if (c < 0 || !jg_is_int(g->cty[c])) return NULL;      // an element that is no cell: nothing stated
+        el->ver[k] = o[c];
+    }
+    return el;
+}
 static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, IrValue *stored, bool unchecked) {
     if (g->nver == g->cver) {
         JVer *nv = JG_NEW(g, JVer, g->cver * 2);
@@ -667,6 +694,15 @@ static bool jg_cells(JG *g) {
             if (i->op == IR_LOAD && i->result && a && a->id >= 0 && a->id < g->nv && g->cell[a->id] >= 0) {
                 g->loadver[i->result->id] = o[g->cell[a->id]];
                 continue;
+            }
+            if (i->op == IR_LOAD && i->result && a && a->id >= 0 && a->id < g->nv && g->iroot[a->id] >= 0 && jg_is_int(i->result->type)) {
+                JELoad *el = jg_elem_load(g, a, o);
+                if (el && !g->eload) {
+                    if (!(g->eload = JG_NEW(g, JELoad *, g->nv))) return jg_fail(g, "out of memory");
+                    for (int32_t v = 0; v < g->nv; v++) g->eload[v] = NULL;
+                }
+                if (el) g->eload[i->result->id] = el;
+                continue;                                      // a load changes nothing
             }
             jg_changes(g, i);
             for (int32_t e = 0; e < g->neff; e++) {
@@ -1188,6 +1224,24 @@ static void jb_state(JB *B, int32_t x) {
         case IR_CONST:
             jb_defk(B, x, NULL, 0, jg_const(d), jb_str(B, "def %%v%lld const", id, 0, 0));
             break;
+        case IR_LOAD: {                                        // a[i]: the element the index names (R7)
+            JELoad *el = g->eload ? g->eload[id] : NULL;
+            if (!el || B->jS >= 0) break;                      // a disjunct holds no disjunction
+            int32_t xi = jb_val(B, el->ix);
+            JHyp *h = jb_hyp(B, jb_str(B, "def %%v%lld element", id, 0, 0));
+            if (!h) break;
+            h->disj = true; h->ndis = el->n;
+            if (!(h->dis = JG_NEW(g, JConj, el->n))) { B->fail = true; break; }
+            for (int32_t k = 0; k < el->n && !B->fail; k++) {
+                JConj *cj = &h->dis[k];
+                cj->nc = 2;
+                if (!(cj->c = JG_NEW(g, JCons, 2))) { B->fail = true; break; }
+                JLT u[2];
+                u[0].var = xi; u[0].c = 1; jb_cons(B, u, 1, J_EQ, k, &cj->c[0]);
+                u[0].var = x; u[0].c = 1; u[1].var = jb_ver(B, el->ver[k]); u[1].c = -1; jb_cons(B, u, 2, J_EQ, 0, &cj->c[1]);
+            }
+            break;
+        }
         case IR_ADD: case IR_SUB:
             if (d->n_operands < 2 || !jg_is_int(d->operands[0]->type) || !jg_is_int(d->operands[1]->type)) break;
             if (d->wrap == IR_WRAP_MODULAR || (d->unchecked && !v->type->is_signed && d->wrap == IR_WRAP_CHECK)) {

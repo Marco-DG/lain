@@ -440,6 +440,9 @@ static void why_val(IrFunc *f, IrValue *v, int depth, char *b, size_t cap) {
             bool k = xd && xd->op == IR_CONST;                 // a constant index, or a variable one
             w = !bd ? (k ? "load.element.param.k" : "load.element.param.i") : bd->op == IR_ALLOCA ? (k ? "load.element.local.k" : "load.element.local.i")
               : (k ? "load.element.k" : "load.element.i");
+            // a variable index into an array past the judge's cap (JELEM_MAXN) is stated nothing
+            const IrType *at = bd && bd->op == IR_ALLOCA ? bd->aux.alloca_ty : NULL;
+            if (!k && at && at->kind == IRT_ARRAY && at->array_len > JELEM_MAXN) w = "load.element.local.i.past-cap";
         }
         strcat(b, w);
         return;
