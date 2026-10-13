@@ -124,9 +124,10 @@ typedef struct { int32_t blk, key; const struct IrType *type; bool head; } JSlot
 // A VC a claim owes, and which claim (an index into the set it was generated with).
 typedef struct { JVc vc; int32_t claim; } JClaimVc;
 // One edge into a loop header as the generator states it (its VC's hypotheses; the goal means
-// nothing), and the header's versions: for each, `pre` is its variable at the header's previous
-// entry (-1 on an edge from before the loop) and `post` the one the edge ends with, both in THIS
-// path's variables. `key` is the version's cell, so one key names one quantity on every path; `tk`
+// nothing), and the header's versions, of the cells the loop writes and of those it only reads:
+// for each, `pre` is its variable at the header's previous entry (-1 on an edge from before the
+// loop) and `post` the one the edge ends with, both in THIS path's variables (one variable, for a
+// cell only read). `key` is the version's cell, so one key names one quantity on every path; `tk`
 // JTERM_LEN for a slice cell, whose quantity is its length.
 // A CALL's path (call_paths) is the facts at a call: `from` and `at` its block and instruction
 // index (as a recursion measure lists a call), `callee` the function it reaches, `pairs` the

@@ -333,6 +333,30 @@ int main(void) {
           "while 0 != 0: the body's narrowing and the loop's end proved:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
 
+    // a ranking claim over a cell the loop only READS: `i = 0; c = n; while i < c { i = i + 1 }`
+    // with c - i, proved (the term c is the header's version of c, the one every trip reads)
+    IrFunc *rf2 = ir_func_new(&A, nm("rr"), u32t, IR_FUNC_PURE);
+    IrValue *rn2 = ir_add_param(rf2, u32t, nm("n"));
+    IrBlock *rb0 = rf2->entry, *rb1 = ir_new_block(rf2), *rb2 = ir_new_block(rf2), *rb3 = ir_new_block(rf2);
+    IrValue *qi = ir_alloca(rf2, rb0, u32t), *qc = ir_alloca(rf2, rb0, u32t);
+    ir_store(rf2, rb0, qi, ir_const_int(rf2, rb0, 0, u32t)); ir_store(rf2, rb0, qc, rn2); ir_set_br(rb0, rb1);
+    IrValue *qli = ir_load(rf2, rb1, qi, u32t), *qlc = ir_load(rf2, rb1, qc, u32t);
+    ir_set_br_cond(rb1, ir_icmp(rf2, rb1, IR_CMP_ULT, qli, qlc), rb2, rb3);
+    IrValue *qli2 = ir_load(rf2, rb2, qi, u32t);
+    ir_store(rf2, rb2, qi, ir_binop(rf2, rb2, IR_ADD, qli2, ir_const_int(rf2, rb2, 1, u32t), u32t));
+    ir_set_br(rb2, rb1);
+    ir_set_ret(rb3, ir_const_int(rf2, rb3, 0, u32t));
+    ir_finalize_cfg(rf2);
+    s.propose = P_RANK; s.nrank = 1;
+    memset(&s.rank[0], 0, sizeof s.rank[0]);
+    s.rank[0].blk = rb1->id; s.rank[0].fn = rf2; s.rank[0].ncomp = 1; s.rank[0].nt = 2; s.rank[0].nedge = 1; s.rank[0].from[0] = rb2->id;
+    s.rank[0].key[0] = qc->id; s.rank[0].coef[0][0] = 1; s.rank[0].key[1] = qi->id; s.rank[0].coef[0][1] = -1;
+    CHECK(run(rf2, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, "rank.fall") && strstr(recs, "rank.bound") &&
+          nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] + nrec[JREC_REFUSED] + nrec[JREC_SOLVER_BUG] == 0,
+          "c - i over a cell only read: proved:\n%s", recs);
+    s.propose = P_NONE; s.nrank = 0;
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

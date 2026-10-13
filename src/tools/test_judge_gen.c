@@ -1772,6 +1772,43 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a fixed condition: false on its edge, 0 <= -1 there; a constant ranking claim for a dead loop\n");
+    // 40. a cell the loop only READS is a pair of its paths: `i = 0; c = n; z = 7; while i < c { i =
+    // i + 1 }; return z`. The header's pairs are i (written) and c (read in the header): on the back
+    // edge c's pre and post are one variable, on the entry edge its pre is -1. z, read only past the
+    // loop, is no pair
+    {   IrFunc *f = ir_func_new(&A, nm("r40"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u32t, nm("n"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u32t), *c = ir_alloca(f, b0, u32t), *z = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u32t)); ir_store(f, b0, c, n); ir_store(f, b0, z, ir_const_int(f, b0, 7, u32t));
+        ir_set_br(b0, b1);
+        IrValue *li = ir_load(f, b1, i, u32t), *lc = ir_load(f, b1, c, u32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, li, lc), b2, b3);
+        IrValue *li2 = ir_load(f, b2, i, u32t);
+        ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li2, ir_const_int(f, b2, 1, u32t), u32t));
+        ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_load(f, b3, z, u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JMem m = jmem_over(region, sizeof region);
+        JPaths P; char err[200];
+        bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+        CHECK(ok && !P.refused && P.n == 2, "two edges into the header (%s)", ok ? "" : err);
+        for (int32_t k = 0; ok && k < P.n; k++) {
+            const JPath *p = &P.p[k]; const JPathPair *pi = NULL, *pc = NULL; int other = 0;
+            for (int32_t q = 0; q < p->npairs; q++) {
+                if (p->pairs[q].key == i->id) pi = &p->pairs[q];
+                else if (p->pairs[q].key == c->id) pc = &p->pairs[q];
+                else other++;
+            }
+            CHECK(pi && pc && other == 0, "path %d: the pairs are i and c, not z (%d pairs)", k, p->npairs);
+            if (!pi || !pc) continue;
+            if (p->back) CHECK(pc->pre >= 0 && pc->pre == pc->post && pi->pre != pi->post, "the back edge: c's pre is its post, i's is not");
+            else CHECK(pc->pre == -1 && pc->post >= 0, "the entry edge: c's pre is -1, its post its value");
+        }
+        gen_mod = NULL;
+    }
+    printf("  a cell the loop only reads: a pair of its paths, one variable before and after a trip\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

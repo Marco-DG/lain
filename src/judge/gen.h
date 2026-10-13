@@ -2684,9 +2684,20 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
     for (IrEdge *e = H->preds; e; e = e->next) np++;
     JPath *P = JG_NEW(&g, JPath, np ? np : 1);
     if (!keys || !tks || !P) return jg_fail(&g, "out of memory");
+    // the header's versions: of every cell the loop writes (its JV_HEAD), and of every cell its
+    // blocks only read, whose one version holds on every trip (`while b.len < b.cap`, cap never
+    // written): its pre and post on a back edge are that version's one variable
+    const uint8_t *Lh = g.inloop + (size_t)header * (size_t)g.nb;
     for (int32_t c = 0; c < g.ncells; c++) {
         int32_t jv = g.instate[(size_t)header * (size_t)g.ncells + (size_t)c];
-        if (jv < 0 || g.ver[jv].blk != header || g.ver[jv].kind != JV_HEAD) continue;
+        if (jv < 0) continue;
+        bool head = g.ver[jv].blk == header && g.ver[jv].kind == JV_HEAD, read = false;
+        for (int32_t b = 0; b < g.nb && !head && !read; b++) {
+            if (!Lh[b] || !g.blk[b]) continue;                 // a loop's blocks are reachable ones
+            for (IrInstr *i = g.blk[b]->instrs; i && !read; i = i->next)
+                read = i->result && g.loadver[i->result->id] >= 0 && g.ver[g.loadver[i->result->id]].cell == c;
+        }
+        if (!head && !read) continue;
         const IrType *st = g.ver[jv].slot;
         if (jg_is_int(st)) { tks[nk] = JTERM_VALUE; keys[nk++] = g.cellv[c]->id; }
         else if (st && st->kind == IRT_SLICE) { tks[nk] = JTERM_LEN; keys[nk++] = g.cellv[c]->id; }   // its length
