@@ -124,7 +124,13 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     // no bound because the loop has no trip count, so Zune 30's ConvertDays, which hangs on the
     // last day of a leap year, was reported as two E086 on `year = year + 1` and then the E011
     // at the `while`: the reader met the consequence first, and in the real hang `year` never
-    // moves. Such an E086 is printed as a note under its loop's E011 or E082.
+    // moves. Such an E086 is not reported at all while its loop's E011 or E082 stands (I.205): the
+    // program is refused by that error anyway, and once the loop is shown to end (or opts out with
+    // `effects diverge`) the total is proven or comes back as its own E086, where it can be acted
+    // on. A note in its place ("`year` grows by 1 ... only if the loop runs a limited number of
+    // times", I.200) read as though a type's range depended on the run and asked nothing of the
+    // reader the E011 did not. A total whose loop IS shown to end, but has no trip count, is not
+    // this case: it keeps its E086.
     char *noterm = calloc((size_t)(V->f->next_block_id > 0 ? V->f->next_block_id : 1) + 1, 1);
     for (int i = 0; noterm && i < V->nchecks; i++) {
         VraCheck *c = &V->checks[i];
@@ -134,7 +140,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
         VraCheck *c = &V->checks[i];
         if (c->ok) continue;                       // proved check-free: nothing to say
         if (c->kind == VRA_OVERFLOW && c->accum && c->accum_T < 0 && c->loop1 > 0 && noterm && noterm[c->loop1])
-            continue;                              // reported under its loop's E011 below
+            continue;                              // a consequence of its loop's E011 (I.159, I.205)
         switch (c->kind) {
             case VRA_BOUNDS:
                 ir_diag(file, c->line, c->col, "E085",
@@ -348,7 +354,6 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                             for (int j = 0; j < c->wit_n; j++)
                                 ir_diag_mark(c->wit_line[j], c->wit_col[j], c->wit_true[j] ? "true" : "false", w,
                                              j == 0 || c->wit_line[j] != c->wit_line[j - 1]);
-                            fprintf(stderr, " %*s |\n", w, "");
                         } else {
                             fprintf(stderr, "       `%s` %s toward %s on some paths through the loop, but not on the one where\n      ", nm, verb, bq);
                             for (int j = 0; j < c->wit_n; j++)
@@ -356,53 +361,6 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
                                         (long long)c->wit_line[j], (long long)c->wit_col[j], c->wit_true[j] ? "true" : "false");
                             fprintf(stderr, "\n");
                         }
-                    }
-                    // I.200: one note per running total the loop leaves unbounded, in the order of
-                    // its first update, naming it, its step and its type: "`year` grows by 1 on
-                    // every trip (Ln 32, Ln 36), so it stays within `i32` only if the loop runs a
-                    // limited number of times".
-                    struct { int cell; IrValue *ld; int64_t dlo, dhi, line[8]; int nl; } g[16];
-                    int ng = 0;
-                    for (int64_t pl = -1, pc = -1; c->loop1 > 0; ) {
-                        VraCheck *nx = NULL;
-                        for (int j = 0; j < V->nchecks; j++) {
-                            VraCheck *a = &V->checks[j];
-                            if (!(a->kind == VRA_OVERFLOW && !a->ok && a->accum && a->accum_T < 0 && a->loop1 == c->loop1)) continue;
-                            if (a->line < pl || (a->line == pl && a->col <= pc)) continue;
-                            if (!nx || a->line < nx->line || (a->line == nx->line && a->col < nx->col)) nx = a;
-                        }
-                        if (!nx) break;
-                        pl = nx->line; pc = nx->col;
-                        IrInstr *ld = nx->accum_load && nx->accum_load->id >= 0 && nx->accum_load->id < V->nvar ? V->def[nx->accum_load->id] : NULL;
-                        int cell = ld && ld->op == IR_LOAD && ld->n_operands >= 1 ? ld->operands[0]->id : -1 - (int)(nx - V->checks);
-                        int k = 0;
-                        while (k < ng && g[k].cell != cell) k++;
-                        if (k == ng) {
-                            if (ng == 16) continue;
-                            g[k].cell = cell; g[k].ld = ld ? nx->accum_load : NULL; g[k].dlo = nx->accum_dlo; g[k].dhi = nx->accum_dhi; g[k].nl = 0; ng++;
-                        }
-                        if (nx->accum_dlo < g[k].dlo) g[k].dlo = nx->accum_dlo;
-                        if (nx->accum_dhi > g[k].dhi) g[k].dhi = nx->accum_dhi;
-                        if (g[k].nl < 8 && (g[k].nl == 0 || g[k].line[g[k].nl - 1] != nx->line)) g[k].line[g[k].nl++] = nx->line;
-                    }
-                    for (int k = 0; k < ng; k++) {
-                        char who[72], step[96], ty[24] = "its type";
-                        if (g[k].ld) { char t[64]; vra_src_expr(V, g[k].ld, t, sizeof t, 0); snprintf(who, sizeof who, "`%s`", t); }
-                        else snprintf(who, sizeof who, "the running total at Ln %lld", (long long)g[k].line[0]);
-                        IrType *lt = g[k].ld ? g[k].ld->type : NULL;
-                        if (lt && lt->kind == IRT_INT) snprintf(ty, sizeof ty, "`%c%d`", lt->is_signed ? 'i' : 'u', lt->bits);
-                        int64_t lo = g[k].dlo, hi = g[k].dhi;
-                        if (lo < -((int64_t)1 << 53) || hi > ((int64_t)1 << 53)) snprintf(step, sizeof step, "changes on every trip");
-                        else if (lo == hi && lo > 0) snprintf(step, sizeof step, "grows by %lld on every trip", (long long)lo);
-                        else if (lo == hi && lo < 0) snprintf(step, sizeof step, "shrinks by %lld on every trip", (long long)-lo);
-                        else if (lo > 0) snprintf(step, sizeof step, "grows by %lld to %lld on every trip", (long long)lo, (long long)hi);
-                        else if (lo == 0) snprintf(step, sizeof step, "grows by up to %lld on each trip", (long long)hi);
-                        else if (hi < 0) snprintf(step, sizeof step, "shrinks by %lld to %lld on every trip", (long long)-hi, (long long)-lo);
-                        else if (hi == 0) snprintf(step, sizeof step, "shrinks by up to %lld on each trip", (long long)-lo);
-                        else snprintf(step, sizeof step, "changes by %lld to %lld on each trip", (long long)lo, (long long)hi);
-                        fprintf(stderr, "       note: %s %s (", who, step);
-                        for (int j = 0; j < g[k].nl; j++) fprintf(stderr, "%sLn %lld", j ? ", " : "", (long long)g[k].line[j]);
-                        fprintf(stderr, "), so it stays within %s only if the loop runs a limited number of times\n", ty);
                     }
                 }
                 n++; break;

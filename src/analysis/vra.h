@@ -118,7 +118,6 @@ typedef struct {
     // things to change. 42% of unproven obligations are the engine refusing correctly, so the
     // quality of the refusal IS the user experience.
     bool     accum;                       // the numbers below are meaningful
-    IrValue *accum_load;                  // the running total's own load (`year` in `year + 1`)
     int64_t  accum_T, accum_dlo, accum_dhi, accum_s0lo, accum_s0hi;
     // The loop an accumulator's bound or a loop's termination is about: its header's block id + 1
     // (0: none). A running total with no bound only because its loop has no trip count is a
@@ -5430,7 +5429,6 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
     bool haveT = vra_loop_trips(V, W, H, &T);
     if (c && vra_is_running_total(V, val, H)) {
         c->accum = true; c->accum_dlo = dlo; c->accum_dhi = dhi;
-        c->accum_load = V->def[val->id]->operands[0];     // vra_accum_delta: an ADD or SUB of a LOAD
         c->accum_s0lo = s0lo; c->accum_s0hi = s0hi;
         c->accum_T = haveT ? T : -1;                 // -1 = the trip count is not bounded
         c->loop1 = H->id + 1;

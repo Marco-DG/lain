@@ -1733,9 +1733,6 @@ func year_of(days0 u32) i32 {
    |            ^ true
  6 |             if days > 366 {
    |                ^ false
-   |
-       note: `year` grows by 1 on every trip (Ln 8, Ln 12), so it stays within `i32`
-       only if the loop runs a limited number of times
 ```
 
 The fix is an `else { break }` on the inner test: then every path through the loop either lowers
