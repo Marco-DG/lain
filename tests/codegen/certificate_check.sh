@@ -101,8 +101,15 @@ func main() i32 {
     return f(3) as i32
 }
 LN
-s1=$("$LAIN" "$D/w.ln" -o "$D/w1.c" --emit-certificate "$D/w.cert" 2>&1 | grep -m1 '^\[E')
-s2=$("$LAIN" "$D/w.ln" -o "$D/w2.c" --check-certificate "$D/w.cert" 2>&1 | grep -m1 '^\[E')
+# The output is captured BEFORE it is searched. Piped into `grep -m1`, the compile was killed by
+# SIGPIPE whenever grep matched and exited while lain still wrote the rest of its diagnostic, which
+# lost the certificate still in its stdio buffer: an empty w.cert, "there is no certificate for it"
+# on the check, 10 of 200 runs under parallel load and none alone (a pipe's reader decides when its
+# writer dies).
+o1=$("$LAIN" "$D/w.ln" -o "$D/w1.c" --emit-certificate "$D/w.cert" 2>&1)
+o2=$("$LAIN" "$D/w.ln" -o "$D/w2.c" --check-certificate "$D/w.cert" 2>&1)
+s1=$(printf '%s\n' "$o1" | grep -m1 '^\[E')
+s2=$(printf '%s\n' "$o2" | grep -m1 '^\[E')
 case "$s1" in "[E082]"*"not by the \`decreasing\` measure written"*) ;; *) echo "searched: not E082 ($s1)"; fail=1;; esac
 [ "$s1" = "$s2" ] || { echo "a mismatched decreasing: searched '$s1', checked '$s2'"; fail=1; }
 # A loop whose test does not end it (I.85): under `or`, the header's else branch goes to the test of
