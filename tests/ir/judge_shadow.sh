@@ -84,6 +84,45 @@ LN
 shadow=$("$ROOT/lain" loop2.ln --judge=shadow -o e.c 2>&1)
 echo "$shadow" | grep -qE "2 loops' termination among them \(2 proved by both, 0 by the judge only\)" \
     || { echo "2c: a length-bounded or wrapping loop is not proved by both: $shadow"; exit 1; }
+# 2d. a WRITTEN loop measure (measure.* on the back edge, keyed to VRA's check by its header like
+# rank.*) and a SELF-recursion (the finder's measure at the function's entry, rec.* at the call,
+# keyed to VRA's one recursion check per function) are proved by both, and neither is unowed
+cat > rec.ln <<'LN'
+func sum(n u32) u32 {
+    var i u32 = 0
+    while i < n decreasing n - i {
+        i = i + 1
+    }
+    return i
+}
+func fact(n i32) i32 {
+    if n <= 1 { return 1 }
+    return fact(n - 1)
+}
+func main() i32 {
+    a = sum(5)
+    return fact(3)
+}
+LN
+shadow=$("$ROOT/lain" rec.ln --judge=shadow -o f.c 2>&1)
+echo "$shadow" | grep -qE "1 loops' termination among them \(1 proved by both, 0 by the judge only\), 1 recursions' termination among them \(1 proved by both, 0 by the judge only\)" \
+    || { echo "2d: a written measure or a self-recursion is not proved by both: $shadow"; exit 1; }
+echo "$shadow" | grep -qE ' 0 unowed, ' || { echo "2d: unowed: $shadow"; exit 1; }
+# 2e. a recursion with a call that does not fall (`spin(n)` beside `spin(n - 1)`): VRA refuses it
+# (E011) and the judge proves none of its calls, so the two AGREE; one call proved would not make
+# the function's check proved, since every rec.* in the function must be
+cat > spin.ln <<'LN'
+func spin(n i32) i32 {
+    if n <= 0 { return 0 }
+    a = spin(n - 1)
+    return spin(n)
+}
+func main() i32 { return spin(3) }
+LN
+shadow=$("$ROOT/lain" spin.ln --judge=shadow -o g.c 2>&1)
+echo "$shadow" | grep -q '\[E011\]' || { echo "2e: E011 lost: $shadow"; exit 1; }
+echo "$shadow" | grep -qE "1 recursions' termination among them \(0 proved by both, 0 by the judge only\)" \
+    && ! echo "$shadow" | grep -q '^judge-shadow: judge-only .* recursion terminates' || { echo "2e: a recursion with a non-falling call proved: $shadow"; exit 1; }
 out=$("$ROOT/lain" ok.ln --judge=authority -o c.c 2>&1); rc=$?
 [ $rc -ne 0 ] && echo "$out" | grep -q "unknown --judge mode 'authority'" || { echo "3: --judge=authority not refused ($rc): $out"; exit 1; }
 [ ! -e c.c ] || { echo "3: C written under an unknown mode"; exit 1; }

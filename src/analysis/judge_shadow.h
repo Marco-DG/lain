@@ -16,8 +16,9 @@
 // instruction, or for a return's landing the returned value's definition, where VRA files it) and
 // of the same class: bounds, division by zero, overflow and narrowing, preconditions. A judge
 // record of the class counts as proved only when every one at that place is (a bounds check is two
-// obligations, lo and hi). Termination has no judge obligation yet (RANK claims come next) and is
-// counted apart.
+// obligations, lo and hi). Termination is compared per loop (rank.* or, for a written measure,
+// measure.* on the back edges into its header) and per function for a recursion (every rec.* in
+// it), and counted apart in the summary.
 //
 // Shadow changes nothing the compiler decides: no verdict, no exit status, no emitted C. Its lines
 // go to stderr after the diagnostics, each starting `judge-shadow:`, and end with one summary.
@@ -32,7 +33,8 @@ typedef struct {
     JRecordKind k;
     char cls;                     // 'B' bounds, 'D' division by zero, 'O' overflow/narrowing, 'V' TYPE_MIN / -1,
                                   // 'P' precondition,
-                                  // 'S' a slice's length bound (objsize), '?' a claim's VC or other
+                                  // 'S' a slice's length bound (objsize), 'T' a loop's termination,
+                                  // 'R' a recursion's, '?' a claim's VC or other
     bool used;                    // matched to a VRA check
     char id[200];                 // "fn irhash point kind ordinal", as §3 prints it
 } JshRec;
@@ -47,6 +49,8 @@ static char jsh_class(const char *kind) {
     if (!strncmp(kind, "assert", 6)) return 'P';
     if (!strcmp(kind, "objsize")) return 'S';      // VRA has no such check: always judge-extra, shown when unproved
     if (!strncmp(kind, "rank.", 5)) return 'T';     // a loop's termination (PE.5): keyed to VRA's by its header
+    if (!strncmp(kind, "measure.", 8)) return 'T';  // ...or its WRITTEN measure's (D-44), owed instead of a proposal's
+    if (!strncmp(kind, "rec.", 4)) return 'R';      // a recursion's: keyed to VRA's one check per function
     return '?';
 }
 static void jsh_sink(void *ctx, const JRecord *r) {
@@ -139,6 +143,7 @@ static const char *jsh_kind_name(JRecordKind k) {
 static void judge_shadow_module(IrFunc *mod) {
     long long n_chk = 0, agree_p = 0, agree_r = 0, vra_only = 0, judge_only = 0, judge_only_c = 0, unowed = 0, outside = 0, term = 0;
     long long nterm = 0, term_p = 0, term_j = 0;      // loops' termination: compared, agreed proved, judge only
+    long long nrec = 0, rec_p = 0, rec_j = 0;         // recursions' termination, the same three
     long long extra = 0, extra_p = 0;
     // 1. VRA's header states for the finder, from a VRA pass of each function
     jsh_nhdr = 0;
@@ -180,11 +185,34 @@ static void judge_shadow_module(IrFunc *mod) {
         for (int i = 0; i < V->nchecks; i++) {
             VraCheck *c = &V->checks[i];
             // a LOOP's termination (PE.5): VRA's check names its header (loop1 - 1); the judge's
-            // rank.* records sit on the back edges into it (the predecessor branches to it), and
-            // with no ranking function proposed there is one `outside` record at the header, which
-            // is the judge proving nothing. A recursion's has no judge obligation yet.
+            // rank.* records, or measure.* for a WRITTEN measure, sit on the back edges into it (the
+            // predecessor branches to it), and with nothing proposed or a measure it cannot read there
+            // is one `outside` record at the header, which is the judge proving nothing.
+            // A RECURSION's: VRA files ONE check per function (at a self-call, or at the call that
+            // enters its cycle); the judge owes rec.* at every call that may close a cycle through it,
+            // so the function's check is proved by the judge when every rec.* record in it is.
+            if (c->kind == VRA_TERMINATION && c->recursion) {
+                int seen = 0, proved = 0; JRecordKind worst = JREC_PROVED;
+                for (int64_t j = 0; j < R.n; j++) {
+                    JshRec *q = &R.r[j];
+                    if (q->fn != f || q->cls != 'R') continue;
+                    q->used = true; seen++;
+                    if (q->k == JREC_PROVED) proved++; else worst = q->k;
+                }
+                n_chk++; nrec++;
+                bool jok = seen && proved == seen;
+                if (!seen) { unowed++; fprintf(stderr, "judge-shadow: unowed %.*s Ln %lld, Col %lld: a recursion's termination check (VRA %s) has no obligation\n",
+                                                (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, c->ok ? "proves it" : "refuses it"); }
+                else if (c->ok && jok) { agree_p++; rec_p++; }
+                else if (!c->ok && !jok) agree_r++;
+                else if (c->ok) { vra_only++; fprintf(stderr, "judge-shadow: vra-only %.*s Ln %lld, Col %lld: VRA proves this recursion terminates, the judge: %s\n",
+                                                      (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, jsh_kind_name(worst)); }
+                else { judge_only++; rec_j++; fprintf(stderr, "judge-shadow: judge-only %.*s Ln %lld, Col %lld: the judge proves this recursion terminates, VRA refuses it\n",
+                                                       (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col); }
+                continue;
+            }
             if (c->kind == VRA_TERMINATION) {
-                if (c->recursion || c->loop1 <= 0) { term++; continue; }
+                if (c->loop1 <= 0) { term++; continue; }
                 int32_t hid = c->loop1 - 1;
                 int seen = 0, proved = 0; JRecordKind worst = JREC_PROVED;
                 for (int64_t j = 0; j < R.n; j++) {
@@ -269,9 +297,9 @@ static void judge_shadow_module(IrFunc *mod) {
     }
     if (ran)
         fprintf(stderr, "judge-shadow: %lld VRA checks: %lld agree (%lld proved, %lld refused), %lld vra-only, %lld judge-only (%lld conditional), "
-                        "%lld unowed, %lld outside; %lld judge-extra (%lld proved); %lld loops' termination among them (%lld proved by both, %lld by the judge only), %lld recursions' not judged yet; records: "
+                        "%lld unowed, %lld outside; %lld judge-extra (%lld proved); %lld loops' termination among them (%lld proved by both, %lld by the judge only), %lld recursions' termination among them (%lld proved by both, %lld by the judge only), %lld termination checks not judged; records: "
                         "%lld proved, %lld not-implied, %lld outside, %lld budget, %lld capacity, %lld solver-bug, %lld uncertified\n",
-                n_chk, agree_p + agree_r, agree_p, agree_r, vra_only, judge_only, judge_only_c, unowed, outside, extra, extra_p, nterm, term_p, term_j, term,
+                n_chk, agree_p + agree_r, agree_p, agree_r, vra_only, judge_only, judge_only_c, unowed, outside, extra, extra_p, nterm, term_p, term_j, nrec, rec_p, rec_j, term,
                 R.kinds[JREC_PROVED], R.kinds[JREC_NOT_IMPLIED], R.kinds[JREC_OUTSIDE], R.kinds[JREC_BUDGET],
                 R.kinds[JREC_CAPACITY], R.kinds[JREC_SOLVER_BUG], R.kinds[JREC_UNCERTIFIED]);
     free(R.r); free(jc.last); free(jc.last_rk); free(buf); free(work);

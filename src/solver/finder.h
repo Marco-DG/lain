@@ -292,6 +292,11 @@ static bool fd_same_path(const JVc *a, const JVc *b) {
 }
 // Build L for header H of f under the claims cl: false when there is nothing to propose (no back
 // edge, a refused header, too many paths, out of memory); never an error of the judge's.
+// With H = JRANK_ENTRY, for f's RECURSION: the paths are f's calls that may close a cycle through
+// it (JudgeGen.call_paths), each a transition from f's parameters at entry to the call's arguments,
+// as a back edge is from the header's versions to the edge's. Only SELF-recursion has a pre-state
+// for every pair (a call to another function of the cycle has none), so a cycle of several
+// functions builds nothing here: its measures must be found jointly (a later link).
 static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdLoop *L) {
     char err[200];
     memset(L, 0, sizeof *L);
@@ -299,7 +304,10 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
     if (!(L->mem = malloc(cap))) { F->oom = true; return false; }
     L->cur = L->mem; L->end = L->mem + cap;
     JPaths P;
-    if (!F->gen->paths || !F->gen->paths(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) || P.refused) return false;
+    bool entry = H == JRANK_ENTRY;
+    if (entry ? !F->gen->call_paths || !F->gen->call_paths(F->gen->ctx, f, cl, ncl, &P, err, sizeof err)
+              : !F->gen->paths || !F->gen->paths(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err)) return false;
+    if (P.refused) return false;
     // 1. the back edges, copied out of the generator's region (the next call reuses it)
     int32_t nraw = 0;
     for (int32_t k = 0; k < P.n; k++) if (P.p[k].back) nraw++;
@@ -365,6 +373,8 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
     int32_t *vid = fd_bump(L, sizeof(int32_t) * (size_t)(nval ? nval : 1));
     if (!kind || !vtk || !vid) return false;
     for (int32_t q = 0; q < nval; q++) { vid[q] = vals[q] / 2; vtk[q] = (uint8_t)(vals[q] % 2); }
+    // at a function's entry nothing but its parameters may be a measure's term, and they are pairs
+    if (entry) nval = 0;
     if (nval && !F->gen->term_kinds(F->gen->ctx, f, H, vid, vtk, nval, kind, err, sizeof err)) return false;
     int32_t nshared = 0;
     for (int32_t q = 0; q < nval; q++) if (kind[q] == 1) vals[nshared] = vals[q], kind[nshared++] = 1;
@@ -880,6 +890,15 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
             if (!x) goto oom;
             F->rk = x; F->rk[F->nrk++] = r;
         }
+        // ...and a measure for its recursion, if it has one to rank: one component over its
+        // parameters at entry, falling at every self-call (the judge owes rec.fall and rec.bound)
+        FdLoop L; JRank r;
+        bool got = fd_loop_build(F, f, JRANK_ENTRY, as, nv, &L) && fd_rank(F, f, JRANK_ENTRY, &L, &r) && r.ncomp == 1;
+        free(L.mem);
+        if (!got) continue;
+        JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
+        if (!x) goto oom;
+        F->rk = x; F->rk[F->nrk++] = r;
     }
     F->kept += nv;
     *ncl = nv;
