@@ -1623,6 +1623,56 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  spec 12's cut: rec.le at the calls a measure lists, which must close no cycle\n");
+    // 38. a CONSTANT FACTOR behind a cast (`2 *? y` widens both operands to i64 first: cast(2) *
+    // cast(y)). A product is stated, not `atom.mul` outside, when a factor is a constant, a checked
+    // `neg` of one, or a cast of either into an integer type whose bits hold its value, at most four
+    // casts deep: (a) cast(2 : i32) : i64; (b) cast(2^64 - 1 : u64) : i64, which i64 cannot hold,
+    // outside; (c) a cast of (a)'s cast; (d) a cast that reads itself (an IR no lowering makes),
+    // outside and no recursion for ever; (e) `neg 4`, whose product is -4 * y; (f) cast(neg 4) :
+    // i64, the same; (g) cast(200 : i32) : i8 and (h) cast(-1 : i32) : u32, neither held, outside
+    IrType *i8t = ir_type_int(&A, 8, true);
+    for (int c = 0; c < 8; c++) {
+        IrType *pt = c == 4 ? i32t : c == 6 ? i8t : c == 7 ? u32t : i64t;   // the product's type
+        IrFunc *f = ir_func_new(&A, nm("m38"), i64t, IR_FUNC_PURE);
+        IrValue *y = ir_add_param(f, i32t, nm("y"));
+        IrBlock *b0 = f->entry;
+        IrValue *k = NULL, *yw = NULL;
+        IrInstr *ci;
+        switch (c) {
+            case 0: case 2:
+                ci = ir_instr(f, IR_CAST, i64t, 1); ci->operands[0] = ir_const_int(f, b0, 2, i32t); ir_emit(b0, ci); k = ci->result;
+                if (c == 2) { ci = ir_instr(f, IR_CAST, i64t, 1); ci->operands[0] = k; ir_emit(b0, ci); k = ci->result; }
+                break;
+            case 1:
+                ci = ir_instr(f, IR_CAST, i64t, 1); ci->operands[0] = ir_const_int(f, b0, -1, u64t); ir_emit(b0, ci); k = ci->result;
+                break;
+            case 3:
+                ci = ir_instr(f, IR_CAST, i64t, 1); ci->operands[0] = ci->result; ir_emit(b0, ci); k = ci->result;
+                break;
+            case 4: case 5:
+                ci = ir_instr(f, IR_NEG, i32t, 1); ci->operands[0] = ir_const_int(f, b0, 4, i32t); ir_emit(b0, ci); k = ci->result;
+                if (c == 5) { ci = ir_instr(f, IR_CAST, i64t, 1); ci->operands[0] = k; ir_emit(b0, ci); k = ci->result; }
+                break;
+            default:
+                ci = ir_instr(f, IR_CAST, pt, 1); ci->operands[0] = ir_const_int(f, b0, c == 6 ? 200 : -1, i32t); ir_emit(b0, ci); k = ci->result;
+                break;
+        }
+        if (c == 4) yw = y;
+        else { ci = ir_instr(f, IR_CAST, pt, 1); ci->operands[0] = y; ir_emit(b0, ci); yw = ci->result; }
+        IrValue *p = ir_binop(f, b0, IR_MUL, k, yw, pt);
+        ir_set_ret(b0, p);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), want[96];
+        snprintf(want, sizeof want, "def %%v%d mul : 1*%%v%d + %s*%%v%d = 0", p->id, p->id, c == 4 || c == 5 ? "4" : "-2", yw->id);
+        if (c == 1 || c == 3 || c == 6 || c == 7)
+            CHECK(t && count(t, "outside atom.mul") == 1 && !strstr(t, " mul : "), "case %d: no constant factor, outside:\n%s", c, t ? t : "");
+        else
+            CHECK(t && !strstr(t, "atom.mul") && count(t, want) == 2, "case %d: the product stated (%s):\n%s", c, want, t ? t : "");
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a constant factor behind a cast: the product stated, outside where the cast cannot hold it\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

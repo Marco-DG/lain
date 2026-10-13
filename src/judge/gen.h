@@ -916,9 +916,22 @@ static void jb_divmod(JB *B, int32_t xv, int32_t qv, int32_t mv, __int128 c, boo
     }
 }
 // A constant operand: a CONST read by its type, or a signed NEG of one under CHECK (`x / -4`
-// lowers its divisor as `neg 4`), which is -c wherever its own obligation held, as NEG's row says.
-static bool jg_const_of(JG *g, IrValue *v, __int128 *c) {
+// lowers its divisor as `neg 4`), which is -c wherever its own obligation held, as NEG's row says;
+// or a CAST of a constant operand into an integer type whose bits hold its value (`2 *? y` widens
+// both operands to i64 and multiplies there: cast(2) * cast(y)), which is that value under every
+// mode a cast has. The type's refinement is not read: it is not what a cast computes. Four casts
+// deep at most (an IR whose cast reads itself must not recurse for ever).
+static bool jg_const_at(JG *g, IrValue *v, __int128 *c, int depth) {
     IrInstr *d = v && v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
+    if (d && d->op == IR_CAST && d->n_operands >= 1 && d->result && d->result->type &&
+        d->result->type->kind == IRT_INT && d->result->type->bits >= 1 && d->result->type->bits <= 64) {
+        const IrType *t = d->result->type; __int128 x;           // the source's kind: its own case decides
+        if (depth >= 4 || !jg_const_at(g, d->operands[0], &x, depth + 1)) return false;
+        __int128 lo = t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0;
+        __int128 hi = t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+        if (x < lo || x > hi) return false;
+        *c = x; return true;
+    }
     if (d && d->op == IR_NEG && d->wrap == IR_WRAP_CHECK && !d->unchecked && d->n_operands >= 1 && d->result &&
         d->result->type && d->result->type->kind == IRT_INT && d->result->type->is_signed) {
         IrValue *o = d->operands[0];
@@ -929,6 +942,7 @@ static bool jg_const_of(JG *g, IrValue *v, __int128 *c) {
     if (!d || d->op != IR_CONST || !jg_is_int(d->result->type)) return false;
     *c = jg_const(d); return true;
 }
+static bool jg_const_of(JG *g, IrValue *v, __int128 *c) { return jg_const_at(g, v, c, 0); }
 static bool jg_uns(const IrType *t) { return t && (t->kind == IRT_BOOL || (t->kind == IRT_INT && !t->is_signed)); }
 
 // A claim's term as a VC variable: a cell is its version in `row` (a block's entry state, or the
@@ -1112,10 +1126,9 @@ static void jb_state(JB *B, int32_t x) {
         case IR_MUL: {
             if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) break;
             for (int k = 0; k < 2; k++) {
-                IrInstr *cd = d->operands[k] && d->operands[k]->id >= 0 && d->operands[k]->id < g->nv ? g->def[d->operands[k]->id] : NULL;
-                IrValue *o = d->operands[1 - k];
-                if (!cd || cd->op != IR_CONST || !jg_is_int(o->type)) continue;
-                t[0].var = jb_val(B, o); t[0].c = jg_const(cd);
+                IrValue *o = d->operands[1 - k]; __int128 kc;
+                if (!jg_const_of(g, d->operands[k], &kc) || !jg_is_int(o->type)) continue;
+                t[0].var = jb_val(B, o); t[0].c = kc;
                 jb_def(B, x, t, 1, jb_str(B, "def %%v%lld mul", id, 0, 0));
                 break;
             }
@@ -1856,8 +1869,8 @@ static bool jg_obligations(JG *g, JObls *L) {
                     JRange rr;
                     if (!jg_range(i->result->type, &rr)) break;
                     if (i->op == IR_MUL) {
-                        bool c0 = i->operands[0] && g->def[i->operands[0]->id] && g->def[i->operands[0]->id]->op == IR_CONST;
-                        bool c1 = i->operands[1] && g->def[i->operands[1]->id] && g->def[i->operands[1]->id]->op == IR_CONST;
+                        __int128 kc;                           // as jb states the product: one constant factor
+                        bool c0 = jg_const_of(g, i->operands[0], &kc), c1 = jg_const_of(g, i->operands[1], &kc);
                         if (!c0 && !c1) { if (!jg_outside(g, L, i, b->id, k, "narrow.lo", "atom.mul: a product of two variables has no lemma in step A")) return false; break; }
                     }
                     JNarrowArg lo = { rr.lo, false, i->result }, hi = { rr.hi, true, i->result };
