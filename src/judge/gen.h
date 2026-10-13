@@ -2545,12 +2545,140 @@ static bool jg_rec_is_listed(const JRank *r, int32_t blk, int32_t idx) {
     for (int32_t m = 0; m < r->nle; m++) if (r->le_blk[m] == blk && r->le_idx[m] == idx) return true;
     return false;
 }
+// A WRITTEN function measure (I.206), read from the ghost tree the lowering states over h's entry
+// parameters (IrFunc.measure_val, a block outside the CFG): a linear form over h's integer
+// parameters and its slice parameters' lengths, through constants, checked `+`, `-` (unary minus
+// is 0 - x) and `*` by a constant. Each arithmetic node's form is kept with its type: the measure
+// is WELL-DEFINED where every node is within its type's bits (a refinement is no part of what the
+// arithmetic computes). Anything else, `/` and `%` among them, is no sum.
+typedef struct { int32_t nt; int32_t key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT]; __int128 coef[JRANK_MAXT], c0; const IrType *type; } JGForm;
+enum { JGHOST_MAXN = 32 };
+typedef struct { JGForm root; JGForm node[JGHOST_MAXN]; int nn; } JGhost;
+static bool jgf_axpy(JGForm *r, const JGForm *a, __int128 k) {      // r += k * a, each number checked
+    const __int128 big = (__int128)1 << 66;
+    __int128 kc;
+    if (!jg_mul_ok(k, a->c0, &kc)) return false;
+    r->c0 += kc;
+    if (r->c0 > big || r->c0 < -big) return false;
+    for (int32_t i = 0; i < a->nt; i++) {
+        int32_t j = 0;
+        while (j < r->nt && !(r->key[j] == a->key[i] && r->tk[j] == a->tk[i])) j++;
+        if (j == r->nt) {
+            if (r->nt == JRANK_MAXT) return false;
+            r->key[j] = a->key[i]; r->tk[j] = a->tk[i]; r->coef[j] = 0; r->nt++;
+        }
+        if (!jg_mul_ok(k, a->coef[i], &kc)) return false;
+        r->coef[j] += kc;
+        if (r->coef[j] > big || r->coef[j] < -big) return false;
+    }
+    return true;
+}
+static bool jg_ghost_form(const IrFunc *h, IrValue *v, JGhost *G, JGForm *out, int depth) {
+    memset(out, 0, sizeof *out);
+    if (!v || !v->type || depth > 64) return false;
+    out->type = v->type;
+    for (const IrParam *p = h->params; p; p = p->next)
+        if (p->value == v) {
+            if (v->type->kind != IRT_INT) return false;
+            out->nt = 1; out->key[0] = v->id; out->tk[0] = JTERM_VALUE; out->coef[0] = 1;
+            return true;
+        }
+    IrInstr *d = NULL;
+    for (IrInstr *i = h->measure_blk ? h->measure_blk->instrs : NULL; i && !d; i = i->next) if (i->result == v) d = i;
+    if (!d) return false;
+    switch (d->op) {
+        case IR_CONST:
+            if (v->type->kind != IRT_INT) return false;
+            out->c0 = jg_const(d);
+            return true;
+        case IR_SLICE_LEN: {                                   // a slice parameter's length
+            IrValue *sv = d->n_operands ? d->operands[0] : NULL;
+            for (const IrParam *p = h->params; p && sv; p = p->next)
+                if (p->value == sv && sv->type && sv->type->kind == IRT_SLICE) {
+                    out->nt = 1; out->key[0] = sv->id; out->tk[0] = JTERM_LEN; out->coef[0] = 1;
+                    return true;
+                }
+            return false;
+        }
+        case IR_ADD: case IR_SUB: case IR_MUL: {
+            if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2 || v->type->kind != IRT_INT ||
+                v->type->bits < 1 || v->type->bits > 64) return false;
+            JGForm a, b;
+            if (!jg_ghost_form(h, d->operands[0], G, &a, depth + 1) || !jg_ghost_form(h, d->operands[1], G, &b, depth + 1))
+                return false;
+            if (d->op == IR_MUL) {                             // one factor constant, or no sum
+                const JGForm *kf = a.nt == 0 ? &a : b.nt == 0 ? &b : NULL, *x = kf == &a ? &b : &a;
+                if (!kf || !jgf_axpy(out, x, kf->c0)) return false;
+            } else if (!jgf_axpy(out, &a, 1) || !jgf_axpy(out, &b, d->op == IR_ADD ? 1 : -1)) return false;
+            if (G->nn == JGHOST_MAXN) return false;
+            G->node[G->nn++] = *out;
+            return true;
+        }
+        default: return false;
+    }
+}
+// h's measure for its recursion: its WRITTEN one where it has one (a proposal's `le` list is read,
+// its measure not: the finder fixes a written member's coefficients to it), else the proposed one.
+// NULL with `why` where none can be stated (`outside` at the calls); false refuses the function.
+static bool jg_rec_measure(JG *g, const JRank *rk, int32_t nrk, const IrFunc *h, const JRank **out, JGhost **G,
+                           const char **why) {
+    *out = NULL; *G = NULL; *why = NULL;
+    if (!h->has_decreasing) {
+        bool bad;
+        *out = jg_entry_rank(g, rk, nrk, h, &bad);
+        if (bad) return false;
+        if (!*out) *why = "no measure proposed for this recursion";
+        return true;
+    }
+    const JRank *pr = NULL;
+    for (int32_t k = 0; k < nrk; k++) {
+        if (rk[k].blk != JRANK_ENTRY || rk[k].fn != h) continue;
+        if (pr) return jg_fail(g, "two measures for one function's recursion");
+        pr = &rk[k];
+    }
+    JGhost *gh = JG_NEW(g, JGhost, 1);
+    JRank *r = JG_NEW(g, JRank, 1);
+    if (!gh || !r) return jg_fail(g, "out of memory");
+    gh->nn = 0;
+    if (!h->measure_val || !jg_ghost_form(h, h->measure_val, gh, &gh->root, 0)) {
+        *why = "a written measure the generator cannot read as a sum";
+        return true;
+    }
+    memset(r, 0, sizeof *r);
+    r->blk = JRANK_ENTRY; r->fn = (IrFunc *)h; r->ncomp = 1; r->nt = gh->root.nt; r->c0[0] = gh->root.c0;
+    for (int32_t i = 0; i < r->nt; i++) { r->key[i] = gh->root.key[i]; r->tk[i] = gh->root.tk[i]; r->coef[0][i] = gh->root.coef[i]; }
+    // the list's count is jg_rec_cut's to refuse, over every entry rank of the module; copied bounded
+    for (int32_t m = 0; pr && m < pr->nle && m < JRANK_MAXL; m++) { r->le_blk[m] = pr->le_blk[m]; r->le_idx[m] = pr->le_idx[m]; r->nle = m + 1; }
+    *out = r; *G = gh;
+    return true;
+}
+// A node of a written measure within its type's bits (`rec.def`): at h's entry values (side 0, h
+// the caller) or at the call's arguments (side 1, h the callee); `hi` its upper end, else its lower.
+typedef struct { const JGForm *n; const IrFunc *h; int side; bool hi; } JRecDef;
+static bool jgk_recdef(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    JRecDef *a = arg; JLT t[JRANK_MAXT]; int n = 0;
+    const IrType *ty = a->n->type;
+    __int128 lo = ty->is_signed ? -((__int128)1 << (ty->bits - 1)) : 0;
+    __int128 hi = ty->is_signed ? ((__int128)1 << (ty->bits - 1)) - 1 : ((__int128)1 << ty->bits) - 1;
+    for (int32_t i = 0; i < a->n->nt; i++) {
+        if (a->n->coef[i] == 0) continue;
+        IrValue *v = NULL;
+        if (a->side == 0) v = jg_param_value(a->h, a->n->key[i]);
+        else {
+            int pk = jg_param_at(a->h, a->n->key[i]);
+            if (pk < 0 || pk >= at->n_operands) return false;
+            v = at->operands[pk];
+        }
+        if (!v) return false;
+        t[n].var = a->n->tk[i] == JTERM_LEN ? jb_len(B, v) : jb_val(B, v); t[n].c = a->hi ? a->n->coef[i] : -a->n->coef[i]; n++;
+    }
+    return jb_cons(B, t, n, J_LE, a->hi ? hi - a->n->c0 : a->n->c0 - lo, goal);   // form <= hi, form >= lo
+}
 static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, const IrCallGraph *cg) {
     int kf = ir_cg_index(cg, g->f);
     if (kf < 0 || !ir_cg_on_cycle(cg, kf) || (g->f->may_diverge && !g->f->has_decreasing)) return true;
-    bool bad;
-    const JRank *r = jg_entry_rank(g, rk, nrk, g->f, &bad);
-    if (bad || !jg_rec_cut(g, rk, nrk, cg, kf)) return false;
+    const JRank *r; JGhost *gf; const char *whyf;
+    if (!jg_rec_measure(g, rk, nrk, g->f, &r, &gf, &whyf) || !jg_rec_cut(g, rk, nrk, cg, kf)) return false;
     for (int32_t ri = 0; ri < g->nrpo; ri++) {
         IrBlock *b = g->blk[g->rpo[ri]];
         int32_t k = 0;
@@ -2564,13 +2692,22 @@ static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, co
                 continue;
             }
             const IrFunc *t = cg->idx[tg[0]];
-            const JRank *rt = t == g->f ? r : jg_entry_rank(g, rk, nrk, t, &bad);
-            if (bad) return false;
-            if (!r || !rt) { if (!jg_outside(g, L, i, b->id, k, "rec.fall", "no measure proposed for this recursion")) return false; continue; }
+            const JRank *rt = r; JGhost *gt = gf; const char *whyt = whyf;
+            if (t != g->f && !jg_rec_measure(g, rk, nrk, t, &rt, &gt, &whyt)) return false;
+            if (!r || !rt) { if (!jg_outside(g, L, i, b->id, k, "rec.fall", r ? whyt : whyf)) return false; continue; }
             bool le = jg_rec_is_listed(r, b->id, k);
             for (int w = 0; w < 2; w++) {
                 JRecArg a = { r, rt, g->f, t, w == 1 ? 1 : le ? 2 : 0 };
                 if (!jg_goal(g, L, i, b->id, k, -1, w == 1 ? "rec.bound" : le ? "rec.le" : "rec.fall", 0, jgk_rec, &a)) return false;
+            }
+            // a written measure's arithmetic, well-defined at the caller's entry and at the arguments
+            for (int side = 0; side < 2; side++) {
+                JGhost *G = side ? gt : gf;
+                for (int q = 0; G && q < G->nn; q++)
+                    for (int w = 0; w < 2; w++) {
+                        JRecDef a = { &G->node[q], side ? t : g->f, side, w == 1 };
+                        if (!jg_goal(g, L, i, b->id, k, -1, "rec.def", side * 1000 + q * 2 + w, jgk_recdef, &a)) return false;
+                    }
             }
         }
     }

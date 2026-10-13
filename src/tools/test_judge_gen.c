@@ -1416,7 +1416,8 @@ int main(void) {
         free(t);
         f->has_decreasing = true;
         t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
-        CHECK(t && strstr(t, "rec.fall"), "...unless it wrote `decreasing` (D-44):\n%s", t ? t : "");
+        CHECK(t && strstr(t, "outside a written measure the generator cannot read as a sum") && !strstr(t, "rec.fall 0"),
+              "...unless it wrote `decreasing` (D-44), which is owed (no ghost here: outside, the proposal not read):\n%s", t ? t : "");
         free(t);
         f->may_diverge = false; f->has_decreasing = false;
         struct { JRank r; int n; const char *why; } bad[3];
@@ -1904,6 +1905,101 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  an unsigned comparison of a signed operand: split on its sign, exact against C\n");
+    // 42. a WRITTEN function measure (I.206), the ghost over the parameters: w(n, k, s) recursing
+    // on w(n - 1, k, s) past n <= 0, its measure (0) 2 * n: one node, so rec.def at the entry
+    // (ordinals 0, 1) and at the arguments (1000, 1001); (1) n / 2 and (2) n * k: no sum, outside;
+    // (3) s.len - n over a slice parameter's length; (4) 2 * n with a proposal whose terms are no
+    // parameter: not read, so not refused; (5) the same proposal listing the self-call: its list
+    // IS read, a cycle of one, refused; (6) two proposals: refused. Then a MIXED component: p
+    // written (decreasing n), q proposed (n), each calling the other on n - 1: both owe rec.fall
+    for (int c = 0; c < 7; c++) {
+        IrType *slt = ir_type_new(&A, IRT_SLICE); slt->elem = u8t;
+        IrFunc *f = ir_func_new(&A, nm("w42"), i32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, i32t, nm("n")), *k = ir_add_param(f, i32t, nm("k")), *sl = ir_add_param(f, slt, nm("s"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SLE, n, ir_const_int(f, b0, 0, i32t)), b1, b2);
+        ir_set_ret(b1, ir_const_int(f, b1, 0, i32t));
+        IrValue *m1 = ir_binop(f, b2, IR_SUB, n, ir_const_int(f, b2, 1, i32t), i32t);
+        int ci = nins(b2);
+        IrInstr *call = ir_instr(f, IR_CALL, i32t, 3); call->aux.callee = nm("w42");
+        call->operands[0] = m1; call->operands[1] = k; call->operands[2] = sl; ir_emit(b2, call);
+        ir_set_ret(b2, call->result);
+        f->has_decreasing = true; f->measure_blk = ir_new_ghost_block(f);
+        IrBlock *gb = f->measure_blk;
+        switch (c) {
+            case 1: f->measure_val = ir_binop(f, gb, IR_SDIV, n, ir_const_int(f, gb, 2, i32t), i32t); break;
+            case 2: f->measure_val = ir_binop(f, gb, IR_MUL, n, k, i32t); break;
+            case 3: { IrValue *len = ir_slice_len(f, gb, sl);
+                      f->measure_val = ir_binop(f, gb, IR_SUB, len, ir_const_int(f, gb, 0, len->type), len->type); break; }
+            default: f->measure_val = ir_binop(f, gb, IR_MUL, ir_const_int(f, gb, 2, i32t), n, i32t); break;
+        }
+        ir_finalize_cfg(f);
+        JRank pr[2]; memset(pr, 0, sizeof pr);
+        for (int w = 0; w < 2; w++) { pr[w].blk = JRANK_ENTRY; pr[w].fn = f; pr[w].ncomp = 1; pr[w].nt = 1; pr[w].key[0] = m1->id; pr[w].coef[0][0] = 7; }
+        if (c == 5) { pr[0].nle = 1; pr[0].le_blk[0] = b2->id; pr[0].le_idx[0] = ci; }
+        gen_rk = c >= 4 ? pr : NULL; gen_nrk = c == 6 ? 2 : c >= 4 ? 1 : 0;
+        gen_mod = f;
+        char why[200] = "", key[48];
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        snprintf(key, sizeof key, "bb%d.%d rec.", b2->id, ci);
+        if (c == 1 || c == 2)
+            CHECK(t && strstr(t, "outside a written measure the generator cannot read as a sum") && !strstr(t, key), "case %d: no sum, outside:\n%s", c, t ? t : why);
+        else if (c == 5 || c == 6)
+            CHECK(!t && strstr(why, c == 5 ? "close a cycle" : "two measures"), "case %d: refused (%s)", c, why);
+        else {
+            int nd = 0; char dk[64];
+            for (int o = 0; o < 2; o++) for (int w = 0; w < 2; w++) {
+                snprintf(dk, sizeof dk, "bb%d.%d rec.def %d", b2->id, ci, o * 1000 + w);
+                if (strstr(t ? t : "", dk)) nd++;
+            }
+            snprintf(dk, sizeof dk, "bb%d.%d rec.fall 0", b2->id, ci);
+            const char *v = t ? vc_of(t, dk) : "";
+            char len[32]; snprintf(len, sizeof len, "len(%%v%d)", sl->id);
+            snprintf(dk, sizeof dk, "bb%d.%d rec.def 0", b2->id, ci);
+            const char *vd = t ? vc_of(t, dk) : "";
+            snprintf(dk, sizeof dk, "bb%d.%d rec.fall 0", b2->id, ci);
+            CHECK(t && strstr(t, dk) && nd == 4 && !strstr(t, "outside") && (c != 3 || (strstr(v, len) && strstr(vd, len))),
+                  "case %d: rec.fall, and rec.def at both ends on each side (%d of 4):\n%s", c, nd, t ? t : why);
+        }
+        free(t);
+    }
+    {   IrFunc *pf = ir_func_new(&A, nm("p42"), i32t, IR_FUNC_PURE), *qf = ir_func_new(&A, nm("q42"), i32t, IR_FUNC_PURE);
+        IrFunc *fs[2] = { pf, qf }; IrValue *ps[2]; IrBlock *cb[2]; int cix[2];
+        for (int w = 0; w < 2; w++) {
+            IrFunc *h = fs[w];
+            ps[w] = ir_add_param(h, i32t, nm("n"));
+            IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+            ir_set_br_cond(h0, ir_icmp(h, h0, IR_CMP_SLE, ps[w], ir_const_int(h, h0, 0, i32t)), h1, h2);
+            ir_set_ret(h1, ir_const_int(h, h1, 0, i32t));
+            IrValue *hm = ir_binop(h, h2, IR_SUB, ps[w], ir_const_int(h, h2, 1, i32t), i32t);
+            cix[w] = nins(h2); cb[w] = h2;
+            ir_set_ret(h2, mk_call(h, h2, w ? "p42" : "q42", hm, i32t));
+            ir_finalize_cfg(h);
+        }
+        pf->has_decreasing = true; pf->measure_blk = ir_new_ghost_block(pf); pf->measure_val = ps[0];
+        pf->next = qf; gen_mod = pf;
+        JRank qr[2]; memset(qr, 0, sizeof qr);
+        qr[0].blk = JRANK_ENTRY; qr[0].fn = qf; qr[0].ncomp = 1; qr[0].nt = 1; qr[0].key[0] = ps[1]->id; qr[0].coef[0][0] = 1;
+        gen_rk = qr; gen_nrk = 1;
+        for (int w = 0; w < 2; w++) {
+            char key[48]; snprintf(key, sizeof key, "bb%d.%d rec.fall 0", cb[w]->id, cix[w]);
+            char *t = gen_with(fs[w], NULL, 0, JGEN_ALL, NULL);
+            CHECK(t && strstr(t, key) && !strstr(t, "outside"), "mixed: %s owes rec.fall:\n%s", w ? "q" : "p", t ? t : "");
+            free(t);
+        }
+        // a proposal for p (written) whose terms are nothing of p's, listing p's call to q: its list
+        // is read (p -> q owes rec.le; q -> p, strict, cuts the cycle), its measure not
+        qr[1].blk = JRANK_ENTRY; qr[1].fn = pf; qr[1].ncomp = 1; qr[1].nt = 1; qr[1].key[0] = 999; qr[1].coef[0][0] = 5;
+        qr[1].nle = 1; qr[1].le_blk[0] = cb[0]->id; qr[1].le_idx[0] = cix[0];
+        gen_nrk = 2;
+        {   char key[48]; snprintf(key, sizeof key, "bb%d.%d rec.le 0", cb[0]->id, cix[0]);
+            char *t = gen_with(pf, NULL, 0, JGEN_ALL, NULL);
+            CHECK(t && strstr(t, key) && !strstr(t, "rec.fall 0"), "p's proposal's list read, its measure not:\n%s", t ? t : "");
+            free(t);
+        }
+    }
+    gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    printf("  a written function measure: owed as written, defined at both ends, outside where no sum\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

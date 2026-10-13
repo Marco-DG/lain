@@ -70,6 +70,7 @@ static bool stub_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **o
     if (s->propose == P_CLAIM) { *out = &s->claim; *n = 1; } else { *out = NULL; *n = 0; }      // P_RANK: ranks only
     return true;
 }
+static int count_in(const char *all, const char *key) { int n = 0; for (const char *p = all; (p = strstr(p, key)); p++) n++; return n; }
 // ── the records, as text, in order ─────────────────────────────────────────────────────────
 static char recs[1 << 16]; static size_t nrec_text; static int nrec[9];
 static void sink(void *ctx, const JRecord *r) {
@@ -370,6 +371,49 @@ int main(void) {
     CHECK(run(uf, &s, true, sizeof region, err), "judges: %s", err);
     CHECK(strstr(recs, "proved bb1.1 divzero") && nrec[JREC_NOT_IMPLIED] + nrec[JREC_SOLVER_BUG] == 0,
           "x <u y with x an i64: 100 / y proved:\n%s", recs);
+
+    // a WRITTEN function measure (I.206), a ghost over the entry parameters, owed as written:
+    // (a) f(n, k) decreasing k, recursing on f(n - 1, k): rec.fall not implied (I.206's ERROR);
+    // (b) down(k) decreasing k, on down(k - 1) past k <= 0: proved (its VERIFY); (c) g(lo, hi)
+    // decreasing hi - lo over u32, on g(lo + 1, hi) past lo >= hi: the subtraction well-defined at
+    // the entry and at the arguments (rec.def), and all proved; (d) h(n) decreasing n + 1 over i32:
+    // n + 1 overflows at 2^31 - 1, rec.def not implied; (e) decreasing 2 * n over i32: it falls by
+    // 2, but 2 * n overflows at the entry and at the arguments, two rec.def not implied; (f) k of
+    // type `i32 >= 0` decreasing k - 1: at the arguments k - 2 may be -1, outside the refinement
+    // but well-defined (a refinement is no part of the arithmetic), so all proved
+    IrType *ki32 = ir_type_int(&A, 32, true), *kref = arena_push_aligned(&A, IrType);
+    *kref = *ki32; kref->has_refine = true; kref->refine_lo = 0; kref->refine_hi = 2147483647;
+    for (int c = 0; c < 6; c++) {
+        IrType *T = c == 2 ? u32t : c == 5 ? kref : i32t;
+        IrFunc *wf = ir_func_new(&A, nm("w"), T, IR_FUNC_PURE);
+        IrValue *p0 = ir_add_param(wf, T, nm("p")), *p1 = c == 0 || c == 2 ? ir_add_param(wf, T, nm("q")) : NULL;
+        IrBlock *w0 = wf->entry, *w1 = ir_new_block(wf), *w2 = ir_new_block(wf);
+        IrValue *stop = c == 2 ? ir_icmp(wf, w0, IR_CMP_UGE, p0, p1) : ir_icmp(wf, w0, IR_CMP_SLE, c == 0 ? p0 : p0, ir_const_int(wf, w0, 0, T));
+        ir_set_br_cond(w0, stop, w1, w2);
+        ir_set_ret(w1, ir_const_int(wf, w1, 0, T));
+        IrValue *a0 = ir_binop(wf, w2, c == 2 ? IR_ADD : IR_SUB, p0, ir_const_int(wf, w2, 1, T), T);
+        int wci = 0; for (IrInstr *i = w2->instrs; i; i = i->next) wci++;
+        IrInstr *wc = ir_instr(wf, IR_CALL, T, p1 ? 2 : 1); wc->aux.callee = nm("w"); wc->operands[0] = a0; if (p1) wc->operands[1] = p1;
+        ir_emit(w2, wc); ir_set_ret(w2, wc->result);
+        wf->has_decreasing = true; wf->measure_blk = ir_new_ghost_block(wf);
+        IrBlock *gb = wf->measure_blk;
+        wf->measure_val = c == 0 ? p1 : c == 1 ? p0 : c == 2 ? ir_binop(wf, gb, IR_SUB, p1, p0, T)
+                        : c == 3 ? ir_binop(wf, gb, IR_ADD, p0, ir_const_int(wf, gb, 1, T), T)
+                        : c == 5 ? ir_binop(wf, gb, IR_SUB, p0, ir_const_int(wf, gb, 1, T), T)
+                                 : ir_binop(wf, gb, IR_MUL, ir_const_int(wf, gb, 2, T), p0, T);
+        ir_finalize_cfg(wf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(wf, &s, true, sizeof region, err), "judges: %s", err);
+        char want[64];
+        if (c == 0) snprintf(want, sizeof want, "not-implied bb%d.%d rec.fall", w2->id, wci);
+        else if (c == 3 || c == 4) snprintf(want, sizeof want, "not-implied bb%d.%d rec.def", w2->id, wci);
+        else snprintf(want, sizeof want, "proved bb%d.%d rec.%s", w2->id, wci, c == 2 || c == 5 ? "def" : "fall");
+        bool clean = nrec[JREC_OUTSIDE] + nrec[JREC_REFUSED] + nrec[JREC_SOLVER_BUG] == 0;
+        CHECK(strstr(recs, want) && clean && nrec[JREC_NOT_IMPLIED] == (c == 0 || c == 4 ? 2 : c == 3 ? 1 : 0) &&
+              (c != 4 || strstr(recs, "proved bb2.2 rec.fall")) &&
+              (c != 2 || (count_in(recs, "proved") == nrec[JREC_PROVED] && strstr(recs, "rec.fall") && strstr(recs, "rec.bound"))),
+              "written measure case %d (%s):\n%s", c, want, recs);
+    }
 
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
