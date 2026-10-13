@@ -558,16 +558,23 @@ static bool fd_i128(const JInt *x, __int128 *out) {
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out);
 // ...and when the whole loop is too much for the Farkas system (CAPACITY: a dozen paths of a
 // hundred hypotheses still overflow 128 bits), or has no ranking function over all of its versions
-// at once, once per header version: that one quantity, the values fixed at the header, and the
-// paths sliced to their connected part. A counter's `n - i` is found from i alone.
+// at once, once per header version: that one quantity ALONE first (its paths cut to the facts that
+// touch it, then two rounds out), then with the values fixed at the header. A counter's `n - i` is found from i and n;
+// `12 - month` from month alone, which matters once a loop reads a table: its cells' claims ride in
+// with the other quantities and pass the system's capacity (convert_days' month loop: 16 pairs,
+// 736 hypotheses, capacity; month alone ranks it).
 static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (fd_rank_on(F, f, H, L, out)) return true;
     int32_t np = L->npaths;
     const JVc **sl = fd_bump(L, sizeof(JVc *) * (size_t)(np ? np : 1));
     uint8_t *on = fd_bump(L, (size_t)(L->npairs ? L->npairs : 1));
     if (!sl || !on) return false;
+    // pass 0: the quantity alone, its paths cut to the facts that touch it (its step and its
+    // guard); pass 1: alone, two rounds out; pass 2: with the values fixed at the header
+    for (int32_t pass = 0; pass < 3; pass++)
     for (int32_t q = 0; q < L->npk; q++) {
-        for (int32_t z = 0; z < L->npairs; z++) on[z] = z == q || z >= L->npk;
+        if (pass == 2 && L->npairs == L->npk) break;       // no value fixed at the header to add
+        for (int32_t z = 0; z < L->npairs; z++) on[z] = z == q || (pass == 2 && z >= L->npk);
         bool ok = true; int32_t ns = 0;
         int32_t *sedge = fd_bump(L, sizeof(int32_t) * (size_t)(np ? np : 1));
         if (!sedge) break;
@@ -575,7 +582,7 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
             JVc *v = fd_bump(L, sizeof *v); JHyp *h = fd_bump(L, sizeof(JHyp) * (size_t)(L->full[k]->nhyps ? L->full[k]->nhyps : 1));
             if (!v || !h) { ok = false; break; }
             memcpy(h, L->full[k]->hyps, sizeof(JHyp) * (size_t)L->full[k]->nhyps);
-            *v = *L->full[k]; v->hyps = h; v->nhyps = fd_slice_on(L, h, L->full[k]->nhyps, L->nv, on, 2);
+            *v = *L->full[k]; v->hyps = h; v->nhyps = fd_slice_on(L, h, L->full[k]->nhyps, L->nv, on, pass == 0 ? 1 : 2);
             bool dup = false;
             for (int32_t z = 0; z < ns && !dup; z++) dup = sedge[z] == L->edge[k] && fd_same_path(sl[z], v);
             if (dup) continue;
