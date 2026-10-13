@@ -404,6 +404,8 @@ static const IrType *jg_pointee(JG *g, int32_t id) {
         return d->result->type->kind == IRT_PTR ? d->result->type->elem : d->result->type;   // an array field decays
     if (d->op == IR_ELEM_PTR && d->result && d->result->type && d->result->type->kind == IRT_PTR)
         return d->result->type->elem;
+    if (d->op == IR_LOAD && g->aroot[id] >= 0 && d->result && d->result->type && d->result->type->kind == IRT_PTR)
+        return d->result->type->elem;                          // a reference binding's address (jg_cells)
     return NULL;
 }
 static bool jg_const_of(JG *g, IrValue *v, __int128 *c);
@@ -519,6 +521,23 @@ static bool jg_cells(JG *g) {
         if (!v || v->id < 0 || v->id >= nv || !v->type || v->type->kind != IRT_PTR || v->type->is_raw || !v->type->elem) continue;
         g->aroot[v->id] = v->id; g->apath[v->id] = ""; g->rclass[v->id] = JR_LOCAL;
     }
+    // a REFERENCE BINDING (`var r = var n`): a local slot whose every use is a load or its one
+    // store, of an address. Every load the store dominates is that address: `r = 2` writes n
+    IrInstr **one = JG_NEW(g, IrInstr *, nv);
+    int32_t *oneblk = JG_NEW(g, int32_t, nv), *oneidx = JG_NEW(g, int32_t, nv);
+    if (!one || !oneblk || !oneidx) return jg_fail(g, "out of memory");
+    for (int32_t i = 0; i < nv; i++) { one[i] = NULL; oneblk[i] = -1; oneidx[i] = 0; }
+    for (int32_t r = 0; r < g->nrpo; r++) {
+        int32_t k = 0;
+        for (IrInstr *i = g->blk[g->rpo[r]]->instrs; i; i = i->next, k++)
+            for (int q = 0; q < i->n_operands; q++) {
+                IrValue *o = i->operands[q];
+                if (!o || o->id < 0 || o->id >= nv || !g->def[o->id] || g->def[o->id]->op != IR_ALLOCA) continue;
+                if (i->op == IR_LOAD && q == 0) continue;
+                if (i->op == IR_STORE && q == 0 && oneblk[o->id] == -1) { one[o->id] = i; oneblk[o->id] = g->rpo[r]; oneidx[o->id] = k; continue; }
+                oneblk[o->id] = -2; one[o->id] = NULL;         // another use, or a second store
+            }
+    }
     // addresses, over the RPO (an operand's definition comes first)
     for (int32_t r = 0; r < g->nrpo; r++)
         for (IrInstr *i = g->blk[g->rpo[r]]->instrs; i; i = i->next) {
@@ -529,6 +548,16 @@ static bool jg_cells(JG *g) {
             }
             IrValue *b0 = i->n_operands >= 1 ? i->operands[0] : NULL;
             if (!b0 || b0->id < 0 || b0->id >= nv) continue;
+            if (i->op == IR_LOAD && one[b0->id] && one[b0->id]->n_operands >= 2) {
+                IrValue *av = one[b0->id]->operands[1];
+                int32_t sb = oneblk[b0->id], lb = g->rpo[r], li = 0;
+                for (IrInstr *j = g->blk[lb]->instrs; j && j != i; j = j->next) li++;
+                bool dom = sb == lb ? oneidx[b0->id] < li : jg_dominates(g, sb, lb);
+                if (dom && av && av->id >= 0 && av->id < nv && g->aroot[av->id] >= 0) {
+                    g->aroot[id] = g->aroot[av->id]; g->apath[id] = g->apath[av->id];
+                    continue;
+                }
+            }
             __int128 kx;
             if ((i->op == IR_FIELD_PTR && g->aroot[b0->id] >= 0) ||
                 (i->op == IR_ELEM_PTR && g->aroot[b0->id] >= 0 && jg_elem_const(g, b0->id, i, &kx))) {

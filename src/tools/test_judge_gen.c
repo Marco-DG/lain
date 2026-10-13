@@ -2248,6 +2248,54 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  a variable-index load: the element the index names, as a disjunction over the cells\n");
+    // 47. a REFERENCE BINDING (`var r = var n`): a slot whose every use is a load or its one store
+    // of n's address; each load the store dominates is n's address, so `r = 2` writes n and `r`
+    // reads it. Then `return 10 / n`: (0) n's version is the store through r (2); (1) the slot
+    // stored twice: not resolved, n is fresh after the unattributed store; (2) the slot's address
+    // also handed to a call: not resolved; (3) the store on one path, the load past the join: not
+    // dominated, not resolved; (4) a binding to a field s.f (path .1): s.f's version is the store
+    {   IrType *pi32 = ir_type_new(&A, IRT_PTR); pi32->elem = i32t; pi32->ptr_mut = true;
+        for (int c = 0; c < 5; c++) {
+            IrFunc *f = ir_func_new(&A, nm("b47"), i32t, IR_FUNC_PURE);
+            IrValue *jx = ir_add_param(f, u64t, nm("j"));
+            IrBlock *b0 = f->entry, *at = b0;
+            IrValue *root, *target;
+            if (c == 4) { root = ir_alloca(f, b0, P43); target = ir_field_ptr(f, b0, root, 1, i32t); }
+            else { root = ir_alloca(f, b0, i32t); target = root; }
+            ir_store(f, b0, target, ir_const_int(f, b0, 7, i32t));
+            IrValue *slot = ir_alloca(f, b0, pi32);
+            if (c == 3) {
+                IrBlock *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+                ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, jx, ir_const_int(f, b0, 5, u64t)), b1, b2);
+                ir_store(f, b1, slot, target); ir_set_br(b1, b3);
+                ir_set_br(b2, b3);
+                at = b3;
+            } else ir_store(f, b0, slot, target);
+            if (c == 1) ir_store(f, b0, slot, target);
+            if (c == 2) {
+                IrType *pp = ir_type_new(&A, IRT_PTR); pp->elem = pi32; pp->ptr_mut = true;
+                IrFunc *callee = ir_func_new(&A, nm("peek47"), u32t, IR_FUNC_PURE);
+                ir_add_param(callee, pp, nm("q")); ir_set_ret(callee->entry, ir_const_int(callee, callee->entry, 0, u32t)); ir_finalize_cfg(callee);
+                f->next = callee;
+                (void)mk_call(f, b0, "peek47", slot, u32t);
+            }
+            ir_store(f, at, ir_load(f, at, slot, pi32), ir_const_int(f, at, 2, i32t));     // r = 2
+            IrValue *n = ir_load(f, at, ir_load(f, at, slot, pi32), i32t);                 // read through r
+            ir_set_ret(at, ir_binop(f, at, IR_SDIV, ir_const_int(f, at, 10, i32t), n, i32t));
+            ir_finalize_cfg(f);
+            gen_mod = f;
+            char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), want[64];
+            snprintf(want, sizeof want, "store %%s%d%s@", root->id, c == 4 ? ".1" : "");
+            const char *vz = t ? vc_of(t, " divzero 0") : "";
+            if (c == 0 || c == 4)
+                CHECK(strstr(vz, want) && !strstr(vz, "havoc"), "case %d: the store through r is the target's version:\n%s", c, vz);
+            else
+                CHECK(*vz && !strstr(vz, want), "case %d: not resolved, no store version read through r:\n%s", c, vz);
+            free(t);
+        }
+        gen_mod = NULL;
+    }
+    printf("  a reference binding: a slot stored once with an address is that address where it dominates\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
