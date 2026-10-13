@@ -309,6 +309,30 @@ int main(void) {
     CHECK(nrec[JREC_REFUSED] == 3 && nrec[JREC_PROVED] == 0 && strstr(recs, "close a cycle"), "every call listed: the three refused:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
 
+    // a FIXED condition: `x = n; while 0 != 0 { x = x + 1 }` with i32 x. The body is never entered,
+    // so x + 1's narrow.hi is proved (before, not implied at x = 2^31 - 1), and a constant ranking
+    // claim proves the loop ends: its fall, 0 <= -1, holds on the dead back edge
+    IrFunc *kf = ir_func_new(&A, nm("k"), u32t, IR_FUNC_PURE);
+    IrType *i32t = ir_type_int(&A, 32, true);
+    IrValue *kn = ir_add_param(kf, i32t, nm("n"));
+    IrBlock *k0 = kf->entry, *k1 = ir_new_block(kf), *k2 = ir_new_block(kf), *k3 = ir_new_block(kf);
+    IrValue *kx = ir_alloca(kf, k0, i32t);
+    ir_store(kf, k0, kx, kn); ir_set_br(k0, k1);
+    ir_set_br_cond(k1, ir_icmp(kf, k1, IR_CMP_NE, ir_const_int(kf, k1, 0, i32t), ir_const_int(kf, k1, 0, i32t)), k2, k3);
+    IrValue *klx = ir_load(kf, k2, kx, i32t);
+    ir_store(kf, k2, kx, ir_binop(kf, k2, IR_ADD, klx, ir_const_int(kf, k2, 1, i32t), i32t));
+    ir_set_br(k2, k1);
+    ir_set_ret(k3, ir_const_int(kf, k3, 0, u32t));
+    ir_finalize_cfg(kf);
+    s.propose = P_RANK; s.nrank = 1;
+    memset(&s.rank[0], 0, sizeof s.rank[0]);
+    s.rank[0].blk = k1->id; s.rank[0].fn = kf; s.rank[0].ncomp = 1; s.rank[0].nt = 0; s.rank[0].nedge = 1; s.rank[0].from[0] = k2->id;
+    CHECK(run(kf, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, "proved") && strstr(recs, "narrow.hi") && strstr(recs, "rank.fall") && strstr(recs, "rank.bound") &&
+          nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] + nrec[JREC_REFUSED] + nrec[JREC_SOLVER_BUG] == 0,
+          "while 0 != 0: the body's narrowing and the loop's end proved:\n%s", recs);
+    s.propose = P_NONE; s.nrank = 0;
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

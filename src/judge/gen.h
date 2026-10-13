@@ -1312,7 +1312,38 @@ static IrInstr *jg_cond_cmp(JG *g, IrValue *cv) {
     return ic && ic->op == IR_ICMP ? ic : NULL;
 }
 static bool jg_cond_ok(JG *g, IrValue *cv) { return cv && cv->id >= 0 && cv->id < g->nv; }   // jb_cond decides
+// A condition the IR FIXES: a bool or integer CONST (nonzero is true, as a branch reads it), or a
+// comparison of two constant operands (jg_const_of), read as jb_cmp states one: a signed or an
+// equality predicate on the values, an unsigned one only where both are non-negative (there the
+// orders agree). 1 or 0; -1 when it is not fixed.
+static int jg_cond_value(JG *g, IrValue *cv) {
+    IrInstr *d = cv && cv->id >= 0 && cv->id < g->nv ? g->def[cv->id] : NULL;
+    if (!d) return -1;
+    if (d->op == IR_CONST) return d->result && jg_is_int(d->result->type) ? jg_const(d) != 0 : -1;
+    __int128 a, b;
+    if (d->op != IR_ICMP || d->n_operands < 2 || !jg_const_of(g, d->operands[0], &a) || !jg_const_of(g, d->operands[1], &b))
+        return -1;
+    switch (d->aux.cmp) {
+        case IR_CMP_EQ: return a == b;   case IR_CMP_NE: return a != b;
+        case IR_CMP_SLT: return a < b;   case IR_CMP_SLE: return a <= b;
+        case IR_CMP_SGT: return a > b;   case IR_CMP_SGE: return a >= b;
+        default: break;
+    }
+    if (a < 0 || b < 0) return -1;
+    switch (d->aux.cmp) {
+        case IR_CMP_ULT: return a < b;   case IR_CMP_ULE: return a <= b;
+        case IR_CMP_UGT: return a > b;   case IR_CMP_UGE: return a >= b;
+        default: return -1;
+    }
+}
 static bool jb_cond(JB *B, IrValue *cv, bool truth, const char *origin) {
+    int k = jg_cond_value(B->g, cv);
+    if (k >= 0) {                                              // fixed: no variable is needed
+        if ((k == 1) == truth) return false;                   // it holds on this edge: nothing new
+        JLT none[1];                                           // it fails: the edge is never taken
+        jb_atom(B, origin, none, 0, J_LE, -1);
+        return true;
+    }
     IrInstr *ic = jg_cond_cmp(B->g, cv);
     if (ic) return jb_cmp(B, ic, truth, origin);
     if (!cv || !cv->type || cv->type->kind != IRT_BOOL) return false;
@@ -1349,7 +1380,9 @@ static bool jb_rel(JB *B, IrValue *v, int depth) {
 
 // The facts that dominate the point: branch edges into single-predecessor blocks on the dominator
 // chain, and ASSUMEs before the point. Each is added once one of its operands is in the VC, until
-// nothing more joins: a condition about variables the goal never reaches costs only size.
+// nothing more joins: a condition about variables the goal never reaches costs only size. A
+// condition the IR fixes (jg_cond_value) is added at once: false on its edge, the point is never
+// reached (`while 0 != 0 { x = x + 1 }`), and everything there is implied.
 // ★ A JOIN (R7). Control reached the join S through one of its predecessors, so ONE of these holds:
 // for predecessor P, the conditions of the edges on its path from S's dominator, and, for each
 // cell S versions afresh, `join version = the version P ends with`. Each is a disjunct, and a
@@ -1473,7 +1506,8 @@ static void jb_facts(JB *B) {
         for (int32_t i = 0; i < nf; i++) {
             if (F[i].used) continue;
             IrInstr *ic = jg_cond_cmp(g, F[i].cv);
-            if (ic ? !jb_rel(B, ic->operands[0], 3) && !jb_rel(B, ic->operands[1], 3) : !jb_rel(B, F[i].cv, 3)) continue;
+            if (jg_cond_value(g, F[i].cv) < 0 &&                // a fixed one is about every VC
+                (ic ? !jb_rel(B, ic->operands[0], 3) && !jb_rel(B, ic->operands[1], 3) : !jb_rel(B, F[i].cv, 3))) continue;
             F[i].used = true;
             if (jb_cond(B, F[i].cv, F[i].truth, F[i].origin)) more = true;
         }
@@ -2291,7 +2325,9 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
         if (r->ncomp < 1 || r->ncomp > JRANK_MAXC || r->nedge < 0 || r->nedge > JRANK_MAXE)
             return jg_fail(g, "a ranking claim of no components, or of more than it may have");
         if (r->nle != 0) return jg_fail(g, "a loop's ranking claim lists calls (a recursion's measure does)");
-        if (!(measure && r->nt == 0) && !jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
+        // a CONSTANT one (no terms), written or proposed, falls on no edge that is ever taken: it is
+        // how a loop whose back edges are dead (`while false`, a fixed guard) is shown to end
+        if (r->nt != 0 && !jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
         for (int32_t i = 0; i < r->nt; i++)
             if (!jg_term_ok(g, H->id, r->key[i], r->tk[i])) return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
         for (int32_t j = 0; j < r->ncomp; j++) {

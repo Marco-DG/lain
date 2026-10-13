@@ -1673,6 +1673,105 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a constant factor behind a cast: the product stated, outside where the cast cannot hold it\n");
+    // 39. a condition the IR FIXES: `x = n; while C { x = x + 1 }` with C (0) `0 != 0`, (1) `false`,
+    // (2) `0 == 0`, (3) `5 <u -1` (true in C, -1 being 2^32 - 1 there; a signed constant below 0 in
+    // an unsigned compare is not fixed, so it cannot be read as 5 < -1, false), (4)
+    // cast(2) : i64 < 1. Where C is false the body is never entered: x + 1's VCs hold `0 <= -1`, from
+    // the guard; where it holds, or is not fixed, nothing is stated. A constant ranking claim (no
+    // terms) is accepted, and its fall on the dead back edge is `0 <= -1` under that guard. Then a
+    // JOIN past `if 0 != 0 { x = 1 } else { x = 2 }`: the dead branch's disjunct holds `0 <= -1`
+    for (int c = 0; c < 5; c++) {
+        IrFunc *f = ir_func_new(&A, nm("k39"), i32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, i32t, nm("n"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *x = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, x, n); ir_set_br(b0, b1);
+        IrValue *cond;
+        switch (c) {
+            case 0: cond = ir_icmp(f, b1, IR_CMP_NE, ir_const_int(f, b1, 0, i32t), ir_const_int(f, b1, 0, i32t)); break;
+            case 1: cond = ir_const_int(f, b1, 0, boolt); break;
+            case 2: cond = ir_icmp(f, b1, IR_CMP_EQ, ir_const_int(f, b1, 0, i32t), ir_const_int(f, b1, 0, i32t)); break;
+            case 3: cond = ir_icmp(f, b1, IR_CMP_ULT, ir_const_int(f, b1, 5, i32t), ir_const_int(f, b1, -1, i32t)); break;
+            default: {
+                IrInstr *ci = ir_instr(f, IR_CAST, i64t, 1); ci->operands[0] = ir_const_int(f, b1, 2, i32t); ir_emit(b1, ci);
+                cond = ir_icmp(f, b1, IR_CMP_SLT, ci->result, ir_const_int(f, b1, 1, i64t)); break;
+            }
+        }
+        ir_set_br_cond(b1, cond, b2, b3);
+        IrValue *lx = ir_load(f, b2, x, i32t);
+        int ai = nins(b2) + 1;                                           // the add, after its constant
+        ir_store(f, b2, x, ir_binop(f, b2, IR_ADD, lx, ir_const_int(f, b2, 1, i32t), i32t));
+        ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_load(f, b3, x, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48];
+        snprintf(key, sizeof key, "bb%d.%d narrow.hi 0", b2->id, ai);
+        const char *v = t ? vc_of(t, key) : "";
+        char want[64]; snprintf(want, sizeof want, "guard bb%d->bb%d : 0 <= -1", b1->id, b2->id);
+        bool dead = c == 0 || c == 1 || c == 4;
+        CHECK(*v && (dead ? strstr(v, want) != NULL : !strstr(t, "0 <= -1")), "case %d: %s:\n%s", c,
+              dead ? "the guard is false, the body never entered" : "nothing stated", t ? t : "");
+        free(t);
+        if (c == 0) {                                                    // a constant ranking claim
+            JRank r; memset(&r, 0, sizeof r);
+            r.blk = b1->id; r.fn = f; r.ncomp = 1; r.nt = 0; r.nedge = 1; r.from[0] = b2->id; r.fall[0] = 0;
+            gen_rk = &r; gen_nrk = 1;
+            char why[200] = "";
+            t = gen_with(f, NULL, 0, JGEN_ALL, why);
+            snprintf(key, sizeof key, "bb%d.%d rank.fall 0", b2->id, nins(b2));
+            v = t ? vc_of(t, key) : "";
+            CHECK(t && strstr(v, want) && strstr(v, "goal 0 <= -1\n"), "a constant ranking claim: its fall is 0 <= -1 past the dead guard (%s):\n%s", why, t ? t : "");
+            free(t);
+            gen_rk = NULL; gen_nrk = 0;
+        }
+    }
+    {   IrFunc *f = ir_func_new(&A, nm("j39"), u32t, IR_FUNC_PURE);
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *x = ir_alloca(f, b0, u32t);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_NE, ir_const_int(f, b0, 0, u32t), ir_const_int(f, b0, 0, u32t)), b1, b2);
+        ir_store(f, b1, x, ir_const_int(f, b1, 1, u32t)); ir_set_br(b1, b3);
+        ir_store(f, b2, x, ir_const_int(f, b2, 2, u32t)); ir_set_br(b2, b3);
+        IrValue *lx = ir_load(f, b3, x, u32t);
+        ir_set_ret(b3, ir_binop(f, b3, IR_UDIV, ir_const_int(f, b3, 100, u32t), ir_binop(f, b3, IR_SUB, lx, ir_const_int(f, b3, 1, u32t), u32t), u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        const char *v = t ? vc_of(t, " divzero 0") : "", *jh = strstr(v, "join bb");
+        CHECK(jh && strstr(jh, ", 0 <= -1 }"), "the join's dead disjunct (x = 1) holds 0 <= -1:\n%s", v);
+        free(t);
+    }
+    {   // every predicate on 1 ? 2, 2 ? 2, 3 ? 2, -1 ? 2 and 2 ? -1: the unsigned ones leave -1 unfixed
+        IrFunc *f = ir_func_new(&A, nm("t39"), u32t, IR_FUNC_PURE);
+        IrBlock *b0 = f->entry;
+        static const struct { IrCmp c; int want[5]; } P[] = {
+            { IR_CMP_EQ,  { 0, 1, 0, 0, 0 } }, { IR_CMP_NE,  { 1, 0, 1, 1, 1 } },
+            { IR_CMP_SLT, { 1, 0, 0, 1, 0 } }, { IR_CMP_SLE, { 1, 1, 0, 1, 0 } },
+            { IR_CMP_SGT, { 0, 0, 1, 0, 1 } }, { IR_CMP_SGE, { 0, 1, 1, 0, 1 } },
+            { IR_CMP_ULT, { 1, 0, 0, -1, -1 } }, { IR_CMP_ULE, { 1, 1, 0, -1, -1 } },
+            { IR_CMP_UGT, { 0, 0, 1, -1, -1 } }, { IR_CMP_UGE, { 0, 1, 1, -1, -1 } } };
+        enum { NP = (int)(sizeof P / sizeof *P) };
+        IrValue *cv[NP][5];
+        static const int L[5] = { 1, 2, 3, -1, 2 }, R[5] = { 2, 2, 2, 2, -1 };
+        for (int q = 0; q < NP; q++)
+            for (int k = 0; k < 5; k++)
+                cv[q][k] = ir_icmp(f, b0, P[q].c, ir_const_int(f, b0, L[k], i32t), ir_const_int(f, b0, R[k], i32t));
+        ir_set_ret(b0, ir_const_int(f, b0, 0, u32t));
+        ir_finalize_cfg(f);
+        JG g; memset(&g, 0, sizeof g);
+        g.nv = f->next_value_id;
+        IrInstr **def = calloc((size_t)g.nv, sizeof *def);
+        for (IrInstr *i = b0->instrs; i; i = i->next) if (i->result) def[i->result->id] = i;
+        g.def = def;
+        for (int q = 0; q < NP; q++)
+            for (int k = 0; k < 5; k++) {
+                int got = jg_cond_value(&g, cv[q][k]);
+                CHECK(got == P[q].want[k], "predicate %d on %d ? %d: %d, not %d", (int)P[q].c, L[k], R[k], got, P[q].want[k]);
+            }
+        free(def);
+    }
+    gen_mod = NULL;
+    printf("  a fixed condition: false on its edge, 0 <= -1 there; a constant ranking claim for a dead loop\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
