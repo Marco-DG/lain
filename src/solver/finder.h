@@ -409,7 +409,10 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
         if (!map) return false;
         for (int32_t x = 0; x < w->nv; x++) {
             map[x] = -1;
-            for (int32_t q = 0; q < npk; q++) { if (w->pre[q] == x) map[x] = 2 * q; if (w->post[q] == x) map[x] = 2 * q + 1; }
+            // a quantity the path leaves unchanged has ONE variable for both sides (a recursive call
+            // passing a parameter through, `f(lo + 1, hi)`): it is the pre-state's, and the post's is
+            // tied to it below, or `hi` would have no pre-state and no measure could read it
+            for (int32_t q = 0; q < npk; q++) { if (w->pre[q] == x) map[x] = 2 * q; if (w->post[q] == x && w->pre[q] != x) map[x] = 2 * q + 1; }
             for (int32_t q = 0; q < nshared && map[x] < 0; q++) if (w->val[x] == vals[q]) map[x] = 2 * npk + q;
             if (map[x] < 0) map[x] = local++;
         }
@@ -471,7 +474,7 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
             int32_t extra = 0, rest = ch;
             for (int32_t h = 0; h < w->nh; h++) if (w->h[h].disj && !skip[h]) { extra += w->h[h].dn[rest % w->h[h].nd]; rest /= w->h[h].nd; }
             JVc *vc = fd_bump(L, sizeof *vc);
-            JHyp *hy = fd_bump(L, sizeof(JHyp) * (size_t)(nh + extra + 1));
+            JHyp *hy = fd_bump(L, sizeof(JHyp) * (size_t)(nh + extra + 1 + 2 * npk));
             if (!vc || !hy) return false;
             int32_t m = 0; rest = ch;
             for (int32_t h = 0; h < w->nh; h++) {
@@ -482,6 +485,18 @@ static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
                 int32_t z = 0;
                 for (int32_t d = 0; d < pick; d++) z += o->dn[d];
                 for (int32_t c = 0; c < o->dn[pick]; c++) { hy[m].origin = "path case"; if (!fd_map_cons(L, &o->dc[z + c].c, map, &hy[m].cons)) return false; m++; }
+            }
+            for (int32_t q = 0; q < npk; q++) {               // ...post - pre <= 0 and pre - post <= 0
+                if (w->pre[q] != w->post[q]) continue;
+                for (int sg = 0; sg < 2; sg++) {
+                    JTerm *t = fd_bump(L, sizeof(JTerm) * 2);
+                    if (!t) return false;
+                    t[0].var = 2 * q;     fd_jint(&t[0].coef, sg ? 1 : -1);
+                    t[1].var = 2 * q + 1; fd_jint(&t[1].coef, sg ? -1 : 1);
+                    memset(&hy[m], 0, sizeof hy[m]);
+                    hy[m].origin = "unchanged"; hy[m].cons.t = t; hy[m].cons.nt = 2; hy[m].cons.op = J_LE; fd_jint(&hy[m].cons.rhs, 0);
+                    m++;
+                }
             }
             vc->vars = L->names; vc->nvars = nv; vc->hyps = hy; vc->nhyps = m;
             vc->id.fn = "loop"; vc->id.irhash = "0"; vc->id.point = "path"; vc->id.kind = "path"; vc->id.ordinal = "0";
