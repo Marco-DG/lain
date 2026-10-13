@@ -965,14 +965,47 @@ static bool jg_const_at(JG *g, IrValue *v, __int128 *c, int depth) {
 }
 static bool jg_const_of(JG *g, IrValue *v, __int128 *c) { return jg_const_at(g, v, c, 0); }
 static bool jg_mul_ok(__int128 a, __int128 b, __int128 *out);
+static IrInstr *jg_cond_cmp(JG *g, IrValue *cv);
+static IrValue *jg_param_value(const IrFunc *h, int32_t key);
+// A parameter's REFINEMENT as its lowering states it: an ASSUME comparing it with a constant in
+// the entry block's PROLOGUE (nothing but constants, comparisons and assumes before it), which
+// holds at every point of the function (a parameter is one value, and the prologue runs first).
+// Narrows r; a predicate it cannot read narrows nothing.
+static void jg_param_refine(JG *g, IrValue *v, JRange *r) {
+    for (IrInstr *i = g->f->entry ? g->f->entry->instrs : NULL; i; i = i->next) {
+        if (i->op == IR_CONST || i->op == IR_ICMP) continue;
+        if (i->op != IR_ASSUME) return;                        // the prologue ends here
+        IrInstr *ic = i->n_operands ? jg_cond_cmp(g, i->operands[0]) : NULL;
+        __int128 c;
+        if (!ic || ic->n_operands < 2) continue;
+        int side = ic->operands[0] == v ? 0 : ic->operands[1] == v ? 1 : -1;
+        if (side < 0 || !jg_const_of(g, ic->operands[1 - side], &c)) continue;
+        IrCmp p = ic->aux.cmp;
+        bool uns = p == IR_CMP_ULT || p == IR_CMP_ULE || p == IR_CMP_UGT || p == IR_CMP_UGE;
+        if (uns && (c < 0 || !v->type || v->type->kind != IRT_INT || v->type->is_signed)) continue;   // as values: both >= 0
+        if (side == 1)                                         // c op v is v op' c
+            p = p == IR_CMP_SLT ? IR_CMP_SGT : p == IR_CMP_SLE ? IR_CMP_SGE : p == IR_CMP_SGT ? IR_CMP_SLT : p == IR_CMP_SGE ? IR_CMP_SLE
+              : p == IR_CMP_ULT ? IR_CMP_UGT : p == IR_CMP_ULE ? IR_CMP_UGE : p == IR_CMP_UGT ? IR_CMP_ULT : p == IR_CMP_UGE ? IR_CMP_ULE : p;
+        switch (p) {
+            case IR_CMP_EQ: if (c > r->lo) r->lo = c; if (c < r->hi) r->hi = c; break;
+            case IR_CMP_SGE: case IR_CMP_UGE: if (c > r->lo) r->lo = c; break;
+            case IR_CMP_SGT: case IR_CMP_UGT: if (c + 1 > r->lo) r->lo = c + 1; break;
+            case IR_CMP_SLE: case IR_CMP_ULE: if (c < r->hi) r->hi = c; break;
+            case IR_CMP_SLT: case IR_CMP_ULT: if (c - 1 < r->hi) r->hi = c - 1; break;
+            default: break;
+        }
+    }
+}
 // A value's STATIC range: a constant's value; through a cast whose source's static range lies in
-// its result type (the value kept under any mode a cast has), the source's; else its type's (a
-// refinement included, as every type fact). False where none is known.
+// its result type (the value kept under any mode a cast has), the source's; a parameter's type
+// narrowed by its refinement (jg_param_refine); else its type's (a refinement included, as every
+// type fact). False where none is known.
 static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
     __int128 c;
     if (jg_const_of(g, v, &c)) { r->lo = r->hi = c; r->has_ne = false; return true; }
     if (!v || !v->type || !jg_range(v->type, r)) return false;
     IrInstr *d = v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
+    if (!d && jg_param_value(g->f, v->id) == v) jg_param_refine(g, v, r);
     JRange s;
     if (depth < 4 && d && d->op == IR_CAST && d->n_operands >= 1 && jg_is_int(d->operands[0]->type) &&
         jg_static_range(g, d->operands[0], &s, depth + 1) && s.lo >= r->lo && s.hi <= r->hi) *r = s;

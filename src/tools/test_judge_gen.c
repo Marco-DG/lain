@@ -2145,6 +2145,53 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a product of two variables: between its corners, outside where they leave its type\n");
+    // 45. a PARAMETER's refinement in its static range: `x * y` into i32 with x, y bounded by
+    // ASSUMEs in the entry block's prologue: (0) 0 <= x <= 100 and 0 <= y <= 100: hull [0, 10000],
+    // owed; (1) the same assumes after an add: not the prologue, not read, outside; (2) -1 < x and
+    // 101 > x (y the same), the constant on the left: as case 0; (3) x <=u 100 on an UNSIGNED u32
+    // x (y the same): [0, 10000] into u32; (4) x <=u 100 on a SIGNED x: not read (the orders differ
+    // there), outside; (5) x > -1 and x < 101, strict: as case 0; (6) x == 5 and y == 7: [35, 35]
+    for (int c = 0; c < 7; c++) {
+        IrType *T = c == 3 ? u32t : i32t;
+        IrFunc *f = ir_func_new(&A, nm("r45"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x")), *y = ir_add_param(f, T, nm("y"));
+        IrBlock *b0 = f->entry;
+        if (c == 1) (void)ir_binop(f, b0, IR_ADD, x, y, T);
+        IrValue *vs[2] = { x, y };
+        for (int w = 0; w < 2; w++) {
+            IrValue *v = vs[w];
+            switch (c) {
+                case 0: case 1:
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, v, ir_const_int(f, b0, 0, T)));
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SLE, v, ir_const_int(f, b0, 100, T))); break;
+                case 2:                                        // strict, so a mirror's error moves the corners
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SLT, ir_const_int(f, b0, -1, T), v));
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGT, ir_const_int(f, b0, 101, T), v)); break;
+                case 3: case 4:
+                    if (c == 4) ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, v, ir_const_int(f, b0, 0, T)));
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_ULE, v, ir_const_int(f, b0, 100, T))); break;
+                case 5:
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGT, v, ir_const_int(f, b0, -1, T)));
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SLT, v, ir_const_int(f, b0, 101, T))); break;
+                default:
+                    ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_EQ, v, ir_const_int(f, b0, w ? 7 : 5, T))); break;
+            }
+        }
+        IrValue *p = ir_binop(f, b0, IR_MUL, x, y, T);
+        ir_set_ret(b0, p);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), lo[96], hi[96];
+        snprintf(lo, sizeof lo, "def %%v%d mul.hull : -1*%%v%d <= %s\n", p->id, p->id, c == 6 ? "-35" : "0");
+        snprintf(hi, sizeof hi, "def %%v%d mul.hull : 1*%%v%d <= %s\n", p->id, p->id, c == 6 ? "35" : "10000");
+        if (c == 1 || c == 4)
+            CHECK(t && strstr(t, "outside atom.mul") && !strstr(t, "mul.hull"), "case %d: the refinement not read, outside:\n%s", c, t ? t : "");
+        else
+            CHECK(t && strstr(t, lo) && strstr(t, hi) && !strstr(t, "atom.mul"), "case %d: the hull from the refinements:\n%s", c, t ? t : "");
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a parameter's refinement: the prologue's assumes narrow its static range\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
