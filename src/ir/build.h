@@ -71,6 +71,14 @@ IrBlock *ir_new_block(IrFunc *f) {
     else { f->blocks_tail->next = b; f->blocks_tail = b; }
     return b;
 }
+// A block outside the function's CFG (I.206's ghost measure): no id of the CFG's (-1), not in
+// `blocks`, so no analysis, emitter or interpreter walks it. Only its owner's reader does.
+IrBlock *ir_new_ghost_block(IrFunc *f) {
+    IrBlock *b = arena_push_aligned(f->arena, IrBlock);
+    memset(b, 0, sizeof *b);
+    b->id = -1;
+    return b;
+}
 // The source position instructions are stamped with. Exactly ONE instruction in the whole
 // lowering used to carry a location (the elem_ptr in ir_lower_addr), so every diagnostic the
 // new engine could produce — a leak, a use-after-move, an uninitialised read, an overflow —

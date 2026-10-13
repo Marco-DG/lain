@@ -593,6 +593,18 @@ typedef struct IrFunc {
     // in a `proc` is a claim nothing sovereign currently checks, and checking it needs exactly
     // this fact, per loop rather than per function.
     bool       has_decreasing;
+    // ...and WHAT it was (I.206): the written measure over the ENTRY parameters, a GHOST tree in
+    // `measure_blk`, a block that is not in `blocks` (id -1): never emitted, analysed or run, so it
+    // owes nothing where it stands. A `decreasing hi - lo` lowered at the entry would owe
+    // no-underflow on the base case's path, where `lo >= hi` returns. The judge reads it under a
+    // substitution, the entry values for m(params) or a recursive call's arguments for m(args), and
+    // owes at each call into the recursion component that both are well-defined, m(params) >= 0
+    // and m(args) < m(params) (E082; Documentation, 2026-10-13). NULL with has_decreasing: a measure
+    // the ghost lowering does not state (anything but parameters, a slice parameter's `.len`,
+    // integer literals, + - * / % and unary minus over one integer type), which the judge reports
+    // as outside, never as a pass.
+    struct IrValue *measure_val;
+    struct IrBlock *measure_blk;
     uint64_t   ret_borrow_mask;      // bit i = it may borrow from param i (0 with a borrowed ret
     bool       ret_borrow_mask_done; // is impossible: the fallback is every reference param)
     // F1: the DECLARED `in <param>` mask, if the signature carried one. Kept apart from the
@@ -680,6 +692,7 @@ IrType  *ir_type_int(Arena *a, int bits, bool is_signed);
 IrType  *ir_type_bool(Arena *a);
 IrValue *ir_new_value(IrFunc *f, IrType *t);
 IrBlock *ir_new_block(IrFunc *f);
+IrBlock *ir_new_ghost_block(IrFunc *f);   // outside the CFG (I.206)
 IrInstr *ir_emit(IrBlock *b, IrInstr *ins);   // append to block body, return it
 
 #endif // LAIN_IR_H

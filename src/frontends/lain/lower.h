@@ -4470,6 +4470,70 @@ static void ir_lower_param_refinements(LowerCtx *c, IrValue *pv, Type *pty, Decl
 }
 
 
+// ── I.206: a written FUNCTION measure, as a ghost tree over the entry parameters ────────────
+// IrFunc.measure_val says why it is a ghost. Lowered by hand rather than by ir_lower_expr: the
+// general lowering may open blocks (a short-circuit, an `if` expression) and reads a parameter
+// through its slot when it has one, and neither belongs outside the CFG. What it states is the
+// arithmetic a measure is made of, over ONE integer type (a literal takes its partner's type),
+// every operation CHECKED, as the source's own arithmetic is: the judge owes each one well-defined
+// at a recursive call. Anything else returns NULL, and the function's measure is not stated.
+static bool ir_ghost_same_int(const IrType *a, const IrType *b) {
+    return a && b && a->kind == IRT_INT && b->kind == IRT_INT && a->bits == b->bits && a->is_signed == b->is_signed;
+}
+static IrValue *ir_lower_ghost_measure(LowerCtx *c, Expr *e, IrType *want) {
+    if (!e) return NULL;
+    switch (e->kind) {
+        case EXPR_IDENTIFIER: {
+            IrLocal *l = ir_env_find(c, e->as.identifier_expr.id);
+            IrValue *v = l ? l->param : NULL;
+            return v && v->type && v->type->kind == IRT_INT ? v : NULL;
+        }
+        case EXPR_LITERAL: {
+            IrType *t = want ? want : ir_type_int(c->a, 64, true);
+            if (e->as.literal_expr.is_bool || t->kind != IRT_INT || !ir_int_const_fits(e->as.literal_expr.value, t)) return NULL;
+            return ir_const_int(c->f, c->cur, e->as.literal_expr.value, t);
+        }
+        case EXPR_MEMBER: {                                  // a slice parameter's `.len`
+            Expr *t = e->as.member_expr.target; Id *m = e->as.member_expr.member;
+            if (!t || t->kind != EXPR_IDENTIFIER || !m || m->length != 3 || memcmp(m->name, "len", 3)) return NULL;
+            IrLocal *l = ir_env_find(c, t->as.identifier_expr.id);
+            IrValue *sv = l ? l->param : NULL;
+            return sv && sv->type && sv->type->kind == IRT_SLICE ? ir_slice_len(c->f, c->cur, sv) : NULL;
+        }
+        case EXPR_UNARY: {
+            if (e->as.unary_expr.op != TOKEN_MINUS) return NULL;
+            IrValue *x = ir_lower_ghost_measure(c, e->as.unary_expr.right, want);
+            if (!x || !x->type->is_signed) return NULL;
+            return ir_binop(c->f, c->cur, IR_SUB, ir_const_int(c->f, c->cur, 0, x->type), x, x->type);
+        }
+        case EXPR_BINARY: {
+            Expr *L = e->as.binary_expr.left, *R = e->as.binary_expr.right;
+            if (!L || !R) return NULL;
+            IrValue *x, *y;
+            if (L->kind == EXPR_LITERAL && R->kind != EXPR_LITERAL) {     // `n - 1` and `1 + n` alike
+                y = ir_lower_ghost_measure(c, R, want);
+                x = y ? ir_lower_ghost_measure(c, L, y->type) : NULL;
+            } else {
+                x = ir_lower_ghost_measure(c, L, want);
+                y = x ? ir_lower_ghost_measure(c, R, x->type) : NULL;
+            }
+            if (!x || !y || !ir_ghost_same_int(x->type, y->type)) return NULL;
+            bool sg = x->type->is_signed;
+            IrOp op;
+            switch (e->as.binary_expr.op) {
+                case TOKEN_PLUS:    op = IR_ADD; break;
+                case TOKEN_MINUS:   op = IR_SUB; break;
+                case TOKEN_ASTERISK: op = IR_MUL; break;
+                case TOKEN_SLASH:   op = sg ? IR_SDIV : IR_UDIV; break;
+                case TOKEN_PERCENT: op = sg ? IR_SREM : IR_UREM; break;
+                default: return NULL;
+            }
+            return ir_binop(c->f, c->cur, op, x, y, x->type);
+        }
+        default: return NULL;
+    }
+}
+
 // ── entry: lower one function ────────────────────────────────────────────────
 IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
     IrType tmp; LowerCtx cc = {0}; cc.a = a; cc.globals = globals; (void)tmp;
@@ -4625,6 +4689,14 @@ IrFunc *ir_lower_function(Decl *fn, DeclList *globals, Arena *a) {
             IrValue *z = ir_const_int(f, b, 0, ir_type_int(a, 32, false));
             ir_assert_coded(f, b, ir_icmp(f, b, IR_CMP_NE, z, z), 135);
         }
+    }
+    // The written measure's value, a ghost tree (I.206). WRITTEN only: the front end installs an
+    // INFERRED measure in the same `decreasing_measure` field, and an inferred one is no claim to
+    // defend. LAST, after the body: its values take the function's last ids, so the body's are
+    // numbered as they were and the emitted C does not move.
+    if (fn->as.function_decl.decreasing_written && fn->as.function_decl.decreasing_measure) {
+        f->measure_blk = cc.cur = ir_new_ghost_block(f);
+        f->measure_val = ir_lower_ghost_measure(&cc, fn->as.function_decl.decreasing_measure, NULL);
     }
     ir_finalize_cfg(f);
     return f;

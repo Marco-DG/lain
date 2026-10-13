@@ -2286,36 +2286,14 @@ static void check_recursion_measure(Decl *fn, Expr *call) {
                 (int)mvar->length, mvar->name);
         diagnostic_show_line(call->line, call->col); exit(1);
     }
-    Expr *arg = NULL; int i = 0;
-    for (ExprList *a = call->as.call_expr.args; a; a = a->next, i++)
-        if (i == found) { arg = a->expr; break; }
-    if (!arg) return;   // arity mismatch reported elsewhere
-    // (a) strict descent, detected SYNTACTICALLY relative to the measure `m` (an
-    // interval subtraction `arg - m` loses the shared-`m` correlation and can't
-    // prove `(n-1) - n = -1`). Mirrors the loop measure's assignment_direction:
-    //   m - K  (K >= 1)  |  m + K (K <= -1)  |  m / D (D >= 2, m >= 1)  → strictly < m.
-    bool strict = false;
-    if (arg->kind == EXPR_BINARY && expr_struct_equal(arg->as.binary_expr.left, m)) {
-        TokenKind op = arg->as.binary_expr.op;
-        Range rr = sema_eval_range(arg->as.binary_expr.right, sema_ranges);
-        if (op == TOKEN_MINUS && rr.known && rr.min >= 1)       strict = true;
-        else if (op == TOKEN_PLUS && rr.known && rr.max <= -1)  strict = true;
-        else if (op == TOKEN_SLASH && rr.known && rr.min >= 2) {
-            Range mr0 = sema_eval_range(m, sema_ranges);
-            if (mr0.known && mr0.min >= 1) strict = true;       // halving, m >= 1
-        }
-    }
-    // (b) well-founded: m provably >= 0 at the call site.
-    Range mr = sema_eval_range(m, sema_ranges);
-    bool wellfounded = mr.known && mr.min >= 0;
-    if (!strict || !wellfounded) {
-        // The legacy E082 for a failing recursion measure is DELETED. It is a TERMINATION VERDICT
-        // and the sovereign engine returns one (`vra_self_call_site` + `vra_recursion_terminates`,
-        // reported by analysis/report.h), which distinguishes a measure that is absent from one
-        // that is present and failing — the distinction Annex B makes normative. (E091, the SHAPE
-        // of a `decreasing` clause, stays: that is front-end policy, not a termination question.)
-        return;
-    }
+    // The measure's DESCENT and BOUND are not checked here. This used to compute both from the
+    // front end's ranges and return without reporting them, the legacy E082 having been deleted on
+    // the understanding that the engine read the measure; it never did (I.206: `decreasing k` with
+    // k unchanged was accepted). The written measure is lowered as IrFunc.measure_val, a ghost over
+    // the parameters, for the judge to owe at every call into the recursion component (E082 under
+    // --judge=authority, once the generator reads it; until then the judge ranks a recursion by the
+    // finder's measure). The default mode's VRA ranks it by a parameter it finds and never reads the
+    // written one. Only the SHAPE (E091) is front-end policy.
 }
 
 // A field of a [packed] struct is BITS inside one integer: it has no address, so a `var` reference

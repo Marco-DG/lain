@@ -125,6 +125,11 @@ void ir_dump_func(const IrFunc *f, FILE *o) {
         for (const IrInstr *ins = b->instrs; ins; ins = ins->next) ir_dump_instr(ins, o);
         ir_dump_term(&b->term, o);
     }
+    if (f->measure_blk && f->measure_val) {        // I.206: the written measure, a ghost over the parameters
+        fputs("decreasing (ghost, not in the CFG):\n", o);
+        for (const IrInstr *ins = f->measure_blk->instrs; ins; ins = ins->next) ir_dump_instr(ins, o);
+        fputs("  measure ", o); ir_dump_val(f->measure_val, o); fputc('\n', o);
+    } else if (f->has_decreasing) fputs("decreasing (not stated as a ghost: outside)\n", o);
     fputs("}\n", o);
 }
 
