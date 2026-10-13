@@ -1504,29 +1504,53 @@ static void jb_state(JB *B, int32_t x) {
 
 // The comparison an ICMP states, true or false, over two variables; false if it is not stated
 // exactly (an unsigned predicate with a signed operand that may be negative: §2's Q row).
-static bool jb_cmp(JB *B, IrInstr *ic, bool truth, const char *origin) {
+// The operands of an unsigned comparison that are split on their sign (jb_cmpk): the signed ones
+// that are not a constant >= 0. Their count, or -1 where one is wider than 64 bits (refused).
+static int jg_cmp_split(JG *g, const IrInstr *ic, int sk[2]) {
+    IrCmp c = ic->aux.cmp;
+    int ns = 0;
+    if (!(c == IR_CMP_ULT || c == IR_CMP_ULE || c == IR_CMP_UGT || c == IR_CMP_UGE)) return 0;
+    for (int k = 0; k < 2; k++) {
+        IrValue *o = ic->operands[k];
+        if (o->type->kind == IRT_BOOL || !o->type->is_signed) continue;
+        IrInstr *od = o->id >= 0 && o->id < g->nv ? g->def[o->id] : NULL;
+        if (od && od->op == IR_CONST && jg_const(od) >= 0) continue;
+        if (o->type->bits < 1 || o->type->bits > 64) return -1;
+        sk[ns++] = k;
+    }
+    return ns;
+}
+// A comparison as a fact; `cas` >= 0 picks ONE case of a fact that is a disjunction (`!=`, an
+// unsigned split), stated as conjuncts: how a join's path states it inside its disjunct.
+static bool jb_cmpk(JB *B, IrInstr *ic, bool truth, const char *origin, int cas) {
     if (!ic || ic->op != IR_ICMP || ic->n_operands < 2) return false;
     IrValue *a = ic->operands[0], *b = ic->operands[1];
     if (!jg_is_int(a->type) || !jg_is_int(b->type)) return false;
     IrCmp c = ic->aux.cmp;
-    bool uns = c == IR_CMP_ULT || c == IR_CMP_ULE || c == IR_CMP_UGT || c == IR_CMP_UGE;
     // An UNSIGNED predicate compares its operands as uint64 (emit_c.h, interp.h's ii_cmp_scalar):
     // a signed operand below 0 is itself + 2^64 there. A signed one that is a constant >= 0 is its
     // value; any other is split on its sign, one disjunct per case (`(i + 15) <u a.len` with i + 15
     // an i34): (x >= 0 and x op y) or (x <= -1 and x + 2^64 op y).
-    int sk[2], ns = 0;
-    for (int k = 0; k < 2 && uns; k++) {
-        IrValue *o = ic->operands[k];
-        if (o->type->kind == IRT_BOOL || !o->type->is_signed) continue;
-        IrInstr *od = o->id >= 0 && o->id < B->g->nv ? B->g->def[o->id] : NULL;
-        if (od && od->op == IR_CONST && jg_const(od) >= 0) continue;
-        if (o->type->bits < 1 || o->type->bits > 64) return false;
-        sk[ns++] = k;
-    }
+    int sk[2], ns = jg_cmp_split(B->g, ic, sk);
+    if (ns < 0) return false;
     if (ns) {
-        if (B->jS >= 0) return false;                          // a disjunction: not inside a disjunct
+        if (B->jS >= 0 && (cas < 0 || cas >= (1 << ns))) return false;   // a disjunction: one case only there
         if (!truth) c = c == IR_CMP_ULT ? IR_CMP_UGE : c == IR_CMP_ULE ? IR_CMP_UGT : c == IR_CMP_UGT ? IR_CMP_ULE : IR_CMP_ULT;
         int32_t va = jb_val(B, a), vb = jb_val(B, b);
+        if (B->jS >= 0) {                                      // case `cas`, as conjuncts of the disjunct
+            __int128 sh[2] = { 0, 0 };
+            for (int q = 0; q < ns; q++) {
+                bool neg = (cas >> q) & 1;
+                JLT u[1]; u[0].var = sk[q] ? vb : va; u[0].c = neg ? 1 : -1;
+                jb_atom(B, origin, u, 1, J_LE, neg ? -1 : 0);
+                if (neg) sh[sk[q]] = (__int128)1 << 64;
+            }
+            JLT u[2]; __int128 k0 = sh[1] - sh[0];
+            bool less = c == IR_CMP_ULT || c == IR_CMP_ULE, strict = c == IR_CMP_ULT || c == IR_CMP_UGT;
+            u[0].var = va; u[0].c = less ? 1 : -1; u[1].var = vb; u[1].c = less ? -1 : 1;
+            jb_atom(B, origin, u, 2, J_LE, (less ? k0 : -k0) - (strict ? 1 : 0));
+            return true;
+        }
         JHyp *h = jb_hyp(B, origin);
         if (!h) return false;
         h->disj = true; h->ndis = 1 << ns;
@@ -1562,7 +1586,12 @@ static bool jb_cmp(JB *B, IrInstr *ic, bool truth, const char *origin) {
     switch (c) {
         case IR_CMP_EQ: t[0].c = 1; t[1].c = -1; jb_atom(B, origin, t, 2, J_EQ, 0); break;
         case IR_CMP_NE: {
-            if (B->jS >= 0) return false;                      // a disjunction: not inside a disjunct
+            if (B->jS >= 0) {                                  // inside a disjunct: case `cas` only
+                if (cas < 0 || cas > 1) return false;
+                JLT u[2]; u[0] = t[0]; u[1] = t[1]; u[0].c = cas == 0 ? 1 : -1; u[1].c = cas == 0 ? -1 : 1;
+                jb_atom(B, origin, u, 2, J_LE, -1);
+                break;
+            }
             JHyp *h = jb_hyp(B, origin);
             if (!h) return false;
             h->disj = true; h->ndis = 2;
@@ -1615,7 +1644,21 @@ static int jg_cond_value(JG *g, IrValue *cv) {
         default: return -1;
     }
 }
-static bool jb_cond(JB *B, IrValue *cv, bool truth, const char *origin) {
+// How many cases a condition is as a fact on an edge: 2 for a `!=` (and a false `==`), 2^n for an
+// unsigned comparison split on n signs, else 1 (jb_cmpk's rules, read without stating anything).
+static int jg_cond_ncases(JG *g, IrValue *cv, bool truth) {
+    if (jg_cond_value(g, cv) >= 0) return 1;
+    IrInstr *ic = jg_cond_cmp(g, cv);
+    if (!ic || ic->n_operands < 2 || !jg_is_int(ic->operands[0]->type) || !jg_is_int(ic->operands[1]->type)) return 1;
+    int sk[2], ns = jg_cmp_split(g, ic, sk);
+    if (ns < 0) return 1;
+    if (ns > 0) return 1 << ns;
+    IrCmp c = ic->aux.cmp;
+    return (truth && c == IR_CMP_NE) || (!truth && c == IR_CMP_EQ) ? 2 : 1;
+}
+static bool jb_condk(JB *B, IrValue *cv, bool truth, const char *origin, int cas);
+static bool jb_cond(JB *B, IrValue *cv, bool truth, const char *origin) { return jb_condk(B, cv, truth, origin, -1); }
+static bool jb_condk(JB *B, IrValue *cv, bool truth, const char *origin, int cas) {
     int k = jg_cond_value(B->g, cv);
     if (k >= 0) {                                              // fixed: no variable is needed
         if ((k == 1) == truth) return false;                   // it holds on this edge: nothing new
@@ -1624,7 +1667,7 @@ static bool jb_cond(JB *B, IrValue *cv, bool truth, const char *origin) {
         return true;
     }
     IrInstr *ic = jg_cond_cmp(B->g, cv);
-    if (ic) return jb_cmp(B, ic, truth, origin);
+    if (ic) return jb_cmpk(B, ic, truth, origin, cas);
     if (!cv || !cv->type || cv->type->kind != IRT_BOOL) return false;
     JLT t[1]; t[0].var = jb_val(B, cv); t[0].c = 1;
     jb_atom(B, origin, t, 1, J_EQ, truth ? 1 : 0);
@@ -1668,6 +1711,52 @@ static bool jb_rel(JB *B, IrValue *v, int depth) {
 // value or version made on that path is described inside it (jb_global_at). A loop header is not
 // a join here (its back edge's values are a later iteration's: the loop cut decides it), and a
 // path with no fact at all makes the disjunction say nothing, so none is stated.
+// A join J's fresh versions, each equal to the version its predecessor P ends with: inside the
+// current disjunct, for the versions the VC names (S's own are VC-wide variables; an inner join's
+// are local to this path).
+static void jb_join_eqs(JB *B, int32_t J, int32_t P, bool outer) {
+    JG *g = B->g;
+    for (int32_t c = 0; c < g->ncells; c++) {
+        int32_t jv = g->instate[(size_t)J * (size_t)g->ncells + (size_t)c];
+        if (jv < 0 || g->ver[jv].kind != JV_JOIN || g->ver[jv].blk != J || B->vver[jv] < 0) continue;
+        int32_t pv = g->outstate[(size_t)P * (size_t)g->ncells + (size_t)c];
+        if (pv < 0) continue;
+        JLT t[2]; t[0].var = outer ? B->vver[jv] : jb_ver(B, jv); t[0].c = 1; t[1].var = jb_ver(B, pv); t[1].c = -1;
+        jb_atom(B, NULL, t, 2, J_EQ, 0);
+    }
+}
+// The PATHS from S's dominator d0 into S, each its edges X -> Y from S upward with the case its
+// condition takes (-1: the whole condition). A path branches at an inner join (one per forward
+// predecessor) and at a condition that is a disjunction (one per case), so no disjunct holds a
+// disjunction. False past JJOIN_MAXP paths or JJOIN_MAXL edges, at a loop header or a back edge.
+enum { JJOIN_MAXP = 32, JJOIN_MAXL = 64 };
+typedef struct { int32_t x, y, cas; } JJStep;
+typedef struct { JJStep *st; int32_t n; } JPathE;
+static bool jb_join_paths(JB *B, int32_t d0, IrBlock *Y, IrBlock *X, JJStep *cur, int32_t n, JPathE *out, int32_t *nout) {
+    JG *g = B->g;
+    if (n >= JJOIN_MAXL) return false;
+    bool cond = X->term.kind == IR_TERM_BR_COND && X->term.a != X->term.b && jg_cond_ok(g, X->term.cond);
+    int nc = cond ? jg_cond_ncases(g, X->term.cond, X->term.a == Y) : 1;
+    for (int cs = 0; cs < nc; cs++) {
+        cur[n].x = X->id; cur[n].y = Y->id; cur[n].cas = nc > 1 ? cs : -1;
+        if (X->id == d0 || !X->preds) {                        // a whole path
+            if (*nout == JJOIN_MAXP) return false;
+            JJStep *cp = JG_NEW(g, JJStep, n + 1);
+            if (!cp) { B->fail = true; return false; }
+            memcpy(cp, cur, sizeof *cp * (size_t)(n + 1));
+            out[*nout].st = cp; out[*nout].n = n + 1; (*nout)++;
+            continue;
+        }
+        if (g->npred[X->id] == 1) { if (!jb_join_paths(B, d0, X, X->preds->block, cur, n + 1, out, nout)) return false; continue; }
+        if (g->inloop[(size_t)X->id * (size_t)g->nb + (size_t)X->id]) return false;   // a loop header: not crossed
+        for (IrEdge *e = X->preds; e; e = e->next) {
+            if (g->rpoix[e->block->id] < 0) continue;
+            if (g->rpoix[e->block->id] >= g->rpoix[X->id]) return false;
+            if (!jb_join_paths(B, d0, X, e->block, cur, n + 1, out, nout)) return false;
+        }
+    }
+    return true;
+}
 static bool jb_join(JB *B, int32_t s) {
     JG *g = B->g; IrBlock *S = g->blk[s];
     IrBlock *pr[8]; int np = 0;
@@ -1678,24 +1767,38 @@ static bool jb_join(JB *B, int32_t s) {
     }
     if (np < 2) return false;
     int32_t d0 = g->idom[s];
-    JConj *dis = JG_NEW(g, JConj, np);
-    if (!dis) { B->fail = true; return false; }
-    for (int k = 0; k < np && !B->fail; k++) {
+    // one disjunct per PATH into S where they can all be told (inner joins and split conditions
+    // distributed), else one per predecessor, stopping at an inner join, as before
+    JPathE *paths = JG_NEW(g, JPathE, JJOIN_MAXP); JJStep *cur = JG_NEW(g, JJStep, JJOIN_MAXL);
+    if (!paths || !cur) { B->fail = true; return false; }
+    int32_t npath = 0; bool all = true;
+    for (int k = 0; k < np && all; k++) all = jb_join_paths(B, d0, S, pr[k], cur, 0, paths, &npath);
+    if (B->fail) return false;
+    int32_t nd = all ? npath : np;
+    JConj *dis = JG_NEW(g, JConj, nd);
+    int32_t *dpred = JG_NEW(g, int32_t, nd);
+    if (!dis || !dpred) { B->fail = true; return false; }
+    for (int32_t k = 0; k < nd && !B->fail; k++) {
         B->jS = s; B->sink = NULL; B->nsink = B->csink = 0; B->dgen++;
-        for (int32_t c = 0; c < g->ncells; c++) {
-            int32_t jv = g->instate[(size_t)s * (size_t)g->ncells + (size_t)c];
-            if (jv < 0 || g->ver[jv].kind != JV_JOIN || g->ver[jv].blk != s || B->vver[jv] < 0) continue;
-            int32_t pv = g->outstate[(size_t)pr[k]->id * (size_t)g->ncells + (size_t)c];
-            if (pv < 0) continue;
-            JLT t[2]; t[0].var = B->vver[jv]; t[0].c = 1; t[1].var = jb_ver(B, pv); t[1].c = -1;
-            jb_atom(B, NULL, t, 2, J_EQ, 0);
-        }
-        IrBlock *Y = S, *X = pr[k];
-        for (int hop = 0; hop < 64; hop++) {
-            if (X->term.kind == IR_TERM_BR_COND && X->term.a != X->term.b && jg_cond_ok(g, X->term.cond))
-                jb_cond(B, X->term.cond, X->term.a == Y, "");
-            if (X->id == d0 || g->npred[X->id] != 1 || !X->preds) break;
-            Y = X; X = X->preds->block;
+        if (all) {
+            const JPathE *pe = &paths[k];
+            dpred[k] = pe->st[0].x;
+            for (int32_t i = 0; i < pe->n && !B->fail; i++) {
+                IrBlock *X = g->blk[pe->st[i].x], *Y = g->blk[pe->st[i].y];
+                if (Y->id == s || g->npred[Y->id] >= 2) jb_join_eqs(B, Y->id, X->id, Y->id == s);
+                if (X->term.kind == IR_TERM_BR_COND && X->term.a != X->term.b && jg_cond_ok(g, X->term.cond))
+                    jb_condk(B, X->term.cond, X->term.a == Y, "", pe->st[i].cas);
+            }
+        } else {
+            dpred[k] = pr[k]->id;
+            jb_join_eqs(B, s, pr[k]->id, true);
+            IrBlock *Y = S, *X = pr[k];
+            for (int hop = 0; hop < 64; hop++) {
+                if (X->term.kind == IR_TERM_BR_COND && X->term.a != X->term.b && jg_cond_ok(g, X->term.cond))
+                    jb_cond(B, X->term.cond, X->term.a == Y, "");
+                if (X->id == d0 || g->npred[X->id] != 1 || !X->preds) break;
+                Y = X; X = X->preds->block;
+            }
         }
         dis[k].c = B->sink; dis[k].nc = B->nsink;
         B->jS = -1;
@@ -1705,7 +1808,7 @@ static bool jb_join(JB *B, int32_t s) {
     if (B->fail) return false;
     JHyp *h = jb_hyp(B, jb_str(B, "join bb%lld", s, 0, 0));
     if (!h) return false;
-    h->disj = true; h->ndis = np; h->dis = dis;
+    h->disj = true; h->ndis = nd; h->dis = dis;
     if (B->njr == B->cjr) {                                  // which predecessor each disjunct is
         int32_t nc = B->cjr ? B->cjr * 2 : 8;
         int32_t *a = JG_NEW(g, int32_t, nc), *b = JG_NEW(g, int32_t, nc); int32_t **c = JG_NEW(g, int32_t *, nc);
@@ -1713,10 +1816,7 @@ static bool jb_join(JB *B, int32_t s) {
         if (B->njr) { memcpy(a, B->jhyp, sizeof *a * (size_t)B->njr); memcpy(b, B->jblk, sizeof *b * (size_t)B->njr); memcpy(c, B->jpred, sizeof *c * (size_t)B->njr); }
         B->jhyp = a; B->jblk = b; B->jpred = c; B->cjr = nc;
     }
-    int32_t *pp = JG_NEW(g, int32_t, np);
-    if (!pp) { B->fail = true; return false; }
-    for (int k = 0; k < np; k++) pp[k] = pr[k]->id;
-    B->jhyp[B->njr] = B->nhyps - 1; B->jblk[B->njr] = s; B->jpred[B->njr] = pp; B->njr++;
+    B->jhyp[B->njr] = B->nhyps - 1; B->jblk[B->njr] = s; B->jpred[B->njr] = dpred; B->njr++;   // several may share one
     return true;
 }
 // Is the join S about the VC: a version it makes is a variable, or a condition into it tests one?

@@ -256,9 +256,14 @@ static void hk_check(JObl *o, IVal *v, int nv) {
         int dk = -1;
         for (int d = 0; tp >= 0 && d < y->ndis && dk < 0; d++) if (o->hpred[k][d] == tp) dk = d;
         if (!y->disj) r = hk_cons(o, &y->cons, v, nv);
-        else if (dk >= 0) {                                  // the join was entered from that one
-            r = 1;
-            for (int c = 0; c < y->dis[dk].nc && r != 0; c++) { int t = hk_cons(o, &y->dis[dk].c[c], v, nv); if (t == 0) r = 0; else if (t < 0) r = -1; }
+        else if (dk >= 0) {                                  // entered from that predecessor: one of ITS
+            r = 0;                                           // disjuncts holds (a path through an inner
+            for (int d = dk; d < y->ndis && r != 1; d++) {   // join or a split condition is several)
+                if (o->hpred[k][d] != tp) continue;
+                int all = 1;
+                for (int c = 0; c < y->dis[d].nc && all == 1; c++) { int t = hk_cons(o, &y->dis[d].c[c], v, nv); all = t == 1 ? 1 : t; }
+                if (all == 1) r = 1; else if (all < 0) r = -1;
+            }
         } else {
             r = 0;
             for (int d = 0; d < y->ndis && r != 1; d++) {

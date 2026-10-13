@@ -2408,6 +2408,66 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  a division or remainder by a variable divisor: bounds from the static ranges\n");
+    // 50. a JOIN's disjuncts are its PATHS from its dominator: one per path through an inner join,
+    // one per case of a condition that is itself a disjunction, so no disjunct holds one. A cell r
+    // set on each path, read past the join S by `100 / r`: (0) if x < 0 { r = 1 } else { if x < 5
+    // { r = 2 } else { r = 3 } }: 3 disjuncts, the inner join's r in the two inner ones; (1) if x
+    // != 0 { r = 1 } else { r = 2 }: the `!=` arm split, 3 disjuncts; (2) if y <u x { r = 1 } else
+    // { r = 2 } with y and x i32: each arm split on both signs, 4 + 4, the shifted compare in them;
+    // (3) the else arm six two-way ifs in a row (65 paths, past the cap): one disjunct per
+    // predecessor, 2. In case 1 the `!=` arm's two cases are x <= -1 and x >= 1
+    for (int c = 0; c < 4; c++) {
+        IrFunc *f = ir_func_new(&A, nm("j50"), i32t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, i32t, nm("x")), *y = ir_add_param(f, i32t, nm("y"));
+        IrBlock *b0 = f->entry;
+        IrValue *r = ir_alloca(f, b0, i32t);
+        IrBlock *at = b0;
+        IrBlock *b1 = ir_new_block(f), *b2 = ir_new_block(f), *S = ir_new_block(f);
+        int inner = -1;                                        // the inner join's block (case 0)
+        IrValue *cnd = c == 1 ? ir_icmp(f, at, IR_CMP_NE, x, ir_const_int(f, at, 0, i32t))
+                     : c == 2 ? ir_icmp(f, at, IR_CMP_ULT, y, x) : ir_icmp(f, at, IR_CMP_SLT, x, ir_const_int(f, at, 0, i32t));
+        ir_set_br_cond(at, cnd, b1, b2);
+        ir_store(f, b1, r, ir_const_int(f, b1, 1, i32t)); ir_set_br(b1, S);
+        if (c == 0) {
+            IrBlock *b3 = ir_new_block(f), *b4 = ir_new_block(f), *b5 = ir_new_block(f);
+            ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_SLT, x, ir_const_int(f, b2, 5, i32t)), b3, b4);
+            ir_store(f, b3, r, ir_const_int(f, b3, 2, i32t)); ir_set_br(b3, b5);
+            ir_store(f, b4, r, ir_const_int(f, b4, 3, i32t)); ir_set_br(b4, b5);
+            ir_set_br(b5, S);
+            inner = b5->id;
+        } else if (c == 3) {                                   // 6 diamonds in a row in the else arm
+            IrValue *tc = ir_alloca(f, b0, i32t);
+            IrBlock *e = b2;
+            for (int k = 0; k < 6; k++) {
+                IrBlock *t1 = ir_new_block(f), *t2 = ir_new_block(f), *t3 = ir_new_block(f);
+                ir_set_br_cond(e, ir_icmp(f, e, IR_CMP_SLT, y, ir_const_int(f, e, k, i32t)), t1, t2);
+                ir_store(f, t1, tc, ir_const_int(f, t1, k, i32t)); ir_set_br(t1, t3);
+                ir_store(f, t2, tc, ir_const_int(f, t2, k + 10, i32t)); ir_set_br(t2, t3);
+                e = t3;
+            }
+            ir_store(f, e, r, ir_const_int(f, e, 2, i32t)); ir_set_br(e, S);
+        } else { ir_store(f, b2, r, ir_const_int(f, b2, 2, i32t)); ir_set_br(b2, S); }
+        ir_set_ret(S, ir_binop(f, S, IR_SDIV, ir_const_int(f, S, 100, i32t), ir_load(f, S, r, i32t), i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), jn[32];
+        snprintf(jn, sizeof jn, "join bb%d : or {", S->id);
+        const char *vz = t ? vc_of(t, " divzero 0") : "", *h = strstr(vz, jn);
+        int bars = 0;
+        for (const char *q = h; q && *q && *q != '\n'; q++) if (*q == '|') bars++;
+        int want = c == 3 ? 1 : c == 2 ? 7 : 2;                // disjuncts - 1
+        char ie[64]; snprintf(ie, sizeof ie, "1*%%s%d@join.bb%d + -1*%%s%d@bb", r->id, inner, r->id);   // the inner join's own
+        bool ok = c != 0 || (h && strstr(h, ie));
+        if (c == 2) ok = h && strstr(h, "18446744073709551");   // a case past 0: the 2^64-shifted compare
+        if (c == 1) {                                          // both ways round 0
+            char ne1[48], ne2[48]; snprintf(ne1, sizeof ne1, "1*%%v%d + -1*%%v", x->id); snprintf(ne2, sizeof ne2, "-1*%%v%d + 1*%%v", x->id);
+            ok = h && strstr(h, ne1) && strstr(h, ne2);
+        }
+        CHECK(h && bars == want && ok, "case %d: %d disjuncts (got %d):\n%s", c, want + 1, bars + 1, vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a join's disjuncts are its paths: inner joins and split conditions distributed\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

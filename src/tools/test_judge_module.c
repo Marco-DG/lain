@@ -500,6 +500,25 @@ int main(void) {
         CHECK(nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] == 0 && strstr(recs, "bounds.hi"), "(200 as i8) + 60 indexes a[4]:\n%s", recs);
     }
 
+    // a `!=` INSIDE a join's disjunct: `if x != 0 { r = x } else { r = 1 }; return 100 / r`: the
+    // r = x path holds r != 0 only if the arm's `!=` is stated in its disjunct (split in two)
+    {   IrType *ni32 = ir_type_int(&A, 32, true);
+        IrFunc *nf = ir_func_new(&A, nm("nej"), ni32, IR_FUNC_PURE);
+        IrValue *nx = ir_add_param(nf, ni32, nm("x"));
+        IrBlock *n0 = nf->entry, *n1 = ir_new_block(nf), *n2 = ir_new_block(nf), *n3 = ir_new_block(nf);
+        IrValue *nr = ir_alloca(nf, n0, ni32);
+        ir_set_br_cond(n0, ir_icmp(nf, n0, IR_CMP_NE, nx, ir_const_int(nf, n0, 0, ni32)), n1, n2);
+        ir_store(nf, n1, nr, nx); ir_set_br(n1, n3);
+        ir_store(nf, n2, nr, ir_const_int(nf, n2, 1, ni32)); ir_set_br(n2, n3);
+        ir_set_ret(n3, ir_binop(nf, n3, IR_SDIV, ir_const_int(nf, n3, 100, ni32), ir_load(nf, n3, nr, ni32), ni32));
+        ir_finalize_cfg(nf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(nf, &s, true, sizeof region, err), "judges: %s", err);
+        const char *dz = strstr(recs, " divzero"), *ln = dz;
+        while (ln && ln > recs && ln[-1] != '\n') ln--;
+        CHECK(ln && !strncmp(ln, "proved ", 7), "the r = x path's x != 0 proves 100 / r:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
