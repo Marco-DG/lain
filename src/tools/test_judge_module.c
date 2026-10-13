@@ -357,6 +357,20 @@ int main(void) {
           "c - i over a cell only read: proved:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
 
+    // an UNSIGNED comparison of a signed operand, split on its sign: `if x <u y { 100 / y }` with
+    // x an i64 that may be negative and y a u64: y is not 0 on either side of x's sign
+    IrType *s64 = ir_type_int(&A, 64, true), *u64 = ir_type_int(&A, 64, false);
+    IrFunc *uf = ir_func_new(&A, nm("u"), u64, IR_FUNC_PURE);
+    IrValue *ux = ir_add_param(uf, s64, nm("x")), *uy = ir_add_param(uf, u64, nm("y"));
+    IrBlock *u0 = uf->entry, *u1 = ir_new_block(uf), *u2 = ir_new_block(uf);
+    ir_set_br_cond(u0, ir_icmp(uf, u0, IR_CMP_ULT, ux, uy), u1, u2);
+    ir_set_ret(u1, ir_binop(uf, u1, IR_UDIV, ir_const_int(uf, u1, 100, u64), uy, u64));
+    ir_set_ret(u2, ir_const_int(uf, u2, 0, u64));
+    ir_finalize_cfg(uf);
+    CHECK(run(uf, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, "proved bb1.1 divzero") && nrec[JREC_NOT_IMPLIED] + nrec[JREC_SOLVER_BUG] == 0,
+          "x <u y with x an i64: 100 / y proved:\n%s", recs);
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

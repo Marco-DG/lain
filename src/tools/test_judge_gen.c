@@ -79,6 +79,11 @@ static JClaim claim1(IrBlock *b, IrValue *cell, int coef, long long rhs) {
     return c;
 }
 // The text of the first VC whose header line contains `key` (e.g. "bounds.hi"), or "".
+static __int128 jint128(const JInt *x) {                 // a VC's constants are below 2^66
+    unsigned __int128 m = 0;
+    for (int i = x->n - 1; i >= 0; i--) m = (m << 32) | x->limb[i];
+    return x->neg ? -(__int128)m : (__int128)m;
+}
 static const char *vc_of(const char *all, const char *key) {
     static char buf[1 << 16];
     const char *p = all;
@@ -119,7 +124,7 @@ int main(void) {
         printf("  a guard into a single-predecessor block, and a slice's length\n");
     }
     // 2 and 3. an unsigned comparison: stated when its signed operand is a non-negative constant,
-    // not when it is a variable that may be negative (the interpreter compares as uint64)
+    // and split on its sign when it is a variable that may be negative (it compares as uint64)
     for (int k = 0; k < 2; k++) {
         IrFunc *f = ir_func_new(&A, nm(k ? "g3" : "g2"), u64t, IR_FUNC_PURE);
         IrValue *x = ir_add_param(f, i64t, nm("x")), *y = ir_add_param(f, u64t, nm("y"));
@@ -130,11 +135,12 @@ int main(void) {
         ir_set_ret(b2, ir_const_int(f, b2, 0, u64t));
         char *t = gen_text(f);
         const char *dz = t ? vc_of(t, "divzero") : "";
-        if (k == 0) CHECK(!strstr(dz, "guard"), "x <u y with x an i64 that may be negative is not stated (it compares as uint64):\n%s", dz);
+        if (k == 0) CHECK(strstr(dz, "guard bb0->bb1 : or {") && strstr(dz, "<= -18446744073709551617 }"),
+                          "x <u y with x an i64 that may be negative: split on its sign, x + 2^64 < y below 0 (test 41):\n%s", dz);
         else        CHECK(strstr(dz, "guard bb0->bb1"), "3 <u y with 3 a non-negative constant is stated:\n%s", dz);
         free(t);
     }
-    printf("  an unsigned comparison: a signed variable is not stated, a non-negative constant is\n");
+    printf("  an unsigned comparison: a signed variable split on its sign, a non-negative constant stated\n");
     // 4. an ASSUME holds at the points after it, never before
     for (int k = 0; k < 2; k++) {
         IrFunc *f = ir_func_new(&A, nm(k ? "g5" : "g4"), i32t, IR_FUNC_PURE);
@@ -1809,6 +1815,95 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  a cell the loop only reads: a pair of its paths, one variable before and after a trip\n");
+    // 41. an UNSIGNED comparison with a signed operand compares both as uint64 (emit_c.h, interp.h):
+    // the guard stated on each edge must be TRUE exactly where C's `(uint64_t)x op (uint64_t)y` is
+    // (soundness one way, precision the other), for ult/ule/ugt/uge, x and y of i64/u64, u64/i64,
+    // i64/i64 (four disjuncts) and i32/u32, on values at both ends of each type
+    {   // cases 4 and 5: one operand a NEGATIVE constant, y = -1 : i64 against a u64 x, x = -3 : i32
+        // against a u32 y (as a uint64 it is 2^64 - 3)
+        IrType *T[6][2] = { { i64t, u64t }, { u64t, i64t }, { i64t, i64t }, { i32t, u32t }, { u64t, i64t }, { i32t, u32t } };
+        IrCmp C[4] = { IR_CMP_ULT, IR_CMP_ULE, IR_CMP_UGT, IR_CMP_UGE };
+        const __int128 P63 = (__int128)1 << 63, P64 = (__int128)1 << 64;
+        int bad = 0, evals = 0;
+        for (int ti = 0; ti < 6; ti++) for (int ci = 0; ci < 4; ci++) {
+            IrFunc *f = ir_func_new(&A, nm("u41"), u64t, IR_FUNC_PURE);
+            IrValue *x = ir_add_param(f, T[ti][0], nm("x")), *y = ir_add_param(f, T[ti][1], nm("y"));
+            IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+            __int128 kv = ti == 4 ? -1 : -3;                               // the constant's value
+            if (ti == 4) y = ir_const_int(f, b0, -1, i64t);
+            if (ti == 5) x = ir_const_int(f, b0, -3, i32t);
+            ir_set_br_cond(b0, ir_icmp(f, b0, C[ci], x, y), b1, b2);
+            ir_set_ret(b1, ir_binop(f, b1, T[ti][1]->is_signed ? IR_SDIV : IR_UDIV, ir_const_int(f, b1, 100, T[ti][1]), y, T[ti][1]));
+            ir_set_ret(b2, ir_binop(f, b2, T[ti][0]->is_signed ? IR_SDIV : IR_UDIV, ir_const_int(f, b2, 100, T[ti][0]), x, T[ti][0]));
+            ir_finalize_cfg(f);
+            JMem m = jmem_over(region, sizeof region); JObl *o; int32_t n; char err[200];
+            if (!jgen_func(&m, f, f, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { bad++; continue; }
+            for (int e = 0; e < 2; e++) {                                  // the true edge, the false one
+                char org[32], xn[16], yn[16]; snprintf(org, sizeof org, "guard bb0->bb%d", e ? b2->id : b1->id);
+                snprintf(xn, sizeof xn, "%%v%d", x->id); snprintf(yn, sizeof yn, "%%v%d", y->id);
+                const JVc *vc = NULL; const JHyp *h = NULL;
+                for (int32_t i = 0; i < n && !h; i++) {
+                    if (o[i].outside || strcmp(o[i].vc.id.kind, "divzero")) continue;
+                    for (int32_t k = 0; k < o[i].vc.nhyps && !h; k++)
+                        if (!strcmp(o[i].vc.hyps[k].origin, org)) { h = &o[i].vc.hyps[k]; vc = &o[i].vc; }
+                }
+                if (!h) { bad++; printf("  no guard %s (types %d, predicate %d)\n", org, ti, ci); continue; }
+                __int128 xs[8], ys[8]; int nx = 0, ny = 0;
+                for (int w = 0; w < 2; w++) {
+                    IrType *t = T[ti][w]; __int128 *vs = w ? ys : xs; int *nv = w ? &ny : &nx;
+                    __int128 lo = t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0, hi = t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+                    __int128 cand[8] = { lo, lo + 1, -2, -1, 0, 1, hi - 1, hi };
+                    if ((ti == 4 && w == 1) || (ti == 5 && w == 0)) { vs[(*nv)++] = kv; continue; }   // the constant
+                    for (int q = 0; q < 8; q++) if (cand[q] >= lo && cand[q] <= hi) vs[(*nv)++] = cand[q];
+                }
+                for (int ix = 0; ix < nx; ix++) for (int iy = 0; iy < ny; iy++) {
+                    __int128 ux = xs[ix] < 0 ? xs[ix] + P64 : xs[ix], uy = ys[iy] < 0 ? ys[iy] + P64 : ys[iy];
+                    bool c = C[ci] == IR_CMP_ULT ? ux < uy : C[ci] == IR_CMP_ULE ? ux <= uy : C[ci] == IR_CMP_UGT ? ux > uy : ux >= uy;
+                    if (e) c = !c;
+                    // the hypothesis at (x, y): every conjunct of some disjunct
+                    bool any = false;
+                    for (int d = 0; d < (h->disj ? h->ndis : 1) && !any; d++) {
+                        const JCons *cs = h->disj ? h->dis[d].c : &h->cons; int nc = h->disj ? h->dis[d].nc : 1; bool all = true;
+                        for (int k = 0; k < nc && all; k++) {
+                            __int128 sum = 0;
+                            for (int32_t tt = 0; tt < cs[k].nt; tt++) {
+                                const char *vn = vc->vars[cs[k].t[tt].var];
+                                __int128 val = !strcmp(vn, xn) ? xs[ix] : !strcmp(vn, yn) ? ys[iy] : (__int128)1 << 100;
+                                sum += jint128(&cs[k].t[tt].coef) * val;
+                            }
+                            __int128 r = jint128(&cs[k].rhs);
+                            all = cs[k].op == J_LE ? sum <= r : cs[k].op == J_EQ ? sum == r : sum != r;
+                        }
+                        any = all;
+                    }
+                    evals++;
+                    if (any != c) { bad++; if (bad < 6) printf("  types %d predicate %d edge %d at x=%lld y=%lld: stated %d, C %d\n", ti, ci, e, (long long)xs[ix], (long long)ys[iy], any, c); }
+                }
+            }
+            (void)P63; (void)kv;
+        }
+        CHECK(bad == 0 && evals > 500, "every guard equals C's uint64 comparison (%d wrong of %d)", bad, evals);
+    }
+    {   // inside a JOIN's disjunct the split cannot be stated (a disjunct holds no disjunction): past
+        // `if x <u y { r = 1 } else { r = 2 }`, the guard is in no hypothesis of its own (stated
+        // globally it would hold on the path that did not test it)
+        IrFunc *f = ir_func_new(&A, nm("w41"), u64t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, i64t, nm("x")), *y = ir_add_param(f, u64t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *r = ir_alloca(f, b0, u64t);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, x, y), b1, b2);
+        ir_store(f, b1, r, ir_const_int(f, b1, 1, u64t)); ir_set_br(b1, b3);
+        ir_store(f, b2, r, ir_const_int(f, b2, 2, u64t)); ir_set_br(b2, b3);
+        ir_set_ret(b3, ir_binop(f, b3, IR_UDIV, ir_const_int(f, b3, 100, u64t), ir_load(f, b3, r, u64t), u64t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        const char *v = t ? vc_of(t, " divzero 0") : "";
+        CHECK(strstr(v, "join bb") && !strstr(v, "guard") && !strstr(v, "  : "), "no guard of a join's path stated alone:\n%s", v);
+        free(t);
+        gen_mod = NULL;
+    }
+    printf("  an unsigned comparison of a signed operand: split on its sign, exact against C\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

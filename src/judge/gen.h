@@ -1265,11 +1265,45 @@ static bool jb_cmp(JB *B, IrInstr *ic, bool truth, const char *origin) {
     if (!jg_is_int(a->type) || !jg_is_int(b->type)) return false;
     IrCmp c = ic->aux.cmp;
     bool uns = c == IR_CMP_ULT || c == IR_CMP_ULE || c == IR_CMP_UGT || c == IR_CMP_UGE;
+    // An UNSIGNED predicate compares its operands as uint64 (emit_c.h, interp.h's ii_cmp_scalar):
+    // a signed operand below 0 is itself + 2^64 there. A signed one that is a constant >= 0 is its
+    // value; any other is split on its sign, one disjunct per case (`(i + 15) <u a.len` with i + 15
+    // an i34): (x >= 0 and x op y) or (x <= -1 and x + 2^64 op y).
+    int sk[2], ns = 0;
     for (int k = 0; k < 2 && uns; k++) {
         IrValue *o = ic->operands[k];
         if (o->type->kind == IRT_BOOL || !o->type->is_signed) continue;
         IrInstr *od = o->id >= 0 && o->id < B->g->nv ? B->g->def[o->id] : NULL;
-        if (!(od && od->op == IR_CONST && jg_const(od) >= 0)) return false;
+        if (od && od->op == IR_CONST && jg_const(od) >= 0) continue;
+        if (o->type->bits < 1 || o->type->bits > 64) return false;
+        sk[ns++] = k;
+    }
+    if (ns) {
+        if (B->jS >= 0) return false;                          // a disjunction: not inside a disjunct
+        if (!truth) c = c == IR_CMP_ULT ? IR_CMP_UGE : c == IR_CMP_ULE ? IR_CMP_UGT : c == IR_CMP_UGT ? IR_CMP_ULE : IR_CMP_ULT;
+        int32_t va = jb_val(B, a), vb = jb_val(B, b);
+        JHyp *h = jb_hyp(B, origin);
+        if (!h) return false;
+        h->disj = true; h->ndis = 1 << ns;
+        if (!(h->dis = JG_NEW(B->g, JConj, h->ndis))) { B->fail = true; return false; }
+        for (int d = 0; d < h->ndis; d++) {
+            JConj *cj = &h->dis[d];
+            cj->nc = ns + 1;
+            if (!(cj->c = JG_NEW(B->g, JCons, cj->nc))) { B->fail = true; return false; }
+            __int128 sh[2] = { 0, 0 };                         // what each operand gains as a uint64
+            for (int q = 0; q < ns; q++) {
+                bool neg = (d >> q) & 1;
+                JLT u[1]; u[0].var = sk[q] ? vb : va; u[0].c = neg ? 1 : -1;
+                jb_cons(B, u, 1, J_LE, neg ? -1 : 0, &cj->c[q]);
+                if (neg) sh[sk[q]] = (__int128)1 << 64;
+            }
+            // (a + sh0) op (b + sh1): a - b op sh1 - sh0
+            JLT u[2]; __int128 k0 = sh[1] - sh[0];
+            bool less = c == IR_CMP_ULT || c == IR_CMP_ULE, strict = c == IR_CMP_ULT || c == IR_CMP_UGT;
+            u[0].var = va; u[0].c = less ? 1 : -1; u[1].var = vb; u[1].c = less ? -1 : 1;
+            jb_cons(B, u, 2, J_LE, (less ? k0 : -k0) - (strict ? 1 : 0), &cj->c[ns]);
+        }
+        return true;
     }
     if (!truth) switch (c) {
         case IR_CMP_EQ: c = IR_CMP_NE; break;  case IR_CMP_NE: c = IR_CMP_EQ; break;
