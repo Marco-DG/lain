@@ -25,11 +25,14 @@ tmin() { case $1 in i8) echo -128;; i16) echo -32768;; i32) echo -2147483648;; i
 tmax() { case $1 in i8) echo 127;; i16) echo 32767;; i32) echo 2147483647;; i64) echo 9223372036854775807;;
                     u8) echo 255;; u16) echo 65535;; u32) echo 4294967295;; u64) echo 18446744073709551615;; esac; }
 tlit() { case $1 in -9223372036854775808) echo "(0 - 9223372036854775807 - 1)";; -*) echo "(0 - ${1#-})";; *) echo "$1";; esac; }
-# a lane value: an edge of the type or a small one
+# a lane value: an edge of the type or a small one. A negative is computed, not spelled: `-$((x))` gave
+# the string "-0" when x was 0, which lane_rhs's `= 0` test let through as a per-lane DIVISOR, so the
+# program divided by zero inside its own `unsafe` and --interpret rightly said so (rc 96), reported
+# here as UNSOUND though the generator, not the compiler, had broken the rule (2026-10-13)
 lane_val() { local T=$1 r=$((RANDOM % 8)) s=${1:0:1}
     case $r in
         0) tmin $T;; 1) tmax $T;; 2) [ $s = i ] && echo -1 || echo 1;; 3) echo 0;; 4) echo 1;;
-        5) [ $s = i ] && echo -$((RANDOM % 100)) || echo $((RANDOM % 100));; *) echo $((RANDOM % 100));;
+        5) [ $s = i ] && echo $(( -(RANDOM % 100) )) || echo $((RANDOM % 100));; *) echo $((RANDOM % 100));;
     esac; }
 # a legal per-lane right operand: non-zero for / and %, in [0, w-1] for a shift
 lane_rhs() { local T=$1 op=$2 w; w=$(bits $T)
