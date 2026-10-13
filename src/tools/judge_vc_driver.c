@@ -323,8 +323,15 @@ static void hk_on_block(IrFunc *f, IrBlock *to, IVal *v, int nv) {
     if (b && bv == v) { HkLast *e = &hk_lastpred[hk_lp_slot(v, to->id)]; e->v = v; e->blk = to->id; e->pred = b->id; }
     if (!b || bv != v) return;
     char where[64]; snprintf(where, sizeof where, "on the edge bb%d->bb%d", b->id, to->id);
+    // A CLAIM's goal is a fact other VCs assume, so it must hold where its edge is taken. An
+    // obligation owed on an edge (a loop's `rank.*`, a written measure's `measure.*`; its `claim`
+    // is -1) is owed, not assumed, and fails in a program the prover refuses (`decreasing 7`): its
+    // hypotheses only, as at an instruction and at a return's landing.
     for (HE *h = hk_from(b); h && h < he + nhe && h->from == b; h++)
-        if (h->o->to == to) { edges++; hk_claim(h->o, v, nv, where, &claimgoals); }
+        if (h->o->to == to) {
+            edges++;
+            if (h->o->claim >= 0) hk_claim(h->o, v, nv, where, &claimgoals); else hk_check(h->o, v, nv);
+        }
 }
 static void hk_on_instr(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) {
     (void)f;

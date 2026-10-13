@@ -1263,6 +1263,102 @@ int main(void) {
         free(t);
     }
     printf("  a wrapping add or sub: the exact result less k*2^w, in its few cases\n");
+    // 35. a WRITTEN measure (`while i < n decreasing m`, D-44) is what a loop owes: `measure.fall` and
+    // `measure.bound` on its back edge, m read as a sum over what the trip starts from; a ranking
+    // claim proposed for it is not read; owed in a function that may diverge too; a measure that is
+    // no sum is outside; a constant one cannot fall; a slice cell stored before the loop is one
+    // length in the guard and in the measure
+    {   IrFunc *f = ir_func_new(&A, nm("g35"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u64t, nm("n")), *xs = ir_add_param(f, slice_of(u8t), nm("xs"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u64t), *sc = ir_alloca(f, b0, slice_of(u8t));
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_store(f, b0, sc, xs); ir_set_br(b0, b1);
+        IrValue *li = ir_load(f, b1, i, u64t);
+        IrValue *sl = ir_slice_len(f, b1, ir_load(f, b1, sc, slice_of(u8t)));
+        IrValue *g1 = ir_icmp(f, b1, IR_CMP_ULT, li, n), *g2 = ir_icmp(f, b1, IR_CMP_ULT, li, sl);
+        IrValue *both = ir_binop(f, b1, IR_AND, g1, g2, boolt);
+        ir_set_br_cond(b1, both, b2, b3);
+        IrValue *li2 = ir_load(f, b2, i, u64t);
+        IrValue *m_n = ir_binop(f, b2, IR_SUB, n, li2, u64t);                // n - i
+        IrValue *m_s = ir_binop(f, b2, IR_SUB, ir_slice_len(f, b2, ir_load(f, b2, sc, slice_of(u8t))), li2, u64t);   // s.len - i
+        IrValue *m_c = ir_const_int(f, b2, 5, u64t);                          // 5
+        IrValue *m_x = ir_binop(f, b2, IR_MUL, n, li2, u64t);                // n * i: no sum
+        IrValue *m_k = ir_binop(f, b2, IR_SUB, ir_const_int(f, b2, 100, u64t), li2, u64t);   // 100 - i
+        // (i * (2^64 - 1)) * (2^64 - 1): the second product is 2^128 - 2^65 + 1, past __int128, and
+        // wrapped it would be -(2^65 - 1), a coefficient within every bound: refused, not wrapped
+        IrValue *umax = ir_const_int(f, b2, -1, u64t);
+        IrValue *m_big = ir_binop(f, b2, IR_MUL, ir_binop(f, b2, IR_MUL, li2, umax, u64t), umax, u64t);
+        ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li2, ir_const_int(f, b2, 1, u64t), u64t));
+        IrValue *m_late = ir_load(f, b2, i, u64t);                            // i after the trip's store
+        ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, u32t));
+        ir_finalize_cfg(f);
+        (void)both;
+        char key[48], want[96];
+        snprintf(key, sizeof key, "bb%d.%d measure.", b2->id, nins(b2));
+        b1->has_measure = true;
+        // n - i, with a ranking claim proposed that would rise: not read
+        JRank bad; memset(&bad, 0, sizeof bad);
+        bad.blk = b1->id; bad.fn = f; bad.ncomp = 1; bad.nt = 1; bad.key[0] = i->id; bad.coef[0][0] = 1; bad.nedge = 1; bad.from[0] = b2->id;
+        gen_rk = &bad; gen_nrk = 1;
+        b1->measure_val = m_n;
+        char *t = gen_text(f);
+        CHECK(t && count(t, key) == 2 && !strstr(t, "rank.") && !strstr(t, "outside a written measure") && !strstr(t, "no ranking function"),
+              "n - i: measure.fall and .bound, the proposal not read:\n%s", t ? t : "");
+        snprintf(want, sizeof want, "bb%d.%d measure.fall", b2->id, nins(b2));
+        const char *vf = t ? vc_of(t, want) : "", *g = strstr(vf, "goal ");
+        CHECK(g && strstr(g, "<= -1") && !strstr(g, "%v0"), "the fall: i rises by 1, n cancelling:\n%s", vf);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0;
+        // in a function that may diverge, a written measure is owed all the same (D-44)
+        f->may_diverge = true;
+        t = gen_text(f);
+        CHECK(t && count(t, key) == 2, "may diverge, the written measure still owed:\n%s", t ? t : "");
+        free(t);
+        f->may_diverge = false;
+        // s.len - i: the guard's length and the measure's are one variable
+        b1->measure_val = m_s;
+        t = gen_text(f);
+        snprintf(want, sizeof want, "bb%d.%d measure.bound", b2->id, nins(b2));
+        const char *vb = t ? vc_of(t, want) : "";
+        g = strstr(vb, "goal ");
+        snprintf(want, sizeof want, "-1*len(%%v%d)", xs->id);
+        CHECK(g && strstr(g, want), "s.len - i: the stored slice's length, as the guard reads it:\n%s", vb);
+        free(t);
+        // 5: no terms, it cannot fall
+        b1->measure_val = m_c;
+        t = gen_text(f);
+        snprintf(want, sizeof want, "bb%d.%d measure.fall", b2->id, nins(b2));
+        vf = t ? vc_of(t, want) : "";
+        CHECK(strstr(vf, "goal 0 <= -1") || strstr(vf, "goal  <= -1"), "a constant measure owes 0 <= -1:\n%s", vf);
+        free(t);
+        // 100 - i: the bound keeps the constant, i <= 100
+        b1->measure_val = m_k;
+        t = gen_text(f);
+        snprintf(want, sizeof want, "bb%d.%d measure.bound", b2->id, nins(b2));
+        vb = t ? vc_of(t, want) : "";
+        g = strstr(vb, "goal ");
+        CHECK(g && strstr(g, "<= 100") && !strstr(g, "%v"), "100 - i: the bound is i <= 100:\n%s", vb);
+        free(t);
+        // a load after the trip's store reads no version the trip starts from: outside
+        b1->measure_val = m_late;
+        t = gen_text(f);
+        CHECK(t && strstr(t, "outside a written measure the generator cannot read as a sum"), "a measure read after a store is outside:\n%s", t ? t : "");
+        free(t);
+        // coefficients past 2^100 are refused before any product overflows: outside (Main Compiler Work)
+        b1->measure_val = m_big;
+        t = gen_text(f);
+        CHECK(t && strstr(t, "outside a written measure the generator cannot read as a sum"), "a measure whose coefficients pass 2^100 is outside:\n%s", t ? t : "");
+        free(t);
+        // n * i: no sum, outside
+        b1->measure_val = m_x;
+        t = gen_text(f);
+        CHECK(t && strstr(t, "outside a written measure the generator cannot read as a sum") && !strstr(t, "measure."),
+              "n * i is outside:\n%s", t ? t : "");
+        free(t);
+        b1->has_measure = false; b1->measure_val = NULL;
+    }
+    printf("  a written measure: owed as written, the proposal not read, outside where it is no sum\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

@@ -759,6 +759,15 @@ static int32_t jb_verlen(JB *B, int32_t ver) {
     B->vlenv[ver] = jb_newvar(B, n, 4, ver, NULL);
     return vl ? jb_local(B, B->vlenv[ver], true) : B->vlenv[ver];
 }
+static int32_t jb_len(JB *B, IrValue *s);
+// The length of a slice cell at version `ver`, named as a load of it names it (jb_len): a STORE
+// version is the slice stored, length and all, so the guard's `s.len` and a claim's term about the
+// same cell are one variable.
+static int32_t jb_cell_len(JB *B, int32_t ver) {
+    JVer *v = &B->g->ver[ver];
+    if (v->kind == JV_STORE && v->stored && v->stored->type && v->stored->type->kind == IRT_SLICE) return jb_len(B, v->stored);
+    return jb_verlen(B, ver);
+}
 static int32_t jb_len(JB *B, IrValue *s) {
     if (!s || s->id < 0 || s->id >= B->g->nv) { B->fail = true; return 0; }
     // a load of a slice cell's STORE version is the slice stored, length and all; the store and
@@ -926,7 +935,7 @@ static bool jg_uns(const IrType *t) { return t && (t->kind == IRT_BOOL || (t->ki
 // JTERM_LEN, the length of that slice version or value.
 static int32_t jb_term(JB *B, int32_t key, uint8_t tk, const int32_t *row) {
     JG *g = B->g;
-    if (g->cell[key] >= 0) return tk == JTERM_LEN ? jb_verlen(B, row[g->cell[key]]) : jb_ver(B, row[g->cell[key]]);
+    if (g->cell[key] >= 0) return tk == JTERM_LEN ? jb_cell_len(B, row[g->cell[key]]) : jb_ver(B, row[g->cell[key]]);
     return tk == JTERM_LEN ? jb_len(B, jg_value(g, key)) : jb_val(B, jg_value(g, key));
 }
 // A cut-point claim of the function being generated (block ids are per function: another
@@ -2139,6 +2148,78 @@ static bool jg_rank_goal(JB *B, const JRank *r, int32_t j, const int32_t *pre, c
     }
     return jb_cons(B, t, n, J_LE, what == 0 ? 0 : what == 1 ? -1 : r->c0[j], goal);
 }
+// The WRITTEN measure (`while c decreasing m`, D-44), read as a ranking claim's one component:
+// lowering computes m at the start of the body, under the guard (lower.h, I.74), so m is a sum over
+// what the trip starts from: a load of a cell reading the version the header makes or keeps, a value
+// fixed at the header (a parameter, a value defined before the loop), a slice's length of either, a
+// constant; through `+`, `-`, unary `-` and `*` by a constant under CHECK, and an integer cast that
+// keeps the value (as VRA's vra_lin_of reads it). False on anything else.
+static bool jg_rank_add(JRank *r, int32_t key, uint8_t tk, __int128 k) {
+    for (int32_t i = 0; i < r->nt; i++) if (r->key[i] == key && r->tk[i] == tk) { r->coef[0][i] += k; return true; }
+    if (r->nt == JRANK_MAXT) return false;
+    r->key[r->nt] = key; r->tk[r->nt] = tk; r->coef[0][r->nt] = k; r->nt++;
+    return true;
+}
+// a * b into *out, refused (false) when it would pass 2^100 in magnitude: a measure's coefficients
+// stay far inside __int128, whose overflow would be undefined in the generator itself
+static bool jg_mul_ok(__int128 a, __int128 b, __int128 *out) {
+    const __int128 lim = (__int128)1 << 100;
+    __int128 ua = a < 0 ? -a : a, ub = b < 0 ? -b : b;
+    if (ua > lim || ub > lim || (ub != 0 && ua > lim / ub)) return false;
+    *out = a * b; return true;
+}
+static bool jg_measure_lin(JG *g, IrBlock *H, IrValue *v, __int128 k, JRank *r, int depth) {
+    const __int128 big = (__int128)1 << 66;
+    if (!v || v->id < 0 || v->id >= g->nv || depth > 16 || k > big || k < -big) return false;
+    const int32_t *row = g->instate + (size_t)H->id * (size_t)g->ncells;
+    if (g->loadver[v->id] >= 0) {                              // a load: the version the trip starts from
+        int32_t ver = g->loadver[v->id], c = g->ver[ver].cell;
+        return row[c] == ver && jg_is_int(g->cty[c]) && jg_rank_add(r, g->cellv[c]->id, JTERM_VALUE, k);
+    }
+    IrInstr *d = g->def[v->id];
+    if (!d || jg_term_ok(g, H->id, v->id, JTERM_VALUE)) return jg_is_int(v->type) && jg_rank_add(r, v->id, JTERM_VALUE, k);
+    __int128 c;
+    switch (d->op) {
+        case IR_CONST: {
+            __int128 kc;
+            if (!jg_is_int(v->type) || !jg_mul_ok(k, jg_const(d), &kc)) return false;
+            r->c0[0] += kc;                                    // each term <= 2^100, at most 2^16 of them
+            return r->c0[0] <= big && r->c0[0] >= -big;
+        }
+        case IR_ADD: case IR_SUB:
+            if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) return false;
+            return jg_measure_lin(g, H, d->operands[0], k, r, depth + 1) &&
+                   jg_measure_lin(g, H, d->operands[1], d->op == IR_ADD ? k : -k, r, depth + 1);
+        case IR_NEG:
+            if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 1) return false;
+            return jg_measure_lin(g, H, d->operands[0], -k, r, depth + 1);
+        case IR_MUL:
+            if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) return false;
+            for (int q = 0; q < 2; q++) {
+                __int128 kc;
+                if (jg_const_of(g, d->operands[q], &c))
+                    return jg_mul_ok(k, c, &kc) && jg_measure_lin(g, H, d->operands[1 - q], kc, r, depth + 1);
+            }
+            return false;
+        case IR_CAST: {
+            const IrType *st = d->n_operands ? d->operands[0]->type : NULL, *dt = v->type;
+            if (!st || !dt || st->kind != IRT_INT || dt->kind != IRT_INT || st->bits > dt->bits) return false;
+            if (st->is_signed && !dt->is_signed) return false;
+            if (!st->is_signed && dt->is_signed && st->bits >= dt->bits) return false;
+            return jg_measure_lin(g, H, d->operands[0], k, r, depth + 1);
+        }
+        case IR_SLICE_LEN: {
+            IrValue *sv = d->n_operands ? d->operands[0] : NULL;
+            if (!sv || sv->id < 0 || sv->id >= g->nv) return false;
+            if (g->loadver[sv->id] >= 0) {                     // a slice cell's length, as the trip starts
+                int32_t ver = g->loadver[sv->id], sc = g->ver[ver].cell;
+                return row[sc] == ver && jg_rank_add(r, g->cellv[sc]->id, JTERM_LEN, k);
+            }
+            return jg_term_ok(g, H->id, sv->id, JTERM_LEN) && jg_rank_add(r, sv->id, JTERM_LEN, k);
+        }
+        default: return false;
+    }
+}
 // A loop's termination is owed where VRA owes it (vra.h, D-44): at every loop header, unless the
 // function declares `diverge` and the loop has no written measure. With a ranking claim at the
 // header, on each back edge P -> H at the end of P, the edge's condition and the header's claims
@@ -2160,10 +2241,32 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             if (r) return jg_fail(g, "two ranking claims at one loop header");
             r = &rk[k];
         }
+        // a WRITTEN measure is what is owed, `measure.fall` and `measure.bound` on every back edge
+        // (E082 where it fails); a ranking claim proposed for the loop is not needed, and not read
+        JRank mr; bool measure = H->has_measure;
+        if (measure) {
+            memset(&mr, 0, sizeof mr);
+            mr.blk = H->id; mr.fn = g->f; mr.ncomp = 1;
+            if (!H->measure_val || !jg_measure_lin(g, H, H->measure_val, 1, &mr, 0)) {
+                if (!jg_outside(g, L, NULL, H->id, 0, "a written measure the generator cannot read as a sum")) return false;
+                continue;
+            }
+            for (IrEdge *pe = H->preds; pe; pe = pe->next) {
+                IrBlock *P = pe->block;
+                if (g->rpoix[P->id] < 0 || !jg_back_edge(g, P->id, H->id)) continue;
+                bool again = false;
+                for (int32_t e2 = 0; e2 < mr.nedge; e2++) if (mr.from[e2] == P->id) again = true;
+                if (again) continue;
+                if (mr.nedge == JRANK_MAXE) { if (!jg_outside(g, L, NULL, H->id, 0, "a written measure on a loop of too many back edges")) return false; measure = false; break; }
+                mr.from[mr.nedge] = P->id; mr.fall[mr.nedge] = 0; mr.nedge++;
+            }
+            if (!measure) continue;
+            r = &mr;                                           // a constant measure (no terms) cannot fall
+        }
         if (!r) { if (!jg_outside(g, L, NULL, H->id, 0, "no ranking function proposed for this loop")) return false; continue; }
         if (r->ncomp < 1 || r->ncomp > JRANK_MAXC || r->nedge < 0 || r->nedge > JRANK_MAXE)
             return jg_fail(g, "a ranking claim of no components, or of more than it may have");
-        if (!jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
+        if (!(measure && r->nt == 0) && !jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
         for (int32_t i = 0; i < r->nt; i++)
             if (!jg_term_ok(g, H->id, r->key[i], r->tk[i])) return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
         for (int32_t j = 0; j < r->ncomp; j++) {
@@ -2203,7 +2306,8 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                     JCons goal;
                     if (B.fail || !jg_rank_goal(&B, r, j, pre, post, what, &goal)) return jg_fail(g, "out of memory building a ranking VC");
                     JObl *o = jg_push(g, L);
-                    const char *kind = what == 0 ? "rank.keep" : what == 1 ? "rank.fall" : "rank.bound";
+                    const char *kind = measure ? (what == 1 ? "measure.fall" : "measure.bound")
+                                               : what == 0 ? "rank.keep" : what == 1 ? "rank.fall" : "rank.bound";
                     if (!o || !jb_finish(&B, NULL, kind, j, &goal, o)) return jg_fail(g, "out of memory building a VC");
                     o->to = H; o->claim = -1;                // an obligation: a ranking claim is never a fact
                 }

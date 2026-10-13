@@ -214,6 +214,36 @@ int main(void) {
     CHECK(strstr(recs, rf) && nrec[JREC_SOLVER_BUG] == 0, "i +%% 1 under i < n: n - i falls:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
 
+    // a WRITTEN measure (`while i < n decreasing m`): `decreasing n - i` proved; `decreasing i`,
+    // which rises, not implied (E082 under authority); a ranking claim proposed there is not read
+    IrFunc *hm = ir_func_new(&A, nm("hm"), u32t, IR_FUNC_PURE);
+    IrValue *mn = ir_add_param(hm, u32t, nm("n"));
+    IrBlock *m0 = hm->entry, *m1 = ir_new_block(hm), *m2 = ir_new_block(hm), *m3 = ir_new_block(hm);
+    IrValue *mi = ir_alloca(hm, m0, u32t);
+    ir_store(hm, m0, mi, ir_const_int(hm, m0, 0, u32t)); ir_set_br(m0, m1);
+    ir_set_br_cond(m1, ir_icmp(hm, m1, IR_CMP_ULT, ir_load(hm, m1, mi, u32t), mn), m2, m3);
+    IrValue *mli = ir_load(hm, m2, mi, u32t);
+    IrValue *meas_ok = ir_binop(hm, m2, IR_SUB, mn, mli, u32t);             // n - i: falls
+    ir_store(hm, m2, mi, ir_binop(hm, m2, IR_ADD, mli, ir_const_int(hm, m2, 1, u32t), u32t));
+    ir_set_br(m2, m1);
+    ir_set_ret(m3, ir_const_int(hm, m3, 0, u32t));
+    ir_finalize_cfg(hm);
+    m1->has_measure = true; m1->measure_val = meas_ok;
+    int mp = 0;
+    for (IrInstr *i = m2->instrs; i; i = i->next) mp++;
+    s.propose = P_RANK; s.nrank = 1;                                       // a proposal, which rises: not read
+    memset(&s.rank[0], 0, sizeof s.rank[0]);
+    s.rank[0].blk = m1->id; s.rank[0].fn = hm; s.rank[0].ncomp = 1; s.rank[0].nt = 1; s.rank[0].key[0] = mi->id;
+    s.rank[0].coef[0][0] = 1; s.rank[0].nedge = 1; s.rank[0].from[0] = m2->id;
+    snprintf(rf, sizeof rf, "proved bb%d.%d measure.fall", m2->id, mp); snprintf(rb, sizeof rb, "proved bb%d.%d measure.bound", m2->id, mp);
+    CHECK(run(hm, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, rf) && strstr(recs, rb) && !strstr(recs, "rank.") && !strstr(recs, "not-implied"), "decreasing n - i: proved, the proposal not read:\n%s", recs);
+    m1->measure_val = mli;                                                 // decreasing i: it rises
+    snprintf(rf, sizeof rf, "not-implied bb%d.%d measure.fall", m2->id, mp);
+    CHECK(run(hm, &s, true, sizeof region, err), "judges: %s", err);
+    CHECK(strstr(recs, rf) && nrec[JREC_SOLVER_BUG] == 0, "decreasing i, which rises: measure.fall not implied:\n%s", recs);
+    s.propose = P_NONE; s.nrank = 0;
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
