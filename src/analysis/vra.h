@@ -16,6 +16,7 @@
 
 #include "analysis/octagon.h"
 #include "ir/ir.h"
+#include "ir/callgraph.h"   // the call graph and its components, shared with the judge (I.136, I.130)
 #include "analysis/footprint.h"   // the alias oracle: who a call can write / retain
 #include "ir/place.h"   // phase D: the index-disjointness seam we fill
 #include "ir/layout.h"  // the sizes Lain decides (@sizeof of an enum, a [packed] struct, a u32)
@@ -7012,143 +7013,10 @@ static void vra_print_measure(Vra *V, IrFunc *f, isize line, bool rec, bool ok) 
 // So the unit is f's strongly connected component of the call graph: every function that f reaches
 // and that reaches f.
 //
-// ★ AN INDIRECT CALL IS AN EDGE TOO (I.136). The graph was the DIRECT calls only, so a cycle that
-// closes through a function pointer drew no obligation at all: `func spin(x u8) u8 { return
-// apply(spin, x) }` with `apply` calling `f(x)` was accepted and ran out of stack. An indirect call
-// can reach any function whose address the program takes (an IR_FUNC_REF: lowering makes a
-// function value no other way) and whose parameter count matches the call's arguments, so it is an
-// edge to each of them. `*via_pointer` says that f reaches ITSELF through such an edge, which makes
-// f a cycle on its own: a component of one function that the self-call rule cannot see.
-// An extern that is handed a function and calls it back (qsort's comparator) is outside this graph:
-// an extern is a trusted boundary, and its row is believed, here as everywhere else.
-//
-// The call graph is built ONCE per module and its components with it (Tarjan's algorithm, run
-// iteratively: a deep call chain must not overflow the compiler's own stack). Every function's
-// analysis asks for its component, and rebuilding the graph per function cost a 1000-function
-// module ten times its compile time (0.95 s to 9.9 s, measured 2026-10-03). The cache is keyed on
-// the module's functions and a signature of their sizes, so a module lowered again, or changed, is
-// rebuilt.
-typedef struct {
-    IrFunc *mod; int n; unsigned long sig;
-    IrFunc **idx;                  // the functions in module order
-    int *hash, hcap;               // name -> index, open addressing
-    int *off, *to; IrInstr **ecall;   // the calls of function k are edges off[k] .. off[k+1]
-    int *comp;                     // the component of each function
-    bool *at;                      // its address is taken (I.136)
-} VraCallGraph;
-static VraCallGraph vra_cg;
-static void vra_cg_free(void) {
-    free(vra_cg.idx); free(vra_cg.hash); free(vra_cg.off); free(vra_cg.to); free(vra_cg.ecall);
-    free(vra_cg.comp); free(vra_cg.at);
-    memset(&vra_cg, 0, sizeof vra_cg);
-}
-static uint32_t vra_name_hash(const IrName *nm) {
-    uint32_t h = 2166136261u;
-    for (isize i = 0; i < nm->length; i++) { h ^= (uint8_t)nm->name[i]; h *= 16777619u; }
-    return h;
-}
-static int vra_cg_lookup(const IrName *nm) {
-    if (!nm || !vra_cg.hash) return -1;
-    for (uint32_t h = vra_name_hash(nm) & (uint32_t)(vra_cg.hcap - 1);; h = (h + 1) & (uint32_t)(vra_cg.hcap - 1)) {
-        int k = vra_cg.hash[h];
-        if (k < 0) return -1;
-        IrName *g = vra_cg.idx[k]->name;
-        if (g && g->length == nm->length && !memcmp(g->name, nm->name, (size_t)nm->length)) return k;
-    }
-}
-static int vra_param_count(IrFunc *g) { int n = 0; for (IrParam *p = g ? g->params : NULL; p; p = p->next) n++; return n; }
-static bool vra_cg_build(IrFunc *mod) {
-    // The signature costs one step per FUNCTION, not per instruction: the analysis runs many times
-    // per function (effects, nested call-site analyses), and a walk of every instruction at each
-    // run cost a 1000-function module twice its compile time. A function's value and block counters
-    // grow with every instruction and block added to it, and the functions are compared by identity.
-    int n = 0; unsigned long sig = 0; bool same = vra_cg.mod == mod && vra_cg.comp;   // a hash: unsigned, it wraps by definition (I.170)
-    for (IrFunc *g = mod; g; g = g->next) {
-        if (same && (n >= vra_cg.n || vra_cg.idx[n] != g)) same = false;
-        n++; sig = sig * 31u + (unsigned long)g->next_value_id * 7u + (unsigned long)g->next_block_id;
-    }
-    if (same && vra_cg.n == n && vra_cg.sig == sig) return true;
-    vra_cg_free();
-    if (!mod || n == 0) return false;
-    VraCallGraph *G = &vra_cg;
-    G->mod = mod; G->n = n; G->sig = sig;
-    G->hcap = 1; while (G->hcap < 2 * n) G->hcap <<= 1;
-    G->idx = calloc((size_t)n, sizeof *G->idx); G->hash = malloc((size_t)G->hcap * sizeof *G->hash);
-    G->off = calloc((size_t)n + 1, sizeof *G->off); G->comp = calloc((size_t)n, sizeof *G->comp);
-    G->at = calloc((size_t)n, sizeof *G->at);
-    int *np = calloc((size_t)n, sizeof *np);
-    if (!G->idx || !G->hash || !G->off || !G->comp || !G->at || !np) { free(np); vra_cg_free(); return false; }
-    for (int h = 0; h < G->hcap; h++) G->hash[h] = -1;
-    { int k = 0;
-      for (IrFunc *g = mod; g; g = g->next, k++) {
-          G->idx[k] = g; np[k] = vra_param_count(g);
-          if (!g->name || vra_cg_lookup(g->name) >= 0) continue;   // a duplicate name resolves to the first
-          uint32_t h = vra_name_hash(g->name) & (uint32_t)(G->hcap - 1);
-          while (G->hash[h] >= 0) h = (h + 1) & (uint32_t)(G->hcap - 1);
-          G->hash[h] = k;
-      } }
-    // the functions whose address is taken: the targets an indirect call may reach (I.136)
-    int nat = 0;
-    for (int k = 0; k < n; k++)
-        for (IrBlock *b = G->idx[k]->blocks; b; b = b->next)
-            for (IrInstr *i = b->instrs; i; i = i->next)
-                if (i->op == IR_FUNC_REF && i->aux.callee) { int c = vra_cg_lookup(i->aux.callee); if (c >= 0 && !G->at[c]) { G->at[c] = true; nat++; } }
-    long E = 0;
-    for (int k = 0; k < n; k++)
-        for (IrBlock *b = G->idx[k]->blocks; b; b = b->next)
-            for (IrInstr *i = b->instrs; i; i = i->next)
-                if (i->op == IR_CALL) E += i->aux.callee ? 1 : nat;
-    G->to = calloc((size_t)E + 1, sizeof *G->to); G->ecall = calloc((size_t)E + 1, sizeof *G->ecall);
-    if (!G->to || !G->ecall) { free(np); vra_cg_free(); return false; }
-    { int e = 0;
-      for (int k = 0; k < n; k++) {
-          G->off[k] = e;
-          for (IrBlock *b = G->idx[k]->blocks; b; b = b->next)
-              for (IrInstr *i = b->instrs; i; i = i->next) {
-                  if (i->op != IR_CALL) continue;
-                  if (i->aux.callee) {
-                      int c = vra_cg_lookup(i->aux.callee);
-                      if (c >= 0) { G->to[e] = c; G->ecall[e] = i; e++; }
-                  } else
-                      for (int c = 0; c < n; c++)
-                          if (G->at[c] && np[c] == i->n_operands - 1) { G->to[e] = c; G->ecall[e] = i; e++; }
-              }
-      }
-      G->off[n] = e; }
-    free(np);
-    // Tarjan, iteratively: index/low per function, an explicit DFS stack of (function, next edge)
-    int *ix = malloc((size_t)n * sizeof *ix), *low = malloc((size_t)n * sizeof *low);
-    int *st = malloc((size_t)n * sizeof *st), *cs = malloc((size_t)n * sizeof *cs), *ce = malloc((size_t)n * sizeof *ce);
-    bool *on = calloc((size_t)n, sizeof *on);
-    if (!ix || !low || !st || !cs || !ce || !on) { free(ix); free(low); free(st); free(cs); free(ce); free(on); vra_cg_free(); return false; }
-    for (int k = 0; k < n; k++) ix[k] = -1;
-    int counter = 0, sp = 0, ncomp = 0;
-    for (int r = 0; r < n; r++) {
-        if (ix[r] >= 0) continue;
-        int top = 0; cs[top] = r; ce[top] = G->off[r]; top++;
-        ix[r] = low[r] = counter++; st[sp++] = r; on[r] = true;
-        while (top > 0) {
-            int v = cs[top-1];
-            if (ce[top-1] < G->off[v+1]) {
-                int w = G->to[ce[top-1]++];
-                if (ix[w] < 0) {
-                    ix[w] = low[w] = counter++; st[sp++] = w; on[w] = true;
-                    cs[top] = w; ce[top] = G->off[w]; top++;
-                } else if (on[w] && ix[w] < low[v]) low[v] = ix[w];
-                continue;
-            }
-            if (low[v] == ix[v]) {                     // v roots a component
-                int w;
-                do { w = st[--sp]; on[w] = false; G->comp[w] = ncomp; } while (w != v);
-                ncomp++;
-            }
-            top--;
-            if (top > 0) { int u = cs[top-1]; if (low[v] < low[u]) low[u] = low[v]; }
-        }
-    }
-    free(ix); free(low); free(st); free(cs); free(ce); free(on);
-    return true;
-}
+// The graph itself, the indirect calls among its edges (I.136), is ir/callgraph.h: the judge's
+// recursion obligations read the same one, so the two engines place a function on the same cycle.
+static IrCallGraph vra_cg;
+
 // f's component: its size (f included), written in module order to `mem` (at most `cap`; the size
 // is returned even when larger, and the caller fails closed). `*site` is f's first call that can
 // reach another function of the component, where a diagnostic points; `*via_pointer` says f
@@ -7156,13 +7024,10 @@ static bool vra_cg_build(IrFunc *mod) {
 static int vra_cycle_members(IrFunc *f, IrFunc *mod, IrFunc **mem, int cap, IrInstr **site, bool *via_pointer) {
     if (site) *site = NULL;
     if (via_pointer) *via_pointer = false;
-    if (!f || !mod || !vra_cg_build(mod)) return 1;
-    int fi = -1;
-    for (int k = 0; k < vra_cg.n && fi < 0; k++) if (vra_cg.idx[k] == f) fi = k;   // by identity, not name
+    if (!f || !mod || !ir_cg_build(&vra_cg, mod)) return 1;
+    int fi = ir_cg_index(&vra_cg, f);
     if (fi < 0) return 1;
-    int count = 0, cf = vra_cg.comp[fi];
-    for (int k = 0; k < vra_cg.n; k++)
-        if (vra_cg.comp[k] == cf) { if (count < cap && mem) mem[count] = vra_cg.idx[k]; count++; }
+    int count = ir_cg_members(&vra_cg, fi, mem, cap), cf = vra_cg.comp[fi];
     for (int e = vra_cg.off[fi]; e < vra_cg.off[fi+1]; e++) {
         int c = vra_cg.to[e];
         if (site && !*site && c != fi && vra_cg.comp[c] == cf) *site = vra_cg.ecall[e];
@@ -7315,26 +7180,21 @@ static bool vra_cycle_terminates(IrFunc *mod, IrFunc **mem, int m, const CertMea
                      memcmp(want->mem[i], mem[i]->name->name, (size_t)mem[i]->name->length) ||
                      want->pos[i] >= C->np[i])) goto out;
     }
-    // which functions of the component have their address taken: an indirect call may reach those
-    bool at[CERT_SCC_MAX] = {false};
-    if (!vra_cg_build(mod)) goto out;
-    for (int q = 0; q < m; q++)
-        for (int k = 0; k < vra_cg.n; k++) if (vra_cg.idx[k] == mem[q]) { at[q] = vra_cg.at[k]; break; }
-    for (int i = 0; i < m; i++)
-        for (IrBlock *b = mem[i]->blocks; b; b = b->next)
-            for (IrInstr *ins = b->instrs; ins; ins = ins->next) {
-                if (ins->op != IR_CALL) continue;
-                for (int j = 0; j < m; j++) {
-                    bool hit = ins->aux.callee
-                        ? (mem[j]->name && mem[j]->name->length == ins->aux.callee->length &&
-                           !memcmp(mem[j]->name->name, ins->aux.callee->name, (size_t)ins->aux.callee->length))
-                        : (at[j] && C->np[j] == ins->n_operands - 1);
-                    if (!hit) continue;
-                    if (C->ne >= VRA_CYC_CALLS) goto out;
-                    C->efrom[C->ne] = i; C->eto[C->ne] = j; C->ecall[C->ne] = ins;
-                    C->eshift[C->ne] = ins->aux.callee ? 0 : 1; C->ne++;
-                }
-            }
+    // the cycle's calls are the graph's edges between members (ir/callgraph.h), so the rule ranks
+    // exactly the calls that put f on its cycle, an indirect call once per member it may reach
+    if (!ir_cg_build(&vra_cg, mod)) goto out;
+    { int gi[CERT_SCC_MAX];
+      for (int q = 0; q < m; q++) if ((gi[q] = ir_cg_index(&vra_cg, mem[q])) < 0) goto out;
+      for (int i = 0; i < m; i++)
+          for (int e = vra_cg.off[gi[i]]; e < vra_cg.off[gi[i]+1]; e++) {
+              int j = 0;
+              while (j < m && gi[j] != vra_cg.to[e]) j++;
+              if (j == m) continue;                     // a call out of the component
+              if (C->ne >= VRA_CYC_CALLS) goto out;
+              IrInstr *ins = vra_cg.ecall[e];
+              C->efrom[C->ne] = i; C->eto[C->ne] = j; C->ecall[C->ne] = ins;
+              C->eshift[C->ne] = ins->aux.callee ? 0 : 1; C->ne++;
+          } }
     { size_t cells = 0;
       for (int e = 0; e < C->ne; e++) { C->moff[e] = (int)cells; cells += (size_t)C->np[C->efrom[e]] * (size_t)C->np[C->eto[e]]; }
       C->memo = calloc(cells ? cells : 1, 1);
