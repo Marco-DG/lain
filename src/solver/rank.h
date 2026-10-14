@@ -56,7 +56,7 @@ static const JInt *rk_coef(const JCons *row, int32_t v) {
 // dl_out[k], -1 for a path not in play); without it every path falls by at least 1. Variables: c_0..c_{npairs-1},
 // c0, then per path its mu rows, its nu rows and (with `delta`) its delta. False: out of room.
 static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, const int32_t *pre,
-                     const int32_t *post, int32_t npairs, bool delta, char **cur, char *end,
+                     const int32_t *post, int32_t npairs, bool delta, int64_t cbound, char **cur, char *end,
                      JVc *lp, int32_t *dl_out) {
     int32_t nv = paths[0]->nvars;
     int32_t nvars = npairs + 1;
@@ -73,7 +73,7 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
     if (dl_out) for (int32_t k = 0; k < npaths; k++) dl_out[k] = dl[k];
     const char **names = (const char **)rk_bump(cur, end, sizeof(char *) * (size_t)nvars);
     char *nbuf = (char *)rk_bump(cur, end, (size_t)nvars * 24);
-    int64_t ncap = 0;
+    int64_t ncap = cbound > 0 ? 2 * (int64_t)npairs : 0;      // the coefficients' bounds
     for (int32_t k = 0; k < npaths; k++) if (on[k]) ncap += 2 * (int64_t)nv + 4 + 2 * paths[k]->nhyps;
     JHyp *hyps = (JHyp *)rk_bump(cur, end, sizeof(JHyp) * (size_t)(ncap > 0 ? ncap : 1));
     if (!names || !nbuf || !hyps) return false;
@@ -142,6 +142,14 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
             RK_NEW(J_LE, 1); RK_TERM(dl[k], &one); RK_DONE();
         }
     }
+    if (cbound > 0) {                                        // |c_i| <= cbound (lia_rank_lex_bounded)
+        int32_t tcap = 1;
+        JInt one, m1; rk_int(&one, 1); rk_int(&m1, -1);
+        for (int32_t i = 0; i < npairs; i++) {
+            RK_NEW(J_LE, cbound); RK_TERM(i, &one); RK_DONE();
+            RK_NEW(J_LE, cbound); RK_TERM(i, &m1); RK_DONE();
+        }
+    }
     #undef RK_NEW
     #undef RK_TERM
     #undef RK_DONE
@@ -168,7 +176,7 @@ static LRank lia_rank(const JVc *const *paths, int32_t npaths, const int32_t *pr
     bool on[4096];
     for (int32_t k = 0; k < npaths; k++) on[k] = true;
     JVc lp;
-    if (!rk_build(paths, npaths, on, pre, post, npairs, false, &cur, end, &lp, NULL)) {
+    if (!rk_build(paths, npaths, on, pre, post, npairs, false, 0, &cur, end, &lp, NULL)) {
         R.k = LIA_RANK_STOP; R.stop = J_ANS_CAPACITY; return R;
     }
     JAnswer A = lia_solve(&lp, limit, cur, (size_t)((char *)mem + size - cur));
@@ -200,8 +208,12 @@ typedef struct {
     JAnswerKind stop;
 } LRankLex;
 
-static LRankLex lia_rank_lex(const JVc *const *paths, int32_t npaths, const int32_t *pre, const int32_t *post,
-                             int32_t npairs, JWork limit, void *mem, size_t size) {
+// ...with every coefficient within [-cbound, cbound] (0: unbounded). Under bounded types a
+// lexicographic ranking also exists LINEARIZED by powers of two (CookSeeZuleger Fig7b's <y, z, x> as
+// about 2^63*y + 2^32*z + x), and the first round, maximizing the paths it lowers, finds that one:
+// past what a ranking claim may state. Bounded, the rounds find the tuple.
+static LRankLex lia_rank_lex_bounded(const JVc *const *paths, int32_t npaths, const int32_t *pre, const int32_t *post,
+                                     int32_t npairs, int64_t cbound, JWork limit, void *mem, size_t size) {
     LRankLex R; memset(&R, 0, sizeof R);
     if (npairs < 1 || !rk_check_paths(paths, npaths) || npaths > 4096) { R.k = LIA_RANK_UNSUPPORTED; return R; }
     // the answer's memory first, kept across rounds; each round's system and solver the rest
@@ -218,7 +230,7 @@ static LRankLex lia_rank_lex(const JVc *const *paths, int32_t npaths, const int3
         char *cur = rbase, *end = rbase + ((char *)mem + size - rbase) / 4;
         JVc lp;
         int32_t *dl = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)npaths);
-        if (!dl || !rk_build(paths, npaths, on, pre, post, npairs, true, &cur, end, &lp, dl)) {
+        if (!dl || !rk_build(paths, npaths, on, pre, post, npairs, true, cbound, &cur, end, &lp, dl)) {
             R.k = LIA_RANK_STOP; R.stop = J_ANS_CAPACITY; return R;
         }
         JTerm *obj = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)left);
@@ -238,6 +250,10 @@ static LRankLex lia_rank_lex(const JVc *const *paths, int32_t npaths, const int3
     }
     R.k = LIA_RANK_FOUND;
     return R;
+}
+static LRankLex lia_rank_lex(const JVc *const *paths, int32_t npaths, const int32_t *pre, const int32_t *post,
+                             int32_t npairs, JWork limit, void *mem, size_t size) {
+    return lia_rank_lex_bounded(paths, npaths, pre, post, npairs, 0, limit, mem, size);
 }
 
 // ── PE.7: two-variable relations a loop keeps (delta synthesis) ───────────────────────────────
@@ -274,6 +290,38 @@ static bool rk_delta(const JVc *P, int32_t pre, int32_t post, JWork limit, void 
 }
 static int64_t rk_ceil_div(int64_t a, int64_t b) { return a / b + ((a % b != 0) && ((a > 0) == (b > 0))); }   // b > 0
 
+// rk_delta on the facts CONNECTED to the pair (pre, post) only: a fact sharing no variable, directly
+// or through others, with the pair cannot bound post - pre, and a path carrying a loop's every claim
+// made each maximization pay for all of them (Gothenburg's relations: 806 maximizations, 114 s). A
+// disjunctive fact is left out, as lia_maximize leaves it. Exact for a satisfiable path; for one
+// whose other facts contradict, the slice answers where the whole would be empty (a candidate only).
+static bool rk_delta_sliced(const JVc *P, int32_t pre, int32_t post, JWork limit, void *mem, size_t size,
+                            int64_t *lo, int64_t *hi) {
+    if (pre == post) { *lo = *hi = 0; return true; }
+    uint8_t *on = calloc((size_t)(P->nvars > 0 ? P->nvars : 1), 1);
+    JHyp *h = malloc(sizeof *h * (size_t)(P->nhyps > 0 ? P->nhyps : 1));
+    uint8_t *took = calloc((size_t)(P->nhyps > 0 ? P->nhyps : 1), 1);
+    if (!on || !h || !took) { free(on); free(h); free(took); return rk_delta(P, pre, post, limit, mem, size, lo, hi); }
+    on[pre] = on[post] = 1;
+    for (bool grew = true; grew; ) {
+        grew = false;
+        for (int32_t r = 0; r < P->nhyps; r++) {
+            if (took[r] || P->hyps[r].disj) continue;
+            bool touch = false;
+            for (int32_t t = 0; t < P->hyps[r].cons.nt && !touch; t++) touch = on[P->hyps[r].cons.t[t].var];
+            if (!touch) continue;
+            took[r] = 1; grew = true;
+            for (int32_t t = 0; t < P->hyps[r].cons.nt; t++) on[P->hyps[r].cons.t[t].var] = 1;
+        }
+    }
+    int32_t m = 0;
+    for (int32_t r = 0; r < P->nhyps; r++) if (took[r]) h[m++] = P->hyps[r];
+    JVc q = *P; q.hyps = h; q.nhyps = m;
+    bool ok = rk_delta(&q, pre, post, limit, mem, size, lo, hi);
+    free(on); free(h); free(took);
+    return ok;
+}
+
 // Every (t, j) relation of this kind over the pairs of a loop's back-edge paths (sharing one
 // variable list, as lia_rank's), at most `cap` into `out`. The deltas are asked once per pair and path.
 static int32_t lia_relations(const JVc *const *paths, int32_t npaths, const int32_t *pre, const int32_t *post,
@@ -283,7 +331,7 @@ static int32_t lia_relations(const JVc *const *paths, int32_t npaths, const int3
     for (int32_t i = 0; i < npairs; i++) {
         ok[i] = true;
         for (int32_t k = 0; k < npaths && ok[i]; k++)
-            ok[i] = rk_delta(paths[k], pre[i], post[i], limit, mem, size, &lo[i][k], &hi[i][k]);
+            ok[i] = rk_delta_sliced(paths[k], pre[i], post[i], limit, mem, size, &lo[i][k], &hi[i][k]);
     }
     int32_t n = 0;
     for (int32_t j = 0; j < npairs; j++) {

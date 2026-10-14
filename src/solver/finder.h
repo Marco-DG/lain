@@ -395,6 +395,33 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
                 o->dn[d] = hy->dis[d].nc;
                 for (int32_t c = 0; c < hy->dis[d].nc; c++) if (!fd_copy_cons(L, &hy->dis[d].c[c], &o->dc[z++])) return false;
             }
+            // a guarded instance the path DECIDES: where the path's own facts refute the guard
+            // case (`i <= k` beside a stated `i >= 5`, c34), it is the bound alone, and the relation
+            // search reads it (a sum over an array a finished loop filled); undecided, it stays
+            // skipped. One satisfiability question per case, the path's conjunctive facts beside it.
+            if (o->upto) {
+                int32_t ncj = 0, mx = 0;
+                for (int32_t h2 = 0; h2 < v->nhyps; h2++) if (!v->hyps[h2].disj) ncj++;
+                for (int32_t d = 0; d < hy->ndis; d++) if (hy->dis[d].nc > mx) mx = hy->dis[d].nc;
+                JHyp *ph = malloc(sizeof *ph * (size_t)(ncj + mx + 1));
+                int32_t live = -1, nlive = 0;
+                for (int32_t d = 0; ph && d < hy->ndis && nlive < 2; d++) {
+                    int32_t m = 0;
+                    for (int32_t h2 = 0; h2 < v->nhyps; h2++) if (!v->hyps[h2].disj) ph[m++] = v->hyps[h2];
+                    for (int32_t c = 0; c < hy->dis[d].nc; c++) { memset(&ph[m], 0, sizeof ph[m]); ph[m].cons = hy->dis[d].c[c]; ph[m].origin = "case"; m++; }
+                    JVc q = *v; q.hyps = ph; q.nhyps = m;
+                    memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; fd_jint(&q.goal.rhs, -1);
+                    if (lia_solve(&q, F->lim, F->work, F->worksz).k != J_ANS_CERT) { live = d; nlive++; }
+                }
+                free(ph);
+                if (nlive == 1) {                            // decided: that case alone, flattened as one
+                    int32_t off = 0;
+                    for (int32_t d = 0; d < live; d++) off += o->dn[d];
+                    o->dn[0] = o->dn[live];
+                    for (int32_t c = 0; c < o->dn[0]; c++) o->dc[c] = o->dc[off + c];
+                    o->nd = 1; o->upto = false;
+                }
+            }
         }
     }
     // 2. which `%v` values are fixed at the header (a claim may name them): one variable each
@@ -581,6 +608,131 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
 // `12 - month` from month alone, which matters once a loop reads a table: its cells' claims ride in
 // with the other quantities and pass the system's capacity (convert_days' month loop: 16 pairs,
 // 736 hypotheses, capacity; month alone ranks it).
+// PE.13 (2), with the generator's MAX components (c36): one component that is the max of a few
+// rows, for a loop that moves a quantity toward 0 from either side (CookSeeZuleger Fig8a's
+// `while x != 0`, x stepping down when positive and up when negative: max(x, -x)) or lowers two at
+// once under `x >= 0 or y >= 0` (max(x, y)). Templates over the versions that step by a constant:
+// max(v, -v), max(v, w), max(-v, -w). Each is checked here first, on every back-edge path, with
+// the generator's own VC shapes (keep/fall per row under its premises, the bound under its
+// premises): a ranking claim that fails is a refusal, where no claim is only "outside".
+typedef struct { int32_t q[2]; int8_t c[2]; int32_t n; } FdRow;      // sum c[i] * pair q[i]
+static int32_t fd_lin(JTerm *t, int32_t nt, int32_t var, int64_t c) {   // add c*var, ascending, merged
+    for (int32_t i = 0; i < nt; i++) if (t[i].var == var) {
+        __int128 v = fd_int128(&t[i].coef) + c;
+        fd_jint(&t[i].coef, v);
+        if (v == 0) { for (int32_t j = i; j + 1 < nt; j++) t[j] = t[j + 1]; nt--; }
+        return nt;
+    }
+    int32_t at = nt;
+    while (at > 0 && t[at - 1].var > var) { t[at] = t[at - 1]; at--; }
+    t[at].var = var; fd_jint(&t[at].coef, c);
+    return nt + 1;
+}
+// sp * row(pre or post) into t
+static int32_t fd_row_terms(JTerm *t, int32_t nt, const FdLoop *L, const FdRow *r, bool post, int64_t sp) {
+    for (int32_t i = 0; i < r->n; i++) nt = fd_lin(t, nt, post ? L->post[r->q[i]] : L->pre[r->q[i]], sp * r->c[i]);
+    return nt;
+}
+static bool fd_max_holds(JFinder *F, const FdLoop *L, const FdRow *R, int32_t nr) {
+    int32_t last = nr - 1;
+    for (int32_t k = 0; k < L->npaths; k++) {
+        const JVc *P = L->paths[k];
+        JHyp *h = malloc(sizeof *h * (size_t)(P->nhyps + nr + 1));
+        JTerm *tt = malloc(sizeof *tt * (size_t)(nr + 1) * 8);
+        if (!h || !tt) { free(h); free(tt); F->oom = true; return false; }
+        bool ok = true;
+        for (int32_t a = 0; ok && a <= nr; a++) {             // a < nr: row a's fall; a == nr: the bound
+            int32_t m = 0, used = 0;
+            for (int32_t x = 0; x < P->nhyps; x++) h[m++] = P->hyps[x];
+            for (int32_t b = 0; b < last; b++) {             // the premises: every row but the last
+                JTerm *t = tt + (size_t)used * 8; int32_t nt = 0;
+                memset(&h[m], 0, sizeof h[m]); h[m].origin = "premise";
+                if (a < nr) { nt = fd_row_terms(t, nt, L, &R[b], false, 1); nt = fd_row_terms(t, nt, L, &R[a], true, -1); fd_jint(&h[m].cons.rhs, 0); }
+                else { nt = fd_row_terms(t, nt, L, &R[b], false, 1); fd_jint(&h[m].cons.rhs, -1); }
+                h[m].cons.t = t; h[m].cons.nt = nt; h[m].cons.op = J_LE;
+                used++; m++;
+            }
+            JVc q = *P; q.hyps = h; q.nhyps = m;
+            JTerm *g = tt + (size_t)used * 8; int32_t ng = 0;
+            memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE;
+            if (a < nr) { ng = fd_row_terms(g, ng, L, &R[a], true, 1); ng = fd_row_terms(g, ng, L, &R[last], false, -1); fd_jint(&q.goal.rhs, -1); }
+            else { ng = fd_row_terms(g, ng, L, &R[last], false, -1); fd_jint(&q.goal.rhs, 0); }
+            q.goal.t = g; q.goal.nt = ng;
+            ok = lia_solve(&q, F->lim, F->work, F->worksz).k == J_ANS_CERT;
+        }
+        free(h); free(tt);
+        if (!ok) return false;
+    }
+    return true;
+}
+// A two-row MIN (c37): per pre row b, the last row's post at most f_b(pre) - 1, under the premise
+// that row 0 did not do it, `f_0(post) >= f_0(pre) or f_0(post) >= f_1(pre)`, a disjunction the
+// solver here does not read: split into its two cases, each its own question. Bounds: every row
+// >= 0, no premise. Piecewise: min(p, q), q falling where q < p, p where p < q.
+static bool fd_min_holds(JFinder *F, const FdLoop *L, const FdRow *R) {
+    for (int32_t k = 0; k < L->npaths; k++) {
+        const JVc *P = L->paths[k];
+        JHyp *h = malloc(sizeof *h * (size_t)(P->nhyps + 2));
+        JTerm *tt = malloc(sizeof *tt * 32);
+        if (!h || !tt) { free(h); free(tt); F->oom = true; return false; }
+        bool ok = true;
+        for (int32_t b = 0; ok && b < 2; b++)                // the falls, one per pre row
+            for (int32_t cs = 0; ok && cs < 2; cs++) {       // the premise's case: 0 vs row 0, 1 vs row 1
+                int32_t m = 0;
+                for (int32_t x = 0; x < P->nhyps; x++) h[m++] = P->hyps[x];
+                JTerm *t = tt; int32_t nt = 0;               // f_cs(pre) - f_0(post) <= 0
+                nt = fd_row_terms(t, nt, L, &R[cs], false, 1); nt = fd_row_terms(t, nt, L, &R[0], true, -1);
+                memset(&h[m], 0, sizeof h[m]); h[m].origin = "premise"; h[m].cons.t = t; h[m].cons.nt = nt;
+                h[m].cons.op = J_LE; fd_jint(&h[m].cons.rhs, 0); m++;
+                JVc q = *P; q.hyps = h; q.nhyps = m;
+                JTerm *g = tt + 16; int32_t ng = 0;          // f_1(post) - f_b(pre) <= -1
+                ng = fd_row_terms(g, ng, L, &R[1], true, 1); ng = fd_row_terms(g, ng, L, &R[b], false, -1);
+                memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; q.goal.t = g; q.goal.nt = ng; fd_jint(&q.goal.rhs, -1);
+                ok = lia_solve(&q, F->lim, F->work, F->worksz).k == J_ANS_CERT;
+            }
+        for (int32_t b = 0; ok && b < 2; b++) {              // the bounds: -f_b(pre) <= 0
+            JVc q = *P; JTerm *g = tt; int32_t ng = fd_row_terms(g, 0, L, &R[b], false, -1);
+            memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; q.goal.t = g; q.goal.nt = ng; fd_jint(&q.goal.rhs, 0);
+            ok = lia_solve(&q, F->lim, F->work, F->worksz).k == J_ANS_CERT;
+        }
+        free(h); free(tt);
+        if (!ok) return false;
+    }
+    return true;
+}
+static bool fd_rank_max(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, const uint8_t *step, JRank *out) {
+    if (L->nedges > JRANK_MAXE) return false;
+    int32_t sv[4], ns = 0;
+    for (int32_t z = 0; z < L->npk && ns < 4; z++) if (step[z] && L->ptk[z] == JTERM_VALUE) sv[ns++] = z;
+    FdRow R[2];
+    for (int32_t t = 0; t < ns + ns * (ns - 1); t++) {
+        if (t < ns) { R[0] = (FdRow){ { sv[t], 0 }, { 1, 0 }, 1 }; R[1] = (FdRow){ { sv[t], 0 }, { -1, 0 }, 1 }; }
+        else {
+            int32_t u = t - ns, i = u / (ns - 1 > 0 ? ns - 1 : 1), j = u % (ns - 1 > 0 ? ns - 1 : 1);
+            if (j >= i) j++;
+            if (i >= j) continue;                            // each pair once, both signs below
+            int8_t sg = (u % 2) ? -1 : 1;
+            R[0] = (FdRow){ { sv[i], 0 }, { sg, 0 }, 1 }; R[1] = (FdRow){ { sv[j], 0 }, { sg, 0 }, 1 };
+        }
+        uint8_t kind = 1;                                    // 1: a max, 2: a min
+        if (!fd_max_holds(F, L, R, 2)) {
+            if (F->oom) return false;
+            if (t < ns || R[0].c[0] < 0 || !fd_min_holds(F, L, R)) { if (F->oom) return false; continue; }
+            kind = 2;                                        // min(v, w): both rows positive
+        }
+        memset(out, 0, sizeof *out);
+        out->blk = H; out->fn = f; out->ncomp = 2; out->nedge = L->nedges;
+        out->nt = R[0].q[0] == R[1].q[0] ? 1 : 2;
+        out->key[0] = L->pkey[R[0].q[0]]; out->tk[0] = L->ptk[R[0].q[0]];
+        if (out->nt == 2) { out->key[1] = L->pkey[R[1].q[0]]; out->tk[1] = L->ptk[R[1].q[0]]; }
+        out->coef[0][0] = R[0].c[0];
+        if (out->nt == 1) out->coef[1][0] = R[1].c[0]; else out->coef[1][1] = R[1].c[0];
+        out->cont[1] = kind;
+        for (int32_t e = 0; e < L->nedges; e++) { out->from[e] = L->edges[e]; out->fall[e] = 0; }
+        return true;
+    }
+    return false;
+}
 static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (fd_rank_on(F, f, H, L, out)) return true;
     int32_t np = L->npaths;
@@ -588,12 +740,31 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     uint8_t *on = fd_bump(L, (size_t)(L->npairs ? L->npairs : 1));
     if (!sl || !on) return false;
     // pass 0: the quantity alone, its paths cut to the facts that touch it (its step and its
-    // guard); pass 1: alone, two rounds out; pass 2: with the values fixed at the header
+    // guard); pass 1: alone, two rounds out; pass 2: with the values fixed at the header; pass 3:
+    // every version that steps by a constant on some path, TOGETHER, the rest left out (CookSeeZuleger
+    // Fig7b's <y, z, x>: each path lowers one counter and sets another arbitrarily, so no counter
+    // alone ranks it, and beside the loop's other versions (its `nondet()` temporaries) the search
+    // found only a ranking past what the judge states)
     int32_t base_pairs = 2 * L->npk + (L->npairs - L->npk);   // the pairs' and fixed values' variables
-    for (int32_t pass = 0; pass < 3; pass++)
+    uint8_t *step = fd_bump(L, (size_t)(L->npairs ? L->npairs : 1));
+    if (!step) return false;
+    // a stepper needs ONE path with a constant step: four paths looked at, each question on the facts
+    // connected to the pair and a sixteenth of the budget (every pair on every path cost Gothenburg
+    // 130 maximizations, 46 s, more than the rest of its proof)
+    int32_t nstep = 0;
+    JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
+    for (int32_t z = 0; z < L->npk; z++) {
+        for (int32_t k = 0; k < np && k < 4 && !step[z]; k++) {
+            int64_t lo, hi;
+            step[z] = rk_delta_sliced(L->paths[k], L->pre[z], L->post[z], slim, F->work, F->worksz, &lo, &hi) && lo == hi && lo != 0;
+        }
+        nstep += step[z];
+    }
+    for (int32_t pass = 0; pass < 4; pass++)
     for (int32_t q = 0; q < L->npk; q++) {
         if (pass == 2 && L->npairs == L->npk) break;       // no value fixed at the header to add
-        for (int32_t z = 0; z < L->npairs; z++) on[z] = z == q || (pass == 2 && z >= L->npk);
+        if (pass == 3 && (q > 0 || nstep < 2 || nstep == L->npk)) break;   // once; none alone, not all
+        for (int32_t z = 0; z < L->npairs; z++) on[z] = pass == 3 ? step[z] : z == q || (pass == 2 && z >= L->npk);
         bool ok = true; int32_t ns = 0;
         int32_t *sedge = fd_bump(L, sizeof(int32_t) * (size_t)(np ? np : 1));
         if (!sedge) break;
@@ -617,9 +788,19 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
                     }
                     if (other || !mine) continue;
                 }
+                if (pass == 3 && src->origin && !strcmp(src->origin, "path claim")) {
+                    bool other = false;                      // a claim about a version left out
+                    for (int32_t t = 0; t < src->cons.nt && !other; t++) {
+                        int32_t vv = src->cons.t[t].var;
+                        if (vv < base_pairs) other = !on[vv < 2 * L->npk ? vv / 2 : L->npk + (vv - 2 * L->npk)];
+                    }
+                    if (other) continue;
+                }
                 h[nh0++] = *src;
             }
-            *v = *L->full[k]; v->hyps = h; v->nhyps = fd_slice_on(L, h, nh0, L->nv, on, pass == 0 ? 1 : 2);
+            // pass 3 follows a version's chain of copies to its end (a counter's new value reaches
+            // its old one through several join versions); its other versions are already left out
+            *v = *L->full[k]; v->hyps = h; v->nhyps = fd_slice_on(L, h, nh0, L->nv, on, pass == 0 ? 1 : pass == 3 ? -1 : 2);
             bool dup = false;
             for (int32_t z = 0; z < ns && !dup; z++) dup = sedge[z] == L->edge[k] && fd_same_path(sl[z], v);
             if (dup) continue;
@@ -632,11 +813,11 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         V.pre = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.post = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs);
         if (!V.pkey || !V.ptk || !V.pre || !V.post) break;
         for (int32_t z = 0; z < L->npairs; z++) if (on[z]) { V.pkey[nn] = L->pkey[z]; V.ptk[nn] = L->ptk[z]; V.pre[nn] = L->pre[z]; V.post[nn] = L->post[z]; nn++; }
-        V.npairs = nn; V.npk = 1;
+        V.npairs = nn; V.npk = pass == 3 ? nstep : 1;
         bool got = fd_rank_on(F, f, H, &V, out);
         if (got) return true;
     }
-    return false;
+    return fd_rank_max(F, f, H, L, step, out);             // no tuple: a max component (c36)
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);
@@ -646,22 +827,46 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
     LRank R1 = lia_rank(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz);
     JInt *coef[JRANK_MAXC]; JInt c0[JRANK_MAXC]; int32_t ncomp = 0;
     int32_t fall_of_edge[JRANK_MAXE];
+    // a linear ranking the judge cannot state is no ranking: under bounded types a lexicographic one
+    // linearizes by powers of two (Fig7b's <y, z, x> as about 2^63*y + 2^32*z + x), past the 2^66 a
+    // ranking claim may carry, and the lexicographic search must run instead
+    if (R1.k == LIA_RANK_FOUND) {
+        const __int128 big = (__int128)1 << 66;
+        for (int32_t i = 0; i <= L->npairs && R1.k == LIA_RANK_FOUND; i++) {
+            __int128 v;
+            if (!fd_i128(&R1.coef[i], &v) || v > big || v < -big) R1.k = LIA_RANK_NONE;
+        }
+    }
     if (R1.k == LIA_RANK_FOUND) {
         coef[0] = R1.coef; c0[0] = R1.c0; ncomp = 1;
         for (int32_t e = 0; e < L->nedges; e++) fall_of_edge[e] = 0;
     } else {
         LRankLex R2 = lia_rank_lex(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz);
+        // a tuple the judge cannot state (a coefficient or constant past 2^66): again, bounded
+        bool fits = R2.k == LIA_RANK_FOUND && R2.ncomp <= JRANK_MAXC;
+        for (int32_t j = 0; fits && j < R2.ncomp; j++)
+            for (int32_t i = 0; fits && i <= L->npairs; i++) {
+                __int128 v;
+                const JInt *x = i < L->npairs ? &R2.coef[j][i] : &R2.c0[j];
+                fits = fd_i128(x, &v) && v <= ((__int128)1 << 66) && v >= -((__int128)1 << 66);
+            }
+        if (R2.k == LIA_RANK_FOUND && !fits)
+            R2 = lia_rank_lex_bounded(L->paths, L->npaths, L->pre, L->post, L->npairs, (int64_t)1 << 20, F->lim, F->work, F->worksz);
         if (R2.k != LIA_RANK_FOUND || R2.ncomp > JRANK_MAXC) return false;
         ncomp = R2.ncomp;
         for (int32_t j = 0; j < ncomp; j++) { coef[j] = R2.coef[j]; c0[j] = R2.c0[j]; }
         for (int32_t e = 0; e < L->nedges; e++) {
-            fall_of_edge[e] = -1;
+            fall_of_edge[e] = -2;                            // -2: no path yet, -1: paths disagree
             for (int32_t k = 0; k < L->npaths; k++) {
                 if (L->edge[k] != L->edges[e]) continue;
-                if (fall_of_edge[e] < 0) fall_of_edge[e] = R2.fall[k];
-                else if (fall_of_edge[e] != R2.fall[k]) return false;   // one fall per back edge
+                if (fall_of_edge[e] == -2) fall_of_edge[e] = R2.fall[k];
+                else if (fall_of_edge[e] != R2.fall[k]) fall_of_edge[e] = -1;
             }
-            if (fall_of_edge[e] < 0) return false;
+            // the paths of one edge lower different components (Fig7b's <y, z, x>: one path lowers
+            // each): the edge is FREE, and the judge owes the lexicographic decrease itself
+            // (rank.lex, c35). lia_rank_lex bounds every component on every path, which is more
+            // than the free edge's per-disjunct bound asks.
+            if (fall_of_edge[e] == -2) return false;
         }
     }
     // the terms: every pair a component reads
@@ -693,7 +898,11 @@ static bool fd_relation_candidates(JFinder *F, IrFunc *f, int32_t H, const FdLoo
                                    const struct FdNest *N, const JClaim *as, int32_t nv,
                                    JCand **cd, int32_t *n, int32_t *cap) {
     LRel rel[32];
-    int32_t nr = lia_relations(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz, rel, 32);
+    // a sixteenth of the budget per question: a trip's change is asked per pair and path (Gothenburg:
+    // 220 maximizations a header over paths carrying every verified claim, 7 times the whole run's
+    // time), and one that runs out only costs that pair its relation
+    JWork lim = F->lim; lim.pivot /= 16; lim.node /= 16; lim.leaf /= 16;
+    int32_t nr = lia_relations(L->paths, L->npaths, L->pre, L->post, L->npairs, lim, F->work, F->worksz, rel, 32);
     for (int32_t q = 0; q < nr; q++) {
         if (rel[q].t >= npk && rel[q].j >= npk) continue;
         if (fd_elem_covered(N, f, H, L->pkey[rel[q].t], as, nv) || fd_elem_covered(N, f, H, L->pkey[rel[q].j], as, nv)) continue;
@@ -963,7 +1172,24 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
     // a verified each(a) claim gives the element)
     if (head) {
         FdLoop L;
-        bool built = fd_loop_build(F, f, H, as, nv, &L);
+        // the claims the trip's change needs: those of OTHER cut points (an EACH bound on the array
+        // a sum reads, made by the loop that filled it) and the header's claims on versions it does
+        // not make (c34's fixed ones), not the header's own invariants, which every back-edge path
+        // would carry into every one of the relation search's maximizations (Gothenburg: 114 s)
+        JClaim *rc = nv ? malloc(sizeof *rc * (size_t)nv) : NULL;
+        int32_t nrc = 0;
+        if (nv && !rc) goto oom;
+        for (int32_t v = 0; v < nv; v++) {
+            bool own = as[v].fn == f && as[v].blk == H;
+            if (own) {                                       // fixed: every term a version H does not make
+                for (int32_t k2 = i; k2 < j && own; k2++)
+                    for (int32_t t = 0; t < as[v].nt && own; t++) own = !(as[v].tk[t] == JTERM_VALUE && as[v].key[t] == sl[k2].key);
+                own = !own;
+            }
+            if (!own) rc[nrc++] = as[v];
+        }
+        bool built = fd_loop_build(F, f, H, rc, nrc, &L);
+        free(rc);
         bool ok = !built || fd_relation_candidates(F, f, H, &L, L.npk, N, as, nv, cd, ncd, ccd);
         free(L.mem);
         if (!ok) goto oom;
@@ -1232,7 +1458,7 @@ static bool fd_rank_cycle(JFinder *F, IrFunc **mem, int32_t m, const JClaim *cl,
         for (int32_t k = 0; k < L->npaths; k++) on[k] = true;
         int32_t *dl = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)L->npaths);
         JVc lp;
-        if (!dl || !rk_build(L->paths, L->npaths, on, L->pre, L->post, L->npairs, true, &cur, end, &lp, dl)) goto out;
+        if (!dl || !rk_build(L->paths, L->npaths, on, L->pre, L->post, L->npairs, true, 0, &cur, end, &lp, dl)) goto out;
         JTerm *obj = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)L->npaths);
         if (!obj) goto out;
         int32_t nt = 0;
@@ -1472,6 +1698,162 @@ static int32_t fd_store_guards(IrFunc *f, const uint8_t *body, int32_t nbk, int3
     }
     return n;
 }
+// PE.13 (3): a loop's affine EQUALITIES (Karr). On each back-edge path the definitions are
+// equations; row-reduced with the path's own variables first, each header version's new value is
+// an affine function of the old ones (or undetermined: a nondeterministic value, a load). A vector
+// c over the versions with c.(x' - x) = 0 for every old x on every path keeps c.x fixed; such c
+// are the nullspace of one linear system, and each basis vector of at most JCLAIM_MAXT terms is
+// proposed as two fixed claims, c.x between its least and greatest value on the loop's entry.
+// MenloPark keeps 2y - z = 199 (y -= z, z = -z) and with it y >= 99, which its ranking needs. The
+// arithmetic is exact (fraction-free, gcd-reduced); past 2^60 the loop gets no candidate.
+#define FD_KARR_BIG ((__int128)1 << 60)
+static __int128 fd_gcd128(__int128 a, __int128 b) { if (a < 0) a = -a; if (b < 0) b = -b; while (b) { __int128 t = a % b; a = b; b = t; } return a; }
+static bool fd_row_norm(__int128 *r, int32_t w) {
+    __int128 g = 0;
+    for (int32_t x = 0; x < w; x++) g = fd_gcd128(g, r[x]);
+    if (g > 1) for (int32_t x = 0; x < w; x++) r[x] /= g;
+    for (int32_t x = 0; x < w; x++) if (r[x] > FD_KARR_BIG || r[x] < -FD_KARR_BIG) return false;
+    return true;
+}
+// Row-reduce A (nr x w, the last column the constant) over columns in the order `ord` (nord of
+// them); piv[col] = its pivot row or -1. False on overflow.
+static bool fd_rref(__int128 *A, int32_t nr, int32_t w, const int32_t *ord, int32_t nord, int32_t *piv) {
+    int32_t used = 0;
+    for (int32_t x = 0; x < w; x++) piv[x] = -1;
+    for (int32_t oi = 0; oi < nord && used < nr; oi++) {
+        int32_t col = ord[oi], p = -1;
+        for (int32_t r = used; r < nr && p < 0; r++) if (A[(size_t)r * w + col] != 0) p = r;
+        if (p < 0) continue;
+        if (p != used) for (int32_t x = 0; x < w; x++) { __int128 t = A[(size_t)p * w + x]; A[(size_t)p * w + x] = A[(size_t)used * w + x]; A[(size_t)used * w + x] = t; }
+        __int128 *P = A + (size_t)used * w;
+        for (int32_t r = 0; r < nr; r++) {
+            if (r == used || A[(size_t)r * w + col] == 0) continue;
+            __int128 *R = A + (size_t)r * w, a = P[col], b = R[col];
+            for (int32_t x = 0; x < w; x++) {
+                if ((P[x] && (b > FD_KARR_BIG || b < -FD_KARR_BIG)) || (R[x] && (a > FD_KARR_BIG || a < -FD_KARR_BIG))) return false;
+                R[x] = a * R[x] - b * P[x];
+            }
+            if (!fd_row_norm(R, w)) return false;
+        }
+        piv[col] = used++;
+    }
+    return true;
+}
+static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    FdLoop L;
+    if (!fd_loop_build(F, f, H, as, nv, &L)) { free(L.mem); return !F->oom; }
+    int32_t K = L.npk, W = L.nv + 1;
+    bool ok = K >= 2 && K <= 16 && L.npaths >= 1 && L.nv <= 512;
+    // the system on c: one row per (path, old variable) and per path its constant, plus c_q = 0 for
+    // a version some path leaves undetermined; at most 32 paths
+    int32_t cap = ok ? (L.npaths * (L.nv + 1) + K) : 0;
+    __int128 *C = ok ? calloc((size_t)cap * (size_t)(K + 1), sizeof *C) : NULL;
+    int32_t ncr = 0;
+    ok = ok && C;
+    for (int32_t k = 0; ok && k < L.npaths; k++) {
+        const JVc *P = L.paths[k];
+        int32_t ne = 0;
+        for (int32_t h = 0; h < P->nhyps; h++) if (!P->hyps[h].disj && P->hyps[h].cons.op == J_EQ) ne++;
+        __int128 *A = calloc((size_t)(ne ? ne : 1) * (size_t)W, sizeof *A);
+        int32_t *piv = malloc(sizeof *piv * (size_t)W), *ord = malloc(sizeof *ord * (size_t)W);
+        uint8_t *base = calloc((size_t)W, 1);
+        if (!A || !piv || !ord || !base) { free(A); free(piv); free(ord); free(base); ok = false; break; }
+        int32_t r = 0;
+        for (int32_t h = 0; h < P->nhyps && ok; h++) {
+            const JHyp *y = &P->hyps[h];
+            if (y->disj || y->cons.op != J_EQ) continue;
+            for (int32_t t = 0; t < y->cons.nt; t++) {
+                int32_t v = y->cons.t[t].var;
+                if (v < 0 || v >= L.nv) { ok = false; break; }
+                A[(size_t)r * W + v] = fd_int128(&y->cons.t[t].coef);
+            }
+            A[(size_t)r * W + L.nv] = fd_int128(&y->cons.rhs);
+            r++;
+        }
+        // the old values are the base: every pair's pre (a value fixed at the header is its own pair)
+        for (int32_t q = 0; q < L.npairs; q++) base[L.pre[q]] = 1;
+        int32_t no = 0;
+        for (int32_t v = 0; v < L.nv; v++) if (!base[v]) ord[no++] = v;     // the path's own first
+        for (int32_t v = 0; v < L.nv; v++) if (base[v]) ord[no++] = v;
+        if (ok) ok = fd_rref(A, r, W, ord, no, piv);
+        // per version q: d*post = rhs - sum_b a_b * b, or undetermined
+        for (int32_t q = 0; ok && q < K; q++) {
+            int32_t pv = L.post[q], pr = piv[pv];
+            bool det = pr >= 0;
+            for (int32_t v = 0; det && v < L.nv; v++) if (v != pv && A[(size_t)pr * W + v] != 0 && !base[v]) det = false;
+            if (!det) { if (ncr < cap) { C[(size_t)ncr * (K + 1) + q] = 1; ncr++; } continue; }
+        }
+        // c.(post - pre) = 0: scale each version's expression to the path's common denominator D
+        __int128 D = 1;
+        for (int32_t q = 0; ok && q < K; q++) {
+            int32_t pr = piv[L.post[q]];
+            if (pr < 0) continue;
+            __int128 d = A[(size_t)pr * W + L.post[q]], g = fd_gcd128(D, d);
+            if (d < 0) d = -d;
+            D = D / g * d;
+            if (D > FD_KARR_BIG) ok = false;
+        }
+        for (int32_t b = 0; ok && b <= L.nv; b++) {                // per base variable, and the constant
+            if (b < L.nv && !base[b]) continue;
+            if (ncr >= cap) { ok = false; break; }
+            __int128 *row = C + (size_t)ncr * (K + 1);
+            bool nz = false;
+            for (int32_t q = 0; q < K; q++) {
+                int32_t pv = L.post[q], pr = piv[pv];
+                __int128 coef = 0;
+                if (pr >= 0) {
+                    __int128 d = A[(size_t)pr * W + pv], m = D / (d < 0 ? -d : d), sgn = d < 0 ? -1 : 1;
+                    // post = (rhs - sum a_b b) / d: coefficient of b is -a_b/d, the constant rhs/d
+                    __int128 a = b < L.nv ? -A[(size_t)pr * W + b] : A[(size_t)pr * W + L.nv];
+                    coef = a * m * sgn;
+                }
+                if (b < L.nv && b == L.pre[q]) coef -= D;
+                if (coef > FD_KARR_BIG || coef < -FD_KARR_BIG) { ok = false; break; }
+                row[q] = coef; nz |= coef != 0;
+            }
+            if (nz) { if (!fd_row_norm(row, K + 1)) ok = false; else ncr++; }
+            else memset(row, 0, sizeof *row * (size_t)(K + 1));
+        }
+        free(A); free(piv); free(ord); free(base);
+    }
+    // the nullspace of C (ncr x K): each free column a basis vector
+    bool okall = true;
+    if (ok && ncr > 0) {
+        int32_t *piv = malloc(sizeof *piv * (size_t)(K + 1)), *ord = malloc(sizeof *ord * (size_t)K);
+        if (!piv || !ord) { free(piv); free(ord); free(C); free(L.mem); F->oom = true; return false; }
+        for (int32_t q = 0; q < K; q++) ord[q] = q;
+        ok = fd_rref(C, ncr, K + 1, ord, K, piv);
+        for (int32_t fq = 0; ok && okall && fq < K; fq++) {
+            if (piv[fq] >= 0) continue;                          // a free column: c_fq = 1, pivots solve
+            __int128 vec[16], den = 1;
+            for (int32_t q = 0; q < K; q++) if (piv[q] >= 0) { __int128 d = C[(size_t)piv[q] * (K + 1) + q]; den = den / fd_gcd128(den, d) * (d < 0 ? -d : d); }
+            if (den > FD_KARR_BIG) continue;
+            int32_t nzt = 0; bool bad = false;
+            for (int32_t q = 0; q < K; q++) {
+                if (q == fq) vec[q] = den;
+                else if (piv[q] >= 0) { __int128 d = C[(size_t)piv[q] * (K + 1) + q]; vec[q] = -C[(size_t)piv[q] * (K + 1) + fq] * (den / d); }
+                else vec[q] = 0;
+                if (vec[q] > FD_KARR_BIG || vec[q] < -FD_KARR_BIG) bad = true;
+                nzt += vec[q] != 0;
+            }
+            if (bad || nzt < 1 || nzt > JCLAIM_MAXT) continue;
+            __int128 g = 0;
+            for (int32_t q = 0; q < K; q++) g = fd_gcd128(g, vec[q]);
+            JClaim c; memset(&c, 0, sizeof c);
+            c.blk = H; c.fn = f;
+            for (int32_t q = 0; q < K; q++) if (vec[q]) { c.key[c.nt] = L.pkey[q]; c.tk[c.nt] = L.ptk[q]; c.coef[c.nt] = vec[q] / g; c.nt++; }
+            __int128 hi, lo;
+            JClaim neg = c;
+            for (int32_t t = 0; t < neg.nt; t++) neg.coef[t] = -neg.coef[t];
+            if (!fd_entry_max(F, f, as, nv, &c, &hi) || !fd_entry_max(F, f, as, nv, &neg, &lo)) { if (F->oom) okall = false; continue; }
+            c.rhs = hi; neg.rhs = lo;                            // c.x <= hi, -c.x <= lo
+            okall = fd_push_claim(F, &c, as, nv, cl, nc, ccl) && fd_push_claim(F, &neg, as, nv, cl, nc, ccl);
+        }
+        free(piv); free(ord);
+    }
+    free(C); free(L.mem);
+    return okall;
+}
 static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     char err[200];
     int32_t keys[64]; uint8_t tk[64], kind[64]; int32_t nk = 0;
@@ -1586,6 +1968,8 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
             free(sl);
             if (round > 0 && !fd_nested_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
+            for (IrBlock *kb = f->blocks; kb; kb = kb->next)
+                if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, &cl, &nc, &ccl)) goto oom;
             fd_nest_free(&N);
         }
         if (nc == nv) break;                                 // nothing new to verify
