@@ -2744,6 +2744,63 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a bit count against its operand; a divisor's zero end lifted\n");
+    // 56. a slice's data, and an element's neighbours: xs i32[5] stored 10..50, s = MAKE_SLICE(&xs[1],
+    // 3) stored once in a slot. (0) s[2] through the slot's load is xs[3], its stored version; (1) the
+    // slice used without a slot; (2) &xs[2] by -1 is xs[1]; (3) s[4] would be xs[5], past xs: no
+    // cell; (4) a store s[i] = 7 makes xs[3] fresh (it indexes xs, not xs[1]); no cell where (5) the
+    // slot is stored twice, (6) its one store is in one arm and the load after the join; (7) &xs[1]
+    // by -2 would be xs[-1]: no cell
+    for (int c = 0; c < 8; c++) {
+        IrType *a5 = ir_type_new(&A, IRT_ARRAY); a5->elem = i32t; a5->array_len = 5;
+        IrType *sl = slice_of(i32t);
+        IrFunc *f = ir_func_new(&A, nm("s56"), i32t, IR_FUNC_PURE);
+        IrValue *ix = ir_add_param(f, u64t, nm("i"));
+        IrBlock *b0 = f->entry, *bl = b0;
+        IrValue *xs = ir_alloca_array(f, b0, a5);
+        for (int k = 0; k < 5; k++)
+            ir_store(f, b0, ir_elem_ptr(f, b0, xs, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 10 * (k + 1), i32t));
+        IrValue *e1 = ir_elem_ptr(f, b0, xs, ir_const_int(f, b0, 1, u64t), i32t);
+        IrInstr *mk = ir_instr(f, IR_MAKE_SLICE, sl, 2); mk->operands[0] = e1; mk->operands[1] = ir_const_int(f, b0, 3, u64t); ir_emit(b0, mk);
+        IrValue *sv = mk->result, *got;
+        if (c != 1 && c != 2 && c != 7) {
+            IrValue *slot = ir_alloca(f, b0, sl);
+            if (c == 6) {
+                IrBlock *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+                ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, ix, ir_const_int(f, b0, 3, u64t)), b1, b2);
+                ir_store(f, b1, slot, sv); ir_set_br(b1, b3); ir_set_br(b2, b3);
+                bl = b3;
+            } else {
+                ir_store(f, b0, slot, sv);
+                if (c == 5) ir_store(f, b0, slot, sv);
+            }
+            sv = ir_load(f, bl, slot, sl);
+        }
+        const char *path = c == 2 ? "[1]" : c == 3 ? "[5]" : c == 7 ? "[-1]" : "[3]";
+        if (c == 2 || c == 7) got = ir_load(f, bl, ir_elem_ptr(f, bl, ir_elem_ptr(f, bl, xs, ir_const_int(f, bl, c == 2 ? 2 : 1, u64t), i32t),
+                                                               ir_const_int(f, bl, c == 2 ? -1 : -2, i64t), i32t), i32t);
+        else {
+            IrValue *d = ir_slice_data(f, bl, sv, i32t);
+            if (c == 4) ir_store(f, bl, ir_elem_ptr(f, bl, d, ix, i32t), ir_const_int(f, bl, 7, i32t));
+            got = ir_load(f, bl, c == 4 ? ir_elem_ptr(f, bl, xs, ir_const_int(f, bl, 3, u64t), i32t)
+                                        : ir_elem_ptr(f, bl, d, ir_const_int(f, bl, c == 3 ? 4 : 2, u64t), i32t), i32t);
+        }
+        ir_set_ret(bl, ir_binop(f, bl, IR_SUB, got, ir_const_int(f, bl, 10, i32t), i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), cellnm[48], stored[64];
+        snprintf(cellnm, sizeof cellnm, "%%s%d%s@", xs->id, path);
+        snprintf(stored, sizeof stored, "store %%s%d%s@", xs->id, path);
+        const char *v = t ? strstr(t, " narrow.hi 0") : NULL;
+        const char *e = v ? strstr(v, "\nend\n") : NULL;
+        char vc[8192] = ""; if (v && e && e - v < (long)sizeof vc) { memcpy(vc, v, (size_t)(e - v)); vc[e - v] = 0; }
+        bool named = strstr(vc, cellnm) != NULL, fresh = strstr(vc, "@havoc") != NULL;
+        if (c <= 2) CHECK(named && !fresh && strstr(vc, stored), "case %d: the load is the stored version of %s:\n%s", c, cellnm, vc);
+        else if (c == 4) CHECK(named && fresh, "case 4: a store through s[i] makes xs[3] fresh:\n%s", vc);
+        else CHECK(*vc && !named, "case %d: no cell %s:\n%s", c, cellnm, vc);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a slice's data is the address it took; an element's neighbour by a constant is a cell\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

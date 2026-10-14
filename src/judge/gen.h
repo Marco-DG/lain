@@ -182,6 +182,8 @@ typedef struct {
     const char **apath;            // by value id: that address's field path (".1.0"; "" for the root)
     int32_t *iroot;                // by value id: the root an ELEMENT address is inside, or -1
     const char **ipath;            // by value id: for an element address, the path of the array it indexes
+    int32_t *alen;                 // by value id: for an attributable address ending in `[k]`, that array's length
+    int32_t *asame;                // by value id: the address a SLICE_DATA is (its slice's data), or -1
     uint8_t *iunsafe;              // by value id: that element address came through an unchecked index
     uint8_t *rclass;               // by value id, for a root: JR_LOCAL, JR_BORROWED or JR_LEAKED
     int32_t *eff_cell; IrValue **eff_val; uint8_t *eff_unc; int32_t neff, eff_gen; int32_t *eff_stamp;  // jg_changes
@@ -412,6 +414,7 @@ static const IrType *jg_pointee(JG *g, int32_t id) {
         return d->result->type->elem;
     if (d->op == IR_LOAD && g->aroot[id] >= 0 && d->result && d->result->type && d->result->type->kind == IRT_PTR)
         return d->result->type->elem;                          // a reference binding's address (jg_cells)
+    if (d->op == IR_SLICE_DATA && g->asame[id] >= 0) return jg_pointee(g, g->asame[id]);   // the slice's data
     return NULL;
 }
 static bool jg_const_of(JG *g, IrValue *v, __int128 *c);
@@ -518,9 +521,12 @@ static bool jg_cells(JG *g) {
     int32_t nv = g->nv;
     if (!(g->aroot = JG_NEW(g, int32_t, nv)) || !(g->apath = JG_NEW(g, const char *, nv)) ||
         !(g->iroot = JG_NEW(g, int32_t, nv)) || !(g->iunsafe = JG_NEW(g, uint8_t, nv)) || !(g->rclass = JG_NEW(g, uint8_t, nv)) ||
-        !(g->ipath = JG_NEW(g, const char *, nv)))
+        !(g->ipath = JG_NEW(g, const char *, nv)) || !(g->alen = JG_NEW(g, int32_t, nv)) || !(g->asame = JG_NEW(g, int32_t, nv)))
         return jg_fail(g, "out of memory");
-    for (int32_t i = 0; i < nv; i++) { g->aroot[i] = g->iroot[i] = -1; g->apath[i] = g->ipath[i] = NULL; g->iunsafe[i] = 0; g->rclass[i] = JR_NONE; }
+    for (int32_t i = 0; i < nv; i++) {
+        g->aroot[i] = g->iroot[i] = g->asame[i] = -1; g->apath[i] = g->ipath[i] = NULL; g->iunsafe[i] = 0; g->rclass[i] = JR_NONE;
+        g->alen[i] = 0;
+    }
     // roots: checked reference parameters, then fixed local slots
     for (IrParam *p = f->params; p; p = p->next) {
         IrValue *v = p->value;
@@ -560,9 +566,54 @@ static bool jg_cells(JG *g) {
                 for (IrInstr *j = g->blk[lb]->instrs; j && j != i; j = j->next) li++;
                 bool dom = sb == lb ? oneidx[b0->id] < li : jg_dominates(g, sb, lb);
                 if (dom && av && av->id >= 0 && av->id < nv && g->aroot[av->id] >= 0) {
-                    g->aroot[id] = g->aroot[av->id]; g->apath[id] = g->apath[av->id];
+                    g->aroot[id] = g->aroot[av->id]; g->apath[id] = g->apath[av->id]; g->alen[id] = g->alen[av->id];
                     continue;
                 }
+            }
+            // a slice's DATA (interp.h: SLICE_DATA is the pointer its MAKE_SLICE took), the slice made
+            // here or loaded from a slot stored once, where that store dominates: the address it took
+            if (i->op == IR_SLICE_DATA) {
+                IrInstr *ms = g->def[b0->id];
+                if (ms && ms->op == IR_LOAD && ms->n_operands >= 1 && ms->operands[0] && ms->operands[0]->id >= 0 &&
+                    ms->operands[0]->id < nv && one[ms->operands[0]->id] && one[ms->operands[0]->id]->n_operands >= 2) {
+                    int32_t sl = ms->operands[0]->id, sb = oneblk[sl], lb = -1, li = 0;
+                    for (int32_t q = 0; q < g->nrpo && lb < 0; q++) {
+                        li = 0;
+                        for (IrInstr *j = g->blk[g->rpo[q]]->instrs; j; j = j->next, li++) if (j == ms) { lb = g->rpo[q]; break; }
+                    }
+                    IrValue *sv = one[sl]->operands[1];
+                    bool dom = lb >= 0 && (sb == lb ? oneidx[sl] < li : jg_dominates(g, sb, lb));
+                    ms = dom && sv && sv->id >= 0 && sv->id < nv ? g->def[sv->id] : NULL;
+                }
+                IrValue *dp = ms && ms->op == IR_MAKE_SLICE && ms->n_operands >= 1 ? ms->operands[0] : NULL;
+                if (dp && dp->id >= 0 && dp->id < nv && g->aroot[dp->id] >= 0) {
+                    g->aroot[id] = g->aroot[dp->id]; g->apath[id] = g->apath[dp->id]; g->alen[id] = g->alen[dp->id];
+                    g->asame[id] = dp->id;
+                }
+                continue;
+            }
+            // an ELEM_PTR from the address of an ELEMENT `[k]` moves along that array (interp.h adds the
+            // index to the pointer's last step): by a constant j to `[k + j]` while inside its length;
+            // by any other index it is an element address of that array (the path before `[k]`)
+            const char *ap = g->aroot[b0->id] >= 0 ? g->apath[b0->id] : NULL, *lk = ap ? strrchr(ap, '[') : NULL;
+            char *ke = NULL;
+            long long k0 = lk ? strtoll(lk + 1, &ke, 10) : 0;
+            if (i->op == IR_ELEM_PTR && lk && ke && ke[0] == ']' && ke[1] == 0 && g->alen[b0->id] > 0) {
+                __int128 kj;
+                size_t m = (size_t)(lk - ap);
+                if (i->n_operands >= 2 && jg_const_of(g, i->operands[1], &kj) && k0 + kj >= 0 && k0 + kj < g->alen[b0->id]) {
+                    char buf[48]; int n = snprintf(buf, sizeof buf, "[%lld]", (long long)(k0 + kj));
+                    char *pth = JG_NEW(g, char, m + (size_t)n + 1);
+                    if (!pth) return jg_fail(g, "out of memory");
+                    memcpy(pth, ap, m); memcpy(pth + m, buf, (size_t)n + 1);
+                    g->aroot[id] = g->aroot[b0->id]; g->apath[id] = pth; g->alen[id] = g->alen[b0->id];
+                } else {
+                    char *pth = JG_NEW(g, char, m + 1);
+                    if (!pth) return jg_fail(g, "out of memory");
+                    memcpy(pth, ap, m); pth[m] = 0;
+                    g->iroot[id] = g->aroot[b0->id]; g->ipath[id] = pth; g->iunsafe[id] = i->unchecked;
+                }
+                continue;
             }
             __int128 kx;
             if ((i->op == IR_FIELD_PTR && g->aroot[b0->id] >= 0) ||
@@ -574,6 +625,7 @@ static bool jg_cells(JG *g) {
                 if (!pth) return jg_fail(g, "out of memory");
                 memcpy(pth, g->apath[b0->id], m); memcpy(pth + m, buf, (size_t)n + 1);
                 g->aroot[id] = g->aroot[b0->id]; g->apath[id] = pth;
+                if (i->op == IR_ELEM_PTR) g->alen[id] = (int32_t)jg_pointee(g, b0->id)->array_len;
             } else if ((i->op == IR_FIELD_PTR || i->op == IR_ELEM_PTR) && (g->aroot[b0->id] >= 0 || g->iroot[b0->id] >= 0)) {
                 g->iroot[id] = g->aroot[b0->id] >= 0 ? g->aroot[b0->id] : g->iroot[b0->id];
                 g->ipath[id] = g->aroot[b0->id] >= 0 ? g->apath[b0->id] : g->ipath[b0->id];

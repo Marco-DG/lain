@@ -650,6 +650,47 @@ int main(void) {
               (!c || strstr(recs, "proved bb3.2 narrow.lo")), "%s:\n%s", c ? "16 - ctz(m), m in [1, 65535]" : "100 / popcount(m), m != 0", recs);
     }
 
+    // a subslice's elements are the array's: xs = [10, 20, 30, 40, 50], s = xs[1..4] (stored once).
+    // (0) 100 / (s[0] + s[2] - 59); (1) s[1] = 7 then 100 / (xs[2] - 6): both proved. (2) `if i < 3 {
+    // s[i] = 0; 100 / xs[3] }`: s[i] may be xs[3], so the divisor is NOT shown nonzero
+    for (int c = 0; c < 3; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true), *mu64 = ir_type_int(&A, 64, false);
+        IrType *ma5 = ir_type_new(&A, IRT_ARRAY); ma5->elem = mi32; ma5->array_len = 5;
+        IrType *msl = ir_type_new(&A, IRT_SLICE); msl->elem = mi32;
+        IrFunc *mf = ir_func_new(&A, nm(c == 0 ? "subsum" : c == 1 ? "subwrite" : "subany"), mi32, IR_FUNC_PURE);
+        IrValue *mi = ir_add_param(mf, mu64, nm("i"));
+        IrBlock *m0 = mf->entry, *mb = m0, *m2 = NULL;
+        IrValue *xs = ir_alloca_array(mf, m0, ma5);
+        for (int k = 0; k < 5; k++)
+            ir_store(mf, m0, ir_elem_ptr(mf, m0, xs, ir_const_int(mf, m0, k, mu64), mi32), ir_const_int(mf, m0, 10 * (k + 1), mi32));
+        IrInstr *mk = ir_instr(mf, IR_MAKE_SLICE, msl, 2);
+        mk->operands[0] = ir_elem_ptr(mf, m0, xs, ir_const_int(mf, m0, 1, mu64), mi32); mk->operands[1] = ir_const_int(mf, m0, 3, mu64);
+        ir_emit(m0, mk);
+        IrValue *slot = ir_alloca(mf, m0, msl);
+        ir_store(mf, m0, slot, mk->result);
+        if (c == 2) {
+            mb = ir_new_block(mf); m2 = ir_new_block(mf);
+            ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_ULT, mi, ir_const_int(mf, m0, 3, mu64)), mb, m2);
+            ir_set_ret(m2, ir_const_int(mf, m2, 0, mi32));
+        }
+        IrValue *d = ir_slice_data(mf, mb, ir_load(mf, mb, slot, msl), mi32), *dv;
+        if (c == 0) {
+            IrValue *s0 = ir_load(mf, mb, ir_elem_ptr(mf, mb, d, ir_const_int(mf, mb, 0, mu64), mi32), mi32);
+            IrValue *s2 = ir_load(mf, mb, ir_elem_ptr(mf, mb, d, ir_const_int(mf, mb, 2, mu64), mi32), mi32);
+            dv = ir_binop(mf, mb, IR_SUB, ir_binop(mf, mb, IR_ADD, s0, s2, mi32), ir_const_int(mf, mb, 59, mi32), mi32);
+        } else {
+            ir_store(mf, mb, ir_elem_ptr(mf, mb, d, c == 1 ? ir_const_int(mf, mb, 1, mu64) : mi, mi32), ir_const_int(mf, mb, c == 1 ? 7 : 0, mi32));
+            dv = ir_load(mf, mb, ir_elem_ptr(mf, mb, xs, ir_const_int(mf, mb, c == 1 ? 2 : 3, mu64), mi32), mi32);
+            if (c == 1) dv = ir_binop(mf, mb, IR_SUB, dv, ir_const_int(mf, mb, 6, mi32), mi32);
+        }
+        ir_set_ret(mb, ir_binop(mf, mb, IR_SDIV, ir_const_int(mf, mb, 100, mi32), dv, mi32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        if (c < 2) CHECK(nrec[JREC_NOT_IMPLIED] == 0 && strstr(recs, " divzero"), "%s:\n%s", c ? "s[1] = 7 is xs[2]" : "s[0] + s[2] is xs[1] + xs[3]", recs);
+        else CHECK(strstr(recs, "not-implied bb1.") && strstr(strstr(recs, "not-implied bb1."), "divzero"), "s[i] = 0 may write xs[3]:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
