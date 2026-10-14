@@ -94,6 +94,7 @@ typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int3
 typedef struct {
     IrInstr *at; IrBlock *blk; int32_t idx;
     IrBlock *to; int32_t claim;               // a claim's obligation: the edge's target, the claim
+    bool guarded; int32_t gvar; __int128 gmin; // a guarded EACH instance: owed only where var gvar >= gmin
     JVc vc;
     const char *outside;
     // per VC variable, what it is (for a harness that evaluates the VC at run time): kind 0 an SSA
@@ -1535,23 +1536,35 @@ static void jb_claims(JB *B, const JVer *v) {
         const JClaim *c = &g->cl[ci];
         if (!jg_mine(g, c) || c->blk != v->blk || B->cst[ci] == at) continue;
         bool about = false;
-        int32_t ec[JELEM_MAXN], en = 0, ek = -1;                  // an EACH term: its elements' cells
-        for (int k = 0; k < c->nt; k++) {
+        int32_t ec[JELEM_MAXN], en = 0, ek = -1, gk = -1;         // an EACH term: its elements' cells;
+        for (int k = 0; k < c->nt; k++) {                         // an UPTO term: the guard
             if (c->tk[k] == JTERM_EACH) {
                 ek = k; en = jg_each_cells(g, c->key[k], ec);
-                for (int32_t q = 0; q < en; q++) if (ec[q] == v->cell) about = true;
-            } else if (g->cell[c->key[k]] == v->cell) about = true;
+                for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && ec[q] == v->cell) about = true;
+            } else {
+                if (c->tk[k] == JTERM_UPTO) gk = k;
+                if (g->cell[c->key[k]] == v->cell) about = true;
+            }
         }
         if (!about) continue;
+        if (gk >= 0 && B->jS >= 0) continue;                      // a disjunct holds no disjunction
         B->cst[ci] = at;
         const int32_t *row = g->instate + (size_t)c->blk * (size_t)g->ncells;
-        for (int32_t q = 0; q < (ek >= 0 ? en : 1) && !B->fail; q++) {   // an EACH claim: every element
-            JLT t[JCLAIM_MAXT];
+        const char *o = jb_str(B, "claim bb%lld #%lld", c->blk, ci, 0);
+        for (int32_t q = 0; q < (ek >= 0 ? en : 1) && !B->fail; q++) {   // an EACH claim: every element cell
+            if (ek >= 0 && ec[q] < 0) continue;
+            JLT t[JCLAIM_MAXT]; int n = 0;
             for (int k = 0; k < c->nt; k++) {
-                t[k].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_term(B, c->key[k], c->tk[k], row);
-                t[k].c = c->coef[k];
+                if (k == gk) continue;
+                t[n].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_term(B, c->key[k], c->tk[k], row);
+                t[n].c = c->coef[k]; n++;
             }
-            jb_atom(B, jb_str(B, "claim bb%lld #%lld", c->blk, ci, 0), t, c->nt, J_LE, c->rhs);
+            if (gk < 0) { jb_atom(B, o, t, n, J_LE, c->rhs); continue; }
+            // guarded: g <= k, or the sum (element q's instance of `for each k < g`)
+            JCons cs[2]; JLT u[1];
+            u[0].var = jb_term(B, c->key[gk], JTERM_VALUE, row); u[0].c = 1;
+            if (!jb_cons(B, u, 1, J_LE, q, &cs[0]) || !jb_cons(B, t, n, J_LE, c->rhs, &cs[1])) { B->fail = true; break; }
+            jb_or2(B, jb_str(B, "claim bb%lld #%lld upto", c->blk, ci, 0), cs, 1, 1);   // the finder keys on "upto"
         }
     }
 }
@@ -3019,20 +3032,23 @@ static bool jg_term_ok(JG *g, int32_t b, int32_t key, uint8_t tk) {
     return d >= 0 && d != b && jg_dominates(g, d, b);
 }
 // An EACH term's array (JTERM_EACH): the address `key` of a fixed array of 1 to JELEM_MAXN elements,
-// every one an integer cell, in cells[0..n). 0 where it is not one (the claim is then refused).
+// cells[k] element k's cell (an integer one) or -1 where it is no cell: an element without a cell
+// carries no fact, so it has no instance. 0 where it is no such array, or none is a cell (refused).
 static int32_t jg_each_cells(JG *g, int32_t key, int32_t *cells) {
     if (key < 0 || key >= g->nv || g->aroot[key] < 0) return 0;
     const IrType *t = jg_pointee(g, key);
     if (!t || t->kind != IRT_ARRAY || t->array_len < 1 || t->array_len > JELEM_MAXN) return 0;
+    bool any = false;
     for (int32_t k = 0; k < (int32_t)t->array_len; k++) {
         char pth[256]; snprintf(pth, sizeof pth, "%s[%lld]", g->apath[key], (long long)k);
         int32_t c = -1;
         for (int32_t c2 = 0; c2 < g->ncells && c < 0; c2++)
             if (g->croot[c2] == g->aroot[key] && !strcmp(g->cpath[c2], pth)) c = c2;
-        if (c < 0 || !jg_is_int(g->cty[c])) return 0;
+        if (c >= 0 && !jg_is_int(g->cty[c])) return 0;
         cells[k] = c;
+        if (c >= 0) any = true;
     }
-    return (int32_t)t->array_len;
+    return any ? (int32_t)t->array_len : 0;
 }
 // Is a version the block makes afresh (a join's or a header's)?
 static bool jg_made_at(JG *g, int32_t blk, int32_t cell) {
@@ -3093,20 +3109,26 @@ static bool jg_claims_ok(JG *g) {
         if (!jg_claim_shape(g, c->key, c->nt, JCLAIM_MAXT)) return false;
         if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
         bool made = false;
-        int each = 0;
+        int each = 0, upto = 0;
         for (int k = 0; k < c->nt; k++) {
             int32_t key = c->key[k];
             if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
-            if (c->tk[k] == JTERM_EACH) {                    // one per element: each element a cell
+            if (c->tk[k] == JTERM_EACH) {                    // one instance per element cell
                 int32_t ec[JELEM_MAXN], en = jg_each_cells(g, key, ec);
                 if (++each > 1) return jg_fail(g, "a claim of two EACH terms");
-                if (!en) return jg_fail(g, "a claim's EACH term is not a fixed array of element cells");
-                for (int32_t q = 0; q < en; q++) if (jg_made_at(g, c->blk, ec[q])) made = true;
+                if (!en) return jg_fail(g, "a claim's EACH term is not a fixed array with an element cell");
+                for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && jg_made_at(g, c->blk, ec[q])) made = true;
                 continue;
             }
-            if (!jg_term_ok(g, c->blk, key, c->tk[k])) return jg_fail(g, "a claim's term is not a cell or a value fixed at its block");
+            if (c->tk[k] == JTERM_UPTO) {                    // a value guarding each instance
+                if (++upto > 1) return jg_fail(g, "a claim of two UPTO terms");
+                if (c->coef[k] != 1) return jg_fail(g, "a claim's UPTO term of a coefficient other than 1");
+            }
+            if (!jg_term_ok(g, c->blk, key, c->tk[k] == JTERM_UPTO ? JTERM_VALUE : c->tk[k]))
+                return jg_fail(g, "a claim's term is not a cell or a value fixed at its block");
             if (g->cell[key] >= 0 && jg_made_at(g, c->blk, g->cell[key])) made = true;
         }
+        if (upto && !each) return jg_fail(g, "a claim's UPTO term without an EACH term");
         if (!made) return jg_fail(g, "a claim about no version its block makes afresh");
     }
     return true;
@@ -3154,23 +3176,35 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
             if (again) continue;
             int32_t n = 0;
             for (IrInstr *i = P->instrs; i; i = i->next) n++;
-            // an EACH claim owes one VC per element (ordinal ci*1000 + k), each about that element
-            int32_t ec[JELEM_MAXN], en = 0, ek = -1;
-            for (int k = 0; k < c->nt; k++) if (c->tk[k] == JTERM_EACH) { ek = k; en = jg_each_cells(g, c->key[k], ec); }
+            // an EACH claim owes one VC per element cell (ordinal ci*1000 + k), each about that
+            // element; a guarded one (UPTO g) only where g >= k + 1 at the edge's end, a hypothesis
+            int32_t ec[JELEM_MAXN], en = 0, ek = -1, gk = -1;
+            for (int k = 0; k < c->nt; k++) {
+                if (c->tk[k] == JTERM_EACH) { ek = k; en = jg_each_cells(g, c->key[k], ec); }
+                if (c->tk[k] == JTERM_UPTO) gk = k;
+            }
             const int32_t *row = g->outstate + (size_t)P->id * (size_t)g->ncells;
             for (int32_t q = 0; q < (ek >= 0 ? en : 1); q++) {
+                if (ek >= 0 && ec[q] < 0) continue;
                 JB B = jb_begin(g, P->id, n, -1);
                 B.to = H->id;
-                JLT t[JCLAIM_MAXT]; JCons goal;
+                JLT t[JCLAIM_MAXT]; JCons goal; int nt = 0;
                 for (int k = 0; k < c->nt; k++) {
-                    t[k].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_term(&B, c->key[k], c->tk[k], row);
-                    t[k].c = c->coef[k];
+                    if (k == gk) continue;
+                    t[nt].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_term(&B, c->key[k], c->tk[k], row);
+                    t[nt].c = c->coef[k]; nt++;
                 }
-                if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
+                int32_t gv = -1;
+                if (gk >= 0) {
+                    JLT u[1]; u[0].var = gv = jb_term(&B, c->key[gk], JTERM_VALUE, row); u[0].c = -1;
+                    jb_atom(&B, jb_str(&B, "claim bb%lld #%lld guard", c->blk, ci, 0), u, 1, J_LE, -(__int128)(q + 1));
+                }
+                if (B.fail || !jb_cons(&B, t, nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
                 const char *kind = jg_forward_join(g, H->id) ? "hull" : g->rpoix[P->id] < g->rpoix[H->id] ? "inv.entry" : "inv.keep";
                 JObl *o = jg_push(g, L);
                 if (!o || !jb_finish(&B, NULL, kind, ek >= 0 ? ci * 1000 + q : ci, &goal, o)) return jg_fail(g, "out of memory building a VC");
                 o->to = H; o->claim = ci;
+                if (gk >= 0) { o->guarded = true; o->gvar = gv; o->gmin = q + 1; }
             }
         }
     }
@@ -3791,10 +3825,10 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const 
         if (tk && tk[i] == JTERM_EACH) {                       // 1, or 2 where an element is made at blk
             int32_t ec[JELEM_MAXN], en = jg_each_cells(&g, keys[i], ec);
             if (en) kind[i] = 1;
-            for (int32_t q = 0; q < en; q++) if (jg_made_at(&g, blk, ec[q])) kind[i] = 2;
+            for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && jg_made_at(&g, blk, ec[q])) kind[i] = 2;
             continue;
         }
-        if (!jg_term_ok(&g, blk, keys[i], tk ? tk[i] : JTERM_VALUE)) continue;
+        if (!jg_term_ok(&g, blk, keys[i], tk && tk[i] != JTERM_UPTO ? tk[i] : JTERM_VALUE)) continue;
         kind[i] = 1;
         if (g.cell[keys[i]] < 0) continue;
         int32_t jv = g.instate[(size_t)blk * (size_t)g.ncells + (size_t)g.cell[keys[i]]];

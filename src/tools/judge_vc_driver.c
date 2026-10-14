@@ -308,6 +308,13 @@ static IrBlock *hk_last; static IVal *hk_lastv;
 // A claim obligation reached where it is owed: its hypotheses, and its goal (the claim), counted
 // in `goals` when it could be evaluated.
 static void hk_claim(JObl *o, IVal *v, int nv, const char *where, long long *goals) {
+    // a guarded EACH instance is owed only where g >= k + 1: the guard is that obligation's premise,
+    // not a fact, so where it fails in the run nothing of it is checked, its hypotheses included
+    if (o->guarded) {
+        __int128 gv;
+        if (!hk_var(o, o->gvar, v, nv, &gv)) { unknown++; return; }
+        if (gv < o->gmin) return;
+    }
     hk_check(o, v, nv);
     int r = hk_cons(o, &o->vc.goal, v, nv);
     if (r < 0) { unknown++; return; }
@@ -563,6 +570,7 @@ int main(int argc, char **argv) {
             if (cl[c].key[k] == JKEY_RET) printf("%lld*%s", (long long)cl[c].coef[k], kn[0]);
             else if (cl[c].tk[k] == JTERM_LEN) printf("%lld*len(%%%d)", (long long)cl[c].coef[k], cl[c].key[k]);
             else if (cl[c].tk[k] == JTERM_EACH) printf("%lld*each(%%%d)", (long long)cl[c].coef[k], cl[c].key[k]);
+            else if (cl[c].tk[k] == JTERM_UPTO) printf("upto(%%%d)", cl[c].key[k]);
             else printf("%lld*%%%d", (long long)cl[c].coef[k], cl[c].key[k]);
         }
         JInt r; jg_int(&r, cl[c].rhs); printf(" <= "); jint_print(&r, stdout); printf("\n");

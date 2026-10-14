@@ -1214,7 +1214,7 @@ int main(void) {
         struct { JClaim c; const char *why; } bad[3];
         for (int k = 0; k < 3; k++) bad[k].c = c;
         bad[0].c.tk[0] = JTERM_LEN; bad[0].why = "not a cell or a value fixed at its block";       // i is no slice
-        bad[1].c.tk[0] = 3; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
+        bad[1].c.tk[0] = 4; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
         memset(&bad[2].c, 0, sizeof bad[2].c);
         bad[2].c.blk = JCLAIM_RET; bad[2].c.fn = f; bad[2].c.nt = 2; bad[2].c.key[0] = JKEY_RET; bad[2].c.coef[0] = 1;
         bad[2].c.key[1] = xs->id; bad[2].c.tk[1] = JTERM_LEN; bad[2].c.coef[1] = -1; bad[2].why = "a return claim over a length";
@@ -3144,8 +3144,8 @@ int main(void) {
     // after it (the instances name the versions the header STARTS with). Claims at the header:
     // #0 each(a) <= 10 and #1 -each(a) <= 0. (0) Owed per element: 8 inv.entry and 8 inv.keep VCs,
     // ordinals ci*1000 + k; stated as all four instances where a VC names an element's header
-    // version. Refused: (1) EACH over the integer cell i; (2) over an array one element of which is
-    // no cell; (3) two EACH terms; (4) at the exit block, where no element is made afresh; (6) over
+    // version. Refused: (1) EACH over the integer cell i; (2) over an array none of whose elements
+    // is a cell (one that is no cell has no instance, c28); (3) two EACH terms; (4) at the exit block, where no element is made afresh; (6) over
     // an i32[17], every element a cell (past JELEM_MAXN). (5) term_kinds: each(a) 2 at the header, 1
     // at the exit; each(i) 0
     {   IrType *a4 = ir_type_new(&A, IRT_ARRAY); a4->elem = i32t; a4->array_len = 4;
@@ -3154,6 +3154,7 @@ int main(void) {
             IrFunc *f = ir_func_new(&A, nm("e63"), i32t, IR_FUNC_PURE);
             IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
             IrValue *a = ir_alloca_array(f, b0, a4), *b = ir_alloca_array(f, b0, a4), *i = ir_alloca(f, b0, u64t);
+            IrValue *nc = ir_alloca_array(f, b0, a4);                      // no element of it is a cell
             for (int k = 0; k < (int)a4->array_len; k++) ir_store(f, b0, ir_elem_ptr(f, b0, a, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 0, i32t));
             for (int k = 0; k < 3; k++) ir_store(f, b0, ir_elem_ptr(f, b0, b, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 0, i32t));
             ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_set_br(b0, b1);
@@ -3162,6 +3163,7 @@ int main(void) {
             IrValue *li = ir_load(f, b2, i, u64t);
             ir_store(f, b2, ir_elem_ptr(f, b2, a, li, i32t), ir_const_int(f, b2, 10, i32t));
             ir_store(f, b2, ir_elem_ptr(f, b2, b, li, i32t), ir_const_int(f, b2, 10, i32t));
+            ir_store(f, b2, ir_elem_ptr(f, b2, nc, li, i32t), ir_const_int(f, b2, 10, i32t));
             ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li, ir_const_int(f, b2, 1, u64t), u64t)); ir_set_br(b2, b1);
             IrValue *a2 = ir_load(f, b3, ir_elem_ptr(f, b3, a, ir_const_int(f, b3, 2, u64t), i32t), i32t);
             ir_set_ret(b3, ir_binop(f, b3, IR_SDIV, ir_const_int(f, b3, 100, i32t), ir_binop(f, b3, IR_SUB, ir_const_int(f, b3, 11, i32t), a2, i32t), i32t));
@@ -3183,11 +3185,11 @@ int main(void) {
                 continue;
             }
             const char *why_want = NULL;
-            if (c == 1) { cl[0].key[0] = i->id; why_want = "is not a fixed array of element cells"; }
-            if (c == 2) { cl[0].key[0] = b->id; why_want = "is not a fixed array of element cells"; }
+            if (c == 1) { cl[0].key[0] = i->id; why_want = "is not a fixed array with an element cell"; }
+            if (c == 2) { cl[0].key[0] = nc->id; why_want = "is not a fixed array with an element cell"; }
             if (c == 3) { cl[0].nt = 2; cl[0].key[1] = b->id; cl[0].tk[1] = JTERM_EACH; cl[0].coef[1] = 1; why_want = "two EACH terms"; }
             if (c == 4) { cl[0].blk = b3->id; why_want = "a claim about no version its block makes afresh"; }
-            if (c == 6) why_want = "is not a fixed array of element cells";
+            if (c == 6) why_want = "is not a fixed array with an element cell";
             char why[200] = "";
             char *t = gen_with(f, cl, c ? 1 : 2, JGEN_ALL, why);
             if (c) { CHECK(!t && strstr(why, why_want), "case %d: refused (%s): got \"%s\"", c, why_want, why); free(t); continue; }
@@ -3209,6 +3211,67 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  an EACH claim: one instance per element, stated and owed\n");
+    // 64. a GUARDED EACH claim (JTERM_UPTO): a u8[8] never stored before `while i < 8 { a[i] = 7;
+    // i = i + 1 }`, then a[7] - 7; only a[7] is a cell (the one constant index). Claims at the header:
+    // #0 each(a) <= 7 and #1 -each(a) <= -7, both upto(i): `for each k < i, a[k] = 7`. (0) one instance,
+    // k = 7: stated as `or { i <= 7 | -a[7] <= -7 }` (origin `claim bbH #ci upto`, which the finder
+    // reads); owed on the entry edge and the back edge with the
+    // hypothesis `i >= 8` (a `guard`), each obligation guarded (o->guarded, gmin 8, gvar i's
+    // version). Refused: (1) UPTO without EACH; (2) two UPTO terms (one key twice); (3) UPTO of
+    // coefficient 2; (4) UPTO over the array's address (one key twice)
+    {   IrType *a8 = ir_type_new(&A, IRT_ARRAY); a8->elem = u8t; a8->array_len = 8;
+        for (int c = 0; c < 5; c++) {
+            IrFunc *f = ir_func_new(&A, nm("u64g"), i32t, IR_FUNC_PURE);
+            IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+            IrValue *a = ir_alloca_array(f, b0, a8), *i = ir_alloca(f, b0, u64t);
+            ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_set_br(b0, b1);
+            ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, ir_load(f, b1, i, u64t), ir_const_int(f, b1, 8, u64t)), b2, b3);
+            IrValue *li = ir_load(f, b2, i, u64t);
+            ir_store(f, b2, ir_elem_ptr(f, b2, a, li, u8t), ir_const_int(f, b2, 7, u8t));
+            ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li, ir_const_int(f, b2, 1, u64t), u64t)); ir_set_br(b2, b1);
+            IrValue *a7 = ir_load(f, b3, ir_elem_ptr(f, b3, a, ir_const_int(f, b3, 7, u64t), u8t), u8t);
+            ir_set_ret(b3, ir_binop(f, b3, IR_SUB, a7, ir_const_int(f, b3, 7, i32t), i32t));
+            int at = nins(b3) - 1;
+            ir_finalize_cfg(f);
+            gen_mod = f;
+            JClaim cl[2]; memset(cl, 0, sizeof cl);
+            for (int q = 0; q < 2; q++) {
+                cl[q].blk = b1->id; cl[q].fn = f; cl[q].nt = 2; cl[q].key[0] = a->id; cl[q].tk[0] = JTERM_EACH; cl[q].coef[0] = q ? -1 : 1;
+                cl[q].key[1] = i->id; cl[q].tk[1] = JTERM_UPTO; cl[q].coef[1] = 1; cl[q].rhs = q ? -7 : 7;
+            }
+            const char *why_want = NULL;
+            if (c == 1) { cl[0].nt = 1; cl[0].key[0] = i->id; cl[0].tk[0] = JTERM_UPTO; why_want = "UPTO term without an EACH term"; }
+            if (c == 2) { cl[0].nt = 3; cl[0].key[2] = i->id; cl[0].tk[2] = JTERM_UPTO; cl[0].coef[2] = 1; why_want = "naming one term twice"; }
+            if (c == 3) { cl[0].coef[1] = 2; why_want = "UPTO term of a coefficient other than 1"; }
+            if (c == 4) { cl[0].key[1] = a->id; why_want = "naming one term twice"; }
+            char why[200] = "";
+            char *t = gen_with(f, cl, c ? 1 : 2, JGEN_ALL, why);
+            if (c) { CHECK(!t && strstr(why, why_want), "case %d: refused (%s): got \"%s\"", c, why_want, why); free(t); continue; }
+            char key[48], st[160], gd[96];
+            snprintf(key, sizeof key, " bb%d.%d narrow.lo 0", b3->id, at);
+            const char *vz = t ? vc_of(t, key) : "";
+            snprintf(st, sizeof st, "claim bb%d #1 upto : or { 1*%%s%d@head.bb%d <= 7 | -1*%%s%d[7]@head.bb%d <= -7 }", b1->id, i->id, b1->id, a->id, b1->id);
+            snprintf(gd, sizeof gd, "claim bb%d #1 guard : -1*%%s%d@", b1->id, i->id);
+            CHECK(strstr(vz, st) != NULL, "case 0: the instance for a[7], guarded, stated after the loop: %s\n%s", st, vz);
+            CHECK(t && count(t, " inv.entry ") == 2 && count(t, " inv.keep ") == 2 && count(t, gd) == 2 && strstr(t, " inv.keep 1007\n"),
+                  "case 0: one entry and one keep VC per claim, each with its guard:\n%s", t ? t : "");
+            free(t);
+            // the obligations carry the guard for a run-time checker
+            JMem m = jmem_over(region, sizeof region);
+            JObl *o; int32_t n; char err[200];
+            int guarded = 0, right = 0;
+            if (jgen_func(&m, f, gen_mod, cl, 2, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err))
+                for (int32_t q = 0; q < n; q++) {
+                    if (o[q].claim < 0) { CHECK(!o[q].guarded, "an obligation that is no claim's is not guarded"); continue; }
+                    guarded += o[q].guarded;
+                    char vn[48]; snprintf(vn, sizeof vn, "%%s%d@", i->id);
+                    if (o[q].guarded && o[q].gmin == 8 && o[q].gvar >= 0 && o[q].gvar < o[q].vc.nvars && !strncmp(o[q].vc.vars[o[q].gvar], vn, strlen(vn))) right++;
+                }
+            CHECK(guarded == 4 && right == 4, "case 0: all 4 claim VCs guarded by i >= 8 (%d, %d)", guarded, right);
+        }
+    }
+    gen_mod = NULL;
+    printf("  a guarded EACH claim: each element below the guard\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

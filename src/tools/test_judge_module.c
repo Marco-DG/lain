@@ -843,6 +843,35 @@ int main(void) {
         s.propose = P_NONE;
     }
 
+    // a GUARDED EACH claim (c28) over a fill loop of an uninitialized u8[8]: `while i < 8 { a[i] = 7;
+    // i = i + 1 }`, then 100 / (a[7] - 6). Proposed at the header: (0) -each(a) <= -7 upto(i), `for
+    // each k < i, a[k] >= 7`: its inv.entry and inv.keep and the division after the loop proved; (1)
+    // -each(a) <= -8 upto(i), which a[i] = 7 breaks: inv.keep not implied
+    for (int c = 0; c < 2; c++) {
+        IrType *mu8 = ir_type_int(&A, 8, false), *mu64 = ir_type_int(&A, 64, false), *mi32 = ir_type_int(&A, 32, true);
+        IrType *ma8 = ir_type_new(&A, IRT_ARRAY); ma8->elem = mu8; ma8->array_len = 8;
+        IrFunc *mf = ir_func_new(&A, nm(c ? "prefixbad" : "prefix"), mi32, IR_FUNC_PURE);
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *m3 = ir_new_block(mf);
+        IrValue *ma = ir_alloca_array(mf, m0, ma8), *mi = ir_alloca(mf, m0, mu64);
+        ir_store(mf, m0, mi, ir_const_int(mf, m0, 0, mu64)); ir_set_br(m0, m1);
+        ir_set_br_cond(m1, ir_icmp(mf, m1, IR_CMP_ULT, ir_load(mf, m1, mi, mu64), ir_const_int(mf, m1, 8, mu64)), m2, m3);
+        IrValue *mli = ir_load(mf, m2, mi, mu64);
+        ir_store(mf, m2, ir_elem_ptr(mf, m2, ma, mli, mu8), ir_const_int(mf, m2, 7, mu8));
+        ir_store(mf, m2, mi, ir_binop(mf, m2, IR_ADD, mli, ir_const_int(mf, m2, 1, mu64), mu64)); ir_set_br(m2, m1);
+        IrValue *ma7 = ir_load(mf, m3, ir_elem_ptr(mf, m3, ma, ir_const_int(mf, m3, 7, mu64), mu8), mu8);
+        ir_set_ret(m3, ir_binop(mf, m3, IR_SDIV, ir_const_int(mf, m3, 100, mi32), ir_binop(mf, m3, IR_SUB, ma7, ir_const_int(mf, m3, 6, mi32), mi32), mi32));
+        ir_finalize_cfg(mf);
+        memset(&s.claim, 0, sizeof s.claim);
+        s.claim.blk = m1->id; s.claim.fn = mf; s.claim.nt = 2; s.claim.key[0] = ma->id; s.claim.tk[0] = JTERM_EACH; s.claim.coef[0] = -1;
+        s.claim.key[1] = mi->id; s.claim.tk[1] = JTERM_UPTO; s.claim.coef[1] = 1; s.claim.rhs = c ? -8 : -7;
+        s.propose = P_CLAIM; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        if (!c) CHECK(count_in(recs, "inv.entry") == 1 && count_in(recs, "inv.keep") == 1 && !strstr(recs, "not-implied") &&
+                      strstr(recs, "proved bb3.6 divzero"), "for each k < i, a[k] >= 7, and a[7] - 6 after:\n%s", recs);
+        else CHECK(strstr(recs, "not-implied bb2.7 inv.keep"), "a[i] = 7 breaks a[k] >= 8:\n%s", recs);
+        s.propose = P_NONE;
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
