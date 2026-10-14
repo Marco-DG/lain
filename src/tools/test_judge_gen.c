@@ -2699,6 +2699,51 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a quotient and a remainder against their dividend; a guard on a quotient joins\n");
+    // 55. a bit count and its operand m: (0) popcount over u32, m <= (2^32 - 1)*p; (1) over i8 any,
+    // m <= 127*p and -m <= 128*p; (2) ctz over u8, one disjunct per k with m >= 2^k; (3) clz over
+    // u8, 2^(7-k) <= m <= 2^(8-k) - 1; (4) ctz over i8 any: no disjunction; (5) 100 / y, y in
+    // [0, 8] over u32, is in [12, 100] (y is nonzero where the division completes); (6) x / y over
+    // i32 with x >= 0 and y >= 0 (so >= 1): q <= x
+    for (int c = 0; c < 7; c++) {
+        IrType *T = c == 0 || c == 5 ? u32t : c == 2 || c == 3 ? u8t : c == 6 ? i32t : i8x, *R = c == 6 ? i32t : u32t;
+        IrFunc *f = ir_func_new(&A, nm("b55"), R, IR_FUNC_PURE);
+        IrValue *m = ir_add_param(f, T, nm("m"));
+        IrBlock *b0 = f->entry;
+        IrValue *p, *x6 = NULL;
+        if (c == 6) {
+            x6 = ir_add_param(f, T, nm("x"));
+            ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, x6, ir_const_int(f, b0, 0, T)));
+            ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, m, ir_const_int(f, b0, 0, T)));
+            p = ir_binop(f, b0, IR_SDIV, x6, m, T);
+        } else if (c == 5) {
+            ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_ULE, m, ir_const_int(f, b0, 8, T)));
+            p = ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 100, T), m, T);
+        } else p = ir_bitcount(f, b0, c <= 1 ? IR_POPCOUNT : c == 3 ? IR_CLZ : IR_CTZ, m, u32t);
+        ir_set_ret(b0, ir_binop(f, b0, c == 6 ? IR_SDIV : IR_UDIV, ir_const_int(f, b0, 1000, R), p, R));
+        int at = nins(b0) - 1;
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), w1[160], w2[160], key[48];
+        snprintf(key, sizeof key, " bb0.%d divzero 0", at);
+        const char *vz = t ? vc_of(t, key) : "";
+        w2[0] = 0;
+        if (c == 0) snprintf(w1, sizeof w1, "popcount : -4294967295*%%v%d + 1*%%v%d <= 0", p->id, m->id);
+        if (c == 1) { snprintf(w1, sizeof w1, "popcount : -127*%%v%d + 1*%%v%d <= 0", p->id, m->id);
+                      snprintf(w2, sizeof w2, "popcount : -128*%%v%d + -1*%%v%d <= 0", p->id, m->id); }
+        if (c == 2) { snprintf(w1, sizeof w1, "| 1*%%v%d = 3 , -1*%%v%d <= -8 |", p->id, m->id);
+                      snprintf(w2, sizeof w2, "| 1*%%v%d = 7 , -1*%%v%d <= -128 }", p->id, m->id); }
+        if (c == 3) { snprintf(w1, sizeof w1, "or { 1*%%v%d = 0 , -1*%%v%d <= -128 , 1*%%v%d <= 255 |", p->id, m->id, m->id);
+                      snprintf(w2, sizeof w2, "| 1*%%v%d = 2 , -1*%%v%d <= -32 , 1*%%v%d <= 63 |", p->id, m->id, m->id); }
+        if (c == 4) snprintf(w1, sizeof w1, "bitcount : or {");
+        if (c == 6) snprintf(w1, sizeof w1, "div.hull : 1*%%v%d + -1*%%v%d <= 0", p->id, x6->id);
+        if (c == 5) { snprintf(w1, sizeof w1, "div.hull : -1*%%v%d <= -12", p->id);
+                      snprintf(w2, sizeof w2, "div.hull : 1*%%v%d <= 100", p->id); }
+        bool has = c != 4;
+        CHECK(*vz && !!strstr(vz, w1) == has && (!w2[0] || strstr(vz, w2)), "case %d: %s%s %s:\n%s", c, has ? "" : "no ", w1, w2, vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a bit count against its operand; a divisor's zero end lifted\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

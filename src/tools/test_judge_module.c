@@ -630,6 +630,26 @@ int main(void) {
               "%s:\n%s", c ? "x - x % y" : "100 / (n - 1) under i < n / 2", recs);
     }
 
+    // a bit count and its operand, over u32: `if m != 0 { 100 / popcount(m) }`, and `if m != 0 { if
+    // m <= 65535 { 100 / (16 - ctz(m)) } }` (ctz(m) <= 15)
+    for (int c = 0; c < 2; c++) {
+        IrType *mu32 = ir_type_int(&A, 32, false);
+        IrFunc *mf = ir_func_new(&A, nm(c ? "lane" : "share"), mu32, IR_FUNC_PURE);
+        IrValue *mm = ir_add_param(mf, mu32, nm("m"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *m3 = c ? ir_new_block(mf) : m1;
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_NE, mm, ir_const_int(mf, m0, 0, mu32)), m1, m2);
+        if (c) ir_set_br_cond(m1, ir_icmp(mf, m1, IR_CMP_ULE, mm, ir_const_int(mf, m1, 65535, mu32)), m3, m2);
+        IrValue *mp = ir_bitcount(mf, m3, c ? IR_CTZ : IR_POPCOUNT, mm, mu32);
+        IrValue *md = c ? ir_binop(mf, m3, IR_SUB, ir_const_int(mf, m3, 16, mu32), mp, mu32) : mp;
+        ir_set_ret(m3, ir_binop(mf, m3, IR_UDIV, ir_const_int(mf, m3, 100, mu32), md, mu32));
+        ir_set_ret(m2, ir_const_int(mf, m2, 0, mu32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, " divzero") && !strstr(recs, "not-implied") && nrec[JREC_NOT_IMPLIED] == 0 &&
+              (!c || strstr(recs, "proved bb3.2 narrow.lo")), "%s:\n%s", c ? "16 - ctz(m), m in [1, 65535]" : "100 / popcount(m), m != 0", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

@@ -879,7 +879,8 @@ static int32_t jb_len(JB *B, IrValue *s) {
     B->vlen[s->id] = jb_newvar(B, jb_str(B, "len(%%v%lld)", s->id, 0, 0), 2, s->id, NULL);
     return local ? jb_local(B, B->vlen[s->id], true) : B->vlen[s->id];
 }
-// A constraint from terms: sorted by var (declaration order), merged, zero terms dropped.
+// A constraint from terms: sorted by var (declaration order), merged, zero terms dropped. The
+// sort is IN PLACE: the caller's t is reordered, so a reused t needs each .var set with its .c.
 static bool jb_cons(JB *B, JLT *t, int n, JOp op, __int128 rhs, JCons *c) {
     for (int i = 1; i < n; i++) for (int j = i; j > 0 && t[j - 1].var > t[j].var; j--) { JLT x = t[j]; t[j] = t[j - 1]; t[j - 1] = x; }
     int m = 0;
@@ -1128,10 +1129,13 @@ static bool jr_mul(const JRange *a, const JRange *b, JRange *h) {
     return true;
 }
 // a QUOTIENT with |q| <= max|x| (|y| >= 1), and where y keeps one sign between the corners a/c,
-// a/d, b/c, b/d (truncating division is monotone in each operand there); a REMAINDER with |r| <
-// max|y|, |r| <= max|x| and x's sign (C's remainder truncates toward zero);
-static bool jr_divrem(bool div, const JRange *a, const JRange *b, JRange *h) {
+// a/d, b/c, b/d (truncating division is monotone in each operand there; y in [0, d] is in [1, d]
+// where it is nonzero, and [c, 0] in [c, -1]); a REMAINDER with |r| < max|y|, |r| <= max|x| and
+// x's sign (C's remainder truncates toward zero);
+static bool jr_divrem(bool div, const JRange *a, const JRange *b0, JRange *h) {
     __int128 alo = a->lo < 0 ? -a->lo : a->lo, ahi = a->hi < 0 ? -a->hi : a->hi, mx = alo > ahi ? alo : ahi;
+    JRange bn = *b0, *b = &bn;
+    if (bn.lo == 0 && bn.hi >= 1) bn.lo = 1; else if (bn.hi == 0 && bn.lo <= -1) bn.hi = -1;
     h->has_ne = false;
     if (div) {
         h->lo = -mx; h->hi = mx;
@@ -1534,11 +1538,11 @@ static void jb_state(JB *B, int32_t x) {
                     jb_atom(B, o, t, 2, J_LE, -1);
                 }
                 // and the dividend: x >= 0 keeps a remainder within [0, x] (of x's sign, |r| <= |x|);
-                // over y in [lo, hi], lo >= 1 (an unsigned divisor is nonzero where it completes),
-                // x = q*y + r with 0 <= r <= y - 1 gives lo*q <= x <= hi*q + hi - 1
+                // over y in [lo, hi], lo >= 1 (a divisor >= 0 is nonzero where it completes), x = q*y + r
+                // with 0 <= r <= y - 1 gives lo*q <= x <= hi*q + hi - 1
                 if (ra.lo < 0) break;
                 if (!dv) { t[0].var = x; t[0].c = 1; t[1].var = xv; t[1].c = -1; jb_atom(B, o, t, 2, J_LE, 0); break; }
-                __int128 lo = rb.lo < 1 && d->op == IR_UDIV ? 1 : rb.lo;
+                __int128 lo = rb.lo == 0 ? 1 : rb.lo;
                 if (lo < 1) break;
                 t[0].var = x; t[0].c = lo; t[1].var = xv; t[1].c = -1; jb_atom(B, o, t, 2, J_LE, 0);
                 t[0].var = x; t[0].c = -rb.hi; t[1].var = xv; t[1].c = 1; jb_atom(B, o, t, 2, J_LE, rb.hi - 1);
@@ -1667,6 +1671,37 @@ static void jb_state(JB *B, int32_t x) {
             const char *o = jb_str(B, d->op == IR_POPCOUNT ? "def %%v%lld popcount" : "def %%v%lld bitcount", id, 0, 0);
             t[0].var = x; t[0].c = -1; jb_atom(B, o, t, 1, J_LE, 0);
             t[0].var = x; t[0].c = 1;  jb_atom(B, o, t, 1, J_LE, d->op == IR_POPCOUNT ? w : w - 1);
+            if (w < 1 || w > 64) break;
+            // and the operand m, its bits at width w: m >= 0 (unsigned, or by its static range), or not
+            JRange rm;
+            int32_t mv = jb_val(B, d->operands[0]);
+            bool nn = jg_uns(d->operands[0]->type) || (jg_static_range(g, d->operands[0], &rm, 0) && rm.lo >= 0);
+            __int128 W = (__int128)1 << w, H = (__int128)1 << (w - 1);
+            if (d->op == IR_POPCOUNT) {                          // no bit set only in 0: m <= (2^w - 1)*p
+                t[0].var = mv; t[0].c = 1; t[1].var = x; t[1].c = nn ? -(W - 1) : -(H - 1);
+                jb_atom(B, o, t, 2, J_LE, 0);                    // a negative m has its sign bit:
+                if (!nn) {                                       // -m <= 2^(w-1)*p (jb_cons sorted t)
+                    t[0].var = mv; t[0].c = -1; t[1].var = x; t[1].c = -H;
+                    jb_atom(B, o, t, 2, J_LE, 0);
+                }
+                break;
+            }
+            // m != 0 where it completes: ctz = k when 2^k divides m, so m >= 2^k; clz = k when m's top
+            // bit is w-1-k, 2^(w-1-k) <= m <= 2^(w-k) - 1. One disjunct per k (not inside a join's
+            // disjunct, which cannot hold a disjunction)
+            if (!nn || B->jS >= 0) break;
+            JHyp *h = jb_hyp(B, o);
+            if (!h) break;
+            h->disj = true; h->ndis = w;
+            if (!(h->dis = JG_NEW(g, JConj, w))) { B->fail = true; break; }
+            for (int k = 0; k < w && !B->fail; k++) {
+                bool cz = d->op == IR_CLZ;
+                if (!(h->dis[k].c = JG_NEW(g, JCons, cz ? 3 : 2))) { B->fail = true; break; }
+                h->dis[k].nc = cz ? 3 : 2;
+                t[0].var = x; t[0].c = 1; jb_cons(B, t, 1, J_EQ, k, &h->dis[k].c[0]);
+                t[0].var = mv; t[0].c = -1; jb_cons(B, t, 1, J_LE, -((__int128)1 << (cz ? w - 1 - k : k)), &h->dis[k].c[1]);
+                if (cz) { t[0].var = mv; t[0].c = 1; jb_cons(B, t, 1, J_LE, ((__int128)1 << (w - k)) - 1, &h->dis[k].c[2]); }
+            }
             break;
         }
         default: break;                                        // its range only
