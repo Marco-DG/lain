@@ -2212,8 +2212,8 @@ int main(void) {
     printf("  a parameter's refinement: the prologue's assumes narrow its static range\n");
     // 46. a LOAD a[i] by a variable index from an array whose every element is a cell: the value
     // is the element the index names, `or { i = 0 , v = a[0] | ... }` over its length: (0) a local
-    // i32[4] filled by constant stores; (1) a[3] never stored at a constant index: no cell, so
-    // nothing; (2) the index unchecked: nothing; (3) an i32[17], past JELEM_MAXN: nothing; (4) the
+    // i32[4] filled by constant stores; (1) a[3] never stored at a constant index: a cell all the
+    // same (c30), its disjunct its entry version; (2) the index unchecked: nothing; (3) an i32[17], past JELEM_MAXN: nothing; (4) the
     // load on one path into a join, read past it: local to that path, nothing stated alone; (5)
     // `a[j] = 9` before it: the disjunction names the elements' fresh versions
     {   IrType *a17 = ir_type_new(&A, IRT_ARRAY); a17->elem = i32t; a17->array_len = 17;
@@ -2251,11 +2251,12 @@ int main(void) {
             char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), hn[48];
             snprintf(hn, sizeof hn, "def %%v%d element : or {", v->id);
             const char *vz = t ? vc_of(t, " divzero 0") : "", *h = strstr(vz, hn);
-            if (c == 0 || c == 5) {
+            if (c == 0 || c == 1 || c == 5) {
                 bool ok = h != NULL;
                 for (int k = 0; ok && k < 4; k++) {                  // disjunct k: i = k and v = a[k]'s version
                     char want[96];
-                    snprintf(want, sizeof want, "1*%%v%d = %d , 1*%%v%d + -1*%%s%d[%d]@%s", ix->id, k, v->id, root->id, k, c == 5 ? "havoc" : "bb");
+                    snprintf(want, sizeof want, "1*%%v%d = %d , 1*%%v%d + -1*%%s%d[%d]@%s", ix->id, k, v->id, root->id, k,
+                             c == 5 ? "havoc" : c == 1 && k == 3 ? "entry" : "bb");
                     ok = strstr(h, want) != NULL;
                     if (!ok) printf("  missing disjunct %s\n", want);
                 }
@@ -3144,8 +3145,8 @@ int main(void) {
     // after it (the instances name the versions the header STARTS with). Claims at the header:
     // #0 each(a) <= 10 and #1 -each(a) <= 0. (0) Owed per element: 8 inv.entry and 8 inv.keep VCs,
     // ordinals ci*1000 + k; stated as all four instances where a VC names an element's header
-    // version. Refused: (1) EACH over the integer cell i; (2) over an array none of whose elements
-    // is a cell (one that is no cell has no instance, c28); (3) two EACH terms; (4) at the exit block, where no element is made afresh; (6) over
+    // version. Refused: (1) EACH over the integer cell i; (2) over an array of structs, whose
+    // elements are no integer cells; (3) two EACH terms; (4) at the exit block, where no element is made afresh; (6) over
     // an i32[17], every element a cell (past JELEM_MAXN). (5) term_kinds: each(a) 2 at the header, 1
     // at the exit; each(i) 0
     {   IrType *a4 = ir_type_new(&A, IRT_ARRAY); a4->elem = i32t; a4->array_len = 4;
@@ -3154,7 +3155,9 @@ int main(void) {
             IrFunc *f = ir_func_new(&A, nm("e63"), i32t, IR_FUNC_PURE);
             IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
             IrValue *a = ir_alloca_array(f, b0, a4), *b = ir_alloca_array(f, b0, a4), *i = ir_alloca(f, b0, u64t);
-            IrValue *nc = ir_alloca_array(f, b0, a4);                      // no element of it is a cell
+            IrType *sp = ir_type_new(&A, IRT_STRUCT); sp->n_fields = 1; sp->fields = arena_push_many_aligned(&A, IrType *, 1); sp->fields[0] = i32t;
+            IrType *as = ir_type_new(&A, IRT_ARRAY); as->elem = sp; as->array_len = 4;
+            IrValue *nc = ir_alloca_array(f, b0, as);                      // its elements are structs
             for (int k = 0; k < (int)a4->array_len; k++) ir_store(f, b0, ir_elem_ptr(f, b0, a, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 0, i32t));
             for (int k = 0; k < 3; k++) ir_store(f, b0, ir_elem_ptr(f, b0, b, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 0, i32t));
             ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_set_br(b0, b1);
@@ -3163,7 +3166,6 @@ int main(void) {
             IrValue *li = ir_load(f, b2, i, u64t);
             ir_store(f, b2, ir_elem_ptr(f, b2, a, li, i32t), ir_const_int(f, b2, 10, i32t));
             ir_store(f, b2, ir_elem_ptr(f, b2, b, li, i32t), ir_const_int(f, b2, 10, i32t));
-            ir_store(f, b2, ir_elem_ptr(f, b2, nc, li, i32t), ir_const_int(f, b2, 10, i32t));
             ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li, ir_const_int(f, b2, 1, u64t), u64t)); ir_set_br(b2, b1);
             IrValue *a2 = ir_load(f, b3, ir_elem_ptr(f, b3, a, ir_const_int(f, b3, 2, u64t), i32t), i32t);
             ir_set_ret(b3, ir_binop(f, b3, IR_SDIV, ir_const_int(f, b3, 100, i32t), ir_binop(f, b3, IR_SUB, ir_const_int(f, b3, 11, i32t), a2, i32t), i32t));
@@ -3212,12 +3214,12 @@ int main(void) {
     gen_mod = NULL;
     printf("  an EACH claim: one instance per element, stated and owed\n");
     // 64. a GUARDED EACH claim (JTERM_UPTO): a u8[8] never stored before `while i < 8 { a[i] = 7;
-    // i = i + 1 }`, then a[7] - 7; only a[7] is a cell (the one constant index). Claims at the header:
-    // #0 each(a) <= 7 and #1 -each(a) <= -7, both upto(i): `for each k < i, a[k] = 7`. (0) one instance,
-    // k = 7: stated as `or { i <= 7 | -a[7] <= -7 }` (origin `claim bbH #ci upto`, which the finder
-    // reads); owed on the entry edge and the back edge with the
-    // hypothesis `i >= 8` (a `guard`), each obligation guarded (o->guarded, gmin 8, gvar i's
-    // version). Refused: (1) UPTO without EACH; (2) two UPTO terms (one key twice); (3) UPTO of
+    // i = i + 1 }`, then a[7] - 7; every element is a cell (a[7] by its constant index, the others
+    // c30's elements no address names). Claims at the header:
+    // #0 each(a) <= 7 and #1 -each(a) <= -7, both upto(i): `for each k < i, a[k] = 7`. (0) eight
+    // instances; k = 7's stated as `or { i <= 7 | -a[7] <= -7 }` (origin `claim bbH #ci upto`, which the
+    // finder reads); owed on the entry edge and the back edge with the hypothesis `i >= k + 1` (a
+    // `guard`), each obligation guarded (o->guarded, gmin k + 1 from its ordinal, gvar i's version). Refused: (1) UPTO without EACH; (2) two UPTO terms (one key twice); (3) UPTO of
     // coefficient 2; (4) UPTO over the array's address (one key twice)
     {   IrType *a8 = ir_type_new(&A, IRT_ARRAY); a8->elem = u8t; a8->array_len = 8;
         for (int c = 0; c < 5; c++) {
@@ -3253,8 +3255,8 @@ int main(void) {
             snprintf(st, sizeof st, "claim bb%d #1 upto : or { 1*%%s%d@head.bb%d <= 7 | -1*%%s%d[7]@head.bb%d <= -7 }", b1->id, i->id, b1->id, a->id, b1->id);
             snprintf(gd, sizeof gd, "claim bb%d #1 guard : -1*%%s%d@", b1->id, i->id);
             CHECK(strstr(vz, st) != NULL, "case 0: the instance for a[7], guarded, stated after the loop: %s\n%s", st, vz);
-            CHECK(t && count(t, " inv.entry ") == 2 && count(t, " inv.keep ") == 2 && count(t, gd) == 2 && strstr(t, " inv.keep 1007\n"),
-                  "case 0: one entry and one keep VC per claim, each with its guard:\n%s", t ? t : "");
+            CHECK(t && count(t, " inv.entry ") == 16 && count(t, " inv.keep ") == 16 && count(t, gd) == 16 && strstr(t, " inv.keep 1007\n"),
+                  "case 0: eight entry and eight keep VCs per claim, each with its guard:\n%s", t ? t : "");
             free(t);
             // the obligations carry the guard for a run-time checker
             JMem m = jmem_over(region, sizeof region);
@@ -3265,9 +3267,10 @@ int main(void) {
                     if (o[q].claim < 0) { CHECK(!o[q].guarded, "an obligation that is no claim's is not guarded"); continue; }
                     guarded += o[q].guarded;
                     char vn[48]; snprintf(vn, sizeof vn, "%%s%d@", i->id);
-                    if (o[q].guarded && o[q].gmin == 8 && o[q].gvar >= 0 && o[q].gvar < o[q].vc.nvars && !strncmp(o[q].vc.vars[o[q].gvar], vn, strlen(vn))) right++;
+                    long long kk = atoll(o[q].vc.id.ordinal) % 1000;
+                    if (o[q].guarded && o[q].gmin == kk + 1 && o[q].gvar >= 0 && o[q].gvar < o[q].vc.nvars && !strncmp(o[q].vc.vars[o[q].gvar], vn, strlen(vn))) right++;
                 }
-            CHECK(guarded == 4 && right == 4, "case 0: all 4 claim VCs guarded by i >= 8 (%d, %d)", guarded, right);
+            CHECK(guarded == 32 && right == 32, "case 0: all 32 claim VCs guarded by i >= k + 1 (%d, %d)", guarded, right);
         }
     }
     gen_mod = NULL;
@@ -3307,6 +3310,71 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a fact about a place is no escape: a call keeps the cells of an array only marked\n");
+    // 66. the elements of a local fixed array of at most JELEM_MAXN integers are cells, named by an
+    // address or not (c30): `while i < 4 { a[i] = 5; i = i + 1 }` then 100 / a[j], no constant index
+    // anywhere. (0) the load is the element j names over the four cells' header versions, and an
+    // obligation's variable of a[2]'s version reads at its array's root + 2 (vkey the root, voff 2);
+    // (1) no slot, term or path pair is offered for those cells (no address to key them by, an EACH
+    // term names them); none for (2) an i32[17]
+    // or (3) a dynamic array
+    for (int c = 0; c < 4; c++) {
+        if (c == 1) continue;                                  // case 1 is case 0's function's
+        IrType *an = ir_type_new(&A, IRT_ARRAY); an->elem = i32t; an->array_len = c == 2 ? 17 : 4;
+        IrFunc *f = ir_func_new(&A, nm("s66"), i32t, IR_FUNC_PURE);
+        IrValue *jx = ir_add_param(f, u64t, nm("j"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *a = c == 3 ? ir_alloca_dyn(f, b0, i32t, ir_const_int(f, b0, 4, u64t)) : ir_alloca_array(f, b0, an);
+        IrValue *i = ir_alloca(f, b0, u64t);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, ir_load(f, b1, i, u64t), ir_const_int(f, b1, 4, u64t)), b2, b3);
+        IrValue *li = ir_load(f, b2, i, u64t);
+        ir_store(f, b2, ir_elem_ptr(f, b2, a, li, i32t), ir_const_int(f, b2, 5, i32t));
+        ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li, ir_const_int(f, b2, 1, u64t), u64t)); ir_set_br(b2, b1);
+        IrValue *v = ir_load(f, b3, ir_elem_ptr(f, b3, a, jx, i32t), i32t);
+        ir_set_ret(b3, ir_binop(f, b3, IR_SDIV, ir_const_int(f, b3, 100, i32t), v, i32t));
+        int at = nins(b3) - 1;
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48], hn[48];
+        snprintf(key, sizeof key, " bb%d.%d divzero 0", b3->id, at);
+        snprintf(hn, sizeof hn, "def %%v%d element : or {", v->id);
+        const char *vz = t ? vc_of(t, key) : "";
+        if (c == 0) {
+            bool ok = strstr(vz, hn) != NULL;
+            for (int k = 0; ok && k < 4; k++) {
+                char want[64]; snprintf(want, sizeof want, "%%s%d[%d]@head.bb%d", a->id, k, b1->id);
+                ok = strstr(vz, want) != NULL;
+            }
+            CHECK(ok, "case 0: a[j] is one of the four cells' header versions:\n%s", vz);
+            JMem m = jmem_over(region, sizeof region);
+            JObl *o; int32_t n; char err[200]; int seen = 0, right = 0;
+            if (jgen_func(&m, f, gen_mod, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err))
+                for (int32_t q = 0; q < n; q++)
+                    for (int32_t x = 0; x < o[q].vc.nvars; x++) {
+                        char nm2[32]; snprintf(nm2, sizeof nm2, "%%s%d[2]@", a->id);
+                        if (strncmp(o[q].vc.vars[x], nm2, strlen(nm2))) continue;
+                        seen++;
+                        if (o[q].voff && o[q].voff[x] == 2 && o[q].vkey[x] == a->id) right++;
+                    }
+            CHECK(seen > 0 && right == seen, "case 0: a[2]'s versions read at the root + 2 (%d of %d)", right, seen);
+            JMem m2 = jmem_over(region, sizeof region);
+            JSlot *sl; int32_t ns; bool none = true;
+            if (jgen_slots(&m2, f, gen_mod, &sl, &ns, err, sizeof err))
+                for (int32_t q = 0; q < ns; q++) if (sl[q].key == a->id) none = false;
+            JMem m3 = jmem_over(region, sizeof region);
+            if (jgen_terms(&m3, f, gen_mod, b1->id, &sl, &ns, err, sizeof err))
+                for (int32_t q = 0; q < ns; q++) if (sl[q].key == a->id) none = false;
+            JMem m4 = jmem_over(region, sizeof region);
+            JPaths P; int pairs = 0;
+            if (jgen_paths(&m4, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err))
+                for (int32_t q = 0; q < P.n; q++)
+                    for (int32_t r = 0; r < P.p[q].npairs; r++) { if (P.p[q].pairs[r].key == a->id) none = false; pairs++; }
+            CHECK(none && pairs > 0, "case 1: no slot, term or path pair keyed by the array's root (%d pairs)", pairs);
+        } else CHECK(*vz && !strstr(vz, " element : "), "case %d: no element cells:\n%s", c, vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a small local array's elements are cells, named by an address or not\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

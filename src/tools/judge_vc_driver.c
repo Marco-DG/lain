@@ -189,7 +189,9 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
         // kind 4 is a slice cell version's length, read the same way
         if (o->vcur[x]) {
             if (c->k != IV_PTR || !c->p.o || !c->p.o->live) return false;
-            c = ip_cell(&c->p, NULL);
+            IPtr p = c->p;                             // an element no address names: its root's + k
+            if (o->voff && o->voff[x] >= 0) p.p[p.d - 1] += o->voff[x];
+            c = ip_cell(&p, NULL);
         } else {
             if (o->vaux[x] < 0 || o->vaux[x] >= nv) return false;
             c = &v[o->vaux[x]];

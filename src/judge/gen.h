@@ -94,6 +94,8 @@ typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int3
 typedef struct {
     IrInstr *at; IrBlock *blk; int32_t idx;
     IrBlock *to; int32_t claim;               // a claim's obligation: the edge's target, the claim
+    const int32_t *voff;                     // per var: a version of an element no address names, that
+                                             // element's index past its array's root (vkey); else -1
     bool guarded; int32_t gvar; __int128 gmin; // a guarded EACH instance: owed only where var gvar >= gmin
     JVc vc;
     const char *outside;
@@ -183,6 +185,7 @@ typedef struct {
     // constant field path inside it, whose leaf is an integer or a slice
     int32_t *cell, ncells;         // by value id: the leaf cell an address is, or -1
     IrValue **cellv;               // by cell: its first address in the RPO (the root itself for a root leaf)
+    uint8_t *csyn; int32_t *coff;  // by cell: an element no address names (cellv its array's root), its index
     int32_t *croot; const char **cpath; const IrType **cty; const char **cname;   // by cell
     int32_t *aroot;                // by value id: the root an attributable address is inside, or -1
     const char **apath;            // by value id: that address's field path (".1.0"; "" for the root)
@@ -548,6 +551,15 @@ static void jg_changes(JG *g, IrInstr *i) {
     jg_havoc_class(g, JR_LEAKED);
     if (raw) jg_havoc_rawable(g);
 }
+// A local FIXED array of 1 to JELEM_MAXN integers, a root (a module table is none, nor a dynamic
+// array): each of its elements is a cell, named by an address or not (jg_cells). The cap bounds the
+// cells a large array would cost; every reader of element cells caps at JELEM_MAXN itself.
+static bool jg_syn_array(JG *g, IrInstr *i) {
+    const IrType *t = i->op == IR_ALLOCA ? i->aux.alloca_ty : NULL;
+    return t && i->n_operands == 0 && i->result && i->result->id >= 0 && i->result->id < g->nv &&
+           g->aroot[i->result->id] == i->result->id && t->kind == IRT_ARRAY && t->array_len >= 1 &&
+           t->array_len <= JELEM_MAXN && jg_is_int(t->elem);
+}
 static bool jg_cells(JG *g) {
     IrFunc *f = g->f;
     int32_t nv = g->nv;
@@ -690,12 +702,20 @@ static bool jg_cells(JG *g) {
             if (r >= 0) g->rclass[r] = JR_LEAKED;
         }
     }
-    // leaf cells: one per (root, path) an attributable address names
+    // leaf cells: one per (root, path) an attributable address names; and one per element of a
+    // local fixed array of at most JELEM_MAXN integers that no address names (read and written only
+    // through a variable index): a cell is a location the versions follow, an address or not
     g->ncells = 0;
-    if (!(g->cellv = JG_NEW(g, IrValue *, nv ? nv : 1)) || !(g->croot = JG_NEW(g, int32_t, nv ? nv : 1)) ||
-        !(g->cpath = JG_NEW(g, const char *, nv ? nv : 1)) || !(g->cty = JG_NEW(g, const IrType *, nv ? nv : 1)) ||
-        !(g->cname = JG_NEW(g, const char *, nv ? nv : 1)))
+    int32_t nsyn = 0;
+    for (int32_t r = 0; r < g->nrpo; r++)
+        for (IrInstr *i = g->blk[g->rpo[r]]->instrs; i; i = i->next)
+            if (jg_syn_array(g, i)) nsyn += (int32_t)i->aux.alloca_ty->array_len;
+    int32_t ncap = nv + nsyn ? nv + nsyn : 1;
+    if (!(g->cellv = JG_NEW(g, IrValue *, ncap)) || !(g->croot = JG_NEW(g, int32_t, ncap)) ||
+        !(g->cpath = JG_NEW(g, const char *, ncap)) || !(g->cty = JG_NEW(g, const IrType *, ncap)) ||
+        !(g->cname = JG_NEW(g, const char *, ncap)) || !(g->csyn = JG_NEW(g, uint8_t, ncap)) || !(g->coff = JG_NEW(g, int32_t, ncap)))
         return jg_fail(g, "out of memory");
+    memset(g->csyn, 0, (size_t)ncap);
     for (int32_t pass = 0; pass < 2; pass++)                    // the parameters, then the RPO
         for (int32_t q = 0; q < (pass ? g->nrpo : 1); q++) {
             int32_t ids[64]; int32_t n = 0;
@@ -730,6 +750,25 @@ static bool jg_cells(JG *g) {
                 if (!s2) return jg_fail(g, "out of memory");
                 strcpy(s2, nm); g->cname[c] = s2;
                 g->cell[id] = c;
+            }
+        }
+    for (int32_t r = 0; r < g->nrpo; r++)                       // the elements no address names
+        for (IrInstr *i = g->blk[g->rpo[r]]->instrs; i; i = i->next) {
+            if (!jg_syn_array(g, i)) continue;
+            int32_t id = i->result->id;
+            for (int32_t k = 0; k < (int32_t)i->aux.alloca_ty->array_len; k++) {
+                char pth[32]; snprintf(pth, sizeof pth, "[%lld]", (long long)k);
+                bool have = false;                     // one cell per location: lookups take the first
+                for (int32_t c2 = 0; c2 < g->ncells && !have; c2++) have = g->croot[c2] == id && !strcmp(g->cpath[c2], pth);
+                if (have) continue;
+                int32_t c = g->ncells++;
+                char *ps = JG_NEW(g, char, strlen(pth) + 1), nm[64];
+                snprintf(nm, sizeof nm, "%%s%lld%s", (long long)id, pth);
+                char *s2 = JG_NEW(g, char, strlen(nm) + 1);
+                if (!ps || !s2) return jg_fail(g, "out of memory");
+                strcpy(ps, pth); strcpy(s2, nm);
+                g->cellv[c] = i->result; g->croot[c] = id; g->cpath[c] = ps; g->cty[c] = i->aux.alloca_ty->elem; g->cname[c] = s2;
+                g->csyn[c] = 1; g->coff[c] = k;
             }
         }
     if (!(g->eff_cell = JG_NEW(g, int32_t, g->ncells ? g->ncells : 1)) || !(g->eff_val = JG_NEW(g, IrValue *, g->ncells ? g->ncells : 1)) ||
@@ -2501,6 +2540,13 @@ static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *
         for (int32_t i = 0; i < B->nvars; i++)
             k2[i] = B->kind[i] == 1 || B->kind[i] == 4 ? g->cellv[g->ver[B->key[i]].cell]->id : B->key[i];
         o->vkind = B->kind; o->vkey = k2; o->vtype = B->vtype;
+        int32_t *off = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1);
+        if (!off) return false;
+        for (int32_t i = 0; i < B->nvars; i++) {
+            int32_t cc = B->kind[i] == 1 || B->kind[i] == 4 ? g->ver[B->key[i]].cell : -1;
+            off[i] = cc >= 0 && g->csyn[cc] ? g->coff[cc] : -1;
+        }
+        o->voff = off;
         int32_t *aux = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1);
         uint8_t *cur = JG_NEW(g, uint8_t, B->nvars ? B->nvars : 1);
         if (!aux || !cur) return false;
@@ -3764,6 +3810,7 @@ static bool jgen_slots(JMem *m, IrFunc *f, IrFunc *mod, JSlot **out, int32_t *no
             if (!head && !jg_forward_join(&g, b)) continue;
             for (int32_t c = 0; c < g.ncells; c++) {
                 int32_t jv = g.instate[(size_t)b * (size_t)g.ncells + (size_t)c];
+                if (g.csyn[c]) continue;                       // no address: no key (an EACH term names it)
                 if (jv < 0 || g.ver[jv].blk != b || !jg_is_int(g.ver[jv].slot)) continue;
                 if (g.ver[jv].kind != (head ? JV_HEAD : JV_JOIN)) continue;
                 if (S) { S[n].blk = b; S[n].key = g.cellv[c]->id; S[n].type = g.ver[jv].slot; S[n].head = head; }
@@ -3791,7 +3838,7 @@ static bool jgen_terms(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, JSlot **out
     memset(seen, 0, (size_t)g.nv);
     for (int32_t c = 0; c < g.ncells; c++) {
         int32_t id = g.cellv[c]->id;
-        if (!jg_term_ok(&g, blk, id, JTERM_VALUE)) continue;
+        if (!jg_term_ok(&g, blk, id, JTERM_VALUE)) continue;   // an unnamed element's key (its root) is no term
         K[n].blk = blk; K[n].key = id; K[n].type = g.cty[c]; K[n].head = false; n++; seen[id] = 1;
     }
     const uint8_t *L = g.inloop + (size_t)blk * (size_t)g.nb;
@@ -3868,7 +3915,7 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
     const uint8_t *Lh = g.inloop + (size_t)header * (size_t)g.nb;
     for (int32_t c = 0; c < g.ncells; c++) {
         int32_t jv = g.instate[(size_t)header * (size_t)g.ncells + (size_t)c];
-        if (jv < 0) continue;
+        if (jv < 0 || g.csyn[c]) continue;
         bool head = g.ver[jv].blk == header && g.ver[jv].kind == JV_HEAD, read = false;
         for (int32_t b = 0; b < g.nb && !head && !read; b++) {
             if (!Lh[b] || !g.blk[b]) continue;                 // a loop's blocks are reachable ones

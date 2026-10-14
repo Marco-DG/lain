@@ -866,9 +866,9 @@ int main(void) {
         s.claim.key[1] = mi->id; s.claim.tk[1] = JTERM_UPTO; s.claim.coef[1] = 1; s.claim.rhs = c ? -8 : -7;
         s.propose = P_CLAIM; s.nrank = 0;
         CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
-        if (!c) CHECK(count_in(recs, "inv.entry") == 1 && count_in(recs, "inv.keep") == 1 && !strstr(recs, "not-implied") &&
+        if (!c) CHECK(count_in(recs, "inv.entry") == 8 && count_in(recs, "inv.keep") == 8 && !strstr(recs, "not-implied") &&
                       strstr(recs, "proved bb3.6 divzero"), "for each k < i, a[k] >= 7, and a[7] - 6 after:\n%s", recs);
-        else CHECK(strstr(recs, "not-implied bb2.7 inv.keep"), "a[i] = 7 breaks a[k] >= 8:\n%s", recs);
+        else CHECK(strstr(recs, "not-implied bb2.7 inv.keep"), "a[i] = 7 breaks a[k] >= 8:\n%s", recs);   // every element's
         s.propose = P_NONE;
     }
 
