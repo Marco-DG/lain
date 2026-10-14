@@ -77,6 +77,22 @@ static bool plain_store(const char *vc, const char *prefix) {
 }
 static int nins(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
 static int count(const char *all, const char *key) { int n = 0; for (const char *p = all; (p = strstr(p, key)); p++) n++; return n; }
+// Some line of `t` is `def %vP mul.mono : or { L | R }` with L the terms -s*a, s*b and R s*p, c, -s*q
+// (s = 1: a <= b - 1 -> p <= q - c; s = -1 mirrored), each a whole token
+static bool mono_has(const char *t, int p, int a, int b, int c, int q, int sg) {
+    char key[48]; snprintf(key, sizeof key, "def %%v%d mul.mono : or { ", p);
+    for (const char *l = t ? strstr(t, key) : NULL; l; l = strstr(l + 1, key)) {
+        const char *e = strchr(l, '\n'), *bar = strstr(l, " | ");
+        if (!e || !bar || bar > e) continue;
+        char L[200], R[200], w[5][24];
+        snprintf(L, sizeof L, " %.*s ", (int)(bar - l - strlen(key)), l + strlen(key));
+        snprintf(R, sizeof R, " %.*s ", (int)(e - bar - 3), bar + 3);
+        snprintf(w[0], 24, " %d*%%v%d ", -sg, a); snprintf(w[1], 24, " %d*%%v%d ", sg, b);
+        snprintf(w[2], 24, " %d*%%v%d ", sg, p); snprintf(w[3], 24, " 1*%%v%d ", c); snprintf(w[4], 24, " %d*%%v%d ", -sg, q);
+        if (strstr(L, w[0]) && strstr(L, w[1]) && strstr(R, w[2]) && strstr(R, w[3]) && strstr(R, w[4]) && strstr(L, " <= 0 ") && strstr(R, " <= 0 }")) return true;
+    }
+    return false;
+}
 static IrValue *mk_call(IrFunc *f, IrBlock *b, const char *callee, IrValue *arg, IrType *rt) {
     IrInstr *c = ir_instr(f, IR_CALL, rt, 1);
     c->aux.callee = nm(callee); c->operands[0] = arg;
@@ -3496,6 +3512,48 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a call through a pointer on a recursion: owed per target, a path per target, cut per target\n");
+    // 68. MONOTONE products: q = b*c in bb0, then p = a*c in bb1 (bb0 -> bb1 | bb2, bb1, bb2 -> bb3),
+    // and 100 / p after p, all u32 unless said. (0) p's def: a <= b - 1 -> p <= q - c and mirrored;
+    // (1) q = c*b, p = c*a: the same; (2) i32, c not >= 0: nothing; (3) i32 with `assume c >= 0`:
+    // both; (4) q in bb2, p in bb3 (q does not dominate p): nothing; (5) q unchecked: nothing; (6)
+    // q = a*c (a == b): nothing; (7) q = b*c, d*c, e*c (three, all in bb0): two of them, four facts;
+    // (8) q and p both in bb1, q first: both; (9) p first, q after it in bb1: nothing about p (q is
+    // not a term of `100 / p`); (10) q = b*c, p = c*a (c at either position): both
+    for (int c = 0; c < 11; c++) {
+        IrType *T = c == 2 || c == 3 ? i32t : u32t;
+        IrFunc *f = ir_func_new(&A, nm("m68"), T, IR_FUNC_PURE);
+        IrValue *pa = ir_add_param(f, T, nm("a")), *pb = ir_add_param(f, T, nm("b")), *pc = ir_add_param(f, T, nm("c")),
+                *pd = ir_add_param(f, T, nm("d")), *pe = ir_add_param(f, T, nm("e"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        if (c == 3) ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, pc, ir_const_int(f, b0, 0, T)));
+        IrValue *q = NULL, *p = NULL;
+        IrBlock *qb = c == 4 ? b2 : c >= 8 ? b1 : b0, *pblk = c == 4 ? b3 : b1;
+        if (c != 9) {
+            q = ir_binop(f, qb, IR_MUL, c == 1 ? pc : c == 6 ? pa : pb, c == 1 ? pb : pc, T);
+            if (c == 5) g_last_instr(qb)->unchecked = true;
+            if (c == 7) { ir_binop(f, qb, IR_MUL, pd, pc, T); ir_binop(f, qb, IR_MUL, pe, pc, T); }
+        }
+        p = ir_binop(f, pblk, IR_MUL, c == 1 || c == 10 ? pc : pa, c == 1 || c == 10 ? pa : pc, T);
+        if (c == 9) q = ir_binop(f, b1, IR_MUL, pb, pc, T);
+        IrValue *r = ir_binop(f, pblk, IR_UDIV, ir_const_int(f, pblk, 100, T), p, T);
+        if (T == i32t) g_last_instr(pblk)->op = IR_SDIV;
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_NE, pd, ir_const_int(f, b0, 0, T)), b1, b2);
+        if (pblk == b1) { ir_set_ret(b1, r); ir_set_br(b2, b3); }
+        else { ir_set_br(b1, b3); ir_set_br(b2, b3); }
+        ir_set_ret(b3, pblk == b3 ? r : ir_const_int(f, b3, 0, T));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48];
+        snprintf(key, sizeof key, "def %%v%d mul.mono", p->id);
+        int bv = c == 6 ? pa->id : pb->id;
+        bool both = mono_has(t, p->id, pa->id, bv, pc->id, q->id, 1) && mono_has(t, p->id, pa->id, bv, pc->id, q->id, -1);
+        if (c == 0 || c == 1 || c == 3 || c == 8 || c == 10) CHECK(both, "case %d: p's two monotone facts:\n%s", c, t ? t : "");
+        else if (c == 7) CHECK(t && count(t, key) == 4, "case %d: two of three products, four facts:\n%s", c, t ? t : "");
+        else CHECK(t && !strstr(t, "mul.mono"), "case %d: nothing:\n%s", c, t ? t : "");
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a product beside an earlier one of the same c >= 0: a <= b - 1 gives p <= q - c\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

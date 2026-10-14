@@ -1722,6 +1722,44 @@ static void jb_wrapto(JB *B, int32_t x, int32_t xv, const IrType *t, const char 
     JRange w; w.lo = jg_width_lo(t); w.hi = jg_width_hi(t); w.has_ne = false;
     jb_range(B, x, &w, origin);
 }
+// MONOTONE products (`i*w + j < h*w`): beside p = a*c, an earlier checked product q = b*c of the
+// same variable c >= 0, its definition dominating p's (so at p, q is the product of the b and c
+// current there), gives a <= b - 1 -> p <= q - c and a >= b + 1 -> p >= q + c, since (b - a)*c >= c
+// there; both products exact, a checked one completing only within its type. At most JMONO_MAX
+// such q per p, the first in block order: each is two disjunctions, which the finder pays for
+// (it flattens them by "mul.mono", an interface).
+enum { JMONO_MAX = 2 };
+static void jb_mul_mono(JB *B, int32_t x, const IrInstr *d, int32_t id) {
+    JG *g = B->g;
+    if (B->jS >= 0 || id < 0 || id >= g->nv || g->defblk[id] < 0) return;   // a disjunct holds no disjunction
+    int32_t pb = g->defblk[id], pi = g->defidx[id], n = 0;
+    for (IrBlock *qb = g->f->blocks; qb && n < JMONO_MAX; qb = qb->next) {
+        if (!jg_dominates(g, qb->id, pb)) continue;
+        int32_t k = 0;
+        for (IrInstr *e = qb->instrs; e && n < JMONO_MAX && !(qb->id == pb && k >= pi); e = e->next, k++) {
+            if (e->op != IR_MUL || e->wrap != IR_WRAP_CHECK || e->unchecked || e->n_operands < 2 || !e->result) continue;
+            int s = -1, u = -1;
+            for (int s0 = 0; s0 < 2 && s < 0; s0++)
+                for (int u0 = 0; u0 < 2 && s < 0; u0++) if (d->operands[s0] == e->operands[u0]) { s = s0; u = u0; }
+            if (s < 0) continue;
+            IrValue *c = d->operands[s], *a = d->operands[1 - s], *b = e->operands[1 - u];
+            JRange rc;
+            if (a == b || !jg_is_int(b->type) || !jg_static_range(g, c, &rc, 0) || rc.lo < 0) continue;
+            int32_t av = jb_val(B, a), bv = jb_val(B, b), cv = jb_val(B, c), qv = jb_val(B, e->result);
+            const char *o = jb_str(B, "def %%v%lld mul.mono", id, 0, 0);
+            for (int w = 0; w < 2; w++) {                      // or { b - a <= 0 | p - q + c <= 0 }, and mirrored
+                int sg = w ? -1 : 1;
+                JCons cs[2]; JLT t[3];
+                t[0].var = bv; t[0].c = sg; t[1].var = av; t[1].c = -sg;
+                if (!jb_cons(B, t, 2, J_LE, 0, &cs[0])) return;
+                t[0].var = x; t[0].c = sg; t[1].var = qv; t[1].c = -sg; t[2].var = cv; t[2].c = 1;
+                if (!jb_cons(B, t, 3, J_LE, 0, &cs[1])) return;
+                jb_or2(B, o, cs, 1, 1);
+            }
+            n++;
+        }
+    }
+}
 // The facts of one variable: its definition and its range.
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
@@ -1862,6 +1900,7 @@ static void jb_state(JB *B, int32_t x) {
             }
             JRange h;                                          // two variables: between the corners
             if (!lin && jg_mul_hull(g, d, &h)) jb_range(B, x, &h, jb_str(B, "def %%v%lld mul.hull", id, 0, 0));
+            if (!lin) jb_mul_mono(B, x, d, id);
             break;
         }
         case IR_CAST:

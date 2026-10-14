@@ -926,6 +926,25 @@ int main(void) {
         s.propose = P_NONE; s.nrank = 0;
     }
 
+    // MONOTONE products (c33): m33(a, b, c) is `q = b * c; if a < b { return q - a * c }`, all u32.
+    // a < b gives a*c <= q - c, so the subtraction cannot go below 0: proved; each product's own
+    // overflow is `outside` (two variables whose corners leave u32)
+    {   IrFunc *mf = ir_func_new(&A, nm("m33"), u32t, IR_FUNC_PURE);
+        IrValue *ma = ir_add_param(mf, u32t, nm("a")), *mb = ir_add_param(mf, u32t, nm("b")), *mc = ir_add_param(mf, u32t, nm("c"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf);
+        IrValue *mq = ir_binop(mf, m0, IR_MUL, mb, mc, u32t);
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_ULT, ma, mb), m1, m2);
+        IrValue *mp = ir_binop(mf, m1, IR_MUL, ma, mc, u32t);
+        ir_set_ret(m1, ir_binop(mf, m1, IR_SUB, mq, mp, u32t));
+        ir_set_ret(m2, ir_const_int(mf, m2, 0, u32t));
+        ir_finalize_cfg(mf);
+        Stub s33; memset(&s33, 0, sizeof s33);
+        CHECK(run(mf, &s33, true, sizeof region, err), "judges: %s", err);
+        char w1[48]; snprintf(w1, sizeof w1, "proved bb%d.%d narrow.lo", m1->id, nins_m(m1) - 1);
+        CHECK(strstr(recs, w1) && nrec[JREC_OUTSIDE] == 2 && nrec[JREC_NOT_IMPLIED] == 0, "q - a*c >= 0 proved:\n%s", recs);
+        (void)mp;
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
