@@ -2132,7 +2132,8 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                              vra_add_via_diff(V,W,r,a,b);      // r = a + b where b is bounded vs (B − a)
                              vra_add_via_diff(V,W,r,b,a); }    // ...and symmetrically
                 else {
-                    if (hl) vra_add_diff_le(V,W,r,a,-blo); if (hh) vra_add_diff_le(V,W,a,r,bhi);
+                    if (hl) vra_add_diff_le(V,W,r,a,-blo);
+                    if (hh) vra_add_diff_le(V,W,a,r,bhi);
                     // RELATIONAL r = a − b: transfer the octagon's OWN a↔b difference to r
                     // exactly (intervals miss it when the bound is symbolic). This proves the
                     // reverse index `a[L−i−1]`: from `i ≤ L` the octagon already holds, r=L−i
@@ -2196,9 +2197,12 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
                     && vra_safe_scale(alo,blo,&c1) && vra_safe_scale(alo,bhi,&c2)
                     && vra_safe_scale(ahi,blo,&c3) && vra_safe_scale(ahi,bhi,&c4)) {
                     int64_t lo=c1, hi=c1;
-                    if (c2<lo) lo=c2; if (c2>hi) hi=c2;
-                    if (c3<lo) lo=c3; if (c3>hi) hi=c3;
-                    if (c4<lo) lo=c4; if (c4>hi) hi=c4;
+                    if (c2<lo) lo=c2;
+                    if (c2>hi) hi=c2;
+                    if (c3<lo) lo=c3;
+                    if (c3>hi) hi=c3;
+                    if (c4<lo) lo=c4;
+                    if (c4>hi) hi=c4;
                     oct_add_lb(W,r,lo); oct_add_ub(W,r,hi);
                 }
             }
@@ -3361,8 +3365,12 @@ static void vra_arith_range(IrOp op, int64_t alo,int64_t ahi, int64_t blo,int64_
     else { // MUL: min/max over the four corners
         __int128 c1=al*bl,c2=al*bh,c3=ah*bl,c4=ah*bh;
         __int128 lo=c1,hi=c1;
-        if(c2<lo)lo=c2; if(c3<lo)lo=c3; if(c4<lo)lo=c4;
-        if(c2>hi)hi=c2; if(c3>hi)hi=c3; if(c4>hi)hi=c4;
+        if(c2<lo)lo=c2;
+        if(c3<lo)lo=c3;
+        if(c4<lo)lo=c4;
+        if(c2>hi)hi=c2;
+        if(c3>hi)hi=c3;
+        if(c4>hi)hi=c4;
         *rlo=lo; *rhi=hi;
     }
 }

@@ -2107,8 +2107,10 @@ static bool sema_body_writes_id(StmtList *body, Id *pn) {
         Stmt *s = b->stmt; if (!s) continue;
         switch (s->kind) {
             case STMT_ASSIGN: if (sema_expr_rooted_at(s->as.assign_stmt.target, pn)) return true; break;
-            case STMT_IF:     if (sema_body_writes_id(s->as.if_stmt.then_body, pn) ||
-                                  sema_body_writes_id(s->as.if_stmt.else_branch, pn)) return true; break;
+            case STMT_IF:
+                if (sema_body_writes_id(s->as.if_stmt.then_body, pn) ||
+                    sema_body_writes_id(s->as.if_stmt.else_branch, pn)) return true;
+                break;
             case STMT_WHILE:  if (sema_body_writes_id(s->as.while_stmt.body, pn)) return true; break;
             case STMT_FOR:    if (sema_body_writes_id(s->as.for_stmt.body, pn)) return true; break;
             default: break;
@@ -2174,10 +2176,12 @@ static void collect_self_calls_e(Expr *e, Decl *fn, Expr **out, int *n) {
     case EXPR_MATCH:
         collect_self_calls_e(e->as.match_expr.value, fn, out, n);
         for (ExprMatchCase *c = e->as.match_expr.cases; c; c = c->next)
-            collect_self_calls_e(c->body, fn, out, n); break;
+            collect_self_calls_e(c->body, fn, out, n);
+        break;
     case EXPR_ARRAY_LITERAL:
         for (ExprList *el = e->as.array_literal_expr.elements; el; el = el->next)
-            collect_self_calls_e(el->expr, fn, out, n); break;
+            collect_self_calls_e(el->expr, fn, out, n);
+        break;
     default: break;
     }
 }
@@ -2195,9 +2199,11 @@ static void collect_self_calls_s(Stmt *s, Decl *fn, Expr **out, int *n) {
     case STMT_WHILE:  collect_self_calls_e(s->as.while_stmt.cond, fn, out, n);
                       collect_self_calls_list(s->as.while_stmt.body, fn, out, n); break;
     case STMT_FOR:    collect_self_calls_list(s->as.for_stmt.body, fn, out, n); break;
-    case STMT_MATCH:  collect_self_calls_e(s->as.match_stmt.value, fn, out, n);
-                      for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
-                          collect_self_calls_list(c->body, fn, out, n); break;
+    case STMT_MATCH:
+        collect_self_calls_e(s->as.match_stmt.value, fn, out, n);
+        for (StmtMatchCase *c = s->as.match_stmt.cases; c; c = c->next)
+            collect_self_calls_list(c->body, fn, out, n);
+        break;
     case STMT_UNSAFE: collect_self_calls_list(s->as.unsafe_stmt.body, fn, out, n); break;
     default: break;
     }

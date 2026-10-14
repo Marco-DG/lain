@@ -459,8 +459,10 @@ static void bor_check_scoped(Borrow *B, IrFunc *mod, IrFunc *f) {
                 switch (cur->term.kind) {
                     case IR_TERM_BR:      succ[ns++]=cur->term.a; break;
                     case IR_TERM_BR_COND: succ[ns++]=cur->term.a; succ[ns++]=cur->term.b; break;
-                    case IR_TERM_SWITCH:  succ[ns++]=cur->term.a;
-                        for (IrSwitchCase *c=cur->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                    case IR_TERM_SWITCH:                     // never reached: ir_finalize_cfg refuses a switch
+                        succ[ns++]=cur->term.a;
+                        for (IrSwitchCase *c=cur->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target;
+                        break;
                     default: break;
                 }
                 for (int k=0;k<ns;k++)
@@ -506,9 +508,12 @@ static int bor_succs(IrBlock *b, IrBlock **out) {
     int n = 0;
     switch (b->term.kind) {
         case IR_TERM_BR:      if (b->term.a) out[n++] = b->term.a; break;
-        case IR_TERM_BR_COND: if (b->term.a) out[n++] = b->term.a;
-                              if (b->term.b) out[n++] = b->term.b; break;
-        case IR_TERM_SWITCH:  if (b->term.a) out[n++] = b->term.a;
+        case IR_TERM_BR_COND:
+            if (b->term.a) out[n++] = b->term.a;
+            if (b->term.b) out[n++] = b->term.b;
+            break;
+        case IR_TERM_SWITCH:                                // never reached: ir_finalize_cfg refuses a switch
+            if (b->term.a) out[n++] = b->term.a;
             for (IrSwitchCase *c = b->term.cases; c && n < 3; c = c->next)
                 if (c->target) out[n++] = c->target;
             break;

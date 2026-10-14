@@ -238,7 +238,7 @@ int main(void){
         IrBlock *e=f->entry, *full=ir_new_block(f), *empty=ir_new_block(f), *j=ir_new_block(f);
         IrValue *b=ir_add_param(f,box,nm("b")); b->owns=true;
         IrValue *tg=ir_sum_tag(f,e,b);
-        ir_set_br_cond(e, ir_binop(f,e,IR_CMP_EQ,tg,ir_const_int(f,e,0,i32),ir_type_bool(&A)), full, empty);
+        ir_set_br_cond(e, ir_icmp(f,e,IR_CMP_EQ,tg,ir_const_int(f,e,0,i32)), full, empty);
         IrValue *pl=ir_sum_payload(f,full,b,0,0,lp);
         { IrValue *hs=ir_alloca(f,full,lp); ir_store(f,full,hs,pl); ir_consume(f,full,hs); }
         ir_set_br(full,j); ir_set_br(empty,j); ir_set_ret(j,NULL);
@@ -249,7 +249,7 @@ int main(void){
         IrBlock *e=f->entry, *full=ir_new_block(f), *empty=ir_new_block(f), *j=ir_new_block(f);
         IrValue *b=ir_add_param(f,box,nm("b")); b->owns=true;
         IrValue *tg=ir_sum_tag(f,e,b);
-        ir_set_br_cond(e, ir_binop(f,e,IR_CMP_EQ,tg,ir_const_int(f,e,0,i32),ir_type_bool(&A)), full, empty);
+        ir_set_br_cond(e, ir_icmp(f,e,IR_CMP_EQ,tg,ir_const_int(f,e,0,i32)), full, empty);
         ir_sum_payload(f,full,b,0,0,lp);             // bound, never released
         ir_set_br(full,j); ir_set_br(empty,j); ir_set_ret(j,NULL);
         lin_expect("payload bound and dropped is E003", count(f,3), 1); }

@@ -321,8 +321,10 @@ static Di *di_analyze(IrFunc *f) {
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
                 case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
-                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
-                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                case IR_TERM_SWITCH:                     // never reached: ir_finalize_cfg refuses a switch
+                    succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target;
+                    break;
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *s=succ[k]; if(!s) continue;

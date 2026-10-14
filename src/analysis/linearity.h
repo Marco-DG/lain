@@ -688,8 +688,10 @@ static Lin *lin_analyze(IrFunc *f) {
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
                 case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
-                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
-                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                case IR_TERM_SWITCH:                     // never reached: ir_finalize_cfg refuses a switch
+                    succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target;
+                    break;
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *s=succ[k]; if(!s) continue;
@@ -715,8 +717,10 @@ static Lin *lin_analyze(IrFunc *f) {
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
                 case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
-                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
-                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                case IR_TERM_SWITCH:                     // never reached: ir_finalize_cfg refuses a switch
+                    succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target;
+                    break;
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *sb=succ[k]; if(!sb) continue;
@@ -750,8 +754,10 @@ static Lin *lin_analyze(IrFunc *f) {
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
                 case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
-                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
-                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                case IR_TERM_SWITCH:                     // never reached: ir_finalize_cfg refuses a switch
+                    succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target;
+                    break;
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *s=succ[k]; if(!s) continue;
@@ -787,8 +793,10 @@ static Lin *lin_analyze(IrFunc *f) {
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
                 case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
-                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
-                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                case IR_TERM_SWITCH:                     // never reached: ir_finalize_cfg refuses a switch
+                    succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target;
+                    break;
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *sb=succ[k]; if(!sb) continue;
@@ -825,8 +833,10 @@ static Lin *lin_analyze(IrFunc *f) {
             switch (b->term.kind) {
                 case IR_TERM_BR:      succ[ns++]=b->term.a; break;
                 case IR_TERM_BR_COND: succ[ns++]=b->term.a; succ[ns++]=b->term.b; break;
-                case IR_TERM_SWITCH:  succ[ns++]=b->term.a;
-                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target; break;
+                case IR_TERM_SWITCH:                     // never reached: ir_finalize_cfg refuses a switch
+                    succ[ns++]=b->term.a;
+                    for (IrSwitchCase *c=b->term.cases;c;c=c->next) if(ns<3) succ[ns++]=c->target;
+                    break;
                 default: break;
             }
             for (int k=0;k<ns;k++){ IrBlock *sb=succ[k]; if(!sb) continue;
@@ -884,8 +894,13 @@ static Lin *lin_analyze(IrFunc *f) {
     free(out); free(tmp);
     return L;
 }
-static void lin_free(Lin *L){ if(!L)return; for(int i=0;i<L->nb;i++) free(L->in[i]); free(L->in);
-    for(int i=0;i<L->nvar;i++) free(L->slot_leaf[i]); free(L->slot_leaf); free(L->slot_nleaf); free(L->slot_ty); if (L->hold_in) { for(int i=0;i<L->nb;i++) free(L->hold_in[i]); free(L->hold_in); }
+static void lin_free(Lin *L){
+    if(!L)return;
+    for(int i=0;i<L->nb;i++) free(L->in[i]);
+    free(L->in);
+    for(int i=0;i<L->nvar;i++) free(L->slot_leaf[i]);
+    free(L->slot_leaf); free(L->slot_nleaf); free(L->slot_ty);
+    if (L->hold_in) { for(int i=0;i<L->nb;i++) free(L->hold_in[i]); free(L->hold_in); }
     free(L->linsl); free(L->movesl); free(L->load_clean); free(L->def); free(L->finds); free(L); }
 
 #endif // LAIN_LINEARITY_H

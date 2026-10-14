@@ -479,10 +479,18 @@ void ir_finalize_cfg(IrFunc *f) {
             case IR_TERM_BR:      ir_add_pred(f, b->term.a, b); break;
             case IR_TERM_BR_COND: ir_add_pred(f, b->term.a, b); ir_add_pred(f, b->term.b, b); break;
             case IR_TERM_SWITCH:
-                ir_add_pred(f, b->term.a, b);
-                for (IrSwitchCase *c = b->term.cases; c; c = c->next) ir_add_pred(f, c->target, b);
+                // ★ THE CFG HAS NO SWITCH, AND THAT IS CHECKED HERE (I.207). Lowering never builds
+                // one, and the analyses rely on it without saying so: definite_init, linearity and
+                // borrow keep three successors (a default and two cases), so a third case's block
+                // would never be visited and its errors never reported; vra_succs has no switch arm
+                // at all. Every function passes here, so a lowering that starts emitting switches
+                // stops at this line, not in a silently weakened analysis.
+                fprintf(stderr, "internal error: a switch terminator in '%.*s' (bb%d): the analyses "
+                        "assume the CFG has none\n", (int)f->name->length, f->name->name, (int)b->id);
+                exit(70);
+            case IR_TERM_RET:
+            case IR_TERM_UNREACHABLE:
                 break;
-            default: break;
         }
     }
     // ★ A loop header is the target of a DFS BACK EDGE — an edge into a block that is still

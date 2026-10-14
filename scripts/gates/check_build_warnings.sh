@@ -45,7 +45,11 @@ check_unit() {
     # gcc folds a constant one at compile time, so a UBSan-built compiler never sees it (I.170's
     # audit missed both); only the warning does. -Wformat-truncation is not here: truncation is
     # defined behaviour, and its sites are judged one by one (I.172).
-    out=$(echo "$all" | grep -E "\[-W(return-type|uninitialized|maybe-uninitialized|implicit-function-declaration|int-conversion|incompatible-pointer-types|format=|format-extra-args|format-security|overflow|shift-count-overflow|shift-count-negative|shift-overflow=?[0-9]*|shift-negative-value|div-by-zero)\]")
+    # And the three that read a construct differently from how it is written (I.207): a switch
+    # that does not name every kind (ast_clone's clone_stmt never copied an `assert`, so generic
+    # instances shared it), a statement indented as if a condition guarded it, and one enum's
+    # value passed as another's (test_linearity built some other opcode than its equality).
+    out=$(echo "$all" | grep -E "\[-W(return-type|uninitialized|maybe-uninitialized|implicit-function-declaration|int-conversion|incompatible-pointer-types|format=|format-extra-args|format-security|overflow|shift-count-overflow|shift-count-negative|shift-overflow=?[0-9]*|shift-negative-value|div-by-zero|switch|misleading-indentation|enum-conversion)\]")
     if [ -n "$out" ]; then
         { echo "── $u"; echo "$out" | head -8; } > "$T/$n.out"
         echo "$out" | wc -l > "$T/$n.bad"

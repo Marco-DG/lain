@@ -800,6 +800,7 @@ void sema_build_scope(DeclList *decls, const char *module_path) {
       case DECL_IMPORT:
       case DECL_EVAL_IMPORT:
       case DECL_DESTRUCT:
+      case DECL_STATIC_ASSERT:   // names nothing: its condition is checked where it is evaluated
         // already inlined earlier or not top-level
         break;
         
@@ -2064,6 +2065,11 @@ void sema_resolve_expr(Expr *e) {
             // Resolve the inner argument, keep node as-is
             if (e->as.builtin_expr.arg)
                 sema_resolve_expr(e->as.builtin_expr.arg);
+            break;
+        case BUILTIN_SIZEOF:
+        case BUILTIN_ALIGNOF:
+            // no operand: the type asked about is resolved where it is typed (typecheck.h), as
+            // the instance's (I.210: a generic body's is substituted first, mono_subst_expr)
             break;
         case BUILTIN_LOAD:
         case BUILTIN_SPLAT:
