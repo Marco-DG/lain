@@ -708,6 +708,21 @@ int main(void) {
         CHECK(strstr(recs, "proved bb1.") && strstr(recs, "assert.0") && nrec[JREC_NOT_IMPLIED] == 0, "assert pos + 1 <= len:\n%s", recs);
     }
 
+    // a product of two loaded slots, stored 10 and 3, in i32: its narrowing owed (the corners
+    // 30, 30 lie in i32) and proved, and 100 / (p - 29) too
+    {   IrType *mi32 = ir_type_int(&A, 32, true);
+        IrFunc *mf = ir_func_new(&A, nm("slots"), mi32, IR_FUNC_PURE);
+        IrBlock *m0 = mf->entry;
+        IrValue *sa = ir_alloca(mf, m0, mi32), *sb = ir_alloca(mf, m0, mi32);
+        ir_store(mf, m0, sa, ir_const_int(mf, m0, 10, mi32)); ir_store(mf, m0, sb, ir_const_int(mf, m0, 3, mi32));
+        IrValue *mp = ir_binop(mf, m0, IR_MUL, ir_load(mf, m0, sa, mi32), ir_load(mf, m0, sb, mi32), mi32);
+        ir_set_ret(m0, ir_binop(mf, m0, IR_SDIV, ir_const_int(mf, m0, 100, mi32), ir_binop(mf, m0, IR_SUB, mp, ir_const_int(mf, m0, 29, mi32), mi32), mi32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, " divzero") && !strstr(recs, "outside") && nrec[JREC_NOT_IMPLIED] == 0, "10 * 3 from two slots:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

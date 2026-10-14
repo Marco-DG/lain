@@ -1138,8 +1138,8 @@ static void jg_param_refine(JG *g, IrValue *v, JRange *r) {
 }
 // A value's STATIC range: a constant's value; through a cast whose source's static range lies in
 // its result type (the value kept under any mode a cast has), the source's; a parameter's type
-// narrowed by its refinement (jg_param_refine); else its type's (a refinement included, as every
-// type fact). False where none is known.
+// narrowed by its refinement (jg_param_refine); a load of a store version, the stored value's; else
+// its type's (a refinement included, as every type fact). False where none is known.
 static bool jg_op_range(JG *g, const IrInstr *d, JRange *h, int depth);
 static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
     __int128 c;
@@ -1166,6 +1166,11 @@ static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
     JRange s;
     if (depth < 4 && d && d->op == IR_CAST && d->n_operands >= 1 && jg_is_int(d->operands[0]->type) &&
         jg_static_range(g, d->operands[0], &s, depth + 1) && s.lo >= r->lo && s.hi <= r->hi) *r = s;
+    // a LOAD of a cell's STORE version (the one kind with a stored value, jg_part's piece of it): the
+    // stored value's, where it lies in the loaded type (any landing keeps it), whichever execution
+    // of that store the load reads (P2.1)
+    if (depth < 4 && d && d->op == IR_LOAD && g->loadver && g->loadver[v->id] >= 0 && g->ver[g->loadver[v->id]].stored &&
+        jg_static_range(g, g->ver[g->loadver[v->id]].stored, &s, depth + 1) && s.lo >= r->lo && s.hi <= r->hi) *r = s;
     r->has_ne = false;
     return true;
 }
