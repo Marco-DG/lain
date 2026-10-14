@@ -37,6 +37,7 @@ static IrType *u32t;
 enum { S_HONEST, S_CORRUPT, S_GOAL_MODEL, S_HYP_MODEL, S_BUDGET };
 typedef struct { int mode; int propose; JClaim claim; JRank rank[3]; int32_t nrank; } Stub;
 enum { P_NONE, P_CLAIM, P_FAIL, P_RANK };
+static int nins_m(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
 static JInt jv(int64_t v) { JInt x; memset(&x, 0, sizeof x); uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v; x.neg = v < 0; while (u) { x.limb[x.n++] = (uint32_t)u; u >>= 32; } return x; }
 static JInt model_vals[64];
 static void corrupt(JSteps *b, bool *done) {          // the first combination anywhere: a sign byte 2
@@ -888,6 +889,41 @@ int main(void) {
         s.propose = P_NONE; s.nrank = 0;
         CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
         CHECK(strstr(recs, " divzero") && !strstr(recs, "not-implied"), "a[2] after init and a call:\n%s", recs);
+    }
+
+    // a recursion through a POINTER (c31): apply(fp, x) calls fp(x); spin(x) is `if x == 0 { 40 }
+    // else { apply(&spin, x - 1) }`. With measures spin 2x and apply 2x + 1, both calls fall: every
+    // rec.* proved (apply's call owes spin's measure at its op[1]); with apply's 2x, the call through
+    // the pointer does not fall: its rec.fall not implied
+    for (int c = 0; c < 2; c++) {
+        IrType *fnt = ir_type_new(&A, IRT_FUNC); fnt->elem = u32t;
+        IrType *fpt = ir_type_new(&A, IRT_PTR); fpt->elem = fnt;
+        IrFunc *ap = ir_func_new(&A, nm("apply"), u32t, IR_FUNC_PURE), *sp = ir_func_new(&A, nm("spin"), u32t, IR_FUNC_PURE);
+        IrValue *af = ir_add_param(ap, fpt, nm("f")), *ax = ir_add_param(ap, u32t, nm("x"));
+        IrInstr *ic = ir_instr(ap, IR_CALL, u32t, 2); ic->operands[0] = af; ic->operands[1] = ax; ir_emit(ap->entry, ic);
+        int aci = nins_m(ap->entry) - 1;
+        ir_set_ret(ap->entry, ic->result);
+        ir_finalize_cfg(ap);
+        IrValue *sx = ir_add_param(sp, u32t, nm("x"));
+        IrBlock *s0 = sp->entry, *s1 = ir_new_block(sp), *s2 = ir_new_block(sp);
+        ir_set_br_cond(s0, ir_icmp(sp, s0, IR_CMP_EQ, sx, ir_const_int(sp, s0, 0, u32t)), s1, s2);
+        ir_set_ret(s1, ir_const_int(sp, s1, 40, u32t));
+        IrValue *self = ir_func_ref(sp, s2, nm("spin"), fpt);
+        IrValue *xm = ir_binop(sp, s2, IR_SUB, sx, ir_const_int(sp, s2, 1, u32t), u32t);
+        IrInstr *dc = ir_instr(sp, IR_CALL, u32t, 2); dc->aux.callee = nm("apply"); dc->operands[0] = self; dc->operands[1] = xm; ir_emit(s2, dc);
+        ir_set_ret(s2, dc->result);
+        ir_finalize_cfg(sp);
+        ap->next = sp;
+        s.propose = P_RANK; s.nrank = 2;
+        memset(s.rank, 0, sizeof s.rank);
+        IrFunc *fs2[2] = { ap, sp }; IrValue *ks2[2] = { ax, sx };
+        for (int w = 0; w < 2; w++) { s.rank[w].blk = JRANK_ENTRY; s.rank[w].fn = fs2[w]; s.rank[w].ncomp = 1; s.rank[w].nt = 1; s.rank[w].key[0] = ks2[w]->id;
+                                      s.rank[w].coef[0][0] = 2; s.rank[w].c0[0] = w == 0 && c == 0 ? 1 : 0; }
+        snprintf(rf, sizeof rf, "%s bb%d.%d rec.fall", c ? "not-implied" : "proved", ap->entry->id, aci);
+        CHECK(run(ap, &s, true, sizeof region, err), "judges: %s", err);
+        if (!c) CHECK(strstr(recs, rf) && nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] + nrec[JREC_REFUSED] == 0, "apply 2x + 1, spin 2x: all proved:\n%s", recs);
+        else CHECK(strstr(recs, rf), "apply 2x: the call through the pointer does not fall:\n%s", recs);
+        s.propose = P_NONE; s.nrank = 0;
     }
 
     printf("── a function the generator refuses, a region too small ──\n");

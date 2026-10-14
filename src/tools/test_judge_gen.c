@@ -1499,8 +1499,19 @@ int main(void) {
         ir_finalize_cfg(z);
         gen_mod = z; gen_rk = NULL; gen_nrk = 0;
         t = gen_with(z, NULL, 0, JGEN_ALL, NULL);
-        CHECK(t && strstr(t, "outside a call through a pointer that may close a recursion"), "an indirect call on the cycle: outside:\n%s", t ? t : "");
+        CHECK(t && strstr(t, "outside no measure proposed for this recursion"), "an indirect call on the cycle, no measure: outside:\n%s", t ? t : "");
         free(t);
+        // with a measure n, the call through the pointer owes it as a direct call would (c31):
+        // its target z's measure at the argument, op[1] (op[0] is the pointer)
+        JRank zr; memset(&zr, 0, sizeof zr);
+        zr.blk = JRANK_ENTRY; zr.fn = z; zr.ncomp = 1; zr.nt = 1; zr.key[0] = zn->id; zr.coef[0][0] = 1;
+        gen_rk = &zr; gen_nrk = 1;
+        t = gen_with(z, NULL, 0, JGEN_ALL, NULL);
+        snprintf(key, sizeof key, "bb%d.%d rec.fall 0", z0->id, nins(z0) - 1);
+        const char *vzf = t ? vc_of(t, key) : "", *gz = strstr(vzf, "goal ");
+        CHECK(gz && !strncmp(gz, "goal 0 <= -1\n", 13) && !strstr(t, "outside"), "an indirect self-call with z(n) owes n - n <= -1:\n%s", t ? t : "");
+        free(t);
+        gen_rk = NULL; gen_nrk = 0;
         gen_mod = NULL;
     }
     printf("  a recursion's termination: rec.fall and rec.bound at each call on the cycle, outside where unmeasured\n");
@@ -1620,12 +1631,12 @@ int main(void) {
         rz.nle = 1; rz.le_blk[0] = fz->entry->id; rz.le_idx[0] = zci;
         gen_rk = &rz; gen_nrk = 1;
         why[0] = 0; t = gen_with(fz, NULL, 0, JGEN_ALL, why);
-        CHECK(!t && strstr(why, "not a direct call that may close its cycle"), "a call through a pointer listed: got \"%s\"", why);
+        CHECK(!t && strstr(why, "close a cycle"), "a self-call through a pointer listed is a cycle of one: got \"%s\"", why);
         free(t);
         gen_rk = r4; gen_nrk = 4;
         struct { int blk, idx, nle; const char *why; } bad[4] = {
-            { cb[3]->id, cix[3], 1, "not a direct call that may close its cycle" },             // b -> h
-            { cb[3]->id, 99, 1, "not a direct call that may close its cycle" },
+            { cb[3]->id, cix[3], 1, "not a call that may close its cycle" },                    // b -> h
+            { cb[3]->id, 99, 1, "not a call that may close its cycle" },
             { cb[4]->id, cix[4], JRANK_MAXL + 1, "listed calls out of range" },
             { cb[4]->id, cix[4], -1, "listed calls out of range" },
         };
@@ -3375,6 +3386,107 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a small local array's elements are cells, named by an address or not\n");
+    // 67. a call through a pointer on a recursion with TWO targets: h67(fp, x) calls fp(x); p67(x) and
+    // q67(x) each call h67(&self, x - 1), so the call graph gives h's call both p and q. Measures p
+    // 2x, q 2x, h 2x + 1. (0) h's call owes rec.fall per target (ordinals 0 and 1), the argument its
+    // op[1], and rec.bound once; (1) call_paths gives h two paths, callee p and q, the argument h's x;
+    // (2) h's call listed `rec.le`: rec.le per target, the cut accepted (p's and q's calls fall);
+    // (3) p's call listed too: h -> p -> h closes a cycle, refused; (4) q's instead: refused as well
+    {   IrType *fnt = ir_type_new(&A, IRT_FUNC); fnt->elem = u32t;
+        IrType *fpt = ir_type_new(&A, IRT_PTR); fpt->elem = fnt;
+        IrFunc *h = ir_func_new(&A, nm("h67"), u32t, IR_FUNC_PURE), *fp = ir_func_new(&A, nm("p67"), u32t, IR_FUNC_PURE),
+               *fq = ir_func_new(&A, nm("q67"), u32t, IR_FUNC_PURE);
+        IrValue *hf = ir_add_param(h, fpt, nm("fp")), *hx = ir_add_param(h, u32t, nm("x"));
+        IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+        ir_set_br_cond(h0, ir_icmp(h, h0, IR_CMP_EQ, hx, ir_const_int(h, h0, 0, u32t)), h1, h2);
+        ir_set_ret(h1, ir_const_int(h, h1, 0, u32t));
+        IrInstr *ic = ir_instr(h, IR_CALL, u32t, 2); ic->operands[0] = hf; ic->operands[1] = hx; ir_emit(h2, ic);
+        int hci = nins(h2) - 1;
+        ir_set_ret(h2, ic->result);
+        ir_finalize_cfg(h);
+        IrFunc *pq[2] = { fp, fq }; IrValue *px[2]; IrBlock *pb[2]; int pci[2];
+        for (int w = 0; w < 2; w++) {
+            IrFunc *u = pq[w];
+            px[w] = ir_add_param(u, u32t, nm("x"));
+            IrBlock *u0 = u->entry;
+            IrValue *self = ir_func_ref(u, u0, nm(w ? "q67" : "p67"), fpt);
+            IrValue *xm = ir_binop(u, u0, IR_SUB, px[w], ir_const_int(u, u0, 1, u32t), u32t);
+            IrInstr *dc = ir_instr(u, IR_CALL, u32t, 2); dc->aux.callee = nm("h67"); dc->operands[0] = self; dc->operands[1] = xm; ir_emit(u0, dc);
+            pci[w] = nins(u0) - 1; pb[w] = u0;
+            ir_set_ret(u0, dc->result);
+            ir_finalize_cfg(u);
+        }
+        h->next = fp; fp->next = fq; gen_mod = h;
+        JRank r3[3]; memset(r3, 0, sizeof r3);
+        IrFunc *fs[3] = { h, fp, fq }; IrValue *ks[3] = { hx, px[0], px[1] };
+        for (int w = 0; w < 3; w++) { r3[w].blk = JRANK_ENTRY; r3[w].fn = fs[w]; r3[w].ncomp = 1; r3[w].nt = 1; r3[w].key[0] = ks[w]->id;
+                                      r3[w].coef[0][0] = 2; r3[w].c0[0] = w == 0 ? 1 : 0; }
+        gen_rk = r3; gen_nrk = 3;
+        char *t = gen_with(h, NULL, 0, JGEN_ALL, NULL), key[48];
+        int nf = 0;
+        for (int q = 0; q < 2; q++) { snprintf(key, sizeof key, "bb%d.%d rec.fall %d\n", h2->id, hci, q); if (t && strstr(t, key)) nf++; }
+        snprintf(key, sizeof key, "bb%d.%d rec.bound", h2->id, hci);
+        CHECK(t && nf == 2 && count(t, key) == 1 && !strstr(t, "outside"), "case 0: h's call: rec.fall per target, rec.bound once:\n%s", t ? t : "");
+        snprintf(key, sizeof key, "bb%d.%d rec.fall 0", h2->id, hci);
+        const char *vf = t ? vc_of(t, key) : "", *g = strstr(vf, "goal ");
+        // 2x at h's x, op[1], less h's 2x + 1, falls by 1: x cancels (op[0], the pointer, would not)
+        CHECK(g && !strncmp(g, "goal 0 <= 0\n", 12), "case 0: the target's measure at op[1] (h's x):\n%s", vf);
+        free(t);
+        {   JMem jm = jmem_over(region, sizeof region); JPaths P; char err[200];
+            bool ok = jgen_call_paths(&jm, h, gen_mod, NULL, 0, &P, err, sizeof err);
+            bool cp = ok && P.n == 2 && P.p[0].callee != P.p[1].callee && (P.p[0].callee == fp || P.p[0].callee == fq) &&
+                      (P.p[1].callee == fp || P.p[1].callee == fq);
+            for (int q = 0; cp && q < 2; q++) cp = P.p[q].at == hci && P.p[q].npairs == 1 && P.p[q].nentry == 1 &&
+                                                   P.p[q].pairs[0].post == P.p[q].entry[0].pre;   // the argument is h's x
+            CHECK(cp, "case 1: h's two call paths, callee p and q, the argument h's x at entry");
+        }
+        r3[0].nle = 1; r3[0].le_blk[0] = h2->id; r3[0].le_idx[0] = hci;
+        t = gen_with(h, NULL, 0, JGEN_ALL, NULL);
+        nf = 0;
+        for (int q = 0; q < 2; q++) { snprintf(key, sizeof key, "bb%d.%d rec.le %d\n", h2->id, hci, q); if (t && strstr(t, key)) nf++; }
+        CHECK(t && nf == 2 && !strstr(t, "rec.fall"), "case 2: h's call listed: rec.le per target, the cut accepted:\n%s", t ? t : "");
+        free(t);
+        r3[1].nle = 1; r3[1].le_blk[0] = pb[0]->id; r3[1].le_idx[0] = pci[0];
+        char why[200] = ""; t = gen_with(h, NULL, 0, JGEN_ALL, why);
+        CHECK(!t && strstr(why, "close a cycle"), "case 3: h -> p -> h listed, refused: got \"%s\"", why);
+        free(t);
+        r3[1].nle = 0; r3[2].nle = 1; r3[2].le_blk[0] = pb[1]->id; r3[2].le_idx[0] = pci[1];
+        why[0] = 0; t = gen_with(h, NULL, 0, JGEN_ALL, why);
+        CHECK(!t && strstr(why, "close a cycle"), "case 4: h -> q -> h listed, refused: got \"%s\"", why);
+        free(t);
+        // (5) p and q's measures written, 2x: at h's call rec.def per target, side 1 at the
+        // arguments, its term h's x (op[1]), not the pointer
+        r3[0].nle = 0; r3[2].nle = 0; gen_nrk = 1;
+        for (int w = 0; w < 2; w++) {
+            IrFunc *u = pq[w];
+            u->has_decreasing = true; u->measure_blk = ir_new_ghost_block(u);
+            u->measure_val = ir_binop(u, u->measure_blk, IR_MUL, ir_const_int(u, u->measure_blk, 2, u32t), px[w], u32t);
+        }
+        t = gen_with(h, NULL, 0, JGEN_ALL, why);
+        char xk[24], fk[24]; snprintf(xk, sizeof xk, "%%v%d", hx->id); snprintf(fk, sizeof fk, "%%v%d", hf->id);
+        int nd = 0;
+        for (int q = 0; q < 2; q++) {
+            snprintf(key, sizeof key, "bb%d.%d rec.def %d", h2->id, hci, q * 100000 + 1001);
+            const char *vd = t ? vc_of(t, key) : "", *gd = strstr(vd, "goal ");
+            if (gd && strstr(gd, xk) && !strstr(gd, fk)) nd++;
+        }
+        CHECK(t && nd == 2, "case 5: rec.def per target at h's x:\n%s", t ? t : why);
+        free(t);
+        // (6) h's measure written too, 2x + 1: its rec.def at h's entry (side 0) owed once, not per target
+        h->has_decreasing = true; h->measure_blk = ir_new_ghost_block(h);
+        h->measure_val = ir_binop(h, h->measure_blk, IR_ADD, ir_binop(h, h->measure_blk, IR_MUL, ir_const_int(h, h->measure_blk, 2, u32t), hx, u32t),
+                                  ir_const_int(h, h->measure_blk, 1, u32t), u32t);
+        gen_nrk = 0;
+        t = gen_with(h, NULL, 0, JGEN_ALL, why);
+        snprintf(key, sizeof key, "bb%d.%d rec.def 0\n", h2->id, hci);
+        char k1[48]; snprintf(k1, sizeof k1, "bb%d.%d rec.def 10000", h2->id, hci);
+        CHECK(t && strstr(t, key) && !strstr(t, k1) && !strstr(t, "outside"), "case 6: h's rec.def at its entry once:\n%s", t ? t : why);
+        free(t);
+        h->has_decreasing = false; h->measure_blk = NULL; h->measure_val = NULL;
+        for (int w = 0; w < 2; w++) { pq[w]->has_decreasing = false; pq[w]->measure_blk = NULL; pq[w]->measure_val = NULL; }
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a call through a pointer on a recursion: owed per target, a path per target, cut per target\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

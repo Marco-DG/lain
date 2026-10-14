@@ -3515,11 +3515,12 @@ static bool jgk_rec(JB *B, IrInstr *at, void *arg, JCons *goal) {
     if (a->what != 1)                                           // the callee's measure at the arguments
         for (int32_t i = 0; i < a->rt->nt; i++) {
             if (a->rt->coef[0][i] == 0) continue;
-            int pk = jg_param_at(a->t, a->rt->key[i]);
-            // a direct call's arguments match its callee's parameters (the front end refuses a call
-            // of another arity), so this refusal is unreachable: kept, fail closed
-            if (pk < 0 || pk >= at->n_operands) return false;
-            IrValue *av = at->operands[pk];
+            int pk = jg_param_at(a->t, a->rt->key[i]), base = at->aux.callee ? 0 : 1;   // op[0]: the pointer
+            // a call's arguments match its callee's parameters (the front end refuses a call of
+            // another arity; a pointer's targets have its arity, callgraph.h), so this refusal is
+            // unreachable: kept, fail closed
+            if (pk < 0 || base + pk >= at->n_operands) return false;
+            IrValue *av = at->operands[base + pk];
             t[n].var = a->rt->tk[i] == JTERM_LEN ? jb_len(B, av) : jb_val(B, av); t[n].c = a->rt->coef[0][i]; n++;
         }
     for (int32_t i = 0; i < a->r->nt; i++) {                    // less the caller's at its entry
@@ -3530,26 +3531,30 @@ static bool jgk_rec(JB *B, IrInstr *at, void *arg, JCons *goal) {
     }
     return jb_cons(B, t, n, J_LE, rhs, goal);
 }
-// The function a call listed in u's measure reaches (u is function ku of the call graph): the
-// instruction at (blk, idx) of u, a direct call into u's component. -1 for anything else.
-static int jg_rec_listed(const IrCallGraph *cg, int ku, const IrFunc *u, int32_t blk, int32_t idx) {
+// The functions a call listed in u's measure reaches (u is function ku of the call graph): the
+// instruction at (blk, idx) of u, a call into u's component, direct or through a pointer (every
+// target there, at most cap). The count, or -1 for anything else.
+enum { JREC_MAXT = 16 };
+static int jg_rec_listed(const IrCallGraph *cg, int ku, const IrFunc *u, int32_t blk, int32_t idx, int *out, int cap) {
     for (IrBlock *b = u->blocks; b; b = b->next) {
         if (b->id != blk) continue;
         int32_t k = 0;
         for (IrInstr *i = b->instrs; i; i = i->next, k++) {
             if (k != idx) continue;
-            int tg[2];
-            return i->op == IR_CALL && i->aux.callee && ir_cg_call_targets(cg, ku, i, true, tg, 2) == 1 ? tg[0] : -1;
+            if (i->op != IR_CALL) return -1;
+            int nt = ir_cg_call_targets(cg, ku, i, true, out, cap);
+            return nt >= 1 && nt <= cap ? nt : -1;
         }
         return -1;
     }
     return -1;
 }
 // Spec 12's cut, over function kf's whole component: the calls its measures list (`rec.le`) close
-// no cycle, so every cycle falls at one call at least. Each listed call must be a direct call into
-// the component; the graph they make is then reduced by its sources (Kahn), and a member left is on
-// a cycle of listed calls: the claim is refused. Every member checks the whole component, so a bad
-// list refuses them all. A self-call listed is a cycle of one.
+// no cycle, so every cycle falls at one call at least. Each listed call must be a call into the
+// component, direct or through a pointer (an edge to each of its targets there); the graph they
+// make is then reduced by its sources (Kahn), and a member left is on a cycle of listed calls: the
+// claim is refused. Every member checks the whole component, so a bad list refuses them all. A
+// self-call listed is a cycle of one.
 static bool jg_rec_cut(JG *g, const JRank *rk, int32_t nrk, const IrCallGraph *cg, int kf) {
     int32_t nm = 0, ne = 0;
     int32_t *loc = JG_NEW(g, int32_t, cg->n);                 // call-graph index -> member, or -1
@@ -3562,7 +3567,7 @@ static bool jg_rec_cut(JG *g, const JRank *rk, int32_t nrk, const IrCallGraph *c
         if (rk[k].blk != JRANK_ENTRY || rk[k].nle == 0) continue;
         if (rk[k].nle < 0 || rk[k].nle > JRANK_MAXL) return jg_fail(g, "a recursion's measure with its listed calls out of range");
         int ku = ir_cg_index(cg, rk[k].fn);
-        if (ku >= 0 && loc[ku] >= 0) { off[loc[ku] + 1] += rk[k].nle; ne += rk[k].nle; }
+        if (ku >= 0 && loc[ku] >= 0) { off[loc[ku] + 1] += rk[k].nle * JREC_MAXT; ne += rk[k].nle * JREC_MAXT; }
     }
     if (ne == 0) return true;
     int32_t *to = JG_NEW(g, int32_t, ne), *at = JG_NEW(g, int32_t, nm);
@@ -3573,16 +3578,16 @@ static bool jg_rec_cut(JG *g, const JRank *rk, int32_t nrk, const IrCallGraph *c
         int ku = ir_cg_index(cg, rk[k].fn);
         if (ku < 0 || loc[ku] < 0) continue;
         for (int32_t m = 0; m < rk[k].nle; m++) {
-            int t = jg_rec_listed(cg, ku, rk[k].fn, rk[k].le_blk[m], rk[k].le_idx[m]);
-            if (t < 0) return jg_fail(g, "a recursion's measure lists what is not a direct call that may close its cycle");
-            to[at[loc[ku]]++] = loc[t]; indeg[loc[t]]++;
+            int tg[JREC_MAXT], nt = jg_rec_listed(cg, ku, rk[k].fn, rk[k].le_blk[m], rk[k].le_idx[m], tg, JREC_MAXT);
+            if (nt < 0) return jg_fail(g, "a recursion's measure lists what is not a call that may close its cycle");
+            for (int q2 = 0; q2 < nt; q2++) { to[at[loc[ku]]++] = loc[tg[q2]]; indeg[loc[tg[q2]]]++; }
         }
     }
     int32_t head = 0, tail = 0;
     for (int32_t c = 0; c < nm; c++) if (indeg[c] == 0) q[tail++] = c;
     while (head < tail) {
         int32_t c = q[head++];
-        for (int32_t e = off[c]; e < off[c + 1]; e++) if (--indeg[to[e]] == 0) q[tail++] = to[e];
+        for (int32_t e = off[c]; e < at[c]; e++) if (--indeg[to[e]] == 0) q[tail++] = to[e];   // the edges written
     }
     if (tail < nm) return jg_fail(g, "the calls a recursion's measures list as not falling close a cycle (spec 12: every cycle falls at one call)");
     return true;
@@ -3712,9 +3717,9 @@ static bool jgk_recdef(JB *B, IrInstr *at, void *arg, JCons *goal) {
         IrValue *v = NULL;
         if (a->side == 0) v = jg_param_value(a->h, a->n->key[i]);
         else {
-            int pk = jg_param_at(a->h, a->n->key[i]);
-            if (pk < 0 || pk >= at->n_operands) return false;
-            v = at->operands[pk];
+            int pk = jg_param_at(a->h, a->n->key[i]), base = at->aux.callee ? 0 : 1;
+            if (pk < 0 || base + pk >= at->n_operands) return false;
+            v = at->operands[base + pk];
         }
         if (!v) return false;
         t[n].var = a->n->tk[i] == JTERM_LEN ? jb_len(B, v) : jb_val(B, v); t[n].c = a->hi ? a->n->coef[i] : -a->n->coef[i]; n++;
@@ -3731,30 +3736,37 @@ static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, co
         int32_t k = 0;
         for (IrInstr *i = b->instrs; i; i = i->next, k++) {
             if (i->op != IR_CALL) continue;
-            int tg[1];
-            int nt = ir_cg_call_targets(cg, kf, i, true, tg, 1);
+            // every function the call may reach in f's component: one, or through a pointer each
+            // address-taken function of its arity there (callgraph.h), at most JREC_MAXT
+            int tg[JREC_MAXT];
+            int nt = ir_cg_call_targets(cg, kf, i, true, tg, JREC_MAXT);
             if (nt == 0) continue;
-            if (!i->aux.callee) {
-                if (!jg_outside(g, L, i, b->id, k, "rec.fall", "a call through a pointer that may close a recursion")) return false;
+            if (nt > JREC_MAXT) {
+                if (!jg_outside(g, L, i, b->id, k, "rec.fall", "a call through a pointer to too many functions of a recursion")) return false;
                 continue;
             }
-            const IrFunc *t = cg->idx[tg[0]];
-            const JRank *rt = r; JGhost *gt = gf; const char *whyt = whyf;
-            if (t != g->f && !jg_rec_measure(g, rk, nrk, t, &rt, &gt, &whyt)) return false;
-            if (!r || !rt) { if (!jg_outside(g, L, i, b->id, k, "rec.fall", r ? whyt : whyf)) return false; continue; }
-            bool le = jg_rec_is_listed(r, b->id, k);
-            for (int w = 0; w < 2; w++) {
-                JRecArg a = { r, rt, g->f, t, w == 1 ? 1 : le ? 2 : 0 };
-                if (!jg_goal(g, L, i, b->id, k, -1, w == 1 ? "rec.bound" : le ? "rec.le" : "rec.fall", 0, jgk_rec, &a)) return false;
-            }
-            // a written measure's arithmetic, well-defined at the caller's entry and at the arguments
-            for (int side = 0; side < 2; side++) {
-                JGhost *G = side ? gt : gf;
-                for (int q = 0; G && q < G->nn; q++)
-                    for (int w = 0; w < 2; w++) {
-                        JRecDef a = { &G->node[q], side ? t : g->f, side, w == 1 };
-                        if (!jg_goal(g, L, i, b->id, k, -1, "rec.def", side * 1000 + q * 2 + w, jgk_recdef, &a)) return false;
-                    }
+            bool le = r && jg_rec_is_listed(r, b->id, k);
+            for (int tq = 0; tq < nt; tq++) {                     // per target: its measure at the arguments
+                const IrFunc *t = cg->idx[tg[tq]];
+                const JRank *rt = r; JGhost *gt = gf; const char *whyt = whyf;
+                if (t != g->f && !jg_rec_measure(g, rk, nrk, t, &rt, &gt, &whyt)) return false;
+                if (!r || !rt) { if (!jg_outside(g, L, i, b->id, k, "rec.fall", r ? whyt : whyf)) return false; continue; }
+                for (int w = 0; w < 2; w++) {                     // rec.bound is the caller's alone: once
+                    if (w == 1 && tq > 0) continue;
+                    JRecArg a = { r, rt, g->f, t, w == 1 ? 1 : le ? 2 : 0 };
+                    if (!jg_goal(g, L, i, b->id, k, -1, w == 1 ? "rec.bound" : le ? "rec.le" : "rec.fall", w == 1 ? 0 : tq, jgk_rec, &a)) return false;
+                }
+                // a written measure's arithmetic, well-defined at the caller's entry (once) and at
+                // the arguments (per target)
+                for (int side = 0; side < 2; side++) {
+                    if (side == 0 && tq > 0) continue;
+                    JGhost *G = side ? gt : gf;
+                    for (int q = 0; G && q < G->nn; q++)
+                        for (int w = 0; w < 2; w++) {
+                            JRecDef a = { &G->node[q], side ? t : g->f, side, w == 1 };
+                            if (!jg_goal(g, L, i, b->id, k, -1, "rec.def", tq * 100000 + side * 1000 + q * 2 + w, jgk_recdef, &a)) return false;
+                        }
+                }
             }
         }
     }
@@ -3963,8 +3975,8 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
 // close a cycle through it, each as the facts at the call (the goal 0 <= 0, meaning nothing) with,
 // per integer or slice parameter of the callee, its variable at f's entry (f being the callee;
 // else -1) and the argument's at the call, and per one of f's, its variable at f's entry (`entry`).
-// `from` and `at` are the call's block and instruction index, `callee` the function it reaches. A
-// call through a pointer is left out (the generator owes it `outside`).
+// `from` and `at` are the call's block and instruction index, `callee` the function it reaches; a
+// call through a pointer gives one path per function it may reach in f's component.
 static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, JPaths *out,
                             char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
@@ -3978,7 +3990,7 @@ static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, i
     int kf = ir_cg_index(&cg, f);
     if (kf < 0 || !ir_cg_on_cycle(&cg, kf)) { ir_cg_free(&cg); out->refused = "not on a recursion cycle"; return true; }
     int32_t cap = 0;
-    for (IrBlock *b = f->blocks; b; b = b->next) for (IrInstr *i = b->instrs; i; i = i->next) if (i->op == IR_CALL) cap++;
+    for (IrBlock *b = f->blocks; b; b = b->next) for (IrInstr *i = b->instrs; i; i = i->next) if (i->op == IR_CALL) cap += JREC_MAXT;
     JPath *P = JG_NEW(&g, JPath, cap ? cap : 1);
     if (!P) { ir_cg_free(&cg); return jg_fail(&g, "out of memory"); }
     int32_t n = 0;
@@ -3986,43 +3998,46 @@ static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, i
         IrBlock *b = g.blk[g.rpo[ri]];
         int32_t k = 0;
         for (IrInstr *i = b->instrs; i; i = i->next, k++) {
-            int tg[1];
-            if (i->op != IR_CALL || !i->aux.callee || ir_cg_call_targets(&cg, kf, i, true, tg, 1) == 0) continue;
-            const IrFunc *t = cg.idx[tg[0]];
-            int32_t np = 0, nf = 0;
-            for (IrParam *p = t->params; p; p = p->next) np++;
-            for (IrParam *p = f->params; p; p = p->next) nf++;
-            JPathPair *pp = JG_NEW(&g, JPathPair, np ? np : 1), *pe = JG_NEW(&g, JPathPair, nf ? nf : 1);
-            JB B = jb_begin(&g, b->id, k, -1);
-            if (!pp || !pe || B.fail) { ir_cg_free(&cg); return jg_fail(&g, "out of memory"); }
-            int32_t q = 0, pos = 0;
-            for (IrParam *p = t->params; p; p = p->next, pos++) {
-                if (!p->value || pos >= i->n_operands) continue;
-                uint8_t tk = jg_is_int(p->value->type) ? JTERM_VALUE : p->value->type && p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
-                if (tk > JTERM_LEN) continue;
-                IrValue *av = i->operands[pos];
-                pp[q].key = p->value->id; pp[q].tk = tk;
-                pp[q].post = tk == JTERM_LEN ? jb_len(&B, av) : jb_val(&B, av);
-                pp[q].pre = t == f ? (tk == JTERM_LEN ? jb_len(&B, p->value) : jb_val(&B, p->value)) : -1;
-                q++;
+            int tg[JREC_MAXT], nt = i->op == IR_CALL ? ir_cg_call_targets(&cg, kf, i, true, tg, JREC_MAXT) : 0;
+            int base = i->op == IR_CALL && !i->aux.callee ? 1 : 0;   // a pointer's call: op[0] the pointer
+            if (nt > JREC_MAXT) nt = 0;                         // owed `outside`: no path
+            for (int tq = 0; tq < nt; tq++) {
+                const IrFunc *t = cg.idx[tg[tq]];
+                int32_t np = 0, nf = 0;
+                for (IrParam *p = t->params; p; p = p->next) np++;
+                for (IrParam *p = f->params; p; p = p->next) nf++;
+                JPathPair *pp = JG_NEW(&g, JPathPair, np ? np : 1), *pe = JG_NEW(&g, JPathPair, nf ? nf : 1);
+                JB B = jb_begin(&g, b->id, k, -1);
+                if (!pp || !pe || B.fail) { ir_cg_free(&cg); return jg_fail(&g, "out of memory"); }
+                int32_t q = 0, pos = 0;
+                for (IrParam *p = t->params; p; p = p->next, pos++) {
+                    if (!p->value || base + pos >= i->n_operands) continue;
+                    uint8_t tk = jg_is_int(p->value->type) ? JTERM_VALUE : p->value->type && p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
+                    if (tk > JTERM_LEN) continue;
+                    IrValue *av = i->operands[base + pos];
+                    pp[q].key = p->value->id; pp[q].tk = tk;
+                    pp[q].post = tk == JTERM_LEN ? jb_len(&B, av) : jb_val(&B, av);
+                    pp[q].pre = t == f ? (tk == JTERM_LEN ? jb_len(&B, p->value) : jb_val(&B, p->value)) : -1;
+                    q++;
+                }
+                int32_t qe = 0;                                     // the caller's own, at its entry
+                for (IrParam *p = f->params; p; p = p->next) {
+                    if (!p->value) continue;
+                    uint8_t tk = jg_is_int(p->value->type) ? JTERM_VALUE : p->value->type && p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
+                    if (tk > JTERM_LEN) continue;
+                    pe[qe].key = p->value->id; pe[qe].tk = tk; pe[qe].post = -1;
+                    pe[qe].pre = tk == JTERM_LEN ? jb_len(&B, p->value) : jb_val(&B, p->value);
+                    qe++;
+                }
+                JLT none[1]; JCons goal; JObl o;
+                JVc *vc = JG_NEW(&g, JVc, 1);
+                if (B.fail || !vc || !jb_cons(&B, none, 0, J_LE, 0, &goal) || !jb_finish(&B, i, "call", 0, &goal, &o)) {
+                    ir_cg_free(&cg); return jg_fail(&g, "out of memory building a call's path");
+                }
+                *vc = o.vc;
+                P[n].vc = vc; P[n].back = true; P[n].from = b->id; P[n].pairs = pp; P[n].npairs = q;
+                P[n].at = k; P[n].callee = t; P[n].entry = pe; P[n].nentry = qe; n++;
             }
-            int32_t qe = 0;                                     // the caller's own, at its entry
-            for (IrParam *p = f->params; p; p = p->next) {
-                if (!p->value) continue;
-                uint8_t tk = jg_is_int(p->value->type) ? JTERM_VALUE : p->value->type && p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
-                if (tk > JTERM_LEN) continue;
-                pe[qe].key = p->value->id; pe[qe].tk = tk; pe[qe].post = -1;
-                pe[qe].pre = tk == JTERM_LEN ? jb_len(&B, p->value) : jb_val(&B, p->value);
-                qe++;
-            }
-            JLT none[1]; JCons goal; JObl o;
-            JVc *vc = JG_NEW(&g, JVc, 1);
-            if (B.fail || !vc || !jb_cons(&B, none, 0, J_LE, 0, &goal) || !jb_finish(&B, i, "call", 0, &goal, &o)) {
-                ir_cg_free(&cg); return jg_fail(&g, "out of memory building a call's path");
-            }
-            *vc = o.vc;
-            P[n].vc = vc; P[n].back = true; P[n].from = b->id; P[n].pairs = pp; P[n].npairs = q;
-            P[n].at = k; P[n].callee = t; P[n].entry = pe; P[n].nentry = qe; n++;
         }
     }
     ir_cg_free(&cg);
