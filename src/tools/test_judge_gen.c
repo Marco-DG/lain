@@ -2931,6 +2931,113 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0;
     }
     printf("  a written measure's quotient fixed at its header is one term\n");
+    // 60. a float converted to an integer (P3.3): the narrowing's goal is on trunc(x), a fresh
+    // variable with only F1's or F2's bounds. F1: (0) -32768.5 as i16 is -32768; (1) 16777219.0 typed
+    // f32 rounds to 16777220 (the constant's IR type, not its spelling); (2) a slot stored 3.75 once
+    // is 3; (3) one stored twice: nothing. F2, TRUE edges about x itself: (4) x >= -32768.0 then
+    // x < 32768.0: [-32768, 32767]; (5) x > -3.0 then x <= 2.5: [-2, 2]; (6) the false edge of x < 0.0
+    // (a NaN passes): nothing; (7) 4.0 > x: at most 3; (8) x != 5.0: nothing; (9) a guard on y, x
+    // converted: nothing; (10) x == 2.5 as an ASSUME: [2, 2]; (11) the conversion's result, named
+    // by a later goal, has the same bounds; (12) x > 0.0 then x < 0.5: [0, 0] (an integral c >= 0
+    // excluded is no tighter); (13) x > -1.0 then x < 0.0: [0, 0]; (14) a slot stored 3.75 in one arm
+    // only, loaded after the join: nothing; (15) ASSUME (x >= 0.0 and x < 4.0): [0, 3]
+    for (int c = 0; c < 16; c++) {
+        IrType *f64 = ir_type_new(&A, IRT_FLOAT), *f32 = ir_type_new(&A, IRT_FLOAT);
+        f64->float_bits = 64; f32->float_bits = 32;
+        IrType *T = c == 0 ? ir_type_int(&A, 16, true) : c == 6 ? u8t : i32t;
+        IrFunc *f = ir_func_new(&A, nm("f60"), i32t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, f64, nm("x")), *y = ir_add_param(f, f64, nm("y"));
+        IrBlock *b0 = f->entry, *bl = b0, *bz = NULL;
+        IrValue *src = x;
+        #define GUARD(cmp, a, bb) do { IrBlock *nb_ = ir_new_block(f); if (!bz) { bz = ir_new_block(f); ir_set_ret(bz, ir_const_int(f, bz, 0, i32t)); } \
+            ir_set_br_cond(bl, ir_icmp(f, bl, cmp, a, bb), nb_, bz); bl = nb_; } while (0)
+        if (c == 0) { IrValue *k = ir_const_float(f, b0, 32768.5, f64); IrInstr *ng = ir_instr(f, IR_NEG, f64, 1); ng->operands[0] = k; ir_emit(b0, ng); src = ng->result; }
+        if (c == 1) src = ir_const_float(f, b0, 16777219.0, f32);
+        if (c == 2 || c == 3) {
+            IrValue *sl = ir_alloca(f, b0, f64);
+            ir_store(f, b0, sl, ir_const_float(f, b0, 3.75, f64));
+            if (c == 3) ir_store(f, b0, sl, ir_const_float(f, b0, 1.0e10, f64));
+            src = ir_load(f, b0, sl, f64);
+        }
+        if (c == 4) { GUARD(IR_CMP_SGE, x, ir_const_float(f, bl, -32768.0, f64)); GUARD(IR_CMP_SLT, x, ir_const_float(f, bl, 32768.0, f64)); }
+        if (c == 5) { GUARD(IR_CMP_SGT, x, ir_const_float(f, bl, -3.0, f64)); GUARD(IR_CMP_SLE, x, ir_const_float(f, bl, 2.5, f64)); }
+        if (c == 6) {                                          // if x < 0.0 { return 0 }: the false edge
+            IrBlock *nb = ir_new_block(f); bz = ir_new_block(f); ir_set_ret(bz, ir_const_int(f, bz, 0, i32t));
+            ir_set_br_cond(bl, ir_icmp(f, bl, IR_CMP_SLT, x, ir_const_float(f, bl, 0.0, f64)), bz, nb); bl = nb;
+        }
+        if (c == 7) GUARD(IR_CMP_SGT, ir_const_float(f, bl, 4.0, f64), x);
+        if (c == 8) GUARD(IR_CMP_NE, x, ir_const_float(f, bl, 5.0, f64));
+        if (c == 9) { GUARD(IR_CMP_SGE, y, ir_const_float(f, bl, 0.0, f64)); GUARD(IR_CMP_SLT, y, ir_const_float(f, bl, 4.0, f64)); }
+        if (c == 10 || c == 11) ir_assume(f, bl, ir_icmp(f, bl, IR_CMP_EQ, x, ir_const_float(f, bl, 2.5, f64)));
+        if (c == 12) { GUARD(IR_CMP_SGT, x, ir_const_float(f, bl, 0.0, f64)); GUARD(IR_CMP_SLT, x, ir_const_float(f, bl, 0.5, f64)); }
+        if (c == 13) { GUARD(IR_CMP_SGT, x, ir_const_float(f, bl, -1.0, f64)); GUARD(IR_CMP_SLT, x, ir_const_float(f, bl, 0.0, f64)); }
+        if (c == 14) {
+            IrValue *sl = ir_alloca(f, b0, f64);
+            IrBlock *ba = ir_new_block(f), *bj = ir_new_block(f);
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SGT, y, ir_const_float(f, b0, 0.0, f64)), ba, bj);
+            ir_store(f, ba, sl, ir_const_float(f, ba, 3.75, f64)); ir_set_br(ba, bj);
+            bl = bj; src = ir_load(f, bl, sl, f64);
+        }
+        if (c == 15) ir_assume(f, bl, ir_binop(f, bl, IR_AND, ir_icmp(f, bl, IR_CMP_SGE, x, ir_const_float(f, bl, 0.0, f64)),
+                                                ir_icmp(f, bl, IR_CMP_SLT, x, ir_const_float(f, bl, 4.0, f64)), boolt));
+        #undef GUARD
+        IrInstr *cv = ir_instr(f, IR_CAST, T, 1); cv->operands[0] = src; ir_emit(bl, cv);
+        int at = nins(bl) - 1;
+        IrValue *r = cv->result;
+        if (c == 11) r = ir_binop(f, bl, IR_SDIV, ir_const_int(f, bl, 100, i32t), r, i32t);
+        ir_set_ret(bl, T == i32t ? r : ir_const_int(f, bl, 0, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48], lo[80], hi[80];
+        if (c == 11) snprintf(key, sizeof key, " bb%d.%d divzero 0", bl->id, nins(bl) - 1);
+        else snprintf(key, sizeof key, " bb%d.%d narrow.lo 0", bl->id, at);
+        const char *vz = t ? vc_of(t, key) : "";
+        long long L = c == 0 ? -32768 : c == 1 ? 16777220 : c == 2 ? 3 : c == 4 ? -32768 : c == 5 ? -2 : c >= 12 ? 0 : 2;
+        long long H = c == 0 ? -32768 : c == 1 ? 16777220 : c == 2 ? 3 : c == 4 ? 32767 : c == 5 ? 2 : c == 7 ? 3 : c == 15 ? 3 : c >= 12 ? 0 : 2;
+        if (c == 11) { snprintf(lo, sizeof lo, "def %%v%d f2i : -1*%%v%d <= %lld", cv->result->id, cv->result->id, -L);
+                       snprintf(hi, sizeof hi, "def %%v%d f2i : 1*%%v%d <= %lld", cv->result->id, cv->result->id, H); }
+        else { snprintf(lo, sizeof lo, ": -1*trunc.%%v%d <= %lld", cv->result->id, -L);
+               snprintf(hi, sizeof hi, ": 1*trunc.%%v%d <= %lld", cv->result->id, H); }
+        bool hasL = c <= 2 || c == 4 || c == 5 || (c >= 10 && c != 14), hasH = hasL || c == 7;
+        CHECK(*vz && (c == 11 || strstr(vz, "goal -1*trunc.%v")) && !!strstr(vz, lo) == hasL && !!strstr(vz, hi) == hasH,
+              "case %d: %s%s, %s%s:\n%s", c, hasL ? "" : "no ", lo, hasH ? "" : "no ", hi, vz);
+        if (!hasL && !hasH) CHECK(!strstr(vz, "f2i"), "case %d: no bound at all:\n%s", c, vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    // F2's bound rule against the interpreter's conversion (interp.h's ii_cast, ii_cmp_scalar), as
+    // P3.3 asks: for each constant c of a set of boundaries and halves, read at f32 and f64, each
+    // predicate, and every f32 x within 64 steps of c, where `x p c` holds, trunc(x) is within the
+    // bounds; and jg_ftrunc's integral part and integrality are C's for each of those values
+    {   static const double cs[] = { 0.0, -0.0, 0.5, -0.5, 1.0, -1.0, 2.5, -2.5, 3.0, -3.0, 127.0, 127.5, -128.0, -128.5,
+                                     255.0, 256.0, 32767.0, 32768.0, -32768.0, -32769.0, 2147483647.0, 2147483648.0,
+                                     -2147483648.0, 4294967296.0, 16777216.0, 16777217.0, 9223372036854775808.0,
+                                     -9223372036854775808.0, 1.0e-30, -1.0e-30 };
+        static const IrCmp ps[] = { IR_CMP_EQ, IR_CMP_SGE, IR_CMP_SGT, IR_CMP_SLE, IR_CMP_SLT, IR_CMP_UGE, IR_CMP_ULT };
+        long bad = 0, tried = 0;
+        for (size_t ci = 0; ci < sizeof cs / sizeof cs[0]; ci++)
+            for (int prec = 0; prec < 2; prec++) {
+                double c = prec ? (double)(float)cs[ci] : cs[ci];
+                float cf = (float)c; uint32_t cb; memcpy(&cb, &cf, sizeof cb);
+                for (size_t pi = 0; pi < sizeof ps / sizeof ps[0]; pi++) {
+                    JRange r; bool hl = false, hh = false; r.lo = r.hi = 0;
+                    jg_f2_bound(ps[pi], c, &r, &hl, &hh);
+                    for (int d = -64; d <= 64; d++) {
+                        uint32_t xb = cb + (uint32_t)d; float xf; memcpy(&xf, &xb, sizeof xf);
+                        double x = xf;
+                        if (x != x || x > 1e30 || x < -1e30) continue;
+                        bool holds = ps[pi] == IR_CMP_EQ ? x == c : ps[pi] == IR_CMP_SGE || ps[pi] == IR_CMP_UGE ? x >= c
+                                   : ps[pi] == IR_CMP_SGT ? x > c : ps[pi] == IR_CMP_SLE ? x <= c : x < c;
+                        __int128 t = (__int128)x, tt; bool in;
+                        tried++;
+                        if (!jg_ftrunc(x, &tt, &in) || tt != t || in != (x == (double)t)) bad++;
+                        if (holds && ((hl && t < r.lo) || (hh && t > r.hi))) bad++;
+                    }
+                }
+            }
+        CHECK(bad == 0 && tried > 20000, "F2's bounds against the conversion: %ld wrong of %ld", bad, tried);
+    }
+    printf("  a float conversion: F1's constants and F2's true guards bound trunc(x)\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

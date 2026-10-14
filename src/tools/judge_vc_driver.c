@@ -198,6 +198,12 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
     if (k == 2 || k == 4) { if (c->k != IV_SLICE) return false; *out = c->len; return true; }
     if (k == 3) {                                      // a fresh variable: its recipe
         const JRecipe *r = o->vrec ? o->vrec[x] : NULL;
+        if (r && r->fval >= 0) {                       // the integral part of a float (a conversion's)
+            if (r->fval >= nv || v[r->fval].k != IV_FLT) return false;
+            double f = v[r->fval].f;
+            if (!(f > -0x1p99 && f < 0x1p99)) return false;   // NaN, infinite or past the generator's reach
+            *out = (__int128)f; return true;
+        }
         if (!r || r->den == 0) return false;
         __int128 s = 0;
         for (int i = 0; i < r->n; i++) {

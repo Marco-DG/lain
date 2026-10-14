@@ -746,6 +746,30 @@ int main(void) {
         CHECK(strstr(recs, rf) && strstr(recs, rb) && !strstr(recs, "outside"), "decreasing n / 2 - i: proved:\n%s", recs);
     }
 
+    // a float converted to an i16 (P3.3, F2): (0) on the TRUE edges of x >= -32768.0 and x < 32768.0,
+    // both narrowings proved; (1) on the FALSE edges of x < -32768.0 and x >= 32768.0, which a NaN
+    // passes (float_guard_lets_nan_through_fail), neither
+    for (int c = 0; c < 2; c++) {
+        IrType *mf64 = ir_type_new(&A, IRT_FLOAT), *mi16 = ir_type_int(&A, 16, true);
+        mf64->float_bits = 64;
+        IrFunc *mf = ir_func_new(&A, nm(c ? "nanpass" : "bias"), mi16, IR_FUNC_PURE);
+        IrValue *mx = ir_add_param(mf, mf64, nm("x"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *mz = ir_new_block(mf);
+        IrValue *lo = ir_icmp(mf, m0, c ? IR_CMP_SLT : IR_CMP_SGE, mx, ir_const_float(mf, m0, -32768.0, mf64));
+        if (c) ir_set_br_cond(m0, lo, mz, m1); else ir_set_br_cond(m0, lo, m1, mz);
+        IrValue *hi = ir_icmp(mf, m1, c ? IR_CMP_SGE : IR_CMP_SLT, mx, ir_const_float(mf, m1, 32768.0, mf64));
+        if (c) ir_set_br_cond(m1, hi, mz, m2); else ir_set_br_cond(m1, hi, m2, mz);
+        IrInstr *cv = ir_instr(mf, IR_CAST, mi16, 1); cv->operands[0] = mx; ir_emit(m2, cv);
+        ir_set_ret(m2, cv->result);
+        ir_set_ret(mz, ir_const_int(mf, mz, 0, mi16));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        if (!c) CHECK(strstr(recs, "proved bb2.0 narrow.lo") && strstr(recs, "proved bb2.0 narrow.hi") && nrec[JREC_NOT_IMPLIED] == 0,
+                      "x as i16 on the true edges:\n%s", recs);
+        else CHECK(strstr(recs, "not-implied bb2.0 narrow.lo") && strstr(recs, "not-implied bb2.0 narrow.hi"), "a NaN passes the false edges:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

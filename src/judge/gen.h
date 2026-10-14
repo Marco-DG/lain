@@ -70,9 +70,10 @@
 #include "judge/mem.h"
 
 // A FRESH variable's value, for a harness that evaluates a VC at run time: (sum of coef * var) / den,
-// an exact division. The generator states its facts; the recipe only says which value they are
-// about (the remainder of x / c is x - c*q).
-typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; } JRecipe;
+// an exact division; or, with fval >= 0, the integral part of that FLOAT value (a conversion's,
+// P3.3). The generator states its facts; the recipe only says which value they are about (the
+// remainder of x / c is x - c*q).
+typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int32_t fval; } JRecipe;
 
 // A claim at a cut point, `sum(coef * term) <= rhs`, over one to four terms by value id: a cell's
 // ALLOCA id is the version the cell has as block `blk` is entered, any other id that integer value.
@@ -186,6 +187,7 @@ typedef struct {
     int32_t *asame;                // by value id: the address a SLICE_DATA is (its slice's data), or -1
     uint8_t *iunsafe;              // by value id: that element address came through an unchecked index
     uint8_t *rclass;               // by value id, for a root: JR_LOCAL, JR_BORROWED or JR_LEAKED
+    IrInstr **one; int32_t *oneblk, *oneidx;   // by ALLOCA value id: its one store (every other use a load)
     int32_t *eff_cell; IrValue **eff_val; uint8_t *eff_unc; int32_t neff, eff_gen; int32_t *eff_stamp;  // jg_changes
     JVer *ver; int32_t nver, cver;
     int32_t *instate;              // by block id * ncells: the version at the block's entry
@@ -535,8 +537,8 @@ static bool jg_cells(JG *g) {
     }
     // a REFERENCE BINDING (`var r = var n`): a local slot whose every use is a load or its one
     // store, of an address. Every load the store dominates is that address: `r = 2` writes n
-    IrInstr **one = JG_NEW(g, IrInstr *, nv);
-    int32_t *oneblk = JG_NEW(g, int32_t, nv), *oneidx = JG_NEW(g, int32_t, nv);
+    IrInstr **one = g->one = JG_NEW(g, IrInstr *, nv);
+    int32_t *oneblk = g->oneblk = JG_NEW(g, int32_t, nv), *oneidx = g->oneidx = JG_NEW(g, int32_t, nv);
     if (!one || !oneblk || !oneidx) return jg_fail(g, "out of memory");
     for (int32_t i = 0; i < nv; i++) { one[i] = NULL; oneblk[i] = -1; oneidx[i] = 0; }
     for (int32_t r = 0; r < g->nrpo; r++) {
@@ -1042,7 +1044,7 @@ static int32_t jb_fresh(JB *B, const char *what, int32_t id, const JLT *t, int n
     JRecipe *r = JG_NEW(B->g, JRecipe, 1);
     if (!s || !r) { B->fail = true; return 0; }
     strcpy(s, nm);
-    r->n = n; r->den = den;
+    r->n = n; r->den = den; r->fval = -1;
     for (int i = 0; i < n; i++) { r->var[i] = t[i].var; r->coef[i] = t[i].c; }
     int32_t x = jb_newvar(B, s, 3, id, NULL);
     B->qt--;                                                   // nothing to state for it
@@ -1136,6 +1138,113 @@ static void jg_param_refine(JG *g, IrValue *v, JRange *r) {
         }
     }
 }
+// ── a float converted to an integer (P3.3): F1 and F2 ──────────────────────────────────────────
+// A double's integral part, exactly: c = +-M * 2^e from its bits, never through a C conversion.
+// False for a NaN, an infinity, or |c| >= 2^99; `integral` whether c is that integer.
+static bool jg_ftrunc(double c, __int128 *t, bool *integral) {
+    uint64_t u; memcpy(&u, &c, sizeof u);
+    int ex = (int)((u >> 52) & 0x7ff);
+    uint64_t m = u & ((1ULL << 52) - 1);
+    __int128 v; bool in;
+    if (ex == 0x7ff) return false;
+    if (ex == 0) { v = 0; in = m == 0; }                       // zero or subnormal: |c| < 1
+    else {
+        int e2 = ex - 1075;
+        m |= 1ULL << 52;
+        if (e2 >= 0) { if (e2 > 46) return false; v = (__int128)m << e2; in = true; }
+        else if (e2 <= -64) { v = 0; in = false; }
+        else { v = (__int128)(m >> -e2); in = (m & ((1ULL << -e2) - 1)) == 0; }
+    }
+    *t = (u >> 63) ? -v : v; *integral = in;
+    return true;
+}
+// F1: a float CONSTANT's value, at its IR type (interp.h's ii_fround: an f32 one rounds through
+// float): a literal, a negated one, or a float slot's one store of one where that store dominates
+// the load (c11's rule; the constant is one value whichever execution stored it).
+static bool jg_fconst(JG *g, IrValue *v, double *c, int depth) {
+    IrInstr *d = v && v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
+    if (!d || depth > 4 || !v->type || v->type->kind != IRT_FLOAT) return false;
+    if (d->op == IR_CONST) { *c = v->type->float_bits == 32 ? (double)(float)d->aux.fimm : d->aux.fimm; return true; }
+    if (d->op == IR_NEG && d->n_operands >= 1 && jg_fconst(g, d->operands[0], c, depth + 1)) { *c = -*c; return true; }
+    if (d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0] && g->one) {
+        int32_t sl = d->operands[0]->id;
+        if (sl < 0 || sl >= g->nv || !g->one[sl] || g->one[sl]->n_operands < 2) return false;
+        int32_t sb = g->oneblk[sl], lb = g->defblk[v->id];
+        bool dom = lb >= 0 && (sb == lb ? g->oneidx[sl] < g->defidx[v->id] : jg_dominates(g, sb, lb));
+        return dom && jg_fconst(g, g->one[sl]->operands[1], c, depth + 1);
+    }
+    return false;
+}
+// F2: a condition TRUE at the point about float value x: a comparison of x itself with a float
+// constant (either way round), ordered, so its truth excludes NaN (interp.h's ii_cmp_scalar: C's
+// <, <=, >, >=, ==; a `!=` holds for a NaN and bounds nothing), or an `and` of such. trunc is
+// monotone: x >= c gives trunc(x) >= trunc(c), and x > c the same but trunc(c) + 1 for an integral
+// c < 0; x <= c gives trunc(x) <= trunc(c), and x < c the same but c - 1 for an integral c > 0.
+static void jg_f2_bound(IrCmp p, double c, JRange *r, bool *hl, bool *hh) {
+    __int128 t; bool in;
+    if (!jg_ftrunc(c, &t, &in)) return;
+    __int128 lo = t, hi = t;
+    bool L = false, H = false;
+    switch (p) {
+        case IR_CMP_EQ: L = H = true; break;
+        case IR_CMP_SGE: case IR_CMP_UGE: L = true; break;
+        case IR_CMP_SGT: case IR_CMP_UGT: L = true; if (in && t < 0) lo = t + 1; break;
+        case IR_CMP_SLE: case IR_CMP_ULE: H = true; break;
+        case IR_CMP_SLT: case IR_CMP_ULT: H = true; if (in && t > 0) hi = t - 1; break;
+        default: return;                                       // `!=`
+    }
+    if (L && (!*hl || lo > r->lo)) { r->lo = lo; *hl = true; }
+    if (H && (!*hh || hi < r->hi)) { r->hi = hi; *hh = true; }
+}
+static void jg_f2_cond(JG *g, IrValue *cv, IrValue *x, JRange *r, bool *hl, bool *hh, int depth) {
+    IrInstr *d = cv && cv->id >= 0 && cv->id < g->nv ? g->def[cv->id] : NULL;
+    if (!d || depth > 4) return;
+    if (d->op == IR_AND && d->n_operands >= 2 && cv->type && cv->type->kind == IRT_BOOL) {
+        jg_f2_cond(g, d->operands[0], x, r, hl, hh, depth + 1);
+        jg_f2_cond(g, d->operands[1], x, r, hl, hh, depth + 1);
+        return;
+    }
+    if (d->op != IR_ICMP || d->n_operands < 2) return;
+    IrCmp p = d->aux.cmp;
+    double c;
+    if (d->operands[0] == x && jg_fconst(g, d->operands[1], &c, 0)) { }
+    else if (d->operands[1] == x && jg_fconst(g, d->operands[0], &c, 0)) {
+        switch (p) {                                           // c op x is x op' c
+            case IR_CMP_SLT: case IR_CMP_ULT: p = IR_CMP_SGT; break;   case IR_CMP_SLE: case IR_CMP_ULE: p = IR_CMP_SGE; break;
+            case IR_CMP_SGT: case IR_CMP_UGT: p = IR_CMP_SLT; break;   case IR_CMP_SGE: case IR_CMP_UGE: p = IR_CMP_SLE; break;
+            default: break;
+        }
+    } else return;
+    jg_f2_bound(p, c, r, hl, hh);
+}
+// trunc(x) at the point (block, index) of a conversion of float x: F1 where x is a constant, else F2
+// from the guards on the dominator chain into the point (the edges TAKEN when a condition held,
+// into single-predecessor blocks) and the ASSUMEs and ASSERTs before it. A negated or `else` edge
+// gives nothing: it holds for a NaN. False where neither bound is known.
+static bool jg_f2i(JG *g, int32_t blk, int32_t idx, IrValue *x, JRange *r, bool *hl, bool *hh) {
+    double c; __int128 t; bool in;
+    *hl = *hh = false; r->has_ne = false;
+    if (jg_fconst(g, x, &c, 0)) {
+        if (!jg_ftrunc(c, &t, &in)) return false;
+        r->lo = r->hi = t; *hl = *hh = true;
+        return true;
+    }
+    for (int32_t s = blk; ; s = g->idom[s]) {
+        IrBlock *S = g->blk[s];
+        int32_t k = 0;
+        for (IrInstr *i = S->instrs; i; i = i->next, k++) {
+            if (s == blk && k >= idx) break;
+            if ((i->op == IR_ASSUME || i->op == IR_ASSERT) && i->n_operands >= 1) jg_f2_cond(g, i->operands[0], x, r, hl, hh, 0);
+        }
+        if (s == g->f->entry->id) break;
+        if (g->npred[s] == 1 && S->preds) {
+            IrBlock *P = S->preds->block;
+            if (P->term.kind == IR_TERM_BR_COND && P->term.a != P->term.b && P->term.a == S) jg_f2_cond(g, P->term.cond, x, r, hl, hh, 0);
+        }
+    }
+    return *hl || *hh;
+}
+
 // A value's STATIC range: a constant's value; through a cast whose source's static range lies in
 // its result type (the value kept under any mode a cast has), the source's; a parameter's type
 // narrowed by its refinement (jg_param_refine); a load of a store version, the stored value's; else
@@ -1557,6 +1666,16 @@ static void jb_state(JB *B, int32_t x) {
             break;
         }
         case IR_CAST:
+            // from a FLOAT, checked: trunc(x), which F1 or F2 bounds at the conversion (P3.3)
+            if (d->n_operands >= 1 && d->operands[0]->type && d->operands[0]->type->kind == IRT_FLOAT && v->type->kind == IRT_INT &&
+                d->wrap == IR_WRAP_CHECK && !d->unchecked) {
+                JRange fr; bool hl, hh;
+                if (!jg_f2i(g, g->defblk[id], g->defidx[id], d->operands[0], &fr, &hl, &hh)) break;
+                const char *o = jb_str(B, "def %%v%lld f2i", id, 0, 0);
+                if (hl) { t[0].var = x; t[0].c = -1; jb_atom(B, o, t, 1, J_LE, -fr.lo); }
+                if (hh) { t[0].var = x; t[0].c = 1;  jb_atom(B, o, t, 1, J_LE, fr.hi); }
+                break;
+            }
             // into an integer only: a cast to bool is 1 for any nonzero value (§3's Q row)
             if (d->n_operands < 1 || !jg_is_int(d->operands[0]->type) || v->type->kind != IRT_INT) break;
             if (d->wrap == IR_WRAP_MODULAR || (d->wrap == IR_WRAP_CHECK && d->unchecked)) {   // it wraps (ii_cast)
@@ -2358,6 +2477,23 @@ static bool jgk_narrow(JB *B, IrInstr *at, void *arg, JCons *goal) {
     t[0].c = -1; return jb_cons(B, t, 1, J_LE, -a->bound, goal);
 }
 
+// A float conversion's narrowing: its integral part trunc(x), a fresh variable (its recipe the float
+// x, for a harness) with only F1's or F2's bounds at the conversion, within the type
+static bool jgk_f2i(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    JNarrowArg *a = arg; JLT t[1];
+    JRange fr; bool hl, hh;
+    int32_t tv = jb_fresh(B, "trunc", at->result->id, NULL, 0, 1);
+    if (B->fail) return false;
+    ((JRecipe *)B->vrec[tv])->fval = a->v->id;
+    if (jg_f2i(B->g, B->blk, B->idx, a->v, &fr, &hl, &hh)) {
+        const char *o = jb_str(B, "f2i %%v%lld", a->v->id, 0, 0);
+        if (hl) { t[0].var = tv; t[0].c = -1; jb_atom(B, o, t, 1, J_LE, -fr.lo); }
+        if (hh) { t[0].var = tv; t[0].c = 1;  jb_atom(B, o, t, 1, J_LE, fr.hi); }
+    }
+    t[0].var = tv;
+    if (a->upper) { t[0].c = 1; return jb_cons(B, t, 1, J_LE, a->bound, goal); }
+    t[0].c = -1; return jb_cons(B, t, 1, J_LE, -a->bound, goal);
+}
 typedef struct { __int128 ne; IrValue *v; } JNeArg;
 static bool jgk_ne(JB *B, IrInstr *at, void *arg, JCons *goal) {
     (void)at; JNeArg *a = arg; JLT t[1];
@@ -2588,12 +2724,14 @@ static bool jg_obligations(JG *g, JObls *L) {
                     if (i->wrap != IR_WRAP_CHECK || i->unchecked || i->n_operands < 1 || !i->result) break;
                     // into an integer only: a cast to bool is `x != 0` and owes nothing (§3)
                     if (!i->result->type || i->result->type->kind != IRT_INT) break;
-                    if (!jg_is_int(i->operands[0]->type)) {
-                        if (i->operands[0]->type && i->operands[0]->type->kind == IRT_FLOAT)
-                            if (!jg_outside(g, L, i, b->id, k, "narrow.lo", "a float converted to an integer (F1 and F2 are a later step)")) return false;
+                    JRange rr;
+                    if (!jg_is_int(i->operands[0]->type)) {               // a float: its integral part fits
+                        if (!i->operands[0]->type || i->operands[0]->type->kind != IRT_FLOAT || !jg_range(i->result->type, &rr)) break;
+                        JNarrowArg flo = { rr.lo, false, i->operands[0] }, fhi = { rr.hi, true, i->operands[0] };
+                        if (!jg_goal(g, L, i, b->id, k, -1, "narrow.lo", 0, jgk_f2i, &flo)) return false;
+                        if (!jg_goal(g, L, i, b->id, k, -1, "narrow.hi", 0, jgk_f2i, &fhi)) return false;
                         break;
                     }
-                    JRange rr;
                     if (!jg_range(i->result->type, &rr)) break;
                     JNarrowArg lo = { rr.lo, false, i->operands[0] }, hi = { rr.hi, true, i->operands[0] };
                     if (!jg_goal(g, L, i, b->id, k, -1, "narrow.lo", 0, jgk_narrow, &lo)) return false;
