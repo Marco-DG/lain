@@ -2162,13 +2162,19 @@ int main(void) {
     // owed; (1) the same assumes after an add: not the prologue, not read, outside; (2) -1 < x and
     // 101 > x (y the same), the constant on the left: as case 0; (3) x <=u 100 on an UNSIGNED u32
     // x (y the same): [0, 10000] into u32; (4) x <=u 100 on a SIGNED x: not read (the orders differ
-    // there), outside; (5) x > -1 and x < 101, strict: as case 0; (6) x == 5 and y == 7: [35, 35]
+    // there), outside; (5) x > -1 and x < 101, strict: as case 0; (6) x == 5 and y == 7: [35, 35].
+    // The product's OWN hull is at its point (c25), where every dominating assume holds and x >=u 0
+    // with x <= 100 agrees with the signed order: in cases 1 and 4 it is [0, 10000] too. The STATIC
+    // range is what a nested hull reads: q = p & m, m in [0, 65535] by assumes (at q's point), has an
+    // and.hull up to p's static hi, 10000 (35) where the refinements are read, 65535 where they are not
     for (int c = 0; c < 7; c++) {
         IrType *T = c == 3 ? u32t : i32t;
         IrFunc *f = ir_func_new(&A, nm("r45"), T, IR_FUNC_PURE);
-        IrValue *x = ir_add_param(f, T, nm("x")), *y = ir_add_param(f, T, nm("y"));
+        IrValue *x = ir_add_param(f, T, nm("x")), *y = ir_add_param(f, T, nm("y")), *m = ir_add_param(f, T, nm("m"));
         IrBlock *b0 = f->entry;
         if (c == 1) (void)ir_binop(f, b0, IR_ADD, x, y, T);
+        ir_assume(f, b0, ir_icmp(f, b0, c == 3 ? IR_CMP_UGE : IR_CMP_SGE, m, ir_const_int(f, b0, 0, T)));
+        ir_assume(f, b0, ir_icmp(f, b0, c == 3 ? IR_CMP_ULE : IR_CMP_SLE, m, ir_const_int(f, b0, 65535, T)));
         IrValue *vs[2] = { x, y };
         for (int w = 0; w < 2; w++) {
             IrValue *v = vs[w];
@@ -2190,16 +2196,16 @@ int main(void) {
             }
         }
         IrValue *p = ir_binop(f, b0, IR_MUL, x, y, T);
-        ir_set_ret(b0, p);
+        IrValue *q = ir_binop(f, b0, IR_AND, p, m, T);
+        ir_set_ret(b0, ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 100, T), q, T));
         ir_finalize_cfg(f);
         gen_mod = f;
-        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), lo[96], hi[96];
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), lo[96], hi[96], qh[96];
         snprintf(lo, sizeof lo, "def %%v%d mul.hull : -1*%%v%d <= %s\n", p->id, p->id, c == 6 ? "-35" : "0");
         snprintf(hi, sizeof hi, "def %%v%d mul.hull : 1*%%v%d <= %s\n", p->id, p->id, c == 6 ? "35" : "10000");
-        if (c == 1 || c == 4)
-            CHECK(t && strstr(t, "outside atom.mul") && !strstr(t, "mul.hull"), "case %d: the refinement not read, outside:\n%s", c, t ? t : "");
-        else
-            CHECK(t && strstr(t, lo) && strstr(t, hi) && !strstr(t, "atom.mul"), "case %d: the hull from the refinements:\n%s", c, t ? t : "");
+        snprintf(qh, sizeof qh, "def %%v%d and.hull : 1*%%v%d <= %s\n", q->id, q->id, c == 6 ? "35" : c == 4 || c == 1 ? "65535" : "10000");
+        CHECK(t && strstr(t, lo) && strstr(t, hi) && !strstr(t, "atom.mul"), "case %d: the product's hull at its point:\n%s", c, t ? t : "");
+        CHECK(t && strstr(t, qh), "case %d: the static range under a nested hull, %s:\n%s", c, qh, t ? t : "");
         free(t);
     }
     gen_mod = NULL;
@@ -3038,6 +3044,56 @@ int main(void) {
         CHECK(bad == 0 && tried > 20000, "F2's bounds against the conversion: %ld wrong of %ld", bad, tried);
     }
     printf("  a float conversion: F1's constants and F2's true guards bound trunc(x)\n");
+    // 61. a product's own hull at its point: p = i * k over u32 with k <= 100 (a prologue assume), i
+    // unbounded statically. Narrowed where (0) a true edge of i < n, n <= 100; (1) the false edge of
+    // i >= n; (3) the guard's load of a cell i and the product's are one version; (5) i an i32 (p in
+    // i32) under i <u n (a negative i fails it: i in [0, 99]); (6) an ASSUME of (i < n and k > 0); (7)
+    // n > i; (8) i == n: p in [0, 9900] (8: [0, 10000]), its narrowing owed. Not where (2) the guard
+    // is on j; (4) i is stored between the guard's load and the product's; (9) i an i32 under i <= 100
+    // and i >u n (a negative i passes it); (10) i an i32 under i <u n with n in [-5, 100] (a negative
+    // n reads as 2^64 + n, so i is bounded by nothing): the narrowing stays outside
+    for (int c = 0; c < 11; c++) {
+        IrType *T = c == 5 || c >= 9 ? i32t : u32t;
+        IrFunc *f = ir_func_new(&A, nm("p61"), T, IR_FUNC_PURE);
+        IrValue *ip = ir_add_param(f, T, nm("i")), *jp = ir_add_param(f, T, nm("j"));
+        IrValue *n = ir_add_param(f, T, nm("n")), *k = ir_add_param(f, T, nm("k"));
+        IrBlock *b0 = f->entry, *bl = b0;
+        bool sg = T == i32t;
+        ir_assume(f, b0, ir_icmp(f, b0, sg ? IR_CMP_SLE : IR_CMP_ULE, n, ir_const_int(f, b0, 100, T)));
+        ir_assume(f, b0, ir_icmp(f, b0, sg ? IR_CMP_SLE : IR_CMP_ULE, k, ir_const_int(f, b0, 100, T)));
+        if (sg) { ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, k, ir_const_int(f, b0, 0, T)));
+                  ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, n, ir_const_int(f, b0, c == 10 ? -5 : 0, T))); }
+        if (c == 9) ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SLE, ip, ir_const_int(f, b0, 100, T)));
+        IrValue *iv = ip, *slot = NULL;
+        if (c == 3 || c == 4) { slot = ir_alloca(f, b0, T); ir_store(f, b0, slot, ip); iv = ir_load(f, b0, slot, T); }
+        IrBlock *b1 = ir_new_block(f), *bz = ir_new_block(f);
+        ir_set_ret(bz, ir_const_int(f, bz, 0, T));
+        if (c == 6) { ir_assume(f, b0, ir_binop(f, b0, IR_AND, ir_icmp(f, b0, IR_CMP_ULT, iv, n), ir_icmp(f, b0, IR_CMP_UGT, k, ir_const_int(f, b0, 0, T)), boolt)); ir_set_br(b0, b1); }
+        else {
+            IrValue *g = c == 1 ? ir_icmp(f, b0, IR_CMP_UGE, iv, n) : c == 2 ? ir_icmp(f, b0, IR_CMP_ULT, jp, n)
+                       : c == 5 || c == 10 ? ir_icmp(f, b0, IR_CMP_ULT, iv, n) : c == 9 ? ir_icmp(f, b0, IR_CMP_UGT, iv, n)
+                       : c == 7 ? ir_icmp(f, b0, IR_CMP_UGT, n, iv)
+                       : c == 8 ? ir_icmp(f, b0, IR_CMP_EQ, iv, n) : ir_icmp(f, b0, IR_CMP_ULT, iv, n);
+            if (c == 1) ir_set_br_cond(b0, g, bz, b1); else ir_set_br_cond(b0, g, b1, bz);
+        }
+        bl = b1;
+        if (c == 4) ir_store(f, bl, slot, jp);
+        IrValue *i2 = slot ? ir_load(f, bl, slot, T) : iv;
+        IrValue *p = ir_binop(f, bl, IR_MUL, i2, k, T);
+        int at = nins(bl) - 1;
+        ir_set_ret(bl, p);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48], want[64];
+        snprintf(key, sizeof key, " bb%d.%d narrow.hi 0", bl->id, at);
+        const char *vz = t ? vc_of(t, key) : "";
+        snprintf(want, sizeof want, "mul.hull : 1*%%v%d <= %d", p->id, c == 8 ? 10000 : 9900);
+        bool owed = c != 2 && c != 4 && c != 9 && c != 10;
+        CHECK(t && !!*vz == owed && (!owed || strstr(vz, want)), "case %d: %s%s:\n%s", c, owed ? "owed, " : "outside", owed ? want : "", owed ? vz : (t ? t : ""));
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  an operation's own hull at its point: its operands narrowed by the guards there\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

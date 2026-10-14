@@ -1354,6 +1354,84 @@ static bool jr_shl(const JRange *a, const JRange *n, int w, JRange *h) {
 // The hull of instruction d from its operands' static ranges (at `depth`): a checked product or
 // shift left, a division or remainder (checked, or unsigned), a bitwise and, or, xor. False where
 // none is stated.
+// Are two values one: the same SSA value, or two loads of one cell version (no write between)?
+static bool jg_same_value(JG *g, IrValue *a, IrValue *b) {
+    if (a == b) return true;
+    if (!a || !b || a->id < 0 || a->id >= g->nv || b->id < 0 || b->id >= g->nv || !g->loadver) return false;
+    return g->loadver[a->id] >= 0 && g->loadver[a->id] == g->loadver[b->id];
+}
+// An integer condition known at a point (`truth` its value there) narrowing v: a comparison of v
+// (jg_same_value) with a value of known static range, either way round, or an `and` that holds.
+// An unsigned predicate (the interpreter compares as uint64) only against a y >= 0: v <u y and
+// v <=u y put v in [0, y] whatever v's sign (a negative v reads as 2^64 + v, above any such y);
+// v >u y and v >=u y bound v below only where v >= 0 by its static range.
+static void jg_int_cond(JG *g, IrValue *cv, bool truth, IrValue *v, JRange *r, int depth) {
+    IrInstr *d = cv && cv->id >= 0 && cv->id < g->nv ? g->def[cv->id] : NULL;
+    if (!d || depth > 4) return;
+    if (d->op == IR_AND && truth && d->n_operands >= 2 && cv->type && cv->type->kind == IRT_BOOL) {
+        jg_int_cond(g, d->operands[0], true, v, r, depth + 1);
+        jg_int_cond(g, d->operands[1], true, v, r, depth + 1);
+        return;
+    }
+    if (d->op != IR_ICMP || d->n_operands < 2 || !jg_is_int(d->operands[0]->type) || !jg_is_int(d->operands[1]->type)) return;
+    IrCmp p = d->aux.cmp;
+    IrValue *y;
+    if (jg_same_value(g, d->operands[0], v)) y = d->operands[1];
+    else if (jg_same_value(g, d->operands[1], v)) {
+        y = d->operands[0];
+        switch (p) {                                           // y op v is v op' y
+            case IR_CMP_SLT: p = IR_CMP_SGT; break; case IR_CMP_SLE: p = IR_CMP_SGE; break;
+            case IR_CMP_SGT: p = IR_CMP_SLT; break; case IR_CMP_SGE: p = IR_CMP_SLE; break;
+            case IR_CMP_ULT: p = IR_CMP_UGT; break; case IR_CMP_ULE: p = IR_CMP_UGE; break;
+            case IR_CMP_UGT: p = IR_CMP_ULT; break; case IR_CMP_UGE: p = IR_CMP_ULE; break;
+            default: break;
+        }
+    } else return;
+    if (!truth)
+        switch (p) {                                           // the false edge: the negation
+            case IR_CMP_EQ: p = IR_CMP_NE; break;  case IR_CMP_NE: p = IR_CMP_EQ; break;
+            case IR_CMP_SLT: p = IR_CMP_SGE; break; case IR_CMP_SGE: p = IR_CMP_SLT; break;
+            case IR_CMP_SLE: p = IR_CMP_SGT; break; case IR_CMP_SGT: p = IR_CMP_SLE; break;
+            case IR_CMP_ULT: p = IR_CMP_UGE; break; case IR_CMP_UGE: p = IR_CMP_ULT; break;
+            case IR_CMP_ULE: p = IR_CMP_UGT; break; case IR_CMP_UGT: p = IR_CMP_ULE; break;
+            default: return;
+        }
+    JRange yr, vr;
+    if (!jg_static_range(g, y, &yr, 0)) return;
+    if ((p == IR_CMP_ULT || p == IR_CMP_ULE || p == IR_CMP_UGT || p == IR_CMP_UGE) && yr.lo < 0) return;
+    if ((p == IR_CMP_UGT || p == IR_CMP_UGE) && (!jg_static_range(g, v, &vr, 0) || vr.lo < 0)) return;
+    if ((p == IR_CMP_ULT || p == IR_CMP_ULE) && r->lo < 0) r->lo = 0;
+    switch (p) {
+        case IR_CMP_SLT: case IR_CMP_ULT: if (yr.hi - 1 < r->hi) r->hi = yr.hi - 1; break;
+        case IR_CMP_SLE: case IR_CMP_ULE: if (yr.hi < r->hi) r->hi = yr.hi; break;
+        case IR_CMP_SGT: case IR_CMP_UGT: if (yr.lo + 1 > r->lo) r->lo = yr.lo + 1; break;
+        case IR_CMP_SGE: case IR_CMP_UGE: if (yr.lo > r->lo) r->lo = yr.lo; break;
+        case IR_CMP_EQ: if (yr.lo > r->lo) r->lo = yr.lo; if (yr.hi < r->hi) r->hi = yr.hi; break;
+        default: break;
+    }
+}
+// v's range at a point (block, index): its static range, narrowed by the integer conditions that
+// hold there, the edges on the dominator chain into single-predecessor blocks (taken either way:
+// an integer comparison is false exactly where its negation holds) and the ASSUMEs and ASSERTs
+// before it. False where v has no static range, or the conditions leave nothing (a dead point).
+static bool jg_point_range(JG *g, IrValue *v, int32_t blk, int32_t idx, JRange *r) {
+    if (!jg_static_range(g, v, r, 0)) return false;
+    if (blk < 0 || blk >= g->nb || !g->idom) return true;
+    for (int32_t s = blk; ; s = g->idom[s]) {
+        IrBlock *S = g->blk[s];
+        int32_t k = 0;
+        for (IrInstr *i = S->instrs; i; i = i->next, k++) {
+            if (s == blk && k >= idx) break;
+            if ((i->op == IR_ASSUME || i->op == IR_ASSERT) && i->n_operands >= 1) jg_int_cond(g, i->operands[0], true, v, r, 0);
+        }
+        if (s == g->f->entry->id) break;
+        if (g->npred[s] == 1 && S->preds) {
+            IrBlock *P = S->preds->block;
+            if (P->term.kind == IR_TERM_BR_COND && P->term.a != P->term.b) jg_int_cond(g, P->term.cond, P->term.a == S, v, r, 0);
+        }
+    }
+    return r->lo <= r->hi;
+}
 static bool jg_op_range(JG *g, const IrInstr *d, JRange *h, int depth) {
     JRange a, b;
     if (d->n_operands < 2 || !d->result || !d->result->type || d->result->type->kind != IRT_INT) return false;
@@ -1364,7 +1442,11 @@ static bool jg_op_range(JG *g, const IrInstr *d, JRange *h, int depth) {
         case IR_UDIV: case IR_UREM: case IR_AND: case IR_OR: case IR_XOR: break;
         default: return false;
     }
-    if (!jg_static_range(g, d->operands[0], &a, depth + 1) || !jg_static_range(g, d->operands[1], &b, depth + 1)) return false;
+    // an operation's OWN hull (depth -1) is at its point: its operands narrowed by what holds there,
+    // which dominates the operation and so every use of its result; a nested one keeps static ranges
+    int32_t rid = d->result->id, pb = depth < 0 && rid >= 0 && rid < g->nv ? g->defblk[rid] : -1, pi = pb >= 0 ? g->defidx[rid] : 0;
+    if (pb >= 0 ? !jg_point_range(g, d->operands[0], pb, pi, &a) || !jg_point_range(g, d->operands[1], pb, pi, &b)
+                : !jg_static_range(g, d->operands[0], &a, depth + 1) || !jg_static_range(g, d->operands[1], &b, depth + 1)) return false;
     switch (d->op) {
         case IR_MUL: return jr_mul(&a, &b, h);
         case IR_SHL: return jr_shl(&a, &b, d->operands[0]->type && d->operands[0]->type->kind == IRT_INT ? d->operands[0]->type->bits : 0, h);

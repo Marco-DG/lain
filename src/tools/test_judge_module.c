@@ -770,6 +770,23 @@ int main(void) {
         else CHECK(strstr(recs, "not-implied bb2.0 narrow.lo") && strstr(recs, "not-implied bb2.0 narrow.hi"), "a NaN passes the false edges:\n%s", recs);
     }
 
+    // a product's hull at its point: `if i < h { return i * w }` over u32 with h, w <= 4095 by
+    // refinement and i unbounded: the corners 4094 * 4095 fit, the narrowing owed and proved
+    {   IrType *mu32 = ir_type_int(&A, 32, false);
+        IrFunc *mf = ir_func_new(&A, nm("rowoff"), mu32, IR_FUNC_PURE);
+        IrValue *mi = ir_add_param(mf, mu32, nm("i")), *mh = ir_add_param(mf, mu32, nm("h")), *mw = ir_add_param(mf, mu32, nm("w"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf);
+        ir_assume(mf, m0, ir_icmp(mf, m0, IR_CMP_ULE, mh, ir_const_int(mf, m0, 4095, mu32)));
+        ir_assume(mf, m0, ir_icmp(mf, m0, IR_CMP_ULE, mw, ir_const_int(mf, m0, 4095, mu32)));
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_ULT, mi, mh), m1, m2);
+        ir_set_ret(m1, ir_binop(mf, m1, IR_MUL, mi, mw, mu32));
+        ir_set_ret(m2, ir_const_int(mf, m2, 0, mu32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, "proved bb1.0 narrow.hi") && !strstr(recs, "outside") && nrec[JREC_NOT_IMPLIED] == 0, "i * w under i < h:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
