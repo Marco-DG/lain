@@ -129,7 +129,7 @@ static const char *vc_of(const char *all, const char *key) {
 }
 
 int main(void) {
-    A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE * 256);
+    A = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE * 512);
     u64t = ir_type_int(&A, 64, false); i64t = ir_type_int(&A, 64, true); i32t = ir_type_int(&A, 32, true);
     u8t = ir_type_int(&A, 8, false); u32t = ir_type_int(&A, 32, false); boolt = ir_type_bool(&A);
 
@@ -3614,6 +3614,81 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a free back edge owes the lexicographic decrease itself, under premises\n");
+    // 70. a component that is the MAX of rows: `while x != 0 { if x > 0 { x-- } else { x++ } }` over
+    // an i32 cell, ranked max(x, -x) (rows x and -x, cont[1] = 1). (0) rank.fall 1000 and 2000, one
+    // per row, each under one `premise rank.max 0`, and rank.bound 0 under one; no rank.keep; (1)
+    // <0, max(x, -x)>, falling at 1: rank.keep 0 (a row of its own), rank.fall 1001 and 2001,
+    // rank.bound 1; refused: (2) cont[0] = 1; (3) cont[1] = 2; (4) fall 1 (one component, two
+    // rows); (5) a free edge over the max; (6) max(x + 5, -x + 2), the constants moved right: the
+    // row x's goal x' + x <= -4, the row -x's premise x + x' <= -3
+    for (int c = 0; c < 7; c++) {
+        IrFunc *f = ir_func_new(&A, nm("abs71"), i32t, IR_FUNC_PURE);
+        IrValue *xp = ir_add_param(f, i32t, nm("xp"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f);
+        IrValue *x = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, x, xp); ir_set_br(b0, b1);
+        IrValue *lx = ir_load(f, b1, x, i32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_NE, lx, ir_const_int(f, b1, 0, i32t)), b2, b5);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_SGT, lx, ir_const_int(f, b2, 0, i32t)), b3, b4);
+        ir_store(f, b3, x, ir_binop(f, b3, IR_SUB, lx, ir_const_int(f, b3, 1, i32t), i32t)); ir_set_br(b3, b6);
+        ir_store(f, b4, x, ir_binop(f, b4, IR_ADD, lx, ir_const_int(f, b4, 1, i32t), i32t)); ir_set_br(b4, b6);
+        ir_set_br(b6, b1);
+        ir_set_ret(b5, ir_const_int(f, b5, 0, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.nt = 1; r.key[0] = x->id; r.nedge = 1; r.from[0] = b6->id;
+        int o1 = c == 1 ? 1 : 0;                                // <0, ...>: row 0 all zero
+        r.ncomp = 2 + o1; r.coef[o1][0] = 1; r.coef[o1 + 1][0] = -1; r.cont[o1 + 1] = 1; r.fall[0] = (int8_t)o1;
+        if (c == 6) { r.c0[0] = 5; r.c0[1] = 2; }
+        const char *bad = NULL;
+        if (c == 2) { r.cont[0] = 1; bad = "max of rows out of shape"; }
+        if (c == 3) { r.cont[1] = 2; bad = "max of rows out of shape"; }
+        if (c == 4) { r.fall[0] = 1; bad = "falling component out of range"; }
+        if (c == 5) { r.fall[0] = -1; bad = "a free back edge over a component that is a max of rows"; }
+        gen_rk = &r; gen_nrk = 1;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        if (bad) { CHECK(!t && strstr(why, bad), "case %d: refused (%s): got \"%s\"", c, bad, why); free(t); gen_rk = NULL; gen_nrk = 0; continue; }
+        const char *want[4] = { "rank.fall 1000", "rank.fall 2000", "rank.bound 0", NULL };
+        const char *want1[5] = { "rank.keep 0", "rank.fall 1001", "rank.fall 2001", "rank.bound 1", NULL };
+        const char **w = c == 1 ? want1 : want;
+        bool ok = t != NULL;
+        for (int k = 0; ok && w[k]; k++) {
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 %s\n", b6->id, w[k]);
+            ok = strstr(t, key) != NULL;
+            char k2[48]; snprintf(k2, sizeof k2, "bb%d.0 %s", b6->id, w[k]);
+            const char *v = ok ? vc_of(t, k2) : "";
+            int np = count(v, "premise rank.max");
+            ok = ok && np == (strstr(w[k], "keep") ? 0 : 1);
+            if (!ok) CHECK(false, "case %d: %s with its premise:\n%s", c, w[k], v);
+        }
+        CHECK(ok && count(t, " rank.") == (c == 1 ? 4 : 3) + count(t, "premise rank."), "case %d: those VCs only:\n%s", c, t ? t : why);
+        if (c == 0 || c == 6) {                                // the bound's premise: x (+ 5) < 0 before the trip
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.bound 0", b6->id);
+            const char *pr = strstr(vc_of(t, key), "premise rank.max 0 : "), *nl = pr ? strchr(pr, '\n') : NULL;
+            char hx[40]; snprintf(hx, sizeof hx, ": 1*%%s%d@head.bb%d <= %s\n", x->id, b1->id, c ? "-6" : "-1");
+            CHECK(pr && nl && !strncmp(pr + strlen("premise rank.max 0 "), hx, strlen(hx)), "case %d: the bound's premise, x%s <= -1:\n%s", c, c ? " + 5" : "", vc_of(t, key));
+        }
+        if (c == 6) {
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.fall 1000", b6->id);
+            const char *g = strstr(vc_of(t, key), "goal ");
+            CHECK(g && strstr(g, "<= -4\n"), "case 6: the row x's goal, x' + 5 - (-x + 2) <= -1:\n%s", vc_of(t, key));
+            snprintf(key, sizeof key, "bb%d.0 rank.fall 2000", b6->id);
+            const char *pr = strstr(vc_of(t, key), "premise rank.max 0 : ");
+            CHECK(pr && !strncmp(strchr(pr, '\n') - 5, "<= -3\n", 6), "case 6: the row -x's premise, x + 5 - (-x' + 2) <= 0:\n%s", vc_of(t, key));
+        }
+        if (c == 0) {                                           // a = x: premise x - x' <= 0, goal x' + x <= -1
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.fall 1000", b6->id);
+            const char *v = vc_of(t, key), *g = strstr(v, "goal ");
+            char hx[32], jx[32]; snprintf(hx, sizeof hx, "1*%%s%d@head.bb%d", x->id, b1->id); snprintf(jx, sizeof jx, "1*%%s%d@join.bb%d", x->id, b6->id);
+            CHECK(g && strstr(g, hx) && strstr(g, jx) && !strstr(g, "-1*%s") && strstr(g, "<= -1\n"), "case 0: the row x's goal against -x, x' + x <= -1:\n%s", v);
+        }
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a ranking component that is the max of rows: one VC per row, under premises\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

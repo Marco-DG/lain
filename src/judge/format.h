@@ -106,7 +106,9 @@ typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MA
 // its value before and after a trip is one). On each back edge, named by its predecessor `from`,
 // the components before fall[e] do not rise and component fall[e] falls by at least 1 while it is
 // non-negative (lexicographic, ADFG); fall[e] -1, a FREE edge, owes that some component does so,
-// which may differ from trip to trip (`rank.lex`). It is never a hypothesis: gen.h owes it on every
+// which may differ from trip to trip (`rank.lex`). A component may be the MAX of several rows: a
+// row j with cont[j] 1 joins the rows before it (cont[0] is 0), and fall[e] counts components, not
+// rows; all cont 0 is one row per component. It is never a hypothesis: gen.h owes it on every
 // back edge (`rank.keep`, `rank.fall`, `rank.bound`), and a loop of a function that must terminate
 // with none is `outside`. A back edge it does not list refuses it.
 // At blk JRANK_ENTRY it is a function's measure for its recursion: one component over its integer
@@ -121,6 +123,7 @@ typedef struct {
     int32_t key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT];             // as a claim's terms
     __int128 coef[JRANK_MAXC][JRANK_MAXT], c0[JRANK_MAXC];
     int32_t from[JRANK_MAXE]; int8_t fall[JRANK_MAXE];
+    uint8_t cont[JRANK_MAXC];                                    // row j continues row j - 1's MAX
     int32_t nle, le_blk[JRANK_MAXL], le_idx[JRANK_MAXL];      // at JRANK_ENTRY: the calls owed `<=`
     struct IrFunc *fn;
 } JRank;

@@ -983,6 +983,39 @@ int main(void) {
                CHECK(strstr(recs, rn) != NULL, "a path lowering nothing: a rank.lex not implied:\n%s", recs); }
     }
 
+    // a MAX component (c36): `while x != 0 { if x > 0 { x-- } else { x++ } }` over an i32 cell.
+    // (0) max(x, -x): its two rank.fall (one per row) and rank.bound proved; (1) x alone: its
+    // rank.fall not implied (the else path raises x); (2) max(x, -x) with the else path x + 2 (-1
+    // goes to 1, |x| stays 1): a rank.fall not implied
+    for (int c = 0; c < 3; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true);
+        IrFunc *af = ir_func_new(&A, nm("abs36"), mi32, IR_FUNC_PURE);
+        IrValue *axp = ir_add_param(af, mi32, nm("xp"));
+        IrBlock *a0 = af->entry, *a1 = ir_new_block(af), *a2 = ir_new_block(af), *a3 = ir_new_block(af), *a4 = ir_new_block(af),
+                *a5 = ir_new_block(af), *a6 = ir_new_block(af);
+        IrValue *ax = ir_alloca(af, a0, mi32);
+        ir_store(af, a0, ax, axp); ir_set_br(a0, a1);
+        IrValue *alx = ir_load(af, a1, ax, mi32);
+        ir_set_br_cond(a1, ir_icmp(af, a1, IR_CMP_NE, alx, ir_const_int(af, a1, 0, mi32)), a2, a5);
+        ir_set_br_cond(a2, ir_icmp(af, a2, IR_CMP_SGT, alx, ir_const_int(af, a2, 0, mi32)), a3, a4);
+        ir_store(af, a3, ax, ir_binop(af, a3, IR_SUB, alx, ir_const_int(af, a3, 1, mi32), mi32)); ir_set_br(a3, a6);
+        ir_store(af, a4, ax, ir_binop(af, a4, IR_ADD, alx, ir_const_int(af, a4, c == 2 ? 2 : 1, mi32), mi32)); ir_set_br(a4, a6);
+        ir_set_br(a6, a1);
+        ir_set_ret(a5, ir_const_int(af, a5, 0, mi32));
+        ir_finalize_cfg(af);
+        Stub sa; memset(&sa, 0, sizeof sa);
+        sa.propose = P_RANK; sa.nrank = 1;
+        JRank *rr = &sa.rank[0];
+        rr->blk = a1->id; rr->fn = af; rr->nt = 1; rr->key[0] = ax->id; rr->nedge = 1; rr->from[0] = a6->id; rr->fall[0] = 0;
+        rr->ncomp = c == 1 ? 1 : 2; rr->coef[0][0] = 1; rr->coef[1][0] = -1; rr->cont[1] = c == 1 ? 0 : 1;
+        CHECK(run(af, &sa, true, sizeof region, err), "judges: %s", err);
+        char p1[48], pb[48], nf[48];                         // a record names its kind, not its ordinal
+        snprintf(p1, sizeof p1, "proved bb%d.0 rank.fall", a6->id);
+        snprintf(pb, sizeof pb, "proved bb%d.0 rank.bound", a6->id); snprintf(nf, sizeof nf, "not-implied bb%d.0 rank.fall", a6->id);
+        if (c == 0) CHECK(count_in(recs, p1) == 2 && count_in(recs, pb) == 1 && !strstr(recs, nf), "max(x, -x): both falls and the bound proved:\n%s", recs);
+        else CHECK(strstr(recs, nf) != NULL, "case %d: a rank.fall not implied:\n%s", c, recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

@@ -3338,6 +3338,16 @@ static bool jg_rank_not(JB *B, const JRank *r, int32_t j, const int32_t *pre, co
     }
     return jb_cons(B, t, n, J_LE, below ? -1 - r->c0[j] : k, c);
 }
+// Row a after a trip against row b before it: f_a(post) - f_b(pre) <= k, or with `neg` its
+// negation's side, f_b(pre) - f_a(post) <= k (rows of one MAX component).
+static bool jg_rank_cross(JB *B, const JRank *r, int32_t a, int32_t b, const int32_t *pre, const int32_t *post, bool neg, __int128 k, JCons *c) {
+    JLT t[2 * JRANK_MAXT]; int n = 0; int s = neg ? -1 : 1;
+    for (int32_t i = 0; i < r->nt; i++) {
+        if (r->coef[a][i] != 0) { t[n].var = post[i]; t[n].c = s * r->coef[a][i]; n++; }
+        if (r->coef[b][i] != 0) { t[n].var = pre[i]; t[n].c = -s * r->coef[b][i]; n++; }
+    }
+    return jb_cons(B, t, n, J_LE, k - s * (r->c0[a] - r->c0[b]), c);
+}
 // The WRITTEN measure (`while c decreasing m`, D-44), read as a ranking claim's one component:
 // lowering computes m at the start of the body, under the guard (lower.h, I.74), so m is a sum over
 // what the trip starts from: a load of a cell reading the version the header makes or keeps, a value
@@ -3479,8 +3489,15 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             for (int32_t i = 0; i < r->nt; i++)
                 if (r->coef[j][i] > big || r->coef[j][i] < -big) return jg_fail(g, "a ranking claim's coefficient out of range");
         }
+        // its components: c is rows c0r[c] .. c0r[c] + cn[c] - 1, their MAX where cn[c] >= 2
+        int32_t c0r[JRANK_MAXC], cn[JRANK_MAXC], nc = 0;
+        for (int32_t j = 0; j < r->ncomp; j++) {
+            if (r->cont[j] > 1 || (j == 0 && r->cont[j])) return jg_fail(g, "a ranking claim's max of rows out of shape");
+            if (r->cont[j]) cn[nc - 1]++; else { c0r[nc] = j; cn[nc] = 1; nc++; }
+        }
         for (int32_t e = 0; e < r->nedge; e++) {
-            if (r->fall[e] < -1 || r->fall[e] >= r->ncomp) return jg_fail(g, "a ranking claim's falling component out of range");
+            if (r->fall[e] < -1 || r->fall[e] >= nc) return jg_fail(g, "a ranking claim's falling component out of range");
+            if (r->fall[e] < 0 && nc != r->ncomp) return jg_fail(g, "a free back edge over a component that is a max of rows");
             bool is = false;
             for (IrEdge *pe = H->preds; pe; pe = pe->next)
                 if (pe->block->id == r->from[e] && g->rpoix[r->from[e]] >= 0 && jg_back_edge(g, r->from[e], H->id)) is = true;
@@ -3530,8 +3547,14 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                 if (!o || !jb_finish(&B, NULL, "rank.lex", q, &goal, o)) return jg_fail(g, "out of memory building a VC");
                 o->to = H; o->claim = -1;
             }
+            // a component that is the MAX of rows R: keeping or falling by d is, for each row a,
+            // f_a(post) <= f_b(pre) - d for some b in R: one VC per a (ordinal 1000*(q + 1) + c, a
+            // the q-th row), its goal against R's last row under the premises that no other b
+            // gave it (`premise rank.max c`); bounded is f_b(pre) >= 0 for some b, one VC (ordinal
+            // c) under the premises that no other b is. Atoms all, no fresh variable
             for (int32_t j = 0; j <= fall; j++)
-                for (int what = j < fall ? 0 : 1; what <= (j < fall ? 0 : 2); what++) {
+                for (int what = j < fall ? 0 : 1; what <= (j < fall ? 0 : 2); what++)
+                for (int32_t q = 0; q < (cn[j] == 1 || what == 2 ? 1 : cn[j]); q++) {
                     JB B = jb_begin(g, P->id, np, -1);
                     B.to = H->id;
                     int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
@@ -3539,12 +3562,21 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                         pre[i] = jb_term(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells);
                         post[i] = jb_term(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
                     }
+                    int32_t last = c0r[j] + cn[j] - 1, a = c0r[j] + q, d = what == 1 ? 1 : 0;
+                    for (int32_t b = c0r[j]; b < last && !B.fail; b++) {
+                        JCons pc;
+                        if (what == 2 ? !jg_rank_not(&B, r, b, pre, post, true, 0, &pc) : !jg_rank_cross(&B, r, a, b, pre, post, true, d - 1, &pc)) B.fail = true;
+                        else { JHyp *h = jb_hyp(&B, jb_str(&B, "premise rank.max %lld", j, 0, 0)); if (h) h->cons = pc; }
+                    }
                     JCons goal;
-                    if (B.fail || !jg_rank_goal(&B, r, j, pre, post, what, &goal)) return jg_fail(g, "out of memory building a ranking VC");
+                    if (B.fail || (cn[j] == 1 || what == 2 ? !jg_rank_goal(&B, r, last, pre, post, what, &goal)
+                                                            : !jg_rank_cross(&B, r, a, last, pre, post, false, -d, &goal)))
+                        return jg_fail(g, "out of memory building a ranking VC");
                     JObl *o = jg_push(g, L);
                     const char *kind = measure ? (what == 1 ? "measure.fall" : "measure.bound")
                                                : what == 0 ? "rank.keep" : what == 1 ? "rank.fall" : "rank.bound";
-                    if (!o || !jb_finish(&B, NULL, kind, j, &goal, o)) return jg_fail(g, "out of memory building a VC");
+                    if (!o || !jb_finish(&B, NULL, kind, cn[j] == 1 || what == 2 ? j : 1000 * (q + 1) + j, &goal, o))
+                        return jg_fail(g, "out of memory building a VC");
                     o->to = H; o->claim = -1;                // an obligation: a ranking claim is never a fact
                 }
         }
