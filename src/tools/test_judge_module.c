@@ -601,6 +601,35 @@ int main(void) {
         CHECK(strstr(recs, " divzero") && !strstr(recs, "divzero not") && nrec[JREC_NOT_IMPLIED] == 0, "x - (x & (x - 1)) nonzero:\n%s", recs);
     }
 
+    // a quotient's guard and a remainder below its dividend, over u64: `if i < n / 2 { 100 / (n - 1) }`
+    // (n >= 2) and `x - x % y`
+    for (int c = 0; c < 2; c++) {
+        IrType *mu64 = ir_type_int(&A, 64, false);
+        IrFunc *mf = ir_func_new(&A, nm(c ? "rounddown" : "halfway"), mu64, IR_FUNC_PURE);
+        IrValue *mx = ir_add_param(mf, mu64, nm("x")), *my = ir_add_param(mf, mu64, nm("y"));
+        IrBlock *m0 = mf->entry;
+        char want[48] = "proved bb1.3 divzero";
+        if (c) {
+            ir_assume(mf, m0, ir_icmp(mf, m0, IR_CMP_UGE, my, ir_const_int(mf, m0, 1, mu64)));
+            IrValue *md = ir_binop(mf, m0, IR_SUB, mx, ir_binop(mf, m0, IR_UREM, mx, my, mu64), mu64);
+            int at = 0;
+            for (IrInstr *q = m0->instrs; q && q->result != md; q = q->next) at++;
+            snprintf(want, sizeof want, "proved bb0.%d narrow.lo", at);
+            ir_set_ret(m0, md);
+        } else {
+            IrBlock *m1 = ir_new_block(mf), *m2 = ir_new_block(mf);
+            IrValue *mq = ir_binop(mf, m0, IR_UDIV, mx, ir_const_int(mf, m0, 2, mu64), mu64);
+            ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_ULT, my, mq), m1, m2);
+            ir_set_ret(m1, ir_binop(mf, m1, IR_UDIV, ir_const_int(mf, m1, 100, mu64), ir_binop(mf, m1, IR_SUB, mx, ir_const_int(mf, m1, 1, mu64), mu64), mu64));
+            ir_set_ret(m2, ir_const_int(mf, m2, 0, mu64));
+        }
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, want) && nrec[JREC_NOT_IMPLIED] == 0,
+              "%s:\n%s", c ? "x - x % y" : "100 / (n - 1) under i < n / 2", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

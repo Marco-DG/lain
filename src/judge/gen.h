@@ -1527,11 +1527,21 @@ static void jb_state(JB *B, int32_t x) {
                 // a remainder below its divisor itself (`i % s.len < s.len`): an unsigned one always
                 // (its divisor is nonzero where it completes), a signed one where x >= 0 and y >= 1
                 JRange ra, rb;
-                if (!dv && jg_static_range(g, d->operands[0], &ra, 0) && jg_static_range(g, d->operands[1], &rb, 0) &&
-                    (d->op == IR_UREM || (ra.lo >= 0 && rb.lo >= 1))) {
-                    t[0].var = x; t[0].c = 1; t[1].var = jb_val(B, d->operands[1]); t[1].c = -1;
+                if (!jg_static_range(g, d->operands[0], &ra, 0) || !jg_static_range(g, d->operands[1], &rb, 0)) break;
+                int32_t xv = jb_val(B, d->operands[0]), yv = jb_val(B, d->operands[1]);
+                if (!dv && (d->op == IR_UREM || (ra.lo >= 0 && rb.lo >= 1))) {
+                    t[0].var = x; t[0].c = 1; t[1].var = yv; t[1].c = -1;
                     jb_atom(B, o, t, 2, J_LE, -1);
                 }
+                // and the dividend: x >= 0 keeps a remainder within [0, x] (of x's sign, |r| <= |x|);
+                // over y in [lo, hi], lo >= 1 (an unsigned divisor is nonzero where it completes),
+                // x = q*y + r with 0 <= r <= y - 1 gives lo*q <= x <= hi*q + hi - 1
+                if (ra.lo < 0) break;
+                if (!dv) { t[0].var = x; t[0].c = 1; t[1].var = xv; t[1].c = -1; jb_atom(B, o, t, 2, J_LE, 0); break; }
+                __int128 lo = rb.lo < 1 && d->op == IR_UDIV ? 1 : rb.lo;
+                if (lo < 1) break;
+                t[0].var = x; t[0].c = lo; t[1].var = xv; t[1].c = -1; jb_atom(B, o, t, 2, J_LE, 0);
+                t[0].var = x; t[0].c = -rb.hi; t[1].var = xv; t[1].c = 1; jb_atom(B, o, t, 2, J_LE, rb.hi - 1);
                 break;
             }
             if (c == 0) break;
@@ -1858,12 +1868,14 @@ static bool jb_has(JB *B, IrValue *v) {
 }
 static void jb_drain(JB *B) { while (B->qh < B->qt && !B->fail) jb_state(B, B->queue[B->qh++]); }
 // Is a condition's operand about the VC: in it, or computed exactly from what is (a guard on one
-// `i + j` and an index computing `i + j` again are two SSA values with the same operands)? Depth 3.
+// `i + j` and an index computing `i + j` again are two SSA values with the same operands), or a
+// quotient or remainder, whose statement names its dividend (`i < n / 2` and a goal on n)? Depth 3.
 static bool jb_rel(JB *B, IrValue *v, int depth) {
     if (jb_has(B, v)) return true;
     if (depth <= 0 || !v || v->id < 0 || v->id >= B->g->nv) return false;
     IrInstr *d = B->g->def[v->id];
-    if (!d || !(d->op == IR_ADD || d->op == IR_SUB || d->op == IR_NEG || d->op == IR_MUL || d->op == IR_CAST)) return false;
+    if (!d || !(d->op == IR_ADD || d->op == IR_SUB || d->op == IR_NEG || d->op == IR_MUL || d->op == IR_CAST ||
+                d->op == IR_SDIV || d->op == IR_UDIV || d->op == IR_SREM || d->op == IR_UREM)) return false;
     for (int k = 0; k < d->n_operands; k++) if (jb_rel(B, d->operands[k], depth - 1)) return true;
     return false;
 }

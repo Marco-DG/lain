@@ -2641,6 +2641,64 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a slice slot's length one variable for relevance; and and remainder below their operands\n");
+    // 54. a quotient's and a remainder's relation to the dividend x >= 0: over y in [lo, hi] with
+    // lo >= 1, lo*q <= x <= hi*q + hi - 1; a remainder r <= x. (0) x / y over u32, y in [2, 8];
+    // (1) over u64, y any (an unsigned divisor is >= 1 where the division completes); (2) x / y
+    // over i32 with x >= 0 and y >= 3; (3) the same with y any: none; (4) x % y over u64; (5) over
+    // i32 with x >= 0, y any; (6) over i32, x any: none. (7) A guard `i < n / 2` joins the VC of a
+    // goal on n - 1 (not naming i), its quotient's statement naming n; (8) and `i < n * 2` as
+    // before.
+    for (int c = 0; c < 9; c++) {
+        IrType *T = c == 0 ? u32t : c == 1 || c == 4 || c >= 7 ? u64t : i32t;
+        bool sg = T == i32t, dv = c <= 3, gd = c >= 7;
+        IrFunc *f = ir_func_new(&A, nm("q54"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x")), *y = ir_add_param(f, T, nm("y"));
+        IrBlock *b0 = f->entry;
+        if (c == 0) { ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_UGE, y, ir_const_int(f, b0, 2, T)));
+                      ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_ULE, y, ir_const_int(f, b0, 8, T))); }
+        if (c == 2 || c == 3 || c == 5) ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, x, ir_const_int(f, b0, 0, T)));
+        if (c == 2) ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, y, ir_const_int(f, b0, 3, T)));
+        if (gd) {                                              // x is n, y is i
+            IrBlock *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+            IrValue *q = ir_binop(f, b0, c == 7 ? IR_UDIV : IR_MUL, x, ir_const_int(f, b0, 2, T), T);
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, y, q), b1, b2);
+            IrValue *df = ir_binop(f, b1, IR_SUB, x, ir_const_int(f, b1, 1, T), T);
+            ir_set_ret(b1, ir_binop(f, b1, IR_UDIV, ir_const_int(f, b1, 100, T), df, T));
+            ir_set_ret(b2, ir_const_int(f, b2, 0, T));
+            int at = nins(b1) - 1;
+            ir_finalize_cfg(f);
+            gen_mod = f;
+            char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48];
+            snprintf(key, sizeof key, " bb1.%d divzero 0", at);
+            const char *vz = t ? vc_of(t, key) : "";
+            CHECK(strstr(vz, "guard bb0->bb1") != NULL, "case %d: the guard on i < n %s 2 joins:\n%s", c, c == 7 ? "/" : "*", vz);
+            free(t);
+            continue;
+        }
+        IrValue *r = ir_binop(f, b0, dv ? (sg ? IR_SDIV : IR_UDIV) : (sg ? IR_SREM : IR_UREM), x, y, T);
+        ir_set_ret(b0, ir_binop(f, b0, sg ? IR_SDIV : IR_UDIV, ir_const_int(f, b0, 100, T), r, T));
+        int at = nins(b0) - 1;
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), w1[128], w2[128], key[48];
+        snprintf(key, sizeof key, " bb0.%d divzero 0", at);
+        const char *vz = t ? vc_of(t, key) : "";
+        const char *o = dv ? "div.hull" : "rem.hull";
+        long long lo = c == 0 ? 2 : c == 2 ? 3 : 1, hi = c == 0 ? 8 : c == 1 ? -1 : 2147483647;
+        if (dv) {
+            snprintf(w1, sizeof w1, "%s : %lld*%%v%d + -1*%%v%d <= 0", o, lo, r->id, x->id);
+            if (c == 1) snprintf(w2, sizeof w2, "%s : -18446744073709551615*%%v%d + 1*%%v%d <= 18446744073709551614", o, r->id, x->id);
+            else snprintf(w2, sizeof w2, "%s : %lld*%%v%d + 1*%%v%d <= %lld", o, -hi, r->id, x->id, hi - 1);
+        } else {
+            snprintf(w1, sizeof w1, "%s : 1*%%v%d + -1*%%v%d <= 0", o, r->id, x->id);
+            snprintf(w2, sizeof w2, "%s", w1);
+        }
+        bool has = c != 3 && c != 6;
+        CHECK(*vz && !!strstr(vz, w1) == has && !!strstr(vz, w2) == has, "case %d: %s%s and %s:\n%s", c, has ? "" : "no ", w1, w2, vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a quotient and a remainder against their dividend; a guard on a quotient joins\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
