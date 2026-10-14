@@ -2375,21 +2375,25 @@ int main(void) {
     // 49. a DIVISION or REMAINDER by a variable divisor, between bounds from the static ranges:
     // (0) 100 / b, b any i32 (an i33 quotient): |q| <= 100; (1) x in [0, 50] / y in [2, 5]: the
     // corners, [0, 25]; (2) x in [-10, 10] / y any i32 (y takes both signs): |q| <= 10 only; (3) x
-    // in [0, 1000] % y in [1, 7]: [0, 6]; (4) x in [-10, 3] % y in [-100, 100]: |r| <= 10; (5) (a +
+    // in [0, 1000] % y in [1, 7]: [0, 6]; (4) x in [-10, 3] % y in [-100, 100]: [-10, 3]; (5) (a +
     // b) % (0 - 4) over u8 a, b in an i32: x folds to [0, 510], y to [-4, -4]: [0, 3]; (6) a signed
     // UNCHECKED division: nothing; (7) a constant divisor: the exact row, no hull; (8) (a + b) / (0 -
     // 4) as case 5: [-127, 0]; (9) an UNCHECKED i8 100 + 100 is not folded (it may wrap): x / y, y
-    // any i8, |q| <= 128 from x's type
+    // any i8, |q| <= 128 from x's type; (10) I.198's mixed signs, an i32 x % a u32 y in i64 (each
+    // extended by its own signedness): [-2^31, 2^31 - 1], x's own ends (|r| <= max|x| was 2^31);
+    // (11) x in [5, 10] % y in [1, 3]: [0, 2], not x's lo; (12) x in [-10, -5] % y in [-3, 3]: [-2, 0];
+    // (13) x in [-3, 10] % y in [-100, 100]: [-3, 10], case 4 mirrored
     {   IrType *i33t = ir_type_int(&A, 33, true);
-        static const struct { int lo, hi; } X[10] = { { 100, 100 }, { 0, 50 }, { -10, 10 }, { 0, 1000 }, { -10, 3 }, { 0, 0 }, { 0, 50 }, { 0, 50 }, { 0, 0 }, { 0, 0 } },
-                                            Y[10] = { { 0, 0 }, { 2, 5 }, { 0, 0 }, { 1, 7 }, { -100, 100 }, { 0, 0 }, { 2, 5 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
-        static const char *want[10] = { "-100 100", "0 25", "-10 10", "0 6", "-10 10", "0 3", "", "", "-127 0", "-128 128" };
-        for (int c = 0; c < 10; c++) {
-            IrType *T = c == 0 ? i33t : c == 9 ? i8x : i32t;
+        static const struct { int lo, hi; } X[14] = { { 100, 100 }, { 0, 50 }, { -10, 10 }, { 0, 1000 }, { -10, 3 }, { 0, 0 }, { 0, 50 }, { 0, 50 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 5, 10 }, { -10, -5 }, { -3, 10 } },
+                                            Y[14] = { { 0, 0 }, { 2, 5 }, { 0, 0 }, { 1, 7 }, { -100, 100 }, { 0, 0 }, { 2, 5 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 1, 3 }, { -3, 3 }, { -100, 100 } };
+        static const char *want[14] = { "-100 100", "0 25", "-10 10", "0 6", "-10 3", "0 3", "", "", "-127 0", "-128 128", "-2147483648 2147483647", "0 2", "-2 0",
+                                        "-3 10" };
+        for (int c = 0; c < 14; c++) {
+            IrType *T = c == 0 ? i33t : c == 9 ? i8x : c == 10 ? i64t : i32t;
             IrFunc *f = ir_func_new(&A, nm("d49"), T, IR_FUNC_PURE);
-            IrValue *x = ir_add_param(f, c == 5 || c == 8 ? u8t : T, nm("x")), *y = ir_add_param(f, c == 5 || c == 8 ? u8t : T, nm("y"));
+            IrValue *x = ir_add_param(f, c == 5 || c == 8 ? u8t : c == 10 ? i32t : T, nm("x")), *y = ir_add_param(f, c == 5 || c == 8 ? u8t : c == 10 ? u32t : T, nm("y"));
             IrBlock *b0 = f->entry;
-            if (c != 0 && c != 2 && c != 5 && c != 8 && c != 9) { // the refinements, in the prologue
+            if (c != 0 && c != 2 && c != 5 && c != 8 && c != 9 && c != 10) { // the refinements, in the prologue
                 ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, x, ir_const_int(f, b0, X[c].lo, T)));
                 ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SLE, x, ir_const_int(f, b0, X[c].hi, T)));
                 if (c != 7) { ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_SGE, y, ir_const_int(f, b0, Y[c].lo, T)));
@@ -2406,7 +2410,12 @@ int main(void) {
                 ys = ir_binop(f, b0, IR_SUB, ir_const_int(f, b0, 0, i32t), ir_const_int(f, b0, 4, i32t), i32t);
             }
             if (c == 7) ys = ir_const_int(f, b0, 4, T);
-            IrValue *q = ir_binop(f, b0, c == 3 || c == 4 || c == 5 ? IR_SREM : IR_SDIV, xs, ys, c == 5 || c == 8 ? i32t : T);
+            if (c == 10) {
+                IrInstr *ca = ir_instr(f, IR_CAST, i64t, 1); ca->operands[0] = x; ir_emit(b0, ca);
+                IrInstr *cb = ir_instr(f, IR_CAST, i64t, 1); cb->operands[0] = y; ir_emit(b0, cb);
+                xs = ca->result; ys = cb->result;
+            }
+            IrValue *q = ir_binop(f, b0, c == 3 || c == 4 || c == 5 || c >= 10 ? IR_SREM : IR_SDIV, xs, ys, c == 5 || c == 8 ? i32t : T);
             if (c == 6) g_last_instr(b0)->unchecked = true;
             IrInstr *w = ir_instr(f, IR_CAST, i64t, 1); w->operands[0] = q; ir_emit(b0, w);
             IrValue *rv = ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 1000, i64t), w->result, i64t);   // q in a VC
@@ -2415,12 +2424,12 @@ int main(void) {
             ir_finalize_cfg(f);
             gen_mod = f;
             char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), lo[96], hi[96];
-            const char *hn = c == 3 || c == 4 || c == 5 ? "rem.hull" : "div.hull";
-            int wl = 0, wh = 0; sscanf(want[c], "%d %d", &wl, &wh);
-            snprintf(lo, sizeof lo, "def %%v%d %s : -1*%%v%d <= %d\n", q->id, hn, q->id, -wl);
-            snprintf(hi, sizeof hi, "def %%v%d %s : 1*%%v%d <= %d\n", q->id, hn, q->id, wh);
+            const char *hn = c == 3 || c == 4 || c == 5 || c >= 10 ? "rem.hull" : "div.hull";
+            long long wl = 0, wh = 0; sscanf(want[c], "%lld %lld", &wl, &wh);
+            snprintf(lo, sizeof lo, "def %%v%d %s : -1*%%v%d <= %lld\n", q->id, hn, q->id, -wl);
+            snprintf(hi, sizeof hi, "def %%v%d %s : 1*%%v%d <= %lld\n", q->id, hn, q->id, wh);
             if (c == 6 || c == 7) CHECK(t && !strstr(t, ".hull"), "case %d: no hull:\n%s", c, t ? t : "");
-            else CHECK(t && strstr(t, lo) && strstr(t, hi), "case %d: q in [%d, %d]:\n%s", c, wl, wh, t ? t : "");
+            else CHECK(t && strstr(t, lo) && strstr(t, hi), "case %d: q in [%lld, %lld]:\n%s", c, wl, wh, t ? t : "");
             free(t);
         }
         gen_mod = NULL;

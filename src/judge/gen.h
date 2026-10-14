@@ -1370,8 +1370,9 @@ static bool jr_mul(const JRange *a, const JRange *b, JRange *h) {
 }
 // a QUOTIENT with |q| <= max|x| (|y| >= 1), and where y keeps one sign between the corners a/c,
 // a/d, b/c, b/d (truncating division is monotone in each operand there; y in [0, d] is in [1, d]
-// where it is nonzero, and [c, 0] in [c, -1]); a REMAINDER with |r| < max|y|, |r| <= max|x| and
-// x's sign (C's remainder truncates toward zero);
+// where it is nonzero, and [c, 0] in [c, -1]); a REMAINDER with |r| < max|y| and between x and 0
+// (C's remainder truncates toward zero: r > 0 only where x > 0, then r <= x <= x.hi; r < 0 only
+// where x < 0, then r >= x >= x.lo);
 static bool jr_divrem(bool div, const JRange *a, const JRange *b0, JRange *h) {
     __int128 alo = a->lo < 0 ? -a->lo : a->lo, ahi = a->hi < 0 ? -a->hi : a->hi, mx = alo > ahi ? alo : ahi;
     JRange bn = *b0, *b = &bn;
@@ -1389,8 +1390,8 @@ static bool jr_divrem(bool div, const JRange *a, const JRange *b0, JRange *h) {
     }
     __int128 my = b->hi > -b->lo ? b->hi : -b->lo;
     if (my < 1) return false;
-    __int128 k = my - 1 < mx ? my - 1 : mx;
-    h->lo = a->lo >= 0 ? 0 : -k; h->hi = a->hi <= 0 ? 0 : k;
+    h->lo = a->lo >= 0 ? 0 : a->lo > -(my - 1) ? a->lo : -(my - 1);
+    h->hi = a->hi <= 0 ? 0 : a->hi < my - 1 ? a->hi : my - 1;
     return true;
 }
 // a BITWISE and, or, xor, at the operands' two's complement width: where both are >= 0, an and in
