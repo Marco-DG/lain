@@ -542,6 +542,11 @@ at=pure 2
 ty=Box_i32 struct
 ty=Box_u64 struct
 ty=Option_i32 struct
+### tests/generics/generic_body_forms_pass.ln
+rc=0
+out=12 8
+at=const 4
+ty=Slice_u8 scalar
 ### tests/generics/generic_box_linear_consumed_pass.ln
 rc=0
 out=
@@ -609,6 +614,16 @@ rc=0
 out=
 at=const 2
 ty=Option_i32 struct
+### tests/generics/generic_sizeof_alignof_instance_pass.ln
+rc=0
+out=u8 1 1
+out=i16 2 2
+out=Big 24 24
+out=align u8 1 1
+out=align Big 8 8
+at=const 10
+ty=Big struct
+ty=Slice_u8 scalar
 ### tests/generics/generic_std_option_pass.ln
 rc=0
 out=
