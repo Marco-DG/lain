@@ -691,6 +691,23 @@ int main(void) {
         else CHECK(strstr(recs, "not-implied bb1.") && strstr(strstr(recs, "not-implied bb1."), "divzero"), "s[i] = 0 may write xs[3]:\n%s", recs);
     }
 
+    // an assert of an unsigned comparison with a signed operand >= 0: `if pos < len { assert pos + 1
+    // <= len }`, pos a u32, len a u64, pos + 1 in i34
+    {   IrType *mu32 = ir_type_int(&A, 32, false), *mu64 = ir_type_int(&A, 64, false), *mi34 = ir_type_int(&A, 34, true);
+        IrFunc *mf = ir_func_new(&A, nm("advance"), mu32, IR_FUNC_PURE);
+        IrValue *mp = ir_add_param(mf, mu32, nm("pos")), *ml = ir_add_param(mf, mu64, nm("len"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf);
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_ULT, mp, ml), m1, m2);
+        IrValue *mx = ir_binop(mf, m1, IR_ADD, mp, ir_const_int(mf, m1, 1, ir_type_int(&A, 32, true)), mi34);
+        ir_assert(mf, m1, ir_icmp(mf, m1, IR_CMP_ULE, mx, ml));
+        ir_set_ret(m1, ir_const_int(mf, m1, 1, mu32));
+        ir_set_ret(m2, ir_const_int(mf, m2, 0, mu32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, "proved bb1.") && strstr(recs, "assert.0") && nrec[JREC_NOT_IMPLIED] == 0, "assert pos + 1 <= len:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

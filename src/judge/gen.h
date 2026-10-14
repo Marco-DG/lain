@@ -2405,8 +2405,9 @@ static bool jgk_assert(JB *B, IrInstr *at, void *arg, JCons *goal) {
     }
 }
 // Can an ASSERT's comparison be a goal? Integers, and an unsigned comparison only of operands that
-// are never negative (the interpreter compares as uint64), as jb_cmp states a fact. One value
-// compared with itself leaves the empty sum: `0 <= 0` for `m <= m`, `0 != 0` for `z != z`.
+// are never negative (the interpreter compares as uint64), as jb_cmp states a fact: unsigned, or
+// signed with a static range >= 0 (a constant's value; `pos + 1` over a u32 pos is in [1, 2^32]).
+// One value compared with itself leaves the empty sum: `0 <= 0` for `m <= m`, `0 != 0` for `z != z`.
 static bool jg_assert_cmp(JG *g, IrInstr *ic) {
     if (!ic || ic->op != IR_ICMP || ic->n_operands < 2) return false;
     IrValue *a = ic->operands[0], *b = ic->operands[1];
@@ -2415,9 +2416,9 @@ static bool jg_assert_cmp(JG *g, IrInstr *ic) {
     if (c == IR_CMP_ULT || c == IR_CMP_ULE || c == IR_CMP_UGT || c == IR_CMP_UGE)
         for (int k = 0; k < 2; k++) {
             IrValue *o = ic->operands[k];
+            JRange r;
             if (o->type->kind == IRT_BOOL || !o->type->is_signed) continue;
-            IrInstr *od = o->id >= 0 && o->id < g->nv ? g->def[o->id] : NULL;
-            if (!(od && od->op == IR_CONST && jg_const(od) >= 0)) return false;
+            if (!jg_static_range(g, o, &r, 0) || r.lo < 0) return false;
         }
     return true;
 }

@@ -2801,6 +2801,31 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a slice's data is the address it took; an element's neighbour by a constant is a cell\n");
+    // 57. an ASSERT of an unsigned comparison with a SIGNED operand: (0) x = pos + 1 in i34 over a
+    // u32 pos (static range [1, 2^32]) `x <=u len`: the comparison is the goal; (1) x an i32
+    // parameter (it may be negative, compared as uint64): the bool `!= 0`; (2) x a constant -1
+    // (i64): the bool
+    for (int c = 0; c < 3; c++) {
+        IrType *i34 = ir_type_int(&A, 34, true);
+        IrFunc *f = ir_func_new(&A, nm("a57"), u32t, IR_FUNC_PURE);
+        IrValue *pos = ir_add_param(f, c == 1 ? i32t : u32t, nm("pos")), *len = ir_add_param(f, u64t, nm("len"));
+        IrBlock *b0 = f->entry;
+        IrValue *x = c == 0 ? ir_binop(f, b0, IR_ADD, pos, ir_const_int(f, b0, 1, i32t), i34) : c == 1 ? pos : ir_const_int(f, b0, -1, i64t);
+        IrValue *q = ir_icmp(f, b0, IR_CMP_ULE, x, len);
+        int aq = nins(b0); ir_assert(f, b0, q);
+        ir_set_ret(b0, ir_const_int(f, b0, 0, u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48], want[64];
+        snprintf(key, sizeof key, " bb0.%d assert.0 0", aq);
+        const char *vz = t ? vc_of(t, key) : "";
+        if (c == 0) snprintf(want, sizeof want, "goal 1*%%v%d + -1*%%v%d <= 0", x->id, len->id);
+        else snprintf(want, sizeof want, "goal 1*%%v%d != 0", q->id);
+        CHECK(*vz && strstr(vz, want), "case %d: %s:\n%s", c, want, vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  an assert of an unsigned comparison: a signed operand >= 0 by its static range\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
