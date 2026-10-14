@@ -164,7 +164,11 @@ static __int128 jg_const(const IrInstr *ins) {
 
 // ── the function's structure ────────────────────────────────────────────────────────────────
 enum { JV_ENTRY, JV_STORE, JV_JOIN, JV_HEAD, JV_HAVOC };
-typedef struct { int kind; int32_t cell, blk, idx; IrValue *stored; IrType *slot; bool unchecked; } JVer;
+// A HAVOC version made by a store through a variable index into an array of element cells (es: that
+// store, ek: this element's index, eprev: its version before) is that element with or without the
+// value stored (jg_elem_store); any other havoc version is es NULL.
+typedef struct { int kind; int32_t cell, blk, idx; IrValue *stored; IrType *slot; bool unchecked;
+                 IrInstr *es; int32_t ek, eprev; } JVer;
 typedef struct {
     JMem *m; IrFunc *f; char *err; size_t errcap;
     IrFunc *mod;                   // the module: where callees are looked up (NULL: every call is unknown)
@@ -347,6 +351,30 @@ static JELoad *jg_elem_load(JG *g, IrValue *a, const int32_t *o) {
     }
     return el;
 }
+// A STORE through a CHECKED variable index into a fixed array of at most JELEM_MAXN elements, the
+// value landing exactly in each integer cell among them (c10's rule for a load, mirrored): cells[k]
+// is element k's cell, or -1. Its havoc version of each is that element, or the value stored where
+// the index names it (jb_state); each on its own, so an element that is no cell takes nothing from
+// the others. 0 where any of that fails: the store's versions are plain havoc.
+static bool jg_lands_exact(const IrType *from, const IrType *to, bool waived);   // below
+static int32_t jg_elem_store(JG *g, IrInstr *st, int32_t *cells) {
+    IrValue *a = st->n_operands >= 2 ? st->operands[0] : NULL;
+    IrInstr *d = a && a->id >= 0 && a->id < g->nv ? g->def[a->id] : NULL;
+    if (!d || d->op != IR_ELEM_PTR || d->n_operands < 2 || !d->operands[0] || d->unchecked || g->iunsafe[a->id]) return 0;
+    IrValue *base = d->operands[0];
+    if (base->id < 0 || base->id >= g->nv || g->aroot[base->id] < 0) return 0;
+    const IrType *t = jg_pointee(g, base->id);
+    if (!t || t->kind != IRT_ARRAY || t->array_len < 1 || t->array_len > JELEM_MAXN) return 0;
+    for (int32_t k = 0; k < (int32_t)t->array_len; k++) {
+        char pth[256]; snprintf(pth, sizeof pth, "%s[%lld]", g->apath[base->id], (long long)k);
+        int32_t c = -1;
+        for (int32_t c2 = 0; c2 < g->ncells && c < 0; c2++)
+            if (g->croot[c2] == g->aroot[base->id] && !strcmp(g->cpath[c2], pth)) c = c2;
+        if (c >= 0 && (!jg_is_int(g->cty[c]) || !jg_lands_exact(st->operands[1]->type, g->cty[c], st->unchecked))) return 0;
+        cells[k] = c;
+    }
+    return (int32_t)t->array_len;
+}
 static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, IrValue *stored, bool unchecked) {
     if (g->nver == g->cver) {
         JVer *nv = JG_NEW(g, JVer, g->cver * 2);
@@ -356,6 +384,7 @@ static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, 
     JVer *v = &g->ver[g->nver++];
     v->kind = kind; v->cell = cell; v->blk = blk; v->idx = idx; v->stored = stored; v->unchecked = unchecked;
     v->slot = (IrType *)g->cty[cell];
+    v->es = NULL; v->ek = v->eprev = -1;
     return true;
 }
 
@@ -794,10 +823,13 @@ static bool jg_cells(JG *g) {
                 continue;                                      // a load changes nothing
             }
             jg_changes(g, i);
+            int32_t ecell[JELEM_MAXN], en = i->op == IR_STORE ? jg_elem_store(g, i, ecell) : 0;
             for (int32_t e = 0; e < g->neff; e++) {
-                int32_t c = g->eff_cell[e];
+                int32_t c = g->eff_cell[e], prev = o[c];
                 if (!jg_pushver(g, g->eff_val[e] ? JV_STORE : JV_HAVOC, c, b->id, k, g->eff_val[e], g->eff_unc[e])) return false;
                 o[c] = g->nver - 1;
+                for (int32_t q = 0; q < en && !g->eff_val[e]; q++)
+                    if (ecell[q] == c) { g->ver[o[c]].es = i; g->ver[o[c]].ek = q; g->ver[o[c]].eprev = prev; }
             }
         }
     }
@@ -1031,7 +1063,6 @@ static void jb_def(JB *B, int32_t x, JLT *t, int n, const char *origin) { jb_def
 
 // Does a STORE keep the value it stores? When its landing is exact (jg_lands_exact): the landing
 // obligation at the store (jg_land) licenses it; a waived one into a plain slot wraps (ii_land).
-static bool jg_lands_exact(const IrType *from, const IrType *to, bool waived);   // below
 static bool jg_store_exact(const JVer *v) {
     return v->stored && v->slot && jg_lands_exact(v->stored->type, v->slot, v->unchecked);
 }
@@ -1647,6 +1678,26 @@ static void jb_state(JB *B, int32_t x) {
             char *os = JG_NEW(g, char, strlen(o) + 1);
             if (os) strcpy(os, o); else B->fail = true;
             jb_def(B, x, t, 1, os);
+        }
+        if (v->kind == JV_HAVOC && v->es && v->eprev >= 0 && B->jS < 0) {
+            // an element a store `a[i] = s` may have written (jg_elem_store): i = k and it is s, or
+            // i is another index and it is what it was (one case per side; not inside a disjunct)
+            IrInstr *ep = g->def[v->es->operands[0]->id];
+            int32_t iv = jb_val(B, ep->operands[1]), sv = jb_val(B, v->es->operands[1]), pv = jb_ver(B, v->eprev);
+            char o[96]; snprintf(o, sizeof o, "store %s@havoc.bb%lld.%lld element", g->cname[v->cell], (long long)v->blk, (long long)v->idx);
+            char *os = JG_NEW(g, char, strlen(o) + 1);
+            JHyp *h = os ? jb_hyp(B, strcpy(os, o)) : NULL;
+            if (!h || !(h->dis = JG_NEW(g, JConj, 3))) { B->fail = true; return; }
+            h->disj = true; h->ndis = 3;
+            for (int dd = 0; dd < 3 && !B->fail; dd++) {
+                if (!(h->dis[dd].c = JG_NEW(g, JCons, 2))) { B->fail = true; return; }
+                h->dis[dd].nc = 2;
+                JLT t[2];
+                t[0].var = iv; t[0].c = dd == 2 ? -1 : 1;              // i = k, i <= k - 1, -i <= -(k + 1)
+                jb_cons(B, t, 1, dd == 0 ? J_EQ : J_LE, dd == 0 ? v->ek : dd == 1 ? v->ek - 1 : -(v->ek + 1), &h->dis[dd].c[0]);
+                t[0].var = x; t[0].c = 1; t[1].var = dd == 0 ? sv : pv; t[1].c = -1;
+                jb_cons(B, t, 2, J_EQ, 0, &h->dis[dd].c[1]);
+            }
         }
         if (v->kind == JV_JOIN || v->kind == JV_HEAD) jb_claims(B, v);
         return;

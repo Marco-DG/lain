@@ -416,7 +416,8 @@ int main(void) {
     }
 
     // ELEMENT cells: `var a i32[4] = [10, 20, 30, 40]; return a[0] - 10` proves its narrowing (a[0]
-    // is the stored 10); with `a[i] = 7` between, a[0] is fresh and its narrow.lo is not implied
+    // is the stored 10); with `a[i] = -2147483648` between, a[0] may be that value (a fresh version,
+    // 10 or the value stored, c26) and its narrow.lo is not implied
     for (int c = 0; c < 2; c++) {
         IrType *ai32 = ir_type_int(&A, 32, true), *u64e = ir_type_int(&A, 64, false);
         IrType *arr = ir_type_new(&A, IRT_ARRAY); arr->elem = ai32; arr->array_len = 4;
@@ -426,7 +427,7 @@ int main(void) {
         IrValue *ea = ir_alloca_array(ef, e0, arr);
         for (int k = 0; k < 4; k++)
             ir_store(ef, e0, ir_elem_ptr(ef, e0, ea, ir_const_int(ef, e0, k, u64e), ai32), ir_const_int(ef, e0, 10 * (k + 1), ai32));
-        if (c) ir_store(ef, e0, ir_elem_ptr(ef, e0, ea, ei, ai32), ir_const_int(ef, e0, 7, ai32));
+        if (c) ir_store(ef, e0, ir_elem_ptr(ef, e0, ea, ei, ai32), ir_const_int(ef, e0, -2147483648LL, ai32));
         IrValue *e00 = ir_load(ef, e0, ir_elem_ptr(ef, e0, ea, ir_const_int(ef, e0, 0, ai32), ai32), ai32);
         ir_set_ret(e0, ir_binop(ef, e0, IR_SUB, e00, ir_const_int(ef, e0, 10, ai32), ai32));
         ir_finalize_cfg(ef);
@@ -785,6 +786,31 @@ int main(void) {
         s.propose = P_NONE; s.nrank = 0;
         CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
         CHECK(strstr(recs, "proved bb1.0 narrow.hi") && !strstr(recs, "outside") && nrec[JREC_NOT_IMPLIED] == 0, "i * w under i < h:\n%s", recs);
+    }
+
+    // a store by a variable index, element by element (c26), under `if i < 4`: (0) a = [10, 20, 30,
+    // 40], a[i] = 7, then 100 / a[2]: a[2] is 7 or 30; (1) a = [6, 6, 6, 6], a[i] = 7, then
+    // 100 / (a[i] - 6): the element the index names is the 7 just stored; (2) under `if i < 2`,
+    // a = [10, 20, 30, 40], a[i] = 0, then 100 / a[2]: i is not 2, so a[2] kept its 30. All proved
+    for (int c = 0; c < 3; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true), *mu64 = ir_type_int(&A, 64, false);
+        IrType *ma4 = ir_type_new(&A, IRT_ARRAY); ma4->elem = mi32; ma4->array_len = 4;
+        IrFunc *mf = ir_func_new(&A, nm(c == 2 ? "storekept" : c ? "storeread" : "storeother"), mi32, IR_FUNC_PURE);
+        IrValue *mi = ir_add_param(mf, mu64, nm("i"));
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf);
+        IrValue *ma = ir_alloca_array(mf, m0, ma4);
+        for (int k = 0; k < 4; k++)
+            ir_store(mf, m0, ir_elem_ptr(mf, m0, ma, ir_const_int(mf, m0, k, mu64), mi32), ir_const_int(mf, m0, c == 1 ? 6 : 10 * (k + 1), mi32));
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_ULT, mi, ir_const_int(mf, m0, c == 2 ? 2 : 4, mu64)), m1, m2);
+        ir_store(mf, m1, ir_elem_ptr(mf, m1, ma, mi, mi32), ir_const_int(mf, m1, c == 2 ? 0 : 7, mi32));
+        IrValue *mr = ir_load(mf, m1, ir_elem_ptr(mf, m1, ma, c == 1 ? mi : ir_const_int(mf, m1, 2, mu64), mi32), mi32);
+        if (c == 1) mr = ir_binop(mf, m1, IR_SUB, mr, ir_const_int(mf, m1, 6, mi32), mi32);
+        ir_set_ret(m1, ir_binop(mf, m1, IR_SDIV, ir_const_int(mf, m1, 100, mi32), mr, mi32));
+        ir_set_ret(m2, ir_const_int(mf, m2, 0, mi32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, " divzero") && !strstr(recs, "divzero  %") && nrec[JREC_NOT_IMPLIED] == 0, "%s:\n%s", c == 2 ? "a[2] kept its 30" : c ? "a[i] read back is 7" : "a[2] is 7 or 30", recs);
     }
 
     printf("── a function the generator refuses, a region too small ──\n");

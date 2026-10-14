@@ -3094,6 +3094,51 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  an operation's own hull at its point: its operands narrowed by the guards there\n");
+    // 62. a store a[i] = 7 through a checked variable index into a fixed array whose elements are
+    // cells: element k's fresh version is `or { i = k , a[k]' = 7 | i <= k - 1 , a[k]' = a[k] |
+    // i >= k + 1 , a[k]' = a[k] }`. (0) an i32[4] stored by constant indexes, a[2] read after; (3)
+    // a[3] no cell: a[2]'s all the same. Nothing where (1) the index is unchecked; (2) the array has
+    // 17 elements; (4) the value is an i64 landing waived in the i32 slots (it may wrap); (5) the
+    // store is on one arm of a join and a[2] is read past it (a disjunct holds no disjunction)
+    for (int c = 0; c < 6; c++) {
+        IrType *an = ir_type_new(&A, IRT_ARRAY); an->elem = i32t; an->array_len = c == 2 ? 17 : 4;
+        IrFunc *f = ir_func_new(&A, nm("s62"), i32t, IR_FUNC_PURE);
+        IrValue *ix = ir_add_param(f, u64t, nm("i")), *w = ir_add_param(f, i64t, nm("w"));
+        IrBlock *b0 = f->entry, *bl = b0;
+        IrValue *a = ir_alloca_array(f, b0, an);
+        for (int k = 0; k < (c == 3 ? 3 : 4); k++)
+            ir_store(f, b0, ir_elem_ptr(f, b0, a, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 10 * (k + 1), i32t));
+        IrBlock *bs = b0;
+        if (c == 5) {
+            IrBlock *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, ix, ir_const_int(f, b0, 2, u64t)), b1, b2);
+            ir_set_br(b1, b3); ir_set_br(b2, b3);
+            bs = b1; bl = b3;
+        }
+        IrValue *ep = ir_elem_ptr(f, bs, a, ix, i32t);
+        if (c == 1) g_last_instr(bs)->unchecked = true;
+        IrValue *v = ir_const_int(f, bs, 7, i32t);
+        if (c == 4) v = w;
+        ir_store(f, bs, ep, v);
+        if (c == 4) g_last_instr(bs)->unchecked = true;
+        IrValue *a2 = ir_load(f, bl, ir_elem_ptr(f, bl, a, ir_const_int(f, bl, 2, u64t), i32t), i32t);
+        ir_set_ret(bl, ir_binop(f, bl, IR_SDIV, ir_const_int(f, bl, 100, i32t), a2, i32t));
+        int at = nins(bl) - 1;
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48], d0[64], d1[64], d2[64];
+        snprintf(key, sizeof key, " bb%d.%d divzero 0", bl->id, at);
+        const char *vz = t ? vc_of(t, key) : "";
+        snprintf(d0, sizeof d0, "element : or { 1*%%v%d = 2 , ", ix->id);
+        snprintf(d1, sizeof d1, " | 1*%%v%d <= 1 , ", ix->id);
+        snprintf(d2, sizeof d2, " | -1*%%v%d <= -3 , ", ix->id);
+        bool has = c == 0 || c == 3;
+        CHECK(*vz && !!strstr(vz, d0) == has && !!strstr(vz, d1) == has && !!strstr(vz, d2) == has && (has || !strstr(vz, "element :")),
+              "case %d: %sthe element's disjunction:\n%s", c, has ? "" : "no ", vz);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a store by a variable index: each element written or kept, by the index\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
