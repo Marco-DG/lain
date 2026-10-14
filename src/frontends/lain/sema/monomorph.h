@@ -97,6 +97,13 @@ static Type *mono_subst_type(Type *t, SubstCtx *ctx) {
 // Forward decls for the body walkers (mutually recursive).
 static void mono_subst_expr(Expr *e, SubstCtx *ctx);
 static void mono_subst_stmt(Stmt *s, SubstCtx *ctx);
+static Type **mono_param_type_slot(Decl *d);
+static void mono_subst_decls(DeclList *dl, SubstCtx *ctx) {
+    for (; dl; dl = dl->next) {
+        Type **slot = mono_param_type_slot(dl->decl);
+        if (slot && *slot) *slot = mono_subst_type(*slot, ctx);
+    }
+}
 
 static void mono_subst_expr(Expr *e, SubstCtx *ctx) {
     if (!e) return;
@@ -150,7 +157,55 @@ static void mono_subst_expr(Expr *e, SubstCtx *ctx) {
         case EXPR_MUT:
             mono_subst_expr(e->as.mut_expr.expr, ctx);
             break;
-        default: break;
+        // ★ EVERY KIND, NO DEFAULT (I.210). A `default: break` here skipped every kind not
+        // listed, so a type parameter stayed in the instance: `@sizeof(T)` was laid out as the
+        // erased parameter (a pointer: 8 for u8, for a 24-byte struct, for every T), and
+        // `[x as T, ...]`, `[x as T for ...]`, `0..(x as T)` were refused as a cast to `T`.
+        // Without a default, a new kind is a -Wswitch warning instead of a silent skip.
+        case EXPR_BUILTIN:
+            mono_subst_expr(e->as.builtin_expr.arg, ctx);
+            mono_subst_expr(e->as.builtin_expr.arg2, ctx);
+            mono_subst_expr(e->as.builtin_expr.arg3, ctx);
+            if (e->as.builtin_expr.vec_type) e->as.builtin_expr.vec_type = mono_subst_type(e->as.builtin_expr.vec_type, ctx);
+            break;
+        case EXPR_ARRAY_LITERAL:
+            for (ExprList *a = e->as.array_literal_expr.elements; a; a = a->next) mono_subst_expr(a->expr, ctx);
+            break;
+        case EXPR_ARRAY_COMPREHENSION:
+            mono_subst_expr(e->as.array_comprehension_expr.body, ctx);
+            mono_subst_expr(e->as.array_comprehension_expr.range, ctx);
+            break;
+        case EXPR_RANGE:
+            mono_subst_expr(e->as.range_expr.start, ctx);
+            mono_subst_expr(e->as.range_expr.end, ctx);
+            break;
+        case EXPR_ADDR:
+            mono_subst_expr(e->as.addr_expr.expr, ctx);
+            break;
+        case EXPR_DEREF:
+            mono_subst_expr(e->as.deref_expr.expr, ctx);
+            break;
+        case EXPR_MOVE:
+            mono_subst_expr(e->as.move_expr.expr, ctx);
+            break;
+        case EXPR_TRY:
+            mono_subst_expr(e->as.try_expr.operand, ctx);
+            break;
+        case EXPR_ELSE:
+            mono_subst_expr(e->as.else_expr.operand, ctx);
+            mono_subst_expr(e->as.else_expr.arm, ctx);
+            break;
+        case EXPR_ANON_STRUCT:
+            mono_subst_decls(e->as.anon_struct_expr.fields, ctx);
+            break;
+        case EXPR_ANON_ENUM:
+            for (Variant *v = e->as.anon_enum_expr.variants; v; v = v->next) mono_subst_decls(v->fields, ctx);
+            break;
+        case EXPR_LITERAL:
+        case EXPR_FLOAT_LITERAL:
+        case EXPR_STRING:
+        case EXPR_CHAR:
+            break;                                          // no type and no operand to substitute
     }
 }
 
@@ -193,7 +248,24 @@ static void mono_subst_stmt(Stmt *s, SubstCtx *ctx) {
         case STMT_UNSAFE:
             for (StmtList *b = s->as.unsafe_stmt.body; b; b = b->next) mono_subst_stmt(b->stmt, ctx);
             break;
-        default: break;
+        // ★ EVERY KIND, NO DEFAULT (I.210): an `assert`, a `defer` and a `comptime if` kept their
+        // type parameters, and a valid generic body was refused with a cast to `T` (E012).
+        case STMT_ASSERT:
+            mono_subst_expr(s->as.assert_stmt.cond, ctx);
+            break;
+        case STMT_DEFER:
+            mono_subst_stmt(s->as.defer_stmt.stmt, ctx);
+            break;
+        case STMT_COMPTIME_IF:
+            mono_subst_expr(s->as.comptime_if_stmt.cond, ctx);
+            for (StmtList *b = s->as.comptime_if_stmt.then_body; b; b = b->next) mono_subst_stmt(b->stmt, ctx);
+            for (StmtList *b = s->as.comptime_if_stmt.else_branch; b; b = b->next) mono_subst_stmt(b->stmt, ctx);
+            break;
+        case STMT_USE:                                      // refused before lowering (E100)
+        case STMT_MATCH_CASE:                               // reached through STMT_MATCH's cases
+        case STMT_CONTINUE:
+        case STMT_BREAK:
+            break;
     }
 }
 
@@ -657,6 +729,7 @@ static Decl *mono_instantiate_function(Decl *tmpl, SubstCtx *ctx, Id *inst_id) {
     inst->as.function_decl.params = newp;
     inst->as.function_decl.return_type = mono_subst_keep_mode(inst->as.function_decl.return_type, ctx);
     for (StmtList *b = inst->as.function_decl.body; b; b = b->next) mono_subst_stmt(b->stmt, ctx);
+    mono_subst_expr(inst->as.function_decl.decreasing_measure, ctx);
     return inst;
 }
 

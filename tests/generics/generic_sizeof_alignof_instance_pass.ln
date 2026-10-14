@@ -1,0 +1,22 @@
+// I.210: the size and alignment a generic body asks about are the INSTANCE's. The substitution
+// walker skipped EXPR_BUILTIN (its `default` arm), so `@sizeof(T)` kept the type parameter, which
+// lowers like the erased template's pointer: `size_of(u8)` was 8, `size_of(Big)` 8 for a 24-byte
+// struct, `align_of(u8)` 8. Generic code computing a buffer's length from `@sizeof(T)` was handed
+// a wrong one, short for every T past a pointer's size. Each line pairs the generic answer with the
+// direct one; the .expected sidecar checks the numbers the program prints.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+type Big { a i64, b i64, c i64 }
+func size_of(T type) u64 {
+    return @sizeof(T)
+}
+func align_of(T type) u64 {
+    return @alignof(T)
+}
+func main() i32 effects io {
+    libc_printf("u8 %llu %llu\n", size_of(u8), @sizeof(u8))
+    libc_printf("i16 %llu %llu\n", size_of(i16), @sizeof(i16))
+    libc_printf("Big %llu %llu\n", size_of(Big), @sizeof(Big))
+    libc_printf("align u8 %llu %llu\n", align_of(u8), @alignof(u8))
+    libc_printf("align Big %llu %llu\n", align_of(Big), @alignof(Big))
+    return 0
+}

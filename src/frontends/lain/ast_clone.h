@@ -284,7 +284,14 @@ Stmt *clone_stmt(Arena *arena, Stmt *s) {
             break;
         case STMT_WHILE:
             new_s->as.while_stmt.cond = clone_expr(arena, s->as.while_stmt.cond);
+            new_s->as.while_stmt.measure = clone_expr(arena, s->as.while_stmt.measure);
             new_s->as.while_stmt.body = clone_stmt_list(arena, s->as.while_stmt.body);
+            break;
+        case STMT_ASSERT:
+            // ★ EVERY KIND THAT HOLDS AN EXPRESSION CLONES IT. An instance substitutes its type
+            // parameters IN PLACE (mono_instantiate_function), so a node left shared with the
+            // template is rewritten by the first instance and seen by every later one.
+            new_s->as.assert_stmt.cond = clone_expr(arena, s->as.assert_stmt.cond);
             break;
         case STMT_MATCH_CASE:
             // Should not be encountered directly, but matched via STMT_MATCH
@@ -338,6 +345,10 @@ Decl *clone_decl(Arena *arena, Decl *d) {
             new_d->as.function_decl.pre_contracts = clone_expr_list(arena, d->as.function_decl.pre_contracts);
             new_d->as.function_decl.post_contracts = clone_expr_list(arena, d->as.function_decl.post_contracts);
             new_d->as.function_decl.return_constraints = clone_expr_list(arena, d->as.function_decl.return_constraints);
+            new_d->as.function_decl.decreasing_measure = clone_expr(arena, d->as.function_decl.decreasing_measure);
+            break;
+        case DECL_STATIC_ASSERT:
+            new_d->as.static_assert_decl.cond = clone_expr(arena, d->as.static_assert_decl.cond);
             break;
         case DECL_STRUCT:
             new_d->as.struct_decl.name = clone_id(arena, d->as.struct_decl.name);

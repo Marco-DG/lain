@@ -1,0 +1,32 @@
+// I.210: every statement and expression of a generic body is substituted. `assert`, `defer`,
+// `comptime if`, array literals, comprehensions and ranges kept their type parameters (the
+// walkers' `default` arms), so each of the forms below was refused with "cannot cast 'i32' to
+// 'T'" (E012) at its first `x as T`. The assert also shared its condition with the template
+// (clone_stmt did not copy it), so substituting it in place would have handed the first
+// instance's type to every later one: `forms` is instantiated twice, at u8 and at i8.
+// `assert(@sizeof(T) == 1)` holds at both. The .expected sidecar checks the sums.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+func note(v i32) {
+}
+func forms(T type, x T) i32 {
+    assert(@sizeof(T) == 1)
+    assert(x as T == x)
+    defer note((x as T) as i32)
+    var r i32 = 0
+    comptime if @os == 1 {
+        r = (x as T) as i32
+    } else {
+        r = (x as T) as i32
+    }
+    var a = [x as T, x as T]
+    var c = [x as T for i in 0..2]
+    var s i32 = 0
+    for i in 0..(x as T) {
+        s = s + 1
+    }
+    return r + (a[1] as i32) + (c[0] as i32) + s
+}
+func main() i32 effects io {
+    libc_printf("%d %d\n", forms(u8, 3), forms(i8, 2))
+    return 0
+}
