@@ -3272,6 +3272,41 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a guarded EACH claim: each element below the guard\n");
+    // 65. a FACT about a place hands its address to no one: a local i32[4] stored 10..40, then a
+    // marker on its address, then a call to an unknown function, then a[2]. After (0) init, (1)
+    // shape, (2) borrow, (3) borrow_end, (4) consume, a[2] is still its store's version (the call
+    // writes only what escaped); after (5) a store of the address into a slot, or (6) the address
+    // passed to the call, it is fresh
+    for (int c = 0; c < 7; c++) {
+        IrType *a4 = ir_type_new(&A, IRT_ARRAY); a4->elem = i32t; a4->array_len = 4;
+        IrType *pi = ir_type_new(&A, IRT_PTR); pi->elem = i32t;
+        IrFunc *f = ir_func_new(&A, nm("m65"), i32t, IR_FUNC_PURE);
+        IrBlock *b0 = f->entry;
+        IrValue *a = ir_alloca_array(f, b0, a4);
+        for (int k = 0; k < 4; k++) ir_store(f, b0, ir_elem_ptr(f, b0, a, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 10 * (k + 1), i32t));
+        IrValue *ext = ir_const_int(f, b0, 0, u32t);
+        if (c == 0) ir_init_fact(f, b0, a);
+        if (c == 1) { IrValue *e[1] = { ir_const_int(f, b0, 4, u64t) }; ir_shape(f, b0, a, e, 1); }
+        if (c == 2) ir_borrow_begin(f, b0, a);
+        if (c == 3) ir_borrow_end(f, b0, a);
+        if (c == 4) ir_consume(f, b0, a);
+        if (c == 5) ir_store(f, b0, ir_alloca(f, b0, pi), a);
+        (void)mk_call(f, b0, "unknown65", c == 6 ? a : ext, u32t);
+        IrValue *a2 = ir_load(f, b0, ir_elem_ptr(f, b0, a, ir_const_int(f, b0, 2, u64t), i32t), i32t);
+        ir_set_ret(b0, ir_binop(f, b0, IR_SUB, a2, ir_const_int(f, b0, 10, i32t), i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), cn[48];
+        snprintf(cn, sizeof cn, "%%s%d[2]@", a->id);
+        const char *v = t ? strstr(t, " narrow.hi 0") : NULL;
+        const char *e = v ? strstr(v, "\nend\n") : NULL;
+        char vc[8192] = ""; if (v && e && e - v < (long)sizeof vc) { memcpy(vc, v, (size_t)(e - v)); vc[e - v] = 0; }
+        bool kept = strstr(vc, cn) && !strstr(vc, "@havoc");
+        CHECK(*vc && kept == (c <= 4), "case %d: a[2] %s after the call:\n%s", c, c <= 4 ? "keeps its store" : "is fresh", vc);
+        free(t);
+    }
+    gen_mod = NULL;
+    printf("  a fact about a place is no escape: a call keeps the cells of an array only marked\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

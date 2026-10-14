@@ -872,6 +872,24 @@ int main(void) {
         s.propose = P_NONE;
     }
 
+    // an array marked initialized (`init`, as a comprehension's fill ends) survives a call to an
+    // unknown function: a = [10, 20, 30, 40], init a, unknown(), then 100 / a[2], proved (c29)
+    {   IrType *mi32 = ir_type_int(&A, 32, true), *mu64 = ir_type_int(&A, 64, false), *mu32 = ir_type_int(&A, 32, false);
+        IrType *ma4 = ir_type_new(&A, IRT_ARRAY); ma4->elem = mi32; ma4->array_len = 4;
+        IrFunc *mf = ir_func_new(&A, nm("initcall"), mi32, IR_FUNC_PURE);
+        IrBlock *m0 = mf->entry;
+        IrValue *ma = ir_alloca_array(mf, m0, ma4);
+        for (int k = 0; k < 4; k++) ir_store(mf, m0, ir_elem_ptr(mf, m0, ma, ir_const_int(mf, m0, k, mu64), mi32), ir_const_int(mf, m0, 10 * (k + 1), mi32));
+        ir_init_fact(mf, m0, ma);
+        IrInstr *call = ir_instr(mf, IR_CALL, mu32, 1); call->aux.callee = nm("unknown"); call->operands[0] = ir_const_int(mf, m0, 0, mu32); ir_emit(m0, call);
+        IrValue *ma2 = ir_load(mf, m0, ir_elem_ptr(mf, m0, ma, ir_const_int(mf, m0, 2, mu64), mi32), mi32);
+        ir_set_ret(m0, ir_binop(mf, m0, IR_SDIV, ir_const_int(mf, m0, 100, mi32), ma2, mi32));
+        ir_finalize_cfg(mf);
+        s.propose = P_NONE; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, " divzero") && !strstr(recs, "not-implied"), "a[2] after init and a call:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

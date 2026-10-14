@@ -674,6 +674,9 @@ static bool jg_cells(JG *g) {
                 int32_t r = g->aroot[o->id] >= 0 ? g->aroot[o->id] : g->iroot[o->id];
                 if (r < 0) continue;
                 if ((i->op == IR_LOAD || i->op == IR_STORE || i->op == IR_FIELD_PTR || i->op == IR_ELEM_PTR) && k == 0) continue;
+                // a FACT about a place (definite init, a shape, a borrow's scope, a move): no result,
+                // no run-time effect (interp.h, emit_c.h), so its operand hands the address to no one
+                if (i->op == IR_INIT || i->op == IR_SHAPE || i->op == IR_BORROW || i->op == IR_BORROW_END || i->op == IR_CONSUME) continue;
                 if (i->op == IR_CALL && !(i->aux.callee == NULL && k == 0) &&
                     !(i->result && jg_carries_raw(i->result->type, 0))) {
                     if (g->rclass[r] < JR_BORROWED) g->rclass[r] = JR_BORROWED;
