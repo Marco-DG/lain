@@ -945,6 +945,44 @@ int main(void) {
         (void)mp;
     }
 
+    // a FREE back edge (c35): Fig. 7b, `while x != 0 { if p { x-- } else if q { y--; z = n1 } else
+    // { z--; x = n2 } }` over u32, ranked <y, z, x>. (0) free: its four rank.lex VCs proved, though
+    // no one component falls on every path; (1) fall 0 (y on every trip): rank.fall not implied;
+    // (2) free, the last path without its z-- (it lowers nothing): a rank.lex not implied
+    for (int c = 0; c < 3; c++) {
+        IrFunc *cf = ir_func_new(&A, nm("cs7b"), u32t, IR_FUNC_PURE);
+        IrValue *cxp = ir_add_param(cf, u32t, nm("xp")), *cp = ir_add_param(cf, u32t, nm("p")), *cq = ir_add_param(cf, u32t, nm("q")),
+                *cn1 = ir_add_param(cf, u32t, nm("n1")), *cn2 = ir_add_param(cf, u32t, nm("n2"));
+        IrBlock *c0 = cf->entry, *c1 = ir_new_block(cf), *c2 = ir_new_block(cf), *c3 = ir_new_block(cf), *c4 = ir_new_block(cf),
+                *c5 = ir_new_block(cf), *c6 = ir_new_block(cf), *c7 = ir_new_block(cf), *c8 = ir_new_block(cf);
+        IrValue *cx = ir_alloca(cf, c0, u32t), *cy = ir_alloca(cf, c0, u32t), *cz = ir_alloca(cf, c0, u32t);
+        ir_store(cf, c0, cx, cxp); ir_store(cf, c0, cy, cxp); ir_store(cf, c0, cz, cxp); ir_set_br(c0, c1);
+        IrValue *clx = ir_load(cf, c1, cx, u32t);
+        ir_set_br_cond(c1, ir_icmp(cf, c1, IR_CMP_NE, clx, ir_const_int(cf, c1, 0, u32t)), c2, c7);
+        ir_set_br_cond(c2, ir_icmp(cf, c2, IR_CMP_NE, cp, ir_const_int(cf, c2, 0, u32t)), c3, c4);
+        ir_store(cf, c3, cx, ir_binop(cf, c3, IR_SUB, clx, ir_const_int(cf, c3, 1, u32t), u32t)); ir_set_br(c3, c6);
+        ir_set_br_cond(c4, ir_icmp(cf, c4, IR_CMP_NE, cq, ir_const_int(cf, c4, 0, u32t)), c5, c8);
+        ir_store(cf, c5, cy, ir_binop(cf, c5, IR_SUB, ir_load(cf, c5, cy, u32t), ir_const_int(cf, c5, 1, u32t), u32t)); ir_store(cf, c5, cz, cn1); ir_set_br(c5, c6);
+        if (c != 2) ir_store(cf, c8, cz, ir_binop(cf, c8, IR_SUB, ir_load(cf, c8, cz, u32t), ir_const_int(cf, c8, 1, u32t), u32t));
+        ir_store(cf, c8, cx, cn2); ir_set_br(c8, c6);
+        ir_set_br(c6, c1);
+        ir_set_ret(c7, ir_const_int(cf, c7, 0, u32t));
+        ir_finalize_cfg(cf);
+        Stub sc; memset(&sc, 0, sizeof sc);
+        sc.propose = P_RANK; sc.nrank = 1;
+        JRank *rr = &sc.rank[0];
+        rr->blk = c1->id; rr->fn = cf; rr->ncomp = 3; rr->nt = 3; rr->key[0] = cy->id; rr->key[1] = cz->id; rr->key[2] = cx->id;
+        for (int j = 0; j < 3; j++) rr->coef[j][j] = 1;
+        rr->nedge = 1; rr->from[0] = c6->id; rr->fall[0] = c == 1 ? 0 : -1;
+        CHECK(run(cf, &sc, true, sizeof region, err), "judges: %s", err);
+        char rl[48]; snprintf(rl, sizeof rl, "proved bb%d.0 rank.lex", c6->id);
+        char rn[48]; snprintf(rn, sizeof rn, "not-implied bb%d.0 rank.fall", c6->id);
+        if (!c) CHECK(count_in(recs, rl) == 4 && !strstr(recs, "rank.fall") && !strstr(recs, "rank.keep"), "free: four rank.lex proved:\n%s", recs);
+        else if (c == 1) CHECK(strstr(recs, rn) != NULL, "fall 0: y does not fall on every trip:\n%s", recs);
+        else { snprintf(rn, sizeof rn, "not-implied bb%d.0 rank.lex", c6->id);
+               CHECK(strstr(recs, rn) != NULL, "a path lowering nothing: a rank.lex not implied:\n%s", recs); }
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

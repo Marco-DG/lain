@@ -1083,6 +1083,18 @@ static void jb_or2(JB *B, const char *origin, const JCons *c, int n0, int n1) {
         memcpy(h->dis[d].c, c + (d == 0 ? 0 : n0), sizeof *c * (size_t)n);
     }
 }
+// or { c[0] | c[1] | … | c[n - 1] }, n >= 2, each disjunct one constraint; nothing inside a disjunct
+static void jb_orn(JB *B, const char *origin, const JCons *c, int n) {
+    if (B->jS >= 0) return;
+    JHyp *h = jb_hyp(B, origin);
+    if (!h) return;
+    h->disj = true; h->ndis = n;
+    if (!(h->dis = JG_NEW(B->g, JConj, n))) { B->fail = true; return; }
+    for (int d = 0; d < n; d++) {
+        if (!(h->dis[d].c = JG_NEW(B->g, JCons, 1))) { B->fail = true; return; }
+        h->dis[d].nc = 1; h->dis[d].c[0] = c[d];
+    }
+}
 static void jb_type(JB *B, int32_t x, const IrType *ty, const char *what, long long id) {
     JRange r; char tn[64];
     if (!jg_range(ty, &r)) return;
@@ -3315,6 +3327,17 @@ static bool jg_rank_goal(JB *B, const JRank *r, int32_t j, const int32_t *pre, c
     }
     return jb_cons(B, t, n, J_LE, what == 0 ? 0 : what == 1 ? -1 : r->c0[j], goal);
 }
+// Component j NOT kept, fallen and bounded, a premise's cases: f(pre) - f(post) <= k (k -1: it rose;
+// k 0: it did not fall) or, with `below`, f(pre) <= -1 (it was negative).
+static bool jg_rank_not(JB *B, const JRank *r, int32_t j, const int32_t *pre, const int32_t *post, bool below, __int128 k, JCons *c) {
+    JLT t[2 * JRANK_MAXT]; int n = 0;
+    for (int32_t i = 0; i < r->nt; i++) {
+        if (r->coef[j][i] == 0) continue;
+        if (!below) { t[n].var = post[i]; t[n].c = -r->coef[j][i]; n++; }
+        t[n].var = pre[i]; t[n].c = r->coef[j][i]; n++;
+    }
+    return jb_cons(B, t, n, J_LE, below ? -1 - r->c0[j] : k, c);
+}
 // The WRITTEN measure (`while c decreasing m`, D-44), read as a ranking claim's one component:
 // lowering computes m at the start of the body, under the guard (lower.h, I.74), so m is a sum over
 // what the trip starts from: a load of a cell reading the version the header makes or keeps, a value
@@ -3457,7 +3480,7 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                 if (r->coef[j][i] > big || r->coef[j][i] < -big) return jg_fail(g, "a ranking claim's coefficient out of range");
         }
         for (int32_t e = 0; e < r->nedge; e++) {
-            if (r->fall[e] < 0 || r->fall[e] >= r->ncomp) return jg_fail(g, "a ranking claim's falling component out of range");
+            if (r->fall[e] < -1 || r->fall[e] >= r->ncomp) return jg_fail(g, "a ranking claim's falling component out of range");
             bool is = false;
             for (IrEdge *pe = H->preds; pe; pe = pe->next)
                 if (pe->block->id == r->from[e] && g->rpoix[r->from[e]] >= 0 && jg_back_edge(g, r->from[e], H->id)) is = true;
@@ -3476,6 +3499,37 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             int32_t np = 0;
             for (IrInstr *i = P->instrs; i; i = i->next) np++;
             int32_t fall = r->fall[e];
+            // a FREE edge (fall -1): its trips may lower different components, one per path; owed
+            // the lexicographic decrease itself, some j with each component before it kept, j
+            // fallen by 1 at least and j >= 0 before. With n components: under the premises that
+            // no j < n - 1 did (`premise rank.lex j`, each a disjunction of how it did not), the
+            // last did, each of its conjuncts one VC (`rank.lex`, ordinal q: component q kept for
+            // q < n - 1, component n - 1 fallen at q = n - 1 and >= 0 at q = n). Then a run lowers,
+            // at its least component falling infinitely often, a value bounded below while every
+            // component before it stays: ADFG's argument
+            for (int32_t q = 0; fall < 0 && q <= r->ncomp; q++) {
+                JB B = jb_begin(g, P->id, np, -1);
+                B.to = H->id;
+                int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
+                for (int32_t i = 0; i < r->nt; i++) {
+                    pre[i] = jb_term(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells);
+                    post[i] = jb_term(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
+                }
+                for (int32_t j = 0; j + 1 < r->ncomp && !B.fail; j++) {
+                    JCons cs[JRANK_MAXC + 1];
+                    for (int32_t i = 0; i <= j; i++)                   // i < j rose, or j did not fall
+                        if (!jg_rank_not(&B, r, i, pre, post, false, i < j ? -1 : 0, &cs[i])) B.fail = true;
+                    if (!B.fail && !jg_rank_not(&B, r, j, pre, post, true, 0, &cs[j + 1])) B.fail = true;   // or j < 0
+                    if (!B.fail) jb_orn(&B, jb_str(&B, "premise rank.lex %lld", j, 0, 0), cs, j + 2);
+                }
+                int32_t last = r->ncomp - 1;
+                JCons goal;
+                if (B.fail || !jg_rank_goal(&B, r, q < last ? q : last, pre, post, q < last ? 0 : q == last ? 1 : 2, &goal))
+                    return jg_fail(g, "out of memory building a ranking VC");
+                JObl *o = jg_push(g, L);
+                if (!o || !jb_finish(&B, NULL, "rank.lex", q, &goal, o)) return jg_fail(g, "out of memory building a VC");
+                o->to = H; o->claim = -1;
+            }
             for (int32_t j = 0; j <= fall; j++)
                 for (int what = j < fall ? 0 : 1; what <= (j < fall ? 0 : 2); what++) {
                     JB B = jb_begin(g, P->id, np, -1);

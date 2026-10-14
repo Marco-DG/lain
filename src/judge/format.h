@@ -105,9 +105,10 @@ typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MA
 // over terms by value id (a cell is its version at the header; any other value dominates it, so
 // its value before and after a trip is one). On each back edge, named by its predecessor `from`,
 // the components before fall[e] do not rise and component fall[e] falls by at least 1 while it is
-// non-negative (lexicographic, ADFG). It is never a hypothesis: gen.h owes it on every back edge
-// (`rank.keep`, `rank.fall`, `rank.bound`), and a loop of a function that must terminate with none
-// is `outside`. A back edge it does not list refuses it.
+// non-negative (lexicographic, ADFG); fall[e] -1, a FREE edge, owes that some component does so,
+// which may differ from trip to trip (`rank.lex`). It is never a hypothesis: gen.h owes it on every
+// back edge (`rank.keep`, `rank.fall`, `rank.bound`), and a loop of a function that must terminate
+// with none is `outside`. A back edge it does not list refuses it.
 // At blk JRANK_ENTRY it is a function's measure for its recursion: one component over its integer
 // parameters (or their slices' lengths) at entry, owed at every call that may close a cycle
 // through it (`rec.fall`, `rec.bound`); its edges are not read. The calls `le` lists, each by its

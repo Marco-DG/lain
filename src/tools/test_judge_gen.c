@@ -3554,6 +3554,66 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a product beside an earlier one of the same c >= 0: a <= b - 1 gives p <= q - c\n");
+    // 69. a FREE back edge (fall -1): Cook, See and Zuleger's Fig. 7b, `while x != 0 { if p { x-- }
+    // else if q { y--; z = n1 } else { z--; x = n2 } }` over u32 cells, its three paths joined before
+    // one back edge, ranked <y, z, x>: each path lowers another component. (0) four rank.lex VCs on
+    // the back edge, keep 0, keep 1, fall 2 and bound 2, each under `premise rank.lex 0` (two cases:
+    // y did not fall, or was negative) and `premise rank.lex 1` (three: y rose, z did not fall, z
+    // negative, its constant moved right: <y + 5, z + 7, x>); no rank.keep, rank.fall or rank.bound;
+    // (1) <y> alone, free: fall 0 and bound 0 as rank.lex, no premise; (2) fall -2: refused
+    for (int c = 0; c < 3; c++) {
+        IrFunc *f = ir_func_new(&A, nm("cs7b"), u32t, IR_FUNC_PURE);
+        IrValue *xp = ir_add_param(f, u32t, nm("xp")), *pp = ir_add_param(f, u32t, nm("p")), *qp = ir_add_param(f, u32t, nm("q")),
+                *n1 = ir_add_param(f, u32t, nm("n1")), *n2 = ir_add_param(f, u32t, nm("n2"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f), *b7 = ir_new_block(f), *b8 = ir_new_block(f);
+        IrValue *x = ir_alloca(f, b0, u32t), *y = ir_alloca(f, b0, u32t), *z = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, x, xp); ir_store(f, b0, y, xp); ir_store(f, b0, z, xp); ir_set_br(b0, b1);
+        IrValue *lx = ir_load(f, b1, x, u32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_NE, lx, ir_const_int(f, b1, 0, u32t)), b2, b7);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_NE, pp, ir_const_int(f, b2, 0, u32t)), b3, b4);
+        ir_store(f, b3, x, ir_binop(f, b3, IR_SUB, lx, ir_const_int(f, b3, 1, u32t), u32t)); ir_set_br(b3, b6);
+        ir_set_br_cond(b4, ir_icmp(f, b4, IR_CMP_NE, qp, ir_const_int(f, b4, 0, u32t)), b5, b8);
+        ir_store(f, b5, y, ir_binop(f, b5, IR_SUB, ir_load(f, b5, y, u32t), ir_const_int(f, b5, 1, u32t), u32t)); ir_store(f, b5, z, n1); ir_set_br(b5, b6);
+        ir_store(f, b8, z, ir_binop(f, b8, IR_SUB, ir_load(f, b8, z, u32t), ir_const_int(f, b8, 1, u32t), u32t)); ir_store(f, b8, x, n2); ir_set_br(b8, b6);
+        ir_set_br(b6, b1);
+        ir_set_ret(b7, ir_const_int(f, b7, 0, u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.ncomp = c == 1 ? 1 : 3; r.nt = c == 1 ? 1 : 3; r.key[0] = y->id; r.key[1] = z->id; r.key[2] = x->id;
+        for (int j = 0; j < 3; j++) r.coef[j][j] = 1;
+        if (c == 0) { r.c0[0] = 5; r.c0[1] = 7; }                       // y + 5 < 0 is y <= -6
+        r.nedge = 1; r.from[0] = b6->id; r.fall[0] = c == 2 ? -2 : -1;
+        gen_rk = &r; gen_nrk = 1;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        if (c == 2) { CHECK(!t && strstr(why, "falling component out of range"), "case 2: refused: got \"%s\"", why); free(t); continue; }
+        bool ok = t && !strstr(t, "rank.keep") && !strstr(t, "rank.fall") && !strstr(t, "rank.bound");
+        int nq = c == 1 ? 2 : 4;
+        for (int q = 0; q < nq && ok; q++) {
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.lex %d", b6->id, q);
+            const char *v = vc_of(t, key), *g = strstr(v, "goal ");
+            int cv = c == 1 ? y->id : q == 0 ? y->id : q == 1 ? z->id : x->id;
+            char cvs[24]; snprintf(cvs, sizeof cvs, "%%s%d@", cv);
+            const char *rhs = q == nq - 2 ? "<= -1\n" : "<= 0\n";
+            ok = g && strstr(g, cvs) && strstr(g, rhs);
+            for (int j = 0; ok && j < 2; j++) {
+                char pk[48]; snprintf(pk, sizeof pk, "premise rank.lex %d : or { ", j);
+                const char *l = strstr(v, pk), *e = l ? strchr(l, '\n') : NULL;
+                int bars = 0;
+                for (const char *u = l; u && e && (u = strstr(u, " | ")) && u < e; u++) bars++;
+                ok = c == 1 ? !l : l && bars == j + 1;
+                char neg[48]; snprintf(neg, sizeof neg, "| 1*%%s%d@head.bb%d <= %d }", j ? z->id : y->id, b1->id, j ? -8 : -6);
+                if (ok && c == 0) ok = strstr(l, neg) && strstr(l, neg) < e;   // the component's constant moved right
+            }
+            if (!ok) CHECK(false, "case %d: rank.lex %d, its goal on component %s and its premises:\n%s", c, q, cvs, v);
+        }
+        CHECK(ok && count(t, " rank.lex ") >= nq, "case %d: %d rank.lex VCs, nothing else on the edge:\n%s", c, nq, t ? t : why);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a free back edge owes the lexicographic decrease itself, under premises\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
