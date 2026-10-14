@@ -149,8 +149,12 @@ static bool same_form(const JClaim *a, const JClaim *b) {
 // Houdini over the module's claims cl[0..nc): each function's claim VCs (its cut points' and its
 // returns'), solved; a claim one of them is not implied by is dropped, and the rest solved again,
 // until none is. The claims left, in order. A function the generator refuses has none of its own,
-// and its final generation reports the refusal.
-static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc) {
+// and its final generation reports the refusal. The first `nold` claims were verified in an
+// earlier round: when the generator refuses a function's set (a claim it cannot state, or more
+// VCs than its region holds), only the function's NEW claims go first, so a round's candidates
+// never cost what earlier rounds kept (2519 candidates once cost the SIMD lexer's `tokenize` its
+// 142 claims: "out of memory building a VC").
+static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) {
     char err[200];
     for (bool again = nc > 0; again; ) {
         again = false;
@@ -160,15 +164,21 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc) {
             if (f->is_extern || !f->entry) continue;
             JClaimVc *o; int32_t n;
             if (!F->gen->claim_vcs(F->gen->ctx, f, cl, nc, JGEN_CLAIMS, &o, &n, err, sizeof err)) {
-                for (int32_t ci = 0; ci < nc; ci++) if (cl[ci].fn == f) bad[ci] = 1;
+                bool fresh = false;                          // this round's: drop those, then retry
+                for (int32_t ci = nold; ci < nc; ci++) if (cl[ci].fn == f) { bad[ci] = 1; fresh = true; }
+                if (!fresh) for (int32_t ci = 0; ci < nc; ci++) if (cl[ci].fn == f) bad[ci] = 1;
                 continue;
             }
             for (int32_t q = 0; q < n; q++)
                 if (!bad[o[q].claim] && lia_solve(&o[q].vc, F->lim, F->work, F->worksz).k != J_ANS_CERT) bad[o[q].claim] = 1;
         }
-        int32_t keep = 0;
-        for (int32_t ci = 0; ci < nc; ci++) if (!bad[ci]) cl[keep++] = cl[ci]; else { F->dropped++; again = true; }
-        nc = keep;
+        int32_t keep = 0, kold = 0;
+        for (int32_t ci = 0; ci < nc; ci++) {
+            if (bad[ci]) { F->dropped++; again = true; continue; }
+            if (ci < nold) kold++;
+            cl[keep++] = cl[ci];
+        }
+        nc = keep; nold = kold;                              // the earlier rounds' still lead
         free(bad);
     }
     return nc;
@@ -185,7 +195,7 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc) {
 #define FD_MAXFLAT 32
 #define FD_MAXEDGES 64                      // a recursion cycle's calls, ranked jointly (fd_rank_cycle)
 typedef struct { JCons c; int32_t *v; } FdCons;              // a constraint over a raw path's variables
-typedef struct { bool disj, claim; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size; claim: a kept claim's
+typedef struct { bool disj, claim, upto; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size; claim: a kept claim's; upto: a guarded EACH claim's cases
 typedef struct { int32_t nv, *val, nh; FdHyp *h; int32_t from, *pre, *post; } FdRaw;
 typedef struct {
     char *mem, *cur, *end;
@@ -369,6 +379,10 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             const JHyp *hy = &v->hyps[h];
             FdHyp *o = &w->h[h];
             o->disj = hy->disj; o->claim = hy->origin && !strncmp(hy->origin, "claim", 5);
+            // a guarded EACH claim's instance as gen.h states it, `claim bbH #ci upto`: an
+            // interface with the Secondary Compiler Worker, the whole form matched
+            size_t ol = hy->origin ? strlen(hy->origin) : 0;
+            o->upto = hy->disj && ol >= 5 && !strncmp(hy->origin, "claim bb", 8) && !strcmp(hy->origin + ol - 5, " upto");
             if (!hy->disj) { if (!fd_copy_cons(L, &hy->cons, &o->c)) return false; continue; }
             int32_t tot = 0;
             for (int32_t d = 0; d < hy->ndis; d++) tot += hy->dis[d].nc;
@@ -477,7 +491,11 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             for (int32_t c = 0, z = 0; c < o->nd && !touch; c++)
                 for (int32_t e = 0; e < o->dn[c] && !touch; e++, z++)
                     for (int32_t t = 0; t < o->dc[z].c.nt && !touch; t++) touch = rel[o->dc[z].c.t[t].var];
-            skip[h] = !touch;
+            // a guarded EACH claim's cases (`g <= k` or the bound, per element k) only say which
+            // elements are bounded yet: a ranking or relation over the loop's counters reads none of
+            // them, and sixteen two-way choices a claim crowd every other choice out (a loop that
+            // keeps `each(a) upto(i)` at its own header lost its ranking to them)
+            skip[h] = !touch || o->upto;
         }
         int32_t left = FD_MAXFLAT - L->npaths, nchoice;
         for (;;) {
@@ -587,14 +605,17 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
                 const JHyp *src = &L->full[k]->hyps[x];
                 // the quantity alone (passes 0 and 1): a claim relating it to ANOTHER quantity of the
                 // header (a table cell, a fixed value) says nothing its own measure reads, and a
-                // loop reading a 12-entry table carries hundreds of them (convert_days' month loop)
+                // loop reading a 12-entry table carries hundreds of them (convert_days' month loop);
+                // nor does one naming none of its variables (each element of an array the loop
+                // reads by the counter, `each(a) <= 25`, reached through the read's cases)
                 if (pass < 2 && src->origin && !strcmp(src->origin, "path claim")) {
-                    bool other = false;
+                    bool other = false, mine = false;
                     for (int32_t t = 0; t < src->cons.nt && !other; t++) {
                         int32_t vv = src->cons.t[t].var;
-                        other = vv < base_pairs && vv != 2 * q && vv != 2 * q + 1;
+                        if (vv == 2 * q || vv == 2 * q + 1) mine = true;
+                        else other = vv < base_pairs;
                     }
-                    if (other) continue;
+                    if (other || !mine) continue;
                 }
                 h[nh0++] = *src;
             }
@@ -666,12 +687,16 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
 // claims, bounded like any other (bound_candidates) and kept by Houdini only if inductive. One of
 // the two terms must be a version the header makes (a claim names one); a relation between two
 // values fixed at the header says nothing a claim may state.
+struct FdNest;
+static bool fd_elem_covered(const struct FdNest *N, IrFunc *f, int32_t H, int32_t key, const JClaim *as, int32_t nv);
 static bool fd_relation_candidates(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, int32_t npk,
+                                   const struct FdNest *N, const JClaim *as, int32_t nv,
                                    JCand **cd, int32_t *n, int32_t *cap) {
     LRel rel[32];
     int32_t nr = lia_relations(L->paths, L->npaths, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz, rel, 32);
     for (int32_t q = 0; q < nr; q++) {
         if (rel[q].t >= npk && rel[q].j >= npk) continue;
+        if (fd_elem_covered(N, f, H, L->pkey[rel[q].t], as, nv) || fd_elem_covered(N, f, H, L->pkey[rel[q].j], as, nv)) continue;
         if (*n == *cap) {
             int32_t nc = *cap ? *cap * 2 : 32;
             JCand *x = realloc(*cd, sizeof *x * (size_t)nc);
@@ -687,23 +712,128 @@ static bool fd_relation_candidates(JFinder *F, IrFunc *f, int32_t H, const FdLoo
     return true;
 }
 
+// A function's loops, computed once per proposal round (fd_nest_build): per loop header, its
+// natural loop by block id (fd_loop_body) and its size, so the innermost loop around a block is
+// the smallest body containing it. Empty (nh 0) when the table would pass 1 << 24 bytes, which
+// costs the candidates that need it, nothing else.
+// ebase[v]: the array (its address value) whose element address v is, an ELEM_PTR's result, else -1.
+typedef struct FdNest { int32_t nbk, nh, *hid, *sz; uint8_t *in; int32_t nid, *ebase; } FdNest;
+static bool fd_loop_body(IrFunc *f, int32_t H, uint8_t *in, int32_t nb);
+static void fd_nest_free(FdNest *N) { free(N->hid); free(N->sz); free(N->in); free(N->ebase); memset(N, 0, sizeof *N); }
+static bool fd_nest_build(IrFunc *f, FdNest *N) {
+    memset(N, 0, sizeof *N);
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) if (i->result && i->result->id >= N->nid) N->nid = i->result->id + 1;
+    if (N->nid > 0) {
+        if (!(N->ebase = malloc(sizeof *N->ebase * (size_t)N->nid))) return false;
+        for (int32_t v = 0; v < N->nid; v++) N->ebase[v] = -1;
+        for (IrBlock *b = f->blocks; b; b = b->next)
+            for (IrInstr *i = b->instrs; i; i = i->next)
+                if (i->op == IR_ELEM_PTR && i->result && i->result->id >= 0 && i->n_operands >= 1 && i->operands[0])
+                    N->ebase[i->result->id] = i->operands[0]->id;
+    }
+    for (IrBlock *b = f->blocks; b; b = b->next) { if (b->id >= N->nbk) N->nbk = b->id + 1; if (b->is_loop_header) N->nh++; }
+    if (N->nh == 0 || N->nbk <= 0) { N->nh = 0; return true; }
+    if ((int64_t)N->nh * N->nbk > ((int64_t)1 << 24)) { N->nh = 0; return true; }
+    N->hid = malloc(sizeof *N->hid * (size_t)N->nh); N->sz = malloc(sizeof *N->sz * (size_t)N->nh);
+    N->in = malloc((size_t)N->nh * (size_t)N->nbk);
+    if (!N->hid || !N->sz || !N->in) { fd_nest_free(N); return false; }
+    int32_t h = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        if (!b->is_loop_header) continue;
+        uint8_t *row = N->in + (size_t)h * (size_t)N->nbk;
+        if (!fd_loop_body(f, b->id, row, N->nbk)) { memset(row, 0, (size_t)N->nbk); row[b->id] = 1; }
+        N->hid[h] = b->id; N->sz[h] = 0;
+        for (int32_t q = 0; q < N->nbk; q++) N->sz[h] += row[q];
+        h++;
+    }
+    return true;
+}
+// Header H's loop (NULL when H is not one), and the innermost loop around block B other than
+// `except`'s (-1: none)
+static const uint8_t *fd_nest_body(const FdNest *N, int32_t H) {
+    for (int32_t h = 0; h < N->nh; h++) if (N->hid[h] == H) return N->in + (size_t)h * (size_t)N->nbk;
+    return NULL;
+}
+// Is value `key` an element of an array that a verified plain EACH claim at block H already bounds?
+// Then a candidate about that element alone repeats it (`a[2] <= 10` beside `each(a) <= 10`), and a
+// relation of it with a counter (`a[2] - 10*i <= 0`) is noise: each one rides into every VC that
+// names the element, and they made forloop1's solves five times slower.
+static bool fd_elem_covered(const struct FdNest *N, IrFunc *f, int32_t H, int32_t key, const JClaim *as, int32_t nv) {
+    if (!N || key < 0 || key >= N->nid || !N->ebase || N->ebase[key] < 0) return false;
+    int32_t base = N->ebase[key];
+    for (int32_t v = 0; v < nv; v++)
+        if (as[v].fn == f && as[v].blk == H && as[v].nt == 1 && as[v].tk[0] == JTERM_EACH && as[v].key[0] == base) return true;
+    return false;
+}
+static int32_t fd_nest_around(const FdNest *N, int32_t B, int32_t except) {
+    int32_t best = -1;
+    if (B < 0 || B >= N->nbk) return -1;
+    for (int32_t h = 0; h < N->nh; h++) {
+        if (N->hid[h] == except || !N->in[(size_t)h * (size_t)N->nbk + (size_t)B]) continue;
+        if (best < 0 || N->sz[h] < N->sz[best]) best = h;
+    }
+    return best < 0 ? -1 : N->hid[best];
+}
+// The natural loop of header H: in[b] = 1 for H and every block that reaches one of its back edges
+// without passing H; a back edge's source is a predecessor of H that the entry reaches only through
+// H (H dominates it). A sketch from the IR's predecessor lists: a wrong answer costs candidates,
+// never a verdict (each is owed). False when f's blocks are not numbered below `nb`.
+static bool fd_loop_body(IrFunc *f, int32_t H, uint8_t *in, int32_t nb) {
+    memset(in, 0, (size_t)nb);
+    IrBlock **by = calloc((size_t)nb, sizeof *by);
+    int32_t *nsu = calloc((size_t)nb + 1, sizeof *nsu), *su = NULL, *at = NULL, *st = malloc(sizeof *st * (size_t)nb);
+    uint8_t *seen = calloc((size_t)nb, 1);
+    bool ok = by && nsu && st && seen && f->entry;
+    for (IrBlock *b = f->blocks; ok && b; b = b->next) { if (b->id < 0 || b->id >= nb) ok = false; else by[b->id] = b; }
+    // successors from the predecessor lists, in CSR form
+    int32_t ne = 0;
+    for (IrBlock *b = f->blocks; ok && b; b = b->next)
+        for (IrEdge *e = b->preds; e; e = e->next) { if (!e->block || e->block->id < 0 || e->block->id >= nb) ok = false; else { nsu[e->block->id + 1]++; ne++; } }
+    if (ok) { for (int32_t x = 0; x < nb; x++) nsu[x + 1] += nsu[x]; su = malloc(sizeof *su * (size_t)(ne ? ne : 1)); at = malloc(sizeof *at * (size_t)nb); ok = su && at; }
+    if (ok) {
+        memcpy(at, nsu, sizeof *at * (size_t)nb);
+        for (IrBlock *b = f->blocks; b; b = b->next) for (IrEdge *e = b->preds; e; e = e->next) su[at[e->block->id]++] = b->id;
+        // what the entry reaches without passing H
+        int32_t sp = 0;
+        if (f->entry->id != H) { seen[f->entry->id] = 1; st[sp++] = f->entry->id; }
+        while (sp > 0) {
+            int32_t x = st[--sp];
+            for (int32_t k = nsu[x]; k < nsu[x + 1]; k++) if (su[k] != H && !seen[su[k]]) { seen[su[k]] = 1; st[sp++] = su[k]; }
+        }
+        // back to H from each back edge's source, never through H
+        in[H] = 1;
+        for (IrEdge *e = by[H] ? by[H]->preds : NULL; e; e = e->next)
+            if (!seen[e->block->id] && !in[e->block->id]) { in[e->block->id] = 1; st[sp++] = e->block->id; }
+        while (sp > 0) {
+            int32_t x = st[--sp];
+            for (IrEdge *e = by[x] ? by[x]->preds : NULL; e; e = e->next)
+                if (!in[e->block->id]) { in[e->block->id] = 1; st[sp++] = e->block->id; }
+        }
+    }
+    free(by); free(nsu); free(su); free(at); free(st); free(seen);
+    return ok;
+}
 // One block's candidates (the slots sl[i..j), all at one block), into `cd`.
-static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, int32_t j,
+static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, const JSlot *sl, int32_t i, int32_t j,
                              JCand **cd, int32_t *ncd, int32_t *ccd, char *err, size_t errcap) {
     int32_t H = sl[i].blk, nt = 0;
     bool head = sl[i].head;
     JSlot *tm = NULL;
+    uint8_t *inl = NULL;                                     // the header's loop, by block id
+    int32_t nbk = 0;
     *ncd = 0;
-    if (head) {
+    {   // the terms: a header's pair with its versions below, and both kinds' compared values
         JSlot *t0;
         if (!F->gen->terms(F->gen->ctx, f, H, &t0, &nt, err, (uint32_t)errcap)) return false;
         if (!(tm = malloc(sizeof *tm * (size_t)(nt ? nt : 1)))) goto oom;
         memcpy(tm, t0, sizeof *tm * (size_t)nt);
     }
     for (int32_t k = i; k < j; k++) {
+        if (fd_elem_covered(N, f, H, sl[k].key, as, nv)) continue;
         if (!cand_push(cd, ncd, ccd, H, sl[k].key, 1, -1, 0, sl[k].type, NULL) ||
             !cand_push(cd, ncd, ccd, H, sl[k].key, -1, -1, 0, sl[k].type, NULL)) goto oom;
-        for (int32_t t = 0; t < nt; t++) {
+        for (int32_t t = 0; head && t < nt; t++) {
             if (tm[t].key == sl[k].key) continue;
             bool own = false;                                // two of the header's versions: one pair
             for (int32_t k2 = i; k2 < j; k2++) if (sl[k2].key == tm[t].key) own = true;
@@ -712,11 +842,38 @@ static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, 
                 !cand_push(cd, ncd, ccd, H, sl[k].key, -1, tm[t].key, 1, sl[k].type, tm[t].type)) goto oom;
         }
     }
-    // a header's comparisons: a header version against a constant or another term, each side at
-    // the compared value give or take one (fixed bounds, nothing to maximize)
-    IrBlock *hb = NULL;
-    for (IrBlock *b = f->blocks; head && b && !hb; b = b->next) if (b->id == H) hb = b;
-    for (IrInstr *ic = hb ? hb->instrs : NULL; ic; ic = ic->next) {
+    // the comparisons in the block's loop (a header's own; a join's innermost): a version made here
+    // against a constant or another term, each side at the compared value give or take one (fixed
+    // bounds, nothing to maximize). One in the body as well as the header's: `if n < m { n = n + 1 }`
+    // keeps `n <= m`, and nothing maximized finds it, at the header (the claim is its own back
+    // edge's hypothesis) or at the join after the `if` (its bound needs the header's)
+    {   int32_t around = head ? H : fd_nest_around(N, H, -1);
+        const uint8_t *body = around >= 0 ? fd_nest_body(N, around) : NULL;
+        if (body) { nbk = N->nbk; if (!(inl = malloc((size_t)nbk))) goto oom; memcpy(inl, body, (size_t)nbk); }
+    }
+    // a compared value the terms do not list (a join's lists its own block's only) may still be
+    // one a claim here can name (a parameter, a value fixed at the block): asked once, together
+    int32_t xk[64]; const IrType *xt[64]; uint8_t xok[64]; int32_t nx = 0;
+    for (IrBlock *hb = inl ? f->blocks : NULL; hb; hb = hb->next) {
+        if (hb->id < 0 || hb->id >= nbk || !inl[hb->id]) continue;
+        for (IrInstr *ic = hb->instrs; ic; ic = ic->next) {
+            if (ic->op != IR_ICMP || ic->n_operands < 2) continue;
+            for (int k = 0; k < 2; k++) {
+                IrValue *o = ic->operands[k];
+                IrInstr *d = NULL;
+                for (IrInstr *x = hb->instrs; x && x != ic; x = x->next) if (x->result == o) d = x;
+                if (!o || (d && (d->op == IR_CONST || d->op == IR_LOAD)) || !fd_is_int(o->type)) continue;
+                bool have = false;
+                for (int32_t t = 0; t < nt && !have; t++) have = tm[t].key == o->id;
+                for (int32_t q = 0; q < nx && !have; q++) have = xk[q] == o->id;
+                if (!have && nx < 64) { xk[nx] = o->id; xt[nx] = o->type; nx++; }
+            }
+        }
+    }
+    if (nx > 0 && !F->gen->term_kinds(F->gen->ctx, f, H, xk, NULL, nx, xok, err, (uint32_t)errcap)) nx = 0;
+    for (IrBlock *hb = inl ? f->blocks : NULL; hb; hb = hb->next) {
+      if (hb->id < 0 || hb->id >= nbk || !inl[hb->id]) continue;
+      for (IrInstr *ic = hb->instrs; ic; ic = ic->next) {
         if (ic->op != IR_ICMP || ic->n_operands < 2) continue;
         int32_t key[2] = { -1, -1 }; bool isc[2] = { false, false }; __int128 cv[2] = { 0, 0 };
         const IrType *ty[2] = { NULL, NULL };
@@ -727,11 +884,24 @@ static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, 
             if (d && d->op == IR_CONST) { isc[k] = true; cv[k] = fd_const(d); continue; }
             int32_t kk = d && d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0] ? d->operands[0]->id : o ? o->id : -1;
             for (int32_t t = 0; t < nt; t++) if (tm[t].key == kk) { key[k] = kk; ty[k] = tm[t].type; }
+            for (int32_t q = 0; q < nx && key[k] < 0; q++) if (xk[q] == kk && xok[q]) { key[k] = kk; ty[k] = xt[q]; }
         }
+        // in the body, only a comparison that GUARDS a write to the cell it compares: its block's
+        // branch, one way of which stores to that cell (`if n < m { n = n + 1 }`). Every comparison
+        // of a loop at every cut point in it was 1786 candidates in the SIMD lexer's `tokenize`,
+        // past what the generator holds in one function's VCs (the function lost every claim)
+        bool guards[2] = { hb->id == H, hb->id == H };
+        if (hb->id != H && hb->term.kind == IR_TERM_BR_COND && hb->term.cond == ic->result)
+            for (int k = 0; k < 2; k++)
+                for (int w = 0; w < 2 && !guards[k]; w++) {
+                    IrBlock *t = w ? hb->term.b : hb->term.a;
+                    for (IrInstr *st = t ? t->instrs : NULL; st && !guards[k]; st = st->next)
+                        guards[k] = st->op == IR_STORE && st->n_operands >= 1 && st->operands[0] && st->operands[0]->id == key[k];
+                }
         for (int k = 0; k < 2; k++) {
             int32_t x = -1;                                  // which header version this side is
             for (int32_t s2 = i; s2 < j; s2++) if (sl[s2].key == key[k]) x = s2;
-            if (x < 0 || (!isc[1 - k] && key[1 - k] < 0)) continue;
+            if (x < 0 || !guards[k] || (!isc[1 - k] && key[1 - k] < 0)) continue;
             for (int d = -1; d <= 1; d++) {
                 int32_t before = *ncd;
                 bool ok = isc[1 - k]
@@ -745,7 +915,9 @@ static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, 
                 (*cd)[before + 1].c.rhs = isc[1 - k] ? -(cv[1 - k] + d) : d;
             }
         }
+      }
     }
+    free(inl); inl = NULL;
     // VRA's relations at this header. VRA names a slice's length by the value an IR_SLICE_LEN
     // computed (`hi <= %3` with %3 = a.len before the loop); the generator names it len(<slice>)
     // (jb_len), so such a variable becomes that JTERM_LEN term, or the relation would have no
@@ -786,19 +958,33 @@ static bool block_candidates(JFinder *F, IrFunc *f, const JSlot *sl, int32_t i, 
         }
         free(keys); free(kind); free(ktk); free(lty);
     }
-    // PE.7: the relations the loop keeps between its versions (and values fixed at it)
+    // PE.7: the relations the loop keeps between its versions (and values fixed at it), each
+    // trip's change bounded by the claims verified so far (`s += a[j]` rises by at most the bound
+    // a verified each(a) claim gives the element)
     if (head) {
         FdLoop L;
-        bool built = fd_loop_build(F, f, H, NULL, 0, &L);
-        bool ok = !built || fd_relation_candidates(F, f, H, &L, L.npk, cd, ncd, ccd);
+        bool built = fd_loop_build(F, f, H, as, nv, &L);
+        bool ok = !built || fd_relation_candidates(F, f, H, &L, L.npk, N, as, nv, cd, ncd, ccd);
         free(L.mem);
         if (!ok) goto oom;
     }
     free(tm);
     return true;
 oom:
-    free(tm); snprintf(err, errcap, "out of memory");
+    free(tm); free(inl); snprintf(err, errcap, "out of memory");
     return false;
+}
+// A claim the generator refuses is refused with every claim of its function (houdini_module marks
+// them all bad), so a candidate past the generator's documented limits never goes in: one to
+// JCLAIM_MAXT terms, no key twice, coefficients nonzero and bound within 2^66 (gen.h's `big`).
+static bool fd_claim_shape_ok(const JClaim *c) {
+    const __int128 big = (__int128)1 << 66;
+    if (c->nt < 1 || c->nt > JCLAIM_MAXT || c->rhs > big || c->rhs < -big) return false;
+    for (int32_t i = 0; i < c->nt; i++) {
+        if (c->coef[i] == 0 || c->coef[i] > big || c->coef[i] < -big) return false;
+        for (int32_t j = i + 1; j < c->nt; j++) if (c->key[i] == c->key[j]) return false;   // as gen.h, whatever the kinds
+    }
+    return true;
 }
 // Each candidate's bound, from the VCs o[0..n) of a claim set whose candidates start at `base`:
 // the largest value its objective takes over its VCs (a fixed one keeps its own). What survives,
@@ -825,6 +1011,7 @@ static bool bound_candidates(JFinder *F, const JCand *cd, int32_t ncd, const JCl
             if (!ok || !any) continue;
             got.rhs = best;
         }
+        if (!fd_claim_shape_ok(&got)) continue;
         // already verified as tight, or this very candidate already proposed (a tighter one not
         // yet verified does not make it redundant: it may fail)
         bool dup = false;
@@ -1096,12 +1283,251 @@ out:
     return ok;
 }
 
+// PE.14: an accumulator of a nested loop. Inside, `ct*s + cj*j` does not rise (lia_relations, j
+// the inner counter, rising: cj < 0) and j stays in [E, U] at the inner header (verified claims),
+// so one run of the inner loop raises ct*s by at most |cj|*(U - E). An outer counter o, unchanged
+// inside and stepping by d (one sign) per outer trip, then bounds it: `ct*s - c*o <= K1` at the
+// outer header, c = ceil(|cj|*(U - E) / |d|), K1 that sum's greatest value on the outer loop's
+// entry; and `ct*s + cj*j - c*o <= K1 + cj*E` at the inner header. Neither holds alone (each is the
+// other's back-edge hypothesis), so both are proposed with fixed bounds and Houdini keeps them
+// only together. Nothing here is believed: a wrong guess (s also changed outside the inner loop,
+// the inner loop run twice per trip) is a pair of refused candidates.
+static bool fd_tight1(const JClaim *as, int32_t nv, const IrFunc *f, int32_t H, int32_t key, int sgn, __int128 *b) {
+    bool any = false;
+    for (int32_t v = 0; v < nv; v++) {
+        const JClaim *c = &as[v];
+        if (c->fn != f || c->blk != H || c->nt != 1 || c->key[0] != key || c->tk[0] != JTERM_VALUE || c->coef[0] != sgn) continue;
+        if (!any || c->rhs < *b) *b = c->rhs;
+        any = true;
+    }
+    return any;
+}
+// The greatest value of claim `cand`'s sum on the edges entering its loop (inv.entry), under the
+// verified claims; false when it has none or one is unbounded.
+static bool fd_entry_max(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, const JClaim *cand, __int128 *out) {
+    char err[200];
+    JClaim *q = malloc(sizeof *q * (size_t)(nv + 1));
+    if (!q) { F->oom = true; return false; }
+    if (nv) memcpy(q, as, sizeof *q * (size_t)nv);
+    q[nv] = *cand;
+    JClaimVc *o; int32_t n;
+    bool ok = F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, cand->blk, &o, &n, err, sizeof err);
+    free(q);
+    if (!ok) return false;
+    bool any = false; __int128 best = 0;
+    for (int32_t k = 0; k < n; k++) {
+        if (o[k].claim != nv || !o[k].vc.id.kind || strcmp(o[k].vc.id.kind, "inv.entry") != 0) continue;
+        LMax x = lia_maximize(&o[k].vc, o[k].vc.goal.t, o[k].vc.goal.nt, F->lim, F->work, F->worksz);
+        if (x.k == LIA_MAX_EMPTY) continue;
+        if (x.k != LIA_MAX_BOUND) return false;
+        __int128 b = fd_int128(&x.b);
+        if (!any || b > best) best = b;
+        any = true;
+    }
+    if (any) *out = best;
+    return any;
+}
+static bool fd_push_claim(JFinder *F, const JClaim *got, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    if (!fd_claim_shape_ok(got)) return true;
+    for (int32_t v = 0; v < *nc; v++) if (same_form(&(*cl)[v], got) && (*cl)[v].fn == got->fn && (*cl)[v].rhs <= got->rhs) return true;
+    (void)as; (void)nv;
+    if (*nc == *ccl) {
+        int32_t nn = *ccl ? *ccl * 2 : 64;
+        JClaim *x = realloc(*cl, sizeof *x * (size_t)nn);
+        if (!x) return false;
+        *cl = x; *ccl = nn;
+    }
+    (*cl)[(*nc)++] = *got;
+    F->proposed++;
+    return true;
+}
+static bool fd_nested_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    for (IrBlock *h2 = f->blocks; h2; h2 = h2->next) {
+        if (!h2->is_loop_header) continue;
+        int32_t H2 = h2->id, H1 = fd_nest_around(N, H2, H2);   // the innermost loop around H2's
+        if (H1 < 0) continue;
+        FdLoop L2, L1;
+        bool b2 = fd_loop_build(F, f, H2, as, nv, &L2);
+        LRel rel[32];
+        int32_t nr = b2 ? lia_relations(L2.paths, L2.npaths, L2.pre, L2.post, L2.npairs, F->lim, F->work, F->worksz, rel, 32) : 0;
+        bool c1 = nr > 0, b1 = c1 && fd_loop_build(F, f, H1, as, nv, &L1);
+        for (int32_t q = 0; b1 && q < nr; q++) {
+            const LRel *r = &rel[q];
+            if (r->t >= L2.npk || r->j >= L2.npk || L2.ptk[r->t] != JTERM_VALUE || L2.ptk[r->j] != JTERM_VALUE || r->cj >= 0) continue;
+            int32_t jk = L2.pkey[r->j], sk = L2.pkey[r->t];
+            __int128 U, Eb;
+            if (!fd_tight1(as, nv, f, H2, jk, 1, &U) || !fd_tight1(as, nv, f, H2, jk, -1, &Eb)) continue;
+            __int128 E = -Eb, T = U - E;
+            if (T <= 0 || T > ((__int128)1 << 20)) continue;
+            for (int32_t o = 0; o < L1.npk; o++) {                 // an outer counter: one step a trip
+                int32_t okey = L1.pkey[o];                          // (one that also moves inside has no
+                if (okey == sk || okey == jk || L1.ptk[o] != JTERM_VALUE) continue;   // such step, as a rule)
+                int64_t d = 0; bool cst = L1.npaths > 0;
+                for (int32_t k = 0; k < L1.npaths && cst; k++) {
+                    int64_t lo, hi;
+                    if (!rk_delta(L1.paths[k], L1.pre[o], L1.post[o], F->lim, F->work, F->worksz, &lo, &hi) || lo != hi || lo == 0 ||
+                        (d && (lo > 0) != (d > 0))) cst = false;
+                    else if (!d || (lo > 0 ? lo : -lo) < (d > 0 ? d : -d)) d = lo;
+                }
+                if (!cst) continue;
+                __int128 ad = d > 0 ? d : -d, rise = (__int128)(-r->cj) * T;
+                __int128 c = rise / ad + (rise % ad != 0);
+                if (c <= 0 || c > ((__int128)1 << 40)) continue;
+                JClaim out1; memset(&out1, 0, sizeof out1);
+                out1.blk = H1; out1.fn = f; out1.nt = 2;
+                out1.key[0] = sk; out1.tk[0] = JTERM_VALUE; out1.coef[0] = r->ct;
+                out1.key[1] = okey; out1.tk[1] = JTERM_VALUE; out1.coef[1] = d > 0 ? -c : c;
+                __int128 K1;
+                if (!fd_entry_max(F, f, as, nv, &out1, &K1)) { if (F->oom) goto fail; continue; }
+                out1.rhs = K1;
+                JClaim in2; memset(&in2, 0, sizeof in2);
+                in2.blk = H2; in2.fn = f; in2.nt = 3;
+                in2.key[0] = sk; in2.tk[0] = JTERM_VALUE; in2.coef[0] = r->ct;
+                in2.key[1] = jk; in2.tk[1] = JTERM_VALUE; in2.coef[1] = r->cj;
+                in2.key[2] = okey; in2.tk[2] = JTERM_VALUE; in2.coef[2] = out1.coef[1];
+                in2.rhs = K1 + (__int128)r->cj * E;
+                if (!fd_push_claim(F, &out1, as, nv, cl, nc, ccl) || !fd_push_claim(F, &in2, as, nv, cl, nc, ccl)) goto fail;
+            }
+        }
+        if (c1) free(L1.mem);
+        free(L2.mem);
+        continue;
+    fail:
+        if (c1) free(L1.mem);
+        free(L2.mem);
+        return false;
+    }
+    return true;
+}
+// PE.14 with JTERM_EACH: every element of a small fixed array the loop writes, bounded at its
+// header. Maximizing cannot bound it (an element the trip leaves alone is bounded on the back edge
+// only by the claim itself), so the bound is iterated: from its greatest value on the loop's entry,
+// raised to its greatest value after a trip under the bound so far, until it holds (at most four
+// raises; then none). `a[i] = 10` from zeros: 0, then 10, which a trip keeps. Fixed, so Houdini
+// checks it as any other.
+static bool fd_iter_bound(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, JClaim *cand) {
+    char err[200];
+    JClaim *q = malloc(sizeof *q * (size_t)(nv + 1));
+    if (!q) { F->oom = true; return false; }
+    if (nv) memcpy(q, as, sizeof *q * (size_t)nv);
+    const __int128 big = (__int128)1 << 66;
+    // the bound so far: none until an edge gives one (a guarded claim's instances are all off on
+    // the loop's entry, `i <= k` with i = 0, so only a trip bounds it)
+    __int128 B = -big; bool have = false, ok = false;
+    for (int it = 0; it < 6 && !ok; it++) {
+        cand->rhs = have ? B : -big; q[nv] = *cand;
+        JClaimVc *o; int32_t n;
+        if (!F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, cand->blk, &o, &n, err, sizeof err)) break;
+        __int128 M = 0; bool any = false, unb = false;
+        for (int32_t k = 0; k < n && !unb; k++) {
+            if (o[k].claim != nv || !o[k].vc.id.kind) continue;
+            bool entry = !strcmp(o[k].vc.id.kind, "inv.entry");
+            if (!entry && strcmp(o[k].vc.id.kind, "inv.keep") != 0) continue;
+            LMax x = lia_maximize(&o[k].vc, o[k].vc.goal.t, o[k].vc.goal.nt, F->lim, F->work, F->worksz);
+            if (x.k == LIA_MAX_EMPTY) continue;
+            if (x.k != LIA_MAX_BOUND) { unb = true; break; }
+            __int128 b = fd_int128(&x.b);
+            if (!any || b > M) M = b;
+            any = true;
+        }
+        if (unb || !any) break;                              // unbounded, or no edge says anything
+        if (have && M <= B) ok = true;
+        else { B = have && B > M ? B : M; have = true; }
+        if (B > big || B < -big) break;
+    }
+    free(q);
+    if (ok) cand->rhs = B;
+    return ok;
+}
+// The cells whose value indexes a store into array `akey` inside a loop's body: a store
+// through an ELEM_PTR on the array, its index a cell's load, through casts and the addition or
+// subtraction of a constant (a comprehension writes `a[x - 0]`). The guards an UPTO claim is
+// worth trying: the counter that fills the array (every integer version the header makes, as a
+// guard, cost the SIMD lexer's `tokenize` every claim it had).
+static int32_t fd_store_guards(IrFunc *f, const uint8_t *body, int32_t nbk, int32_t akey, int32_t *g, int32_t cap) {
+    int32_t n = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        if (!body || b->id < 0 || b->id >= nbk || !body[b->id]) continue;
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op != IR_STORE || i->n_operands < 1 || !i->operands[0]) continue;
+            IrInstr *ep = NULL;
+            for (IrInstr *x = b->instrs; x && x != i; x = x->next) if (x->result == i->operands[0]) ep = x;
+            if (!ep || ep->op != IR_ELEM_PTR || ep->n_operands < 2 || !ep->operands[0] || ep->operands[0]->id != akey) continue;
+            IrValue *v = ep->operands[1];
+            for (int hop = 0; v && hop < 8; hop++) {
+                IrInstr *d = NULL;
+                for (IrInstr *x = b->instrs; x && x != i; x = x->next) if (x->result == v) d = x;
+                if (!d) break;
+                if (d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0]) {
+                    int32_t key = d->operands[0]->id; bool seen = false;
+                    for (int32_t q = 0; q < n && !seen; q++) seen = g[q] == key;
+                    if (!seen && n < cap) g[n++] = key;
+                    break;
+                }
+                if (d->op == IR_CAST && d->n_operands >= 1) { v = d->operands[0]; continue; }
+                if ((d->op == IR_ADD || d->op == IR_SUB) && d->n_operands >= 2) { v = d->operands[0]; continue; }
+                break;
+            }
+        }
+    }
+    return n;
+}
+static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    char err[200];
+    int32_t keys[64]; uint8_t tk[64], kind[64]; int32_t nk = 0;
+    FdRange er[64];                                          // each array's element type's range
+    for (IrBlock *b = f->blocks; b; b = b->next)               // the arrays a claim may name: allocas
+        for (IrInstr *i = b->instrs; i && nk < 64; i = i->next) {
+            const IrType *at = i->op == IR_ALLOCA && i->result ? i->aux.alloca_ty : NULL;   // what it allocates
+            if (!at || at->kind != IRT_ARRAY || !fd_range(at->elem, &er[nk])) continue;
+            keys[nk] = i->result->id; tk[nk] = JTERM_EACH; nk++;
+        }
+    if (nk == 0) return true;
+    JSlot *s0 = NULL, *sl = NULL; int32_t ns = 0;              // a guard: an integer version a header makes
+    if (F->gen->slots(F->gen->ctx, f, &s0, &ns, err, sizeof err) && ns > 0) {
+        if (!(sl = malloc(sizeof *sl * (size_t)ns))) { F->oom = true; return false; }
+        memcpy(sl, s0, sizeof *sl * (size_t)ns);
+    }
+    bool okall = true;
+    for (IrBlock *h = f->blocks; h && okall; h = h->next) {
+        if (!h->is_loop_header) continue;
+        if (!F->gen->term_kinds(F->gen->ctx, f, h->id, keys, tk, nk, kind, err, sizeof err)) continue;
+        for (int32_t a = 0; a < nk && okall; a++) {
+            if (kind[a] != 2) continue;                         // no element made at this header
+            for (int sg = 1; sg >= -1 && okall; sg -= 2) {
+                JClaim c; memset(&c, 0, sizeof c);
+                c.blk = h->id; c.fn = f; c.nt = 1; c.key[0] = keys[a]; c.tk[0] = JTERM_EACH; c.coef[0] = sg;
+                // a bound no tighter than the element's type says nothing, and its instances ride
+                // into every path that names an element
+                __int128 tb = sg > 0 ? er[a].hi : -er[a].lo;
+                if (fd_iter_bound(F, f, as, nv, &c) && c.rhs < tb) { okall = fd_push_claim(F, &c, as, nv, cl, nc, ccl); continue; }
+                if (F->oom) { okall = false; break; }
+                // ...or each element below a counter: a fill of storage that starts with no value
+                // (`var a i32[8]`), whose elements are bounded only once the loop has written them
+                int32_t gk[8], ng = fd_store_guards(f, fd_nest_body(N, h->id), N->nbk, keys[a], gk, 8);
+                for (int32_t g = 0; g < ns && okall; g++) {
+                    if (sl[g].blk != h->id || !sl[g].head || !fd_is_int(sl[g].type)) continue;
+                    bool guard = false;
+                    for (int32_t q = 0; q < ng && !guard; q++) guard = gk[q] == sl[g].key;
+                    if (!guard) continue;
+                    JClaim u = c; u.nt = 2;
+                    u.key[1] = sl[g].key; u.tk[1] = JTERM_UPTO; u.coef[1] = 1;
+                    if (fd_iter_bound(F, f, as, nv, &u) && u.rhs < tb) okall = fd_push_claim(F, &u, as, nv, cl, nc, ccl);
+                    else if (F->oom) okall = false;
+                }
+            }
+        }
+    }
+    free(sl);
+    return okall;
+}
 static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     IrFunc *mod = F->mod;
     char err[200];
     JClaim *cl = NULL, *as = NULL;
     JCand *cd = NULL;
     int32_t nc = 0, ccl = 0, nv = 0, ncd = 0, ccd = 0;
+    FdNest N; memset(&N, 0, sizeof N);                       // the current function's loops
     *ncl = 0;
     F->oom = false;
     F->rk = NULL; F->nrk = 0;                                // the caller frees the last call's
@@ -1113,6 +1539,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
             if (f->is_extern || !f->entry) continue;
             JSlot *s0; int32_t ns = 0;
             JSlot *sl = NULL;
+            if (!fd_nest_build(f, &N)) goto oom;
             if (F->gen->slots(F->gen->ctx, f, &s0, &ns, err, sizeof err) && ns > 0) {
                 if (!(sl = malloc(sizeof *sl * (size_t)ns))) goto oom;
                 memcpy(sl, s0, sizeof *sl * (size_t)ns);
@@ -1122,7 +1549,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
                 int32_t only;
                 if (i < ns) {
                     for (j = i; j < ns && sl[j].blk == sl[i].blk; j++) ;
-                    if (!block_candidates(F, f, sl, i, j, &cd, &ncd, &ccd, err, sizeof err)) continue;
+                    if (!block_candidates(F, f, &N, as, nv, sl, i, j, &cd, &ncd, &ccd, err, sizeof err)) continue;
                     for (int32_t c = 0; c < ncd; c++) cd[c].c.fn = f;
                     only = sl[i].blk;
                 } else {
@@ -1157,9 +1584,12 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
                 }
             }
             free(sl);
+            if (round > 0 && !fd_nested_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
+            if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
+            fd_nest_free(&N);
         }
         if (nc == nv) break;                                 // nothing new to verify
-        int32_t kept = houdini_module(F, cl, nc);
+        int32_t kept = houdini_module(F, cl, nc, nv);
         if (kept < 0) goto oom;
         bool grew = kept > nv;
         free(as); as = malloc(sizeof *as * (size_t)(kept ? kept : 1));
@@ -1238,6 +1668,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     if (nv == 0) { free(as); return NULL; }
     return as;
 oom:
+    fd_nest_free(&N);
     free(cd); free(cl); free(as); free(F->rk); F->rk = NULL; F->nrk = 0;
     F->oom = true;
     return NULL;
