@@ -1016,6 +1016,42 @@ int main(void) {
         else CHECK(strstr(recs, nf) != NULL, "case %d: a rank.fall not implied:\n%s", c, recs);
     }
 
+    // a MIN component (c37), Piecewise: `while p > 0 and q > 0 { if q < p { q--; p = n1 } else {
+    // p--; q = n2 } }` over i32 cells. (0) min(p, q): its two rank.fall and two rank.bound proved;
+    // (1) max(p, q): a rank.fall not implied (the arbitrary one rises); (2) min(p, q) with the else
+    // path keeping p (p = p): a rank.fall not implied
+    for (int c = 0; c < 3; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true);
+        IrFunc *pf = ir_func_new(&A, nm("pw37"), mi32, IR_FUNC_PURE);
+        IrValue *pp0 = ir_add_param(pf, mi32, nm("p0")), *pq0 = ir_add_param(pf, mi32, nm("q0")),
+                *pn1 = ir_add_param(pf, mi32, nm("n1")), *pn2 = ir_add_param(pf, mi32, nm("n2"));
+        IrBlock *q0b = pf->entry, *q1 = ir_new_block(pf), *q2 = ir_new_block(pf), *q3 = ir_new_block(pf), *q4 = ir_new_block(pf),
+                *q5 = ir_new_block(pf), *q6 = ir_new_block(pf), *q7 = ir_new_block(pf);
+        IrValue *pc = ir_alloca(pf, q0b, mi32), *qc = ir_alloca(pf, q0b, mi32);
+        ir_store(pf, q0b, pc, pp0); ir_store(pf, q0b, qc, pq0); ir_set_br(q0b, q1);
+        IrValue *plp = ir_load(pf, q1, pc, mi32);
+        ir_set_br_cond(q1, ir_icmp(pf, q1, IR_CMP_SGT, plp, ir_const_int(pf, q1, 0, mi32)), q2, q7);
+        IrValue *plq = ir_load(pf, q2, qc, mi32);
+        ir_set_br_cond(q2, ir_icmp(pf, q2, IR_CMP_SGT, plq, ir_const_int(pf, q2, 0, mi32)), q3, q7);
+        ir_set_br_cond(q3, ir_icmp(pf, q3, IR_CMP_SLT, plq, plp), q4, q5);
+        ir_store(pf, q4, qc, ir_binop(pf, q4, IR_SUB, plq, ir_const_int(pf, q4, 1, mi32), mi32)); ir_store(pf, q4, pc, pn1); ir_set_br(q4, q6);
+        ir_store(pf, q5, pc, c == 2 ? plp : ir_binop(pf, q5, IR_SUB, plp, ir_const_int(pf, q5, 1, mi32), mi32)); ir_store(pf, q5, qc, pn2); ir_set_br(q5, q6);
+        ir_set_br(q6, q1);
+        ir_set_ret(q7, ir_const_int(pf, q7, 0, mi32));
+        ir_finalize_cfg(pf);
+        Stub sp; memset(&sp, 0, sizeof sp);
+        sp.propose = P_RANK; sp.nrank = 1;
+        JRank *rr = &sp.rank[0];
+        rr->blk = q1->id; rr->fn = pf; rr->nt = 2; rr->key[0] = pc->id; rr->key[1] = qc->id; rr->nedge = 1; rr->from[0] = q6->id; rr->fall[0] = 0;
+        rr->ncomp = 2; rr->coef[0][0] = 1; rr->coef[1][1] = 1; rr->cont[1] = c == 1 ? 1 : 2;
+        CHECK(run(pf, &sp, true, sizeof region, err), "judges: %s", err);
+        char pf_[48], pb[48], nf[48];                        // a record names its kind, not its ordinal
+        snprintf(pf_, sizeof pf_, "proved bb%d.0 rank.fall", q6->id); snprintf(pb, sizeof pb, "proved bb%d.0 rank.bound", q6->id);
+        snprintf(nf, sizeof nf, "not-implied bb%d.0 rank.fall", q6->id);
+        if (c == 0) CHECK(count_in(recs, pf_) == 2 && count_in(recs, pb) == 2 && !strstr(recs, nf), "min(p, q): both falls and both bounds proved:\n%s", recs);
+        else CHECK(strstr(recs, nf) != NULL, "case %d: a rank.fall not implied:\n%s", c, recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

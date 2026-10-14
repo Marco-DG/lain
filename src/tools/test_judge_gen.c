@@ -3618,7 +3618,7 @@ int main(void) {
     // an i32 cell, ranked max(x, -x) (rows x and -x, cont[1] = 1). (0) rank.fall 1000 and 2000, one
     // per row, each under one `premise rank.max 0`, and rank.bound 0 under one; no rank.keep; (1)
     // <0, max(x, -x)>, falling at 1: rank.keep 0 (a row of its own), rank.fall 1001 and 2001,
-    // rank.bound 1; refused: (2) cont[0] = 1; (3) cont[1] = 2; (4) fall 1 (one component, two
+    // rank.bound 1; refused: (2) cont[0] = 1; (3) cont[1] = 3; (4) fall 1 (one component, two
     // rows); (5) a free edge over the max; (6) max(x + 5, -x + 2), the constants moved right: the
     // row x's goal x' + x <= -4, the row -x's premise x + x' <= -3
     for (int c = 0; c < 7; c++) {
@@ -3643,10 +3643,10 @@ int main(void) {
         r.ncomp = 2 + o1; r.coef[o1][0] = 1; r.coef[o1 + 1][0] = -1; r.cont[o1 + 1] = 1; r.fall[0] = (int8_t)o1;
         if (c == 6) { r.c0[0] = 5; r.c0[1] = 2; }
         const char *bad = NULL;
-        if (c == 2) { r.cont[0] = 1; bad = "max of rows out of shape"; }
-        if (c == 3) { r.cont[1] = 2; bad = "max of rows out of shape"; }
+        if (c == 2) { r.cont[0] = 1; bad = "max or min of rows out of shape"; }
+        if (c == 3) { r.cont[1] = 3; bad = "max or min of rows out of shape"; }
         if (c == 4) { r.fall[0] = 1; bad = "falling component out of range"; }
-        if (c == 5) { r.fall[0] = -1; bad = "a free back edge over a component that is a max of rows"; }
+        if (c == 5) { r.fall[0] = -1; bad = "a free back edge over a component that is a max or min of rows"; }
         gen_rk = &r; gen_nrk = 1;
         char why[200] = "";
         char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
@@ -3689,6 +3689,77 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a ranking component that is the max of rows: one VC per row, under premises\n");
+    // 71. a component that is the MIN of rows (Piecewise): `while p > 0 and q > 0 { if q < p { q--;
+    // p = n1 } else { p--; q = n2 } }` over i32 cells, ranked min(p, q) (cont[1] = 2). (0) rank.fall
+    // 1000 and 2000, one per row before the trip, the goal on the last row q after it, each under
+    // one `premise rank.min 0` of two cases (p after the trip not below p or not below q, both
+    // before it); rank.bound 1000 and 2000, one per row, no premise; (1) refused: rows p, q, p's
+    // negation with cont 1, 2 (a max and a min in one component); (2) min(p, q, p + q): three falls,
+    // each under two premises (rows p and q) of three cases
+    for (int c = 0; c < 3; c++) {
+        IrFunc *f = ir_func_new(&A, nm("pw72"), i32t, IR_FUNC_PURE);
+        IrValue *pp = ir_add_param(f, i32t, nm("p0")), *qp = ir_add_param(f, i32t, nm("q0")),
+                *n1 = ir_add_param(f, i32t, nm("n1")), *n2 = ir_add_param(f, i32t, nm("n2"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f), *b7 = ir_new_block(f);
+        IrValue *p = ir_alloca(f, b0, i32t), *q = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, p, pp); ir_store(f, b0, q, qp); ir_set_br(b0, b1);
+        IrValue *lp = ir_load(f, b1, p, i32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SGT, lp, ir_const_int(f, b1, 0, i32t)), b2, b7);
+        IrValue *lq = ir_load(f, b2, q, i32t);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_SGT, lq, ir_const_int(f, b2, 0, i32t)), b3, b7);
+        ir_set_br_cond(b3, ir_icmp(f, b3, IR_CMP_SLT, lq, lp), b4, b5);
+        ir_store(f, b4, q, ir_binop(f, b4, IR_SUB, lq, ir_const_int(f, b4, 1, i32t), i32t)); ir_store(f, b4, p, n1); ir_set_br(b4, b6);
+        ir_store(f, b5, p, ir_binop(f, b5, IR_SUB, lp, ir_const_int(f, b5, 1, i32t), i32t)); ir_store(f, b5, q, n2); ir_set_br(b5, b6);
+        ir_set_br(b6, b1);
+        ir_set_ret(b7, ir_const_int(f, b7, 0, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.nt = 2; r.key[0] = p->id; r.key[1] = q->id; r.nedge = 1; r.from[0] = b6->id;
+        r.ncomp = 2; r.coef[0][0] = 1; r.coef[1][1] = 1; r.cont[1] = 2; r.fall[0] = 0;
+        if (c == 1) { r.ncomp = 3; r.coef[2][0] = -1; r.cont[1] = 1; r.cont[2] = 2; }
+        if (c == 2) { r.ncomp = 3; r.coef[2][0] = 1; r.coef[2][1] = 1; r.cont[2] = 2; }
+        gen_rk = &r; gen_nrk = 1;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        if (c == 1) { CHECK(!t && strstr(why, "max or min of rows out of shape"), "case 1: refused: got \"%s\"", why); free(t); gen_rk = NULL; gen_nrk = 0; continue; }
+        if (c == 2) {
+            bool ok3 = t != NULL;
+            for (int k = 1; ok3 && k <= 3; k++) {
+                char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.fall %d", b6->id, 1000 * k);
+                const char *v = vc_of(t, key);
+                int np = 0;
+                for (const char *pr = strstr(v, "premise rank.min 0 : or { "); pr; pr = strstr(pr + 1, "premise rank.min 0 : or { ")) {
+                    const char *nl = strchr(pr, '\n'); int bars = 0;
+                    for (const char *u = pr; nl && (u = strstr(u, " | ")) && u < nl; u++) bars++;
+                    if (bars == 2) np++;
+                }
+                ok3 = np == 2;
+                if (!ok3) CHECK(false, "case 2: %s under two premises of three cases:\n%s", key, v);
+            }
+            CHECK(ok3, "case 2: min(p, q, p + q)'s three falls:\n%s", t ? t : why);
+            free(t); gen_rk = NULL; gen_nrk = 0; continue;
+        }
+        bool ok = t && count(t, " rank.") == 4 + count(t, "premise rank.");
+        char hp[32], hq[32], jq[32];
+        snprintf(hp, sizeof hp, "%%s%d@head.bb%d", p->id, b1->id); snprintf(hq, sizeof hq, "%%s%d@head.bb%d", q->id, b1->id);
+        snprintf(jq, sizeof jq, "%%s%d@join.bb%d", q->id, b6->id);
+        for (int k = 0; ok && k < 4; k++) {
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.%s %d", b6->id, k < 2 ? "fall" : "bound", 1000 * (k % 2 + 1));
+            const char *v = vc_of(t, key), *g = strstr(v, "goal ");
+            const char *pr = strstr(v, "premise rank.min 0 : or { "), *nl = pr ? strchr(pr, '\n') : NULL;
+            int bars = 0;
+            for (const char *u = pr; u && nl && (u = strstr(u, " | ")) && u < nl; u++) bars++;
+            if (k < 2) ok = g && strstr(g, jq) && strstr(g, k ? hq : hp) && strstr(g, "<= -1\n") && count(v, "premise rank.") == 1 && bars == 1;
+            else ok = g && strstr(g, k == 2 ? hp : hq) && !strstr(g, "@join") && !strstr(v, "premise rank.");
+            if (!ok) CHECK(false, "case 0: %s, its goal and premise:\n%s", key, v);
+        }
+        CHECK(ok, "case 0: two falls and two bounds on the min:\n%s", t ? t : why);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a ranking component that is the min of rows: under premises, one VC per row before the trip\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
