@@ -90,11 +90,13 @@ struct IrFunc; struct IrType;
 // A claim at a cut point (blk >= 0: a forward join or a loop header), `sum(coef * term) <= rhs`
 // over one to JCLAIM_MAXT terms by value id (a cell's ALLOCA id is its version at the block); or a
 // RETURN claim (blk JCLAIM_RET) over the value returned (JKEY_RET) and integer parameters. `fn` is
-// the claim's function. A term's kind `tk` is JTERM_VALUE (the value, or the cell's version) or
-// JTERM_LEN (the length of that slice value, or of the slice cell's version). gen.h states and
-// owes them; nothing here is believed.
+// the claim's function. A term's kind `tk` is JTERM_VALUE (the value, or the cell's version),
+// JTERM_LEN (the length of that slice value, or of the slice cell's version), or, at a cut point,
+// JTERM_EACH: EACH element of the fixed array at address `key`, every one an integer cell (at most
+// one such term a claim): the claim is one instance per element, each about that element's
+// version. gen.h states and owes them; nothing here is believed.
 enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
-enum { JTERM_VALUE = 0, JTERM_LEN = 1 };
+enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
                  struct IrFunc *fn; } JClaim;
 // A RANKING claim at a loop header: a tuple of components f_j = sum coef[j][i] * term_i + c0[j]

@@ -1214,7 +1214,7 @@ int main(void) {
         struct { JClaim c; const char *why; } bad[3];
         for (int k = 0; k < 3; k++) bad[k].c = c;
         bad[0].c.tk[0] = JTERM_LEN; bad[0].why = "not a cell or a value fixed at its block";       // i is no slice
-        bad[1].c.tk[0] = 2; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
+        bad[1].c.tk[0] = 3; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
         memset(&bad[2].c, 0, sizeof bad[2].c);
         bad[2].c.blk = JCLAIM_RET; bad[2].c.fn = f; bad[2].c.nt = 2; bad[2].c.key[0] = JKEY_RET; bad[2].c.coef[0] = 1;
         bad[2].c.key[1] = xs->id; bad[2].c.tk[1] = JTERM_LEN; bad[2].c.coef[1] = -1; bad[2].why = "a return claim over a length";
@@ -3139,6 +3139,76 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a store by a variable index: each element written or kept, by the index\n");
+    // 63. an EACH claim (JTERM_EACH) over a fill loop: a i32[4] stored 0 by constant indexes, then
+    // `while i < 4 { a[i] = 10; i = i + 1 }` whose header also stores a[0] = 5, and 100 / (11 - a[2])
+    // after it (the instances name the versions the header STARTS with). Claims at the header:
+    // #0 each(a) <= 10 and #1 -each(a) <= 0. (0) Owed per element: 8 inv.entry and 8 inv.keep VCs,
+    // ordinals ci*1000 + k; stated as all four instances where a VC names an element's header
+    // version. Refused: (1) EACH over the integer cell i; (2) over an array one element of which is
+    // no cell; (3) two EACH terms; (4) at the exit block, where no element is made afresh; (6) over
+    // an i32[17], every element a cell (past JELEM_MAXN). (5) term_kinds: each(a) 2 at the header, 1
+    // at the exit; each(i) 0
+    {   IrType *a4 = ir_type_new(&A, IRT_ARRAY); a4->elem = i32t; a4->array_len = 4;
+        for (int c = 0; c < 7; c++) {
+            if (c == 6) a4->array_len = 17;
+            IrFunc *f = ir_func_new(&A, nm("e63"), i32t, IR_FUNC_PURE);
+            IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+            IrValue *a = ir_alloca_array(f, b0, a4), *b = ir_alloca_array(f, b0, a4), *i = ir_alloca(f, b0, u64t);
+            for (int k = 0; k < (int)a4->array_len; k++) ir_store(f, b0, ir_elem_ptr(f, b0, a, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 0, i32t));
+            for (int k = 0; k < 3; k++) ir_store(f, b0, ir_elem_ptr(f, b0, b, ir_const_int(f, b0, k, u64t), i32t), ir_const_int(f, b0, 0, i32t));
+            ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_set_br(b0, b1);
+            ir_store(f, b1, ir_elem_ptr(f, b1, a, ir_const_int(f, b1, 0, u64t), i32t), ir_const_int(f, b1, 5, i32t));
+            ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, ir_load(f, b1, i, u64t), ir_const_int(f, b1, 4, u64t)), b2, b3);
+            IrValue *li = ir_load(f, b2, i, u64t);
+            ir_store(f, b2, ir_elem_ptr(f, b2, a, li, i32t), ir_const_int(f, b2, 10, i32t));
+            ir_store(f, b2, ir_elem_ptr(f, b2, b, li, i32t), ir_const_int(f, b2, 10, i32t));
+            ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li, ir_const_int(f, b2, 1, u64t), u64t)); ir_set_br(b2, b1);
+            IrValue *a2 = ir_load(f, b3, ir_elem_ptr(f, b3, a, ir_const_int(f, b3, 2, u64t), i32t), i32t);
+            ir_set_ret(b3, ir_binop(f, b3, IR_SDIV, ir_const_int(f, b3, 100, i32t), ir_binop(f, b3, IR_SUB, ir_const_int(f, b3, 11, i32t), a2, i32t), i32t));
+            int at = nins(b3) - 1;
+            ir_finalize_cfg(f);
+            gen_mod = f;
+            JClaim cl[2]; memset(cl, 0, sizeof cl);
+            for (int q = 0; q < 2; q++) {
+                cl[q].blk = b1->id; cl[q].fn = f; cl[q].nt = 1; cl[q].key[0] = a->id; cl[q].tk[0] = JTERM_EACH;
+                cl[q].coef[0] = q ? -1 : 1; cl[q].rhs = q ? 0 : 10;
+            }
+            if (c == 5) {
+                JMem m = jmem_over(region, sizeof region);
+                int32_t keys[3] = { a->id, a->id, i->id };
+                uint8_t tks[3] = { JTERM_EACH, JTERM_EACH, JTERM_EACH }, kh[3], kx[3]; char err[200];
+                bool ok = jgen_term_kinds(&m, f, gen_mod, b1->id, keys, tks, 3, kh, err, sizeof err) &&
+                          jgen_term_kinds(&m, f, gen_mod, b3->id, keys, tks, 3, kx, err, sizeof err);
+                CHECK(ok && kh[0] == 2 && kx[0] == 1 && kh[2] == 0, "case 5: each(a) 2 at the header, 1 at the exit, each(i) 0 (got %d %d %d)", kh[0], kx[0], kh[2]);
+                continue;
+            }
+            const char *why_want = NULL;
+            if (c == 1) { cl[0].key[0] = i->id; why_want = "is not a fixed array of element cells"; }
+            if (c == 2) { cl[0].key[0] = b->id; why_want = "is not a fixed array of element cells"; }
+            if (c == 3) { cl[0].nt = 2; cl[0].key[1] = b->id; cl[0].tk[1] = JTERM_EACH; cl[0].coef[1] = 1; why_want = "two EACH terms"; }
+            if (c == 4) { cl[0].blk = b3->id; why_want = "a claim about no version its block makes afresh"; }
+            if (c == 6) why_want = "is not a fixed array of element cells";
+            char why[200] = "";
+            char *t = gen_with(f, cl, c ? 1 : 2, JGEN_ALL, why);
+            if (c) { CHECK(!t && strstr(why, why_want), "case %d: refused (%s): got \"%s\"", c, why_want, why); free(t); continue; }
+            char key[48], want[96];
+            snprintf(key, sizeof key, " bb%d.%d divzero 0", b3->id, at);
+            const char *vz = t ? vc_of(t, key) : "";
+            int nent = t ? count(t, " inv.entry ") : -1, nkeep = t ? count(t, " inv.keep ") : -1;
+            snprintf(want, sizeof want, " inv.keep 1002\n");
+            bool ord = t && strstr(t, want) && strstr(t, " inv.entry 3\n");
+            int inst = 0;
+            for (int k = 0; k < 4; k++) {
+                snprintf(want, sizeof want, "claim bb%d #1 : -1*%%s%d[%d]@head.bb%d <= 0", b1->id, a->id, k, b1->id);
+                if (strstr(vz, want)) inst++;
+            }
+            CHECK(nent == 8 && nkeep == 8 && ord, "case 0: 8 inv.entry and 8 inv.keep, ordinals ci*1000 + k (got %d, %d):\n%s", nent, nkeep, t ? t : "");
+            CHECK(inst == 4, "case 0: all four instances of claim #1 stated where a[2]'s header version is named (%d):\n%s", inst, vz);
+            free(t);
+        }
+    }
+    gen_mod = NULL;
+    printf("  an EACH claim: one instance per element, stated and owed\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

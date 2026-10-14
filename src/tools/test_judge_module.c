@@ -813,6 +813,36 @@ int main(void) {
         CHECK(strstr(recs, " divzero") && !strstr(recs, "divzero  %") && nrec[JREC_NOT_IMPLIED] == 0, "%s:\n%s", c == 2 ? "a[2] kept its 30" : c ? "a[i] read back is 7" : "a[2] is 7 or 30", recs);
     }
 
+    // an EACH claim (c27) over a fill loop: a u8[4] stored 0, `while i < 4 { a[i] = 10; i = i + 1 }`,
+    // then 100 / (11 - a[2]). Proposed at the header: each(a) <= 10. Its 4 inv.entry and 4 inv.keep
+    // VCs proved (a store keeps or writes 10, c26), and the division after the loop; (1) with a[3]
+    // stored 20 before the loop, element 3's inv.entry (ordinal 3) alone not implied
+    for (int c = 0; c < 2; c++) {
+        IrType *mu8 = ir_type_int(&A, 8, false), *mu64 = ir_type_int(&A, 64, false), *mi32 = ir_type_int(&A, 32, true);
+        IrType *ma4 = ir_type_new(&A, IRT_ARRAY); ma4->elem = mu8; ma4->array_len = 4;
+        IrFunc *mf = ir_func_new(&A, nm("fill"), mi32, IR_FUNC_PURE);
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *m3 = ir_new_block(mf);
+        IrValue *ma = ir_alloca_array(mf, m0, ma4), *mi = ir_alloca(mf, m0, mu64);
+        for (int k = 0; k < 4; k++) ir_store(mf, m0, ir_elem_ptr(mf, m0, ma, ir_const_int(mf, m0, k, mu64), mu8), ir_const_int(mf, m0, c && k == 3 ? 20 : 0, mu8));
+        ir_store(mf, m0, mi, ir_const_int(mf, m0, 0, mu64)); ir_set_br(m0, m1);
+        ir_set_br_cond(m1, ir_icmp(mf, m1, IR_CMP_ULT, ir_load(mf, m1, mi, mu64), ir_const_int(mf, m1, 4, mu64)), m2, m3);
+        IrValue *mli = ir_load(mf, m2, mi, mu64);
+        ir_store(mf, m2, ir_elem_ptr(mf, m2, ma, mli, mu8), ir_const_int(mf, m2, 10, mu8));
+        ir_store(mf, m2, mi, ir_binop(mf, m2, IR_ADD, mli, ir_const_int(mf, m2, 1, mu64), mu64)); ir_set_br(m2, m1);
+        IrValue *ma2 = ir_load(mf, m3, ir_elem_ptr(mf, m3, ma, ir_const_int(mf, m3, 2, mu64), mu8), mu8);
+        ir_set_ret(m3, ir_binop(mf, m3, IR_SDIV, ir_const_int(mf, m3, 100, mi32), ir_binop(mf, m3, IR_SUB, ir_const_int(mf, m3, 11, mi32), ma2, mi32), mi32));
+        ir_finalize_cfg(mf);
+        memset(&s.claim, 0, sizeof s.claim);
+        s.claim.blk = m1->id; s.claim.fn = mf; s.claim.nt = 1; s.claim.key[0] = ma->id; s.claim.tk[0] = JTERM_EACH; s.claim.coef[0] = 1; s.claim.rhs = 10;
+        s.propose = P_CLAIM; s.nrank = 0;
+        CHECK(run(mf, &s, true, sizeof region, err), "judges: %s", err);
+        if (!c) CHECK(count_in(recs, "inv.keep") == 4 && count_in(recs, "inv.entry") == 4 &&
+                      !strstr(recs, "not-implied") && strstr(recs, "divzero") && !strstr(recs, "divzero  "),
+                      "each(a) <= 10 over the fill loop, and the division after it:\n%s", recs);
+        else CHECK(count_in(recs, "not-implied") == 1 && strstr(recs, "inv.entry 3 "), "a[3] = 20 breaks element 3's inv.entry alone:\n%s", recs);
+        s.propose = P_NONE;
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
