@@ -723,6 +723,29 @@ int main(void) {
         CHECK(strstr(recs, " divzero") && !strstr(recs, "outside") && nrec[JREC_NOT_IMPLIED] == 0, "10 * 3 from two slots:\n%s", recs);
     }
 
+    // a written measure with a quotient fixed at the header: `while i < n / 2 decreasing n / 2 - i`
+    {   IrFunc *qm = ir_func_new(&A, nm("halfm"), u32t, IR_FUNC_PURE);
+        IrValue *qn = ir_add_param(qm, u32t, nm("n"));
+        IrBlock *q0 = qm->entry, *q1 = ir_new_block(qm), *q2 = ir_new_block(qm), *q3 = ir_new_block(qm);
+        IrValue *qi = ir_alloca(qm, q0, u32t);
+        ir_store(qm, q0, qi, ir_const_int(qm, q0, 0, u32t)); ir_set_br(q0, q1);
+        IrValue *qh = ir_binop(qm, q1, IR_UDIV, qn, ir_const_int(qm, q1, 2, u32t), u32t);
+        ir_set_br_cond(q1, ir_icmp(qm, q1, IR_CMP_ULT, ir_load(qm, q1, qi, u32t), qh), q2, q3);
+        IrValue *qli = ir_load(qm, q2, qi, u32t);
+        IrValue *qms = ir_binop(qm, q2, IR_SUB, qh, qli, u32t);
+        ir_store(qm, q2, qi, ir_binop(qm, q2, IR_ADD, qli, ir_const_int(qm, q2, 1, u32t), u32t));
+        ir_set_br(q2, q1);
+        ir_set_ret(q3, ir_const_int(qm, q3, 0, u32t));
+        ir_finalize_cfg(qm);
+        q1->has_measure = true; q1->measure_val = qms;
+        int qp = 0;
+        for (IrInstr *i = q2->instrs; i; i = i->next) qp++;
+        s.propose = P_NONE; s.nrank = 0;
+        snprintf(rf, sizeof rf, "proved bb%d.%d measure.fall", q2->id, qp); snprintf(rb, sizeof rb, "proved bb%d.%d measure.bound", q2->id, qp);
+        CHECK(run(qm, &s, true, sizeof region, err), "judges: %s", err);
+        CHECK(strstr(recs, rf) && strstr(recs, rb) && !strstr(recs, "outside"), "decreasing n / 2 - i: proved:\n%s", recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

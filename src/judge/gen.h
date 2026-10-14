@@ -2898,6 +2898,16 @@ static bool jg_mul_ok(__int128 a, __int128 b, __int128 *out) {
     if (ua > lim || ub > lim || (ub != 0 && ua > lim / ub)) return false;
     *out = a * b; return true;
 }
+// A QUOTIENT fixed at header b: a division by a nonzero constant (a signed one checked: it exists only
+// where it completes) of a value fixed at b. Every trip computes it from the same operands, so it is
+// one value before and after a trip, wherever in the loop it is made: a written measure's term.
+static bool jg_fixed_quot(JG *g, int32_t b, int32_t key) {
+    IrInstr *d = key >= 0 && key < g->nv ? g->def[key] : NULL;
+    __int128 c;
+    if (!d || (d->op != IR_SDIV && d->op != IR_UDIV) || d->n_operands < 2 || !jg_is_int(d->result->type)) return false;
+    if (d->op == IR_SDIV && (d->wrap != IR_WRAP_CHECK || d->unchecked)) return false;
+    return jg_const_of(g, d->operands[1], &c) && c != 0 && d->operands[0] && jg_term_ok(g, b, d->operands[0]->id, JTERM_VALUE);
+}
 static bool jg_measure_lin(JG *g, IrBlock *H, IrValue *v, __int128 k, JRank *r, int depth) {
     const __int128 big = (__int128)1 << 66;
     if (!v || v->id < 0 || v->id >= g->nv || depth > 16 || k > big || k < -big) return false;
@@ -2907,7 +2917,8 @@ static bool jg_measure_lin(JG *g, IrBlock *H, IrValue *v, __int128 k, JRank *r, 
         return row[c] == ver && jg_is_int(g->cty[c]) && jg_rank_add(r, g->cellv[c]->id, JTERM_VALUE, k);
     }
     IrInstr *d = g->def[v->id];
-    if (!d || jg_term_ok(g, H->id, v->id, JTERM_VALUE)) return jg_is_int(v->type) && jg_rank_add(r, v->id, JTERM_VALUE, k);
+    if (!d || jg_term_ok(g, H->id, v->id, JTERM_VALUE) || jg_fixed_quot(g, H->id, v->id))
+        return jg_is_int(v->type) && jg_rank_add(r, v->id, JTERM_VALUE, k);
     __int128 c;
     switch (d->op) {
         case IR_CONST: {
@@ -3000,8 +3011,9 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
         // a CONSTANT one (no terms), written or proposed, falls on no edge that is ever taken: it is
         // how a loop whose back edges are dead (`while false`, a fixed guard) is shown to end
         if (r->nt != 0 && !jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
-        for (int32_t i = 0; i < r->nt; i++)
-            if (!jg_term_ok(g, H->id, r->key[i], r->tk[i])) return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
+        for (int32_t i = 0; i < r->nt; i++)                    // a written measure's: a fixed quotient too
+            if (!jg_term_ok(g, H->id, r->key[i], r->tk[i]) && !(r == &mr && r->tk[i] == JTERM_VALUE && jg_fixed_quot(g, H->id, r->key[i])))
+                return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
         for (int32_t j = 0; j < r->ncomp; j++) {
             if (r->c0[j] > big || r->c0[j] < -big) return jg_fail(g, "a ranking claim's constant out of range");
             for (int32_t i = 0; i < r->nt; i++)

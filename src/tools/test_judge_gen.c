@@ -2871,6 +2871,66 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  a load's static range is its store version's stored value's\n");
+    // 59. a written measure with a QUOTIENT fixed at the header: `while i < n / 2 decreasing n / 2 - i`.
+    // (0) n / 2 made in the header, (1) made again in the body: one term, its division stated, the
+    // fall with it cancelling; outside where the quotient is (2) of the cell i, (3) by a variable
+    // divisor, (4) a signed one that wraps; (5) a proposed ranking claim naming it is refused
+    {   IrFunc *f = ir_func_new(&A, nm("q59"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u64t, nm("n")), *kv = ir_add_param(f, u64t, nm("k")), *ns = ir_add_param(f, i64t, nm("ns"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u64t);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u64t)); ir_set_br(b0, b1);
+        IrValue *li = ir_load(f, b1, i, u64t);
+        IrValue *q = ir_binop(f, b1, IR_UDIV, n, ir_const_int(f, b1, 2, u64t), u64t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, li, q), b2, b3);
+        IrValue *li2 = ir_load(f, b2, i, u64t);
+        IrValue *m[5];
+        m[0] = ir_binop(f, b2, IR_SUB, q, li2, u64t);
+        IrValue *q1 = ir_binop(f, b2, IR_UDIV, n, ir_const_int(f, b2, 2, u64t), u64t);
+        m[1] = ir_binop(f, b2, IR_SUB, q1, li2, u64t);
+        m[2] = ir_binop(f, b2, IR_SUB, ir_binop(f, b2, IR_UDIV, li2, ir_const_int(f, b2, 2, u64t), u64t), li2, u64t);
+        m[3] = ir_binop(f, b2, IR_SUB, ir_binop(f, b2, IR_UDIV, n, kv, u64t), li2, u64t);
+        IrValue *sq = ir_binop(f, b2, IR_SDIV, ns, ir_const_int(f, b2, 2, i64t), i64t);
+        g_last_instr(b2)->unchecked = true;
+        m[4] = ir_binop(f, b2, IR_SUB, sq, li2, i64t);
+        ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li2, ir_const_int(f, b2, 1, u64t), u64t));
+        ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, u32t));
+        ir_finalize_cfg(f);
+        char key[48], want[64], qd[48];
+        snprintf(key, sizeof key, "bb%d.%d measure.", b2->id, nins(b2));
+        b1->has_measure = true;
+        for (int c = 0; c < 5; c++) {
+            b1->measure_val = m[c];
+            char *t = gen_text(f);
+            bool ok = c <= 1;
+            if (ok) {
+                IrValue *qq = c == 0 ? q : q1;
+                snprintf(want, sizeof want, "bb%d.%d measure.bound", b2->id, nins(b2));
+                snprintf(qd, sizeof qd, "def %%v%d div", qq->id);
+                const char *vb = t ? vc_of(t, want) : "";
+                snprintf(want, sizeof want, "bb%d.%d measure.fall", b2->id, nins(b2));
+                const char *vf = t ? vc_of(t, want) : "", *gf = strstr(vf, "goal ");
+                char qv[24]; snprintf(qv, sizeof qv, "%%v%d ", qq->id);
+                CHECK(t && count(t, key) == 2 && !strstr(t, "a written measure the generator cannot read"), "case %d: owed:\n%s", c, t ? t : "");
+                CHECK(strstr(vb, qd) != NULL, "case %d: the bound states the quotient's division:\n%s", c, vb);
+                CHECK(gf && !strstr(gf, qv), "case %d: the fall, the quotient cancelling:\n%s", c, vf);
+            } else CHECK(t && strstr(t, "a written measure the generator cannot read as a sum"), "case %d: outside:\n%s", c, t ? t : "");
+            free(t);
+        }
+        b1->has_measure = false; b1->measure_val = NULL;
+        // (5) a PROPOSED ranking claim (untrusted) naming that quotient: refused, as before
+        JRank pr; memset(&pr, 0, sizeof pr);
+        pr.blk = b1->id; pr.fn = f; pr.ncomp = 1; pr.nt = 2; pr.key[0] = q->id; pr.coef[0][0] = 1; pr.key[1] = i->id; pr.coef[0][1] = -1;
+        pr.nedge = 1; pr.from[0] = b2->id;
+        gen_rk = &pr; gen_nrk = 1;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        CHECK(!t && strstr(why, "is not a cell or a value fixed at its header"), "case 5: a proposed claim's quotient refused: %s", why);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0;
+    }
+    printf("  a written measure's quotient fixed at its header is one term\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
