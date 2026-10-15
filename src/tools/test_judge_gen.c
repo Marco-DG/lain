@@ -4220,8 +4220,10 @@ int main(void) {
     // disjunction; m <= 2^32 - a - b the first atom) and `premise rank.lex 0` over m alone (m did
     // not fall, or m < 0); goals m' <= m, then q's fall and bound. (1) <q, max(a, -a)>: the max is
     // named only where its VC uses it: not in rank.lex 0 (q kept), m and m' in rank.lex 1 (it
-    // falls), m alone in rank.lex 2 (bounded)
-    for (int c = 0; c < 2; c++) {
+    // falls), m alone in rank.lex 2 (bounded). (2) TWO groups, <min(2^32 -+ a -+ b), max(q, -q)>
+    // (Main Compiler Work's f11 proposes it): each its own fresh pair, rank.min.0 and rank.max.1;
+    // the min (not last) defined both sides in every VC, the max (last) as in (1)
+    for (int c = 0; c < 3; c++) {
         IrFunc *f = ir_func_new(&A, nm("nest75"), i32t, IR_FUNC_PURE);
         IrValue *a0p = ir_add_param(f, i32t, nm("a0")), *b0p = ir_add_param(f, i32t, nm("b0")), *q0p = ir_add_param(f, i32t, nm("q0"));
         IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
@@ -4242,10 +4244,11 @@ int main(void) {
         JRank r; memset(&r, 0, sizeof r);
         r.blk = b1->id; r.fn = f; r.nt = 3; r.key[0] = a->id; r.key[1] = b->id; r.key[2] = q->id;
         r.nedge = 1; r.from[0] = b2->id; r.fall[0] = -1;
-        if (c == 0) {
-            r.ncomp = 5;
+        if (c != 1) {
+            r.ncomp = c == 2 ? 6 : 5;
             for (int k = 0; k < 4; k++) { r.coef[k][0] = (k & 2) ? 1 : -1; r.coef[k][1] = (k & 1) ? 1 : -1; r.c0[k] = (__int128)1 << 32; if (k) r.cont[k] = 2; }
             r.coef[4][2] = 1;
+            if (c == 2) { r.coef[5][2] = -1; r.cont[5] = 1; }   // max(q, -q)
         } else {
             r.ncomp = 3; r.coef[0][2] = 1; r.coef[1][0] = 1; r.coef[2][0] = -1; r.cont[2] = 1;
         }
@@ -4253,6 +4256,24 @@ int main(void) {
         char why[200] = "";
         char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
         bool ok = t != NULL;
+        if (c == 2) {                                          // per VC: min defs pre/post, max defs pre/post
+            const int want[3][4] = { { 5, 5, 0, 0 }, { 5, 5, 3, 3 }, { 5, 5, 3, 0 } };
+            const char *goals[3] = { "goal -1*rank.min.0.pre + 1*rank.min.0.post <= 0\n", "goal -1*rank.max.1.pre + 1*rank.max.1.post <= -1\n",
+                                     "goal -1*rank.max.1.pre <= 0\n" };
+            for (int qq = 0; ok && qq < 3; qq++) {
+                char key[48]; snprintf(key, sizeof key, "bb%d.%d rank.lex %d", b2->id, ni, qq);
+                const char *v = vc_of(t, key);
+                ok = *v && count(v, "def rank.min 0 pre : ") == want[qq][0] && count(v, "def rank.min 0 post : ") == want[qq][1] &&
+                     count(v, "def rank.max 1 pre : ") == want[qq][2] && count(v, "def rank.max 1 post : ") == want[qq][3] &&
+                     count(v, "premise rank.lex 0 : or { 1*rank.min.0.pre + -1*rank.min.0.post <= 0 | 1*rank.min.0.pre <= -1 }\n") == 1 &&
+                     count(v, "premise rank.") == 1 && strstr(v, goals[qq]) && !strstr(v, "rank.max.0") && !strstr(v, "rank.min.1");
+                if (!ok) CHECK(false, "case 2: rank.lex %d, two groups, each named once where used:\n%s", qq, v);
+            }
+            char k3s[48]; snprintf(k3s, sizeof k3s, "bb%d.%d rank.lex 3", b2->id, ni);
+            CHECK(ok && !strstr(t, k3s), "case 2: rank.lex 0 .. 2 only:\n%s", t ? t : why);
+            free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+            continue;
+        }
         const char *k = c == 0 ? "min" : "max";
         int dc = c == 0 ? 0 : 1, rows = c == 0 ? 4 : 2;      // the group's component, its rows
         for (int qq = 0; ok && qq < 3; qq++) {

@@ -1226,15 +1226,17 @@ int main(void) {
     // rows (2^32 + |a| + |b|, rising): a rank.lex not implied. (B) a region's tuple with a MAX: `while
     // x != 0 and y >= 0 { if y > 0 { if x > 0 { x-- } else { x++ } } else { y = 1 } }`, regions
     // y >= 1 with <max(x, -x)> and -y >= 0 with <y>. (3) its rank.cover, rank.region and four rank.lex
-    // proved; (4) the else path x + 2 (-1 goes to 1): a rank.lex not implied
-    for (int c = 0; c < 5; c++) {
+    // proved; (4) the else path x + 2 (-1 goes to 1): a rank.lex not implied. (5) 4NestedWith3Variables
+    // ranked as Main Compiler Work's f11 does, TWO groups: <min(2^32 -+ a -+ b), max(q, -q)>: rank.lex
+    // 0 .. 2 proved; (6) the second group a MIN (-|q|, rising as q falls): a rank.lex not implied
+    for (int c = 0; c < 7; c++) {
         IrType *mi32 = ir_type_int(&A, 32, true);
         Stub sn; memset(&sn, 0, sizeof sn);
         sn.propose = P_RANK; sn.nrank = 1;
         JRank *rr = &sn.rank[0];
         IrFunc *nf;
         IrBlock *latch;
-        if (c < 3) {
+        if (c < 3 || c >= 5) {
             nf = ir_func_new(&A, nm("nest41"), mi32, IR_FUNC_PURE);
             IrValue *a0p = ir_add_param(nf, mi32, nm("a0")), *b0p = ir_add_param(nf, mi32, nm("b0")), *q0p = ir_add_param(nf, mi32, nm("q0"));
             IrBlock *n0 = nf->entry, *n1 = ir_new_block(nf), *n2 = ir_new_block(nf), *n3 = ir_new_block(nf);
@@ -1252,12 +1254,13 @@ int main(void) {
             ir_finalize_cfg(nf);
             latch = n2;
             rr->blk = n1->id; rr->fn = nf; rr->nt = 3; rr->key[0] = na->id; rr->key[1] = nb->id; rr->key[2] = nq->id;
-            rr->nedge = 1; rr->from[0] = n2->id; rr->fall[0] = -1; rr->ncomp = 5;
+            rr->nedge = 1; rr->from[0] = n2->id; rr->fall[0] = -1; rr->ncomp = c >= 5 ? 6 : 5;
             for (int k = 0; k < 4; k++) {                      // 2^32 - a - b, - a + b, + a - b, + a + b
                 rr->coef[k][0] = (k & 2) ? 1 : -1; rr->coef[k][1] = (k & 1) ? 1 : -1; rr->c0[k] = (__int128)1 << 32;
                 if (k) rr->cont[k] = c == 2 ? 1 : 2;
             }
             rr->coef[4][2] = 1;                                // q
+            if (c >= 5) { rr->coef[5][2] = -1; rr->cont[5] = c == 5 ? 1 : 2; }   // max(q, -q), or min
         } else {
             nf = ir_func_new(&A, nm("reg41"), mi32, IR_FUNC_PURE);
             IrValue *x0p = ir_add_param(nf, mi32, nm("x0")), *y0p = ir_add_param(nf, mi32, nm("y0"));
@@ -1292,7 +1295,7 @@ int main(void) {
         snprintf(pl, sizeof pl, "proved bb%d.%d rank.", latch->id, nins_m(latch)); snprintf(nl, sizeof nl, "not-implied bb%d.%d rank.lex", latch->id, nins_m(latch));
         int nrk = 0;                                           // every rank.* record, whatever its verdict
         for (const char *l = recs; (l = strstr(l, " rank.")); l++) nrk++;
-        if (c == 0) CHECK(count_in(recs, pl) == 3 && nrk == 3 && count_in(recs, "rank.lex") == 3, "4NestedWith3Variables: rank.lex 0 .. 2 proved:\n%s", recs);
+        if (c == 0 || c == 5) CHECK(count_in(recs, pl) == 3 && nrk == 3 && count_in(recs, "rank.lex") == 3, "case %d, 4NestedWith3Variables: rank.lex 0 .. 2 proved:\n%s", c, recs);
         else if (c == 3) CHECK(count_in(recs, pl) == 6 && nrk == 6 && count_in(recs, "rank.lex") == 4, "a region's max: cover, region and four rank.lex proved:\n%s", recs);
         else CHECK(strstr(recs, nl) != NULL, "case %d: a rank.lex not implied:\n%s", c, recs);
     }
