@@ -4441,6 +4441,34 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const 
     return true;
 }
 
+// Is cell c's version v, the one header H makes (JV_HEAD), LIVE in H's loop: does any trip use the
+// value c had as it began (c45)? Live where (1) a load in the loop reads v; (2) a block of the loop
+// but H joins v in from a predecessor in the loop; (3) the loop havocs c (a call may read it through
+// its address); (4) a claim of the function names c beside another term (it may tie v to the rest).
+// Dead otherwise: every path stores c before it reads it, and v's variable on a back edge is free in
+// its type's box (narrowed by interval claims), so no ranking or relation over the other pairs gains
+// from it (a linear one c*v + g + c0 ranks the paths only if g does with its constant moved: on each
+// path the box end where c*(v' - v) >= 0 exists, v' being in the type too).
+static bool jg_head_live(JG *g, int32_t H, int32_t c, int32_t v) {
+    const uint8_t *Lh = g->inloop + (size_t)H * (size_t)g->nb;
+    for (int32_t b = 0; b < g->nb; b++) {
+        if (!Lh[b] || !g->blk[b]) continue;
+        for (IrInstr *i = g->blk[b]->instrs; i; i = i->next)                          // (1)
+            if (i->result && i->result->id >= 0 && i->result->id < g->nv && g->loadver[i->result->id] == v) return true;
+        if (b != H && g->instate[(size_t)b * (size_t)g->ncells + (size_t)c] != v)       // (2)
+            for (IrEdge *e = g->blk[b]->preds; e; e = e->next)
+                if (Lh[e->block->id] && g->rpoix[e->block->id] >= 0 && g->outstate[(size_t)e->block->id * (size_t)g->ncells + (size_t)c] == v) return true;
+    }
+    for (int32_t j = 0; j < g->nver; j++)                                               // (3)
+        if (g->ver[j].kind == JV_HAVOC && g->ver[j].cell == c && g->ver[j].blk >= 0 && Lh[g->ver[j].blk]) return true;
+    int32_t key = g->cellv[c]->id;
+    for (int32_t ci = 0; ci < g->ncl; ci++) {                                           // (4)
+        const JClaim *cl = &g->cl[ci];
+        if (!jg_mine(g, cl) || cl->nt < 2) continue;                                // a cut point's, not a return's
+        for (int32_t k = 0; k < cl->nt; k++) if (cl->key[k] == key) return true;
+    }
+    return false;
+}
 // For whoever proposes ranking functions and loop relations (untrusted; PE.5, PE.7): every edge
 // into loop header `header` as the generator states it with the claims `cl` (on a back edge the
 // header's claims about its previous entry are facts, as for `inv.keep`), and for each version the
@@ -4463,7 +4491,8 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
     for (IrEdge *e = H->preds; e; e = e->next) np++;
     JPath *P = JG_NEW(&g, JPath, np ? np : 1);
     if (!keys || !tks || !P) return jg_fail(&g, "out of memory");
-    // the header's versions: of every cell the loop writes (its JV_HEAD), and of every cell its
+    // the header's versions: of every cell the loop writes (its JV_HEAD) whose value a trip uses
+    // (jg_head_live: not a temporary every path stores before it reads, c45), and of every cell its
     // blocks only read, whose one version holds on every trip (`while b.len < b.cap`, cap never
     // written): its pre and post on a back edge are that version's one variable
     const uint8_t *Lh = g.inloop + (size_t)header * (size_t)g.nb;
@@ -4477,6 +4506,7 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
                 read = i->result && g.loadver[i->result->id] >= 0 && g.ver[g.loadver[i->result->id]].cell == c;
         }
         if (!head && !read) continue;
+        if (head && !jg_head_live(&g, header, c, jv)) continue;   // dead: no trip uses it, no pair (c45)
         const IrType *st = g.ver[jv].slot;
         if (jg_is_int(st)) { tks[nk] = JTERM_VALUE; keys[nk++] = g.cellv[c]->id; }
         else if (st && st->kind == IRT_SLICE) { tks[nk] = JTERM_LEN; keys[nk++] = g.cellv[c]->id; }   // its length

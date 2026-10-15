@@ -4538,6 +4538,72 @@ int main(void) {
         free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a recursion's measure in regions: c38's VCs at each call, from the parameters to the arguments\n");
+    // 78. jgen_paths offers no pair for a DEAD header version (c45). One loop, all u32, `while r < n`:
+    // r read at the header (live); t stored then read each trip (dead: no pair, no ENTRY pair); j
+    // stored on one arm and read after the join (its header version reaches the join from the other
+    // arm: live); k stored then read each trip, dead unless (1) a header claim names it beside r
+    // (k - r <= 0): then kept. (0) no claims: r and j with their ENTRY pairs, nothing of t or k. (2)
+    // a fifth cell h, stored then read each trip, but handed by a mutable pointer to a call in the
+    // loop (its HAVOC version: the callee may read it): kept
+    for (int c = 0; c < 3; c++) {
+        IrFunc *f = ir_func_new(&A, nm("dead78"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u32t, nm("n"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f);
+        IrValue *r = ir_alloca(f, b0, u32t), *t = ir_alloca(f, b0, u32t), *j = ir_alloca(f, b0, u32t), *k = ir_alloca(f, b0, u32t);
+        IrValue *z0 = ir_const_int(f, b0, 0, u32t);
+        ir_store(f, b0, r, z0); ir_store(f, b0, t, z0); ir_store(f, b0, j, z0); ir_store(f, b0, k, z0); ir_set_br(b0, b1);
+        IrValue *lr = ir_load(f, b1, r, u32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, lr, n), b2, b6);
+        ir_store(f, b2, t, ir_binop(f, b2, IR_ADD, lr, ir_const_int(f, b2, 1, u32t), u32t));
+        IrValue *lt = ir_load(f, b2, t, u32t);
+        ir_store(f, b2, k, lt);
+        IrValue *lk = ir_load(f, b2, k, u32t);
+        IrValue *h = NULL; IrFunc *wrh = NULL;
+        if (c == 2) {                                          // h: stored, read, then handed to wrh
+            IrType *pmu = ir_type_new(&A, IRT_PTR); pmu->elem = u32t; pmu->ptr_mut = true;
+            wrh = ir_func_new(&A, nm("wrh78"), u32t, IR_FUNC_PURE);
+            ir_add_param(wrh, pmu, nm("p")); ir_set_ret(wrh->entry, ir_const_int(wrh, wrh->entry, 0, u32t));
+            ir_finalize_cfg(wrh);
+            h = ir_alloca(f, b0, u32t);
+            ir_store(f, b2, h, lt);
+            (void)ir_load(f, b2, h, u32t);
+            mk_call(f, b2, "wrh78", h, u32t);
+        }
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_UGT, lk, ir_const_int(f, b2, 5, u32t)), b3, b4);
+        ir_store(f, b3, j, lt); ir_set_br(b3, b5);
+        ir_set_br(b4, b5);
+        IrValue *lj = ir_load(f, b5, j, u32t);
+        ir_store(f, b5, r, ir_binop(f, b5, IR_ADD, lr, ir_binop(f, b5, IR_UDIV, lj, ir_const_int(f, b5, 1000, u32t), u32t), u32t));
+        ir_store(f, b5, r, ir_binop(f, b5, IR_ADD, ir_load(f, b5, r, u32t), ir_const_int(f, b5, 1, u32t), u32t));
+        ir_set_br(b5, b1);
+        ir_set_ret(b6, ir_const_int(f, b6, 0, u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        if (wrh) { wrh->next = f; gen_mod = wrh; }
+        JClaim cl[1]; memset(cl, 0, sizeof cl);
+        cl[0].blk = b1->id; cl[0].fn = f; cl[0].nt = 2; cl[0].key[0] = k->id; cl[0].coef[0] = 1; cl[0].key[1] = r->id; cl[0].coef[1] = -1;
+        JMem m = jmem_over(region, sizeof region);
+        JPaths P; char err[200];
+        bool ok = jgen_paths(&m, f, gen_mod, cl, c == 1, b1->id, &P, err, sizeof err);
+        CHECK(ok && !P.refused && P.n == 2, "case %d: two edges into the header (got %d, %s)", c, ok ? P.n : -1, ok ? (P.refused ? P.refused : "") : err);
+        for (int32_t q = 0; ok && q < P.n; q++) {
+            const JPath *p = &P.p[q];
+            int has[5][2] = { { 0 } };                         // r, t, j, k, h: VALUE, ENTRY
+            IrValue *cells[5] = { r, t, j, k, h };
+            for (int32_t z = 0; z < p->npairs; z++)
+                for (int w = 0; w < 5; w++)
+                    if (cells[w] && p->pairs[z].key == cells[w]->id) has[w][p->pairs[z].tk == JTERM_ENTRY]++;
+            bool want_k = c == 1, want_h = c == 2;
+            CHECK(has[0][0] == 1 && has[0][1] == 1 && has[2][0] == 1 && has[2][1] == 1 && has[1][0] == 0 && has[1][1] == 0 &&
+                  has[3][0] == want_k && has[3][1] == want_k && has[4][0] == want_h && p->npairs == 4 + 2 * want_k + (has[4][0] + has[4][1]),
+                  "case %d, path %d: r and j live, t dead, k %s, h %s (r %d/%d, t %d/%d, j %d/%d, k %d/%d, h %d/%d of %d pairs)", c, q,
+                  want_k ? "kept by the claim" : "dead", want_h ? "kept by the call" : "absent", has[0][0], has[0][1], has[1][0], has[1][1],
+                  has[2][0], has[2][1], has[3][0], has[3][1], has[4][0], has[4][1], p->npairs);
+        }
+        gen_mod = NULL;
+    }
+    printf("  the paths offer no pair for a header version no trip uses\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
