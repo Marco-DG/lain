@@ -941,10 +941,13 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         }
         nstep += step[z];
     }
+    int32_t nreal = 0;                                       // the versions, ENTRY pairs aside (c40)
+    for (int32_t z = 0; z < L->npk; z++) nreal += L->ptk[z] != JTERM_ENTRY;
     for (int32_t pass = 0; pass < 4; pass++)
     for (int32_t q = 0; q < L->npk; q++) {
         if (pass == 2 && L->npairs == L->npk) break;       // no value fixed at the header to add
-        if (pass == 3 && (q > 0 || nstep < 2 || nstep == L->npk)) break;   // once; none alone, not all
+        if (pass == 3 && (q > 0 || nstep < 2 || nstep == nreal)) break;    // once; none alone, not all
+        if (pass < 3 && L->ptk[q] == JTERM_ENTRY) continue;   // fixed in the loop: alone it ranks nothing
         for (int32_t z = 0; z < L->npairs; z++) on[z] = pass == 3 ? step[z] : z == q || (pass == 2 && z >= L->npk);
         bool ok = true; int32_t ns = 0;
         int32_t *sedge = fd_bump(L, sizeof(int32_t) * (size_t)(np ? np : 1));
@@ -1390,9 +1393,18 @@ static bool fd_claim_shape_ok(const JClaim *c) {
     if (c->nt < 1 || c->nt > JCLAIM_MAXT || c->rhs > big || c->rhs < -big) return false;
     for (int32_t i = 0; i < c->nt; i++) {
         if (c->coef[i] == 0 || c->coef[i] > big || c->coef[i] < -big) return false;
-        for (int32_t j = i + 1; j < c->nt; j++) if (c->key[i] == c->key[j]) return false;   // as gen.h, whatever the kinds
+        // as gen.h: one key twice only as a cell beside its own ENTRY value (c40)
+        for (int32_t j = i + 1; j < c->nt; j++) if (c->key[i] == c->key[j] && (c->tk[i] == JTERM_ENTRY) == (c->tk[j] == JTERM_ENTRY)) return false;
     }
-    return true;
+    // ...and a claim of ENTRY terms only is made by no header: gen.h refuses it, and one refused
+    // candidate costs every candidate of its round in the function. gen.h's made rule proper (a
+    // version the header MAKES) is each source's to keep: Karr's columns read-only versions cannot
+    // enter (their coefficient is forced to 0), its entry equality and fd_monotone_candidates name
+    // only cells with an ENTRY pair (offered for written head versions only), and a relation's two
+    // versions both change. This test is the part one line can state.
+    bool made = false;
+    for (int32_t i = 0; i < c->nt; i++) made |= c->tk[i] != JTERM_ENTRY;
+    return made;
 }
 // Each candidate's bound, from the VCs o[0..n) of a claim set whose candidates start at `base`:
 // the largest value its objective takes over its VCs (a fixed one keeps its own). What survives,
@@ -1924,7 +1936,10 @@ static bool fd_rref(__int128 *A, int32_t nr, int32_t w, const int32_t *ord, int3
 static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     FdLoop L;
     if (!fd_loop_build(F, f, H, as, nv, &L)) { free(L.mem); return !F->oom; }
-    int32_t K = L.npk, W = L.nv + 1;
+    // the columns: the header's versions, its ENTRY pairs aside (c40: fixed in the loop, each would
+    // be a free column of its own, and a claim of it alone is refused); col[q] is column q's pair
+    int32_t col[16], K = 0, W = L.nv + 1;
+    for (int32_t q = 0; q < L.npk && K <= 16; q++) if (L.ptk[q] != JTERM_ENTRY) { if (K < 16) col[K] = q; K++; }
     bool ok = K >= 2 && K <= 16 && L.npaths >= 1 && L.nv <= 512;
     // the system on c: one row per (path, old variable) and per path its constant, plus c_q = 0 for
     // a version some path leaves undetermined; at most 32 paths
@@ -1960,7 +1975,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
         if (ok) ok = fd_rref(A, r, W, ord, no, piv);
         // per version q: d*post = rhs - sum_b a_b * b, or undetermined
         for (int32_t q = 0; ok && q < K; q++) {
-            int32_t pv = L.post[q], pr = piv[pv];
+            int32_t pv = L.post[col[q]], pr = piv[pv];
             bool det = pr >= 0;
             for (int32_t v = 0; det && v < L.nv; v++) if (v != pv && A[(size_t)pr * W + v] != 0 && !base[v]) det = false;
             if (!det) { if (ncr < cap) { C[(size_t)ncr * (K + 1) + q] = 1; ncr++; } continue; }
@@ -1968,9 +1983,9 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
         // c.(post - pre) = 0: scale each version's expression to the path's common denominator D
         __int128 D = 1;
         for (int32_t q = 0; ok && q < K; q++) {
-            int32_t pr = piv[L.post[q]];
+            int32_t pr = piv[L.post[col[q]]];
             if (pr < 0) continue;
-            __int128 d = A[(size_t)pr * W + L.post[q]], g = fd_gcd128(D, d);
+            __int128 d = A[(size_t)pr * W + L.post[col[q]]], g = fd_gcd128(D, d);
             if (d < 0) d = -d;
             D = D / g * d;
             if (D > FD_KARR_BIG) ok = false;
@@ -1981,7 +1996,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
             __int128 *row = C + (size_t)ncr * (K + 1);
             bool nz = false;
             for (int32_t q = 0; q < K; q++) {
-                int32_t pv = L.post[q], pr = piv[pv];
+                int32_t pv = L.post[col[q]], pr = piv[pv];
                 __int128 coef = 0;
                 if (pr >= 0) {
                     __int128 d = A[(size_t)pr * W + pv], m = D / (d < 0 ? -d : d), sgn = d < 0 ? -1 : 1;
@@ -1989,7 +2004,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
                     __int128 a = b < L.nv ? -A[(size_t)pr * W + b] : A[(size_t)pr * W + L.nv];
                     coef = a * m * sgn;
                 }
-                if (b < L.nv && b == L.pre[q]) coef -= D;
+                if (b < L.nv && b == L.pre[col[q]]) coef -= D;
                 if (coef > FD_KARR_BIG || coef < -FD_KARR_BIG) { ok = false; break; }
                 row[q] = coef; nz |= coef != 0;
             }
@@ -2023,13 +2038,34 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
             for (int32_t q = 0; q < K; q++) g = fd_gcd128(g, vec[q]);
             JClaim c; memset(&c, 0, sizeof c);
             c.blk = H; c.fn = f;
-            for (int32_t q = 0; q < K; q++) if (vec[q]) { c.key[c.nt] = L.pkey[q]; c.tk[c.nt] = L.ptk[q]; c.coef[c.nt] = vec[q] / g; c.nt++; }
+            int32_t ent[JCLAIM_MAXT]; bool all_ent = true;
+            for (int32_t q = 0; q < K; q++) if (vec[q]) {
+                c.key[c.nt] = L.pkey[col[q]]; c.tk[c.nt] = L.ptk[col[q]]; c.coef[c.nt] = vec[q] / g;
+                ent[c.nt] = -1;                                  // the term's ENTRY pair, if the path offers one
+                for (int32_t e = 0; e < L.npk; e++) if (L.ptk[e] == JTERM_ENTRY && L.pkey[e] == c.key[c.nt]) ent[c.nt] = e;
+                all_ent &= ent[c.nt] >= 0;
+                c.nt++;
+            }
             __int128 hi, lo;
             JClaim neg = c;
             for (int32_t t = 0; t < neg.nt; t++) neg.coef[t] = -neg.coef[t];
-            if (!fd_entry_max(F, f, as, nv, &c, &hi) || !fd_entry_max(F, f, as, nv, &neg, &lo)) { if (F->oom) okall = false; continue; }
-            c.rhs = hi; neg.rhs = lo;                            // c.x <= hi, -c.x <= lo
-            okall = fd_push_claim(F, &c, as, nv, cl, nc, ccl) && fd_push_claim(F, &neg, as, nv, cl, nc, ccl);
+            bool bounded = fd_entry_max(F, f, as, nv, &c, &hi) && fd_entry_max(F, f, as, nv, &neg, &lo);
+            if (F->oom) { okall = false; continue; }
+            if (bounded) {
+                c.rhs = hi; neg.rhs = lo;                        // c.x <= hi, -c.x <= lo
+                okall = fd_push_claim(F, &c, as, nv, cl, nc, ccl) && fd_push_claim(F, &neg, as, nv, cl, nc, ccl);
+            }
+            // not one constant on entry (LarrazOliveras Fig1's inner loop keeps x + z, whatever x and
+            // z were when it began): the same sum against its value on the loop's entry edge, an
+            // equality c.x - c.entry(x) = 0, both sides, where every term has its ENTRY pair (c40)
+            if (okall && (!bounded || hi != -lo) && all_ent && 2 * c.nt <= JCLAIM_MAXT) {
+                JClaim e1 = c; e1.rhs = 0;
+                for (int32_t t = 0; t < c.nt; t++) { e1.key[c.nt + t] = c.key[t]; e1.tk[c.nt + t] = JTERM_ENTRY; e1.coef[c.nt + t] = -c.coef[t]; }
+                e1.nt = 2 * c.nt;
+                JClaim e2 = e1;
+                for (int32_t t = 0; t < e2.nt; t++) e2.coef[t] = -e2.coef[t];
+                okall = fd_push_claim(F, &e1, as, nv, cl, nc, ccl) && fd_push_claim(F, &e2, as, nv, cl, nc, ccl);
+            }
         }
         free(piv); free(ord);
     }
@@ -2084,6 +2120,49 @@ static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JCl
     }
     free(sl);
     return okall;
+}
+// PE.13 kind (3), nested loops (AliasDarteFeautrierGonnord-SAS2010 nestedLoop-1): a cell that a
+// nested loop only RAISES (`i = k`, with k >= i from the loop inside it) never falls below its value
+// on the loop's entry, `i - entry(i) >= 0` (c40's ENTRY term), and the enclosing loop's own
+// `i = i + 1` after it then lowers `n - i` by at least one a trip. Per nested header and version that
+// never falls (or never rises) on any back-edge path, and has its ENTRY pair: the version against
+// it, one side. A candidate only: Houdini keeps it if its keep holds (its entry always does). The
+// first round has no claims for the loops inside (k >= i), so this runs from the second, as
+// fd_nested_candidates does.
+static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
+    for (IrBlock *h2 = f->blocks; h2; h2 = h2->next) {
+        if (!h2->is_loop_header || fd_nest_around(N, h2->id, h2->id) < 0) continue;
+        FdLoop L;
+        if (!fd_loop_build(F, f, h2->id, as, nv, &L)) { free(L.mem); if (F->oom) return false; continue; }
+        for (int32_t v = 0; v < L.npk; v++) {
+            if (L.ptk[v] != JTERM_VALUE) continue;
+            int32_t e = -1;
+            for (int32_t z = 0; z < L.npk && e < 0; z++) if (L.ptk[z] == JTERM_ENTRY && L.pkey[z] == L.pkey[v]) e = z;
+            if (e < 0 || L.pre[v] == L.post[v]) continue;
+            int dir = 0;                                     // +1: never falls, -1: never rises
+            for (int sg = 1; sg >= -1 && !dir; sg -= 2) {
+                bool all = L.npaths > 0;
+                for (int32_t k = 0; k < L.npaths && all; k++) {
+                    JTerm t[2]; JVc q = *L.paths[k];         // sg*(pre - post) <= 0, terms ascending
+                    int32_t a = L.pre[v], b = L.post[v];
+                    t[0].var = a < b ? a : b; t[1].var = a < b ? b : a;
+                    fd_jint(&t[0].coef, a < b ? sg : -sg); fd_jint(&t[1].coef, a < b ? -sg : sg);
+                    memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; q.goal.t = t; q.goal.nt = 2; fd_jint(&q.goal.rhs, 0);
+                    all = lia_solve(&q, slim, F->work, F->worksz).k == J_ANS_CERT;
+                }
+                if (all) dir = sg;
+            }
+            if (!dir) continue;
+            JClaim c; memset(&c, 0, sizeof c);               // +1: entry(v) - v <= 0; -1: v - entry(v) <= 0
+            c.blk = h2->id; c.fn = f; c.nt = 2; c.rhs = 0;
+            c.key[0] = L.pkey[v]; c.tk[0] = JTERM_VALUE; c.coef[0] = -dir;
+            c.key[1] = L.pkey[v]; c.tk[1] = JTERM_ENTRY; c.coef[1] = dir;
+            if (!fd_push_claim(F, &c, as, nv, cl, nc, ccl)) { free(L.mem); return false; }
+        }
+        free(L.mem);
+    }
+    return true;
 }
 static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     IrFunc *mod = F->mod;
@@ -2149,6 +2228,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
             }
             free(sl);
             if (round > 0 && !fd_nested_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
+            if (round > 0 && !fd_monotone_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             for (IrBlock *kb = f->blocks; kb; kb = kb->next)
                 if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, &cl, &nc, &ccl)) goto oom;
