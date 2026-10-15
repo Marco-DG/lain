@@ -3864,7 +3864,8 @@ int main(void) {
     // fixed fall; (10) a guard row in a max (P's last tuple row, then N's guard); (15) a max across
     // a region's start (N's guard, then its tuple's first row); (16) rows laid out P's guard, N's,
     // P's tuple, N's, a max over P's last tuple row and N's first; and a recursion's measure with
-    // (11) a region, (12) a cont. (13) two atoms in each guard (P: x - 1 >= 0, y - 1 >= 0; N: -x - 1
+    // (11) a region whose guard and tuple are its one row (c43: as a loop's), (12) a cont on its
+    // first row. (13) two atoms in each guard (P: x - 1 >= 0, y - 1 >= 0; N: -x - 1
     // >= 0, y - 1 >= 0): rank.cover 0 and 1, each under a two-case `premise rank.cover 0`;
     // rank.region 1 under two pre premises and one post (all of N's but the last); each rank.lex
     // under two pre and two post. (14) three regions (P, N, then y - 1 >= 0 with <y>): rank.region
@@ -3952,7 +3953,7 @@ int main(void) {
             gen_mod = h; gen_rk = &e; gen_nrk = 1;
             char why[200] = "";
             char *t = gen_with(h, NULL, 0, JGEN_ALL, why);
-            CHECK(!t && strstr(why, c == 11 ? "a recursion's measure in regions" : "a recursion's measure's max or min of rows out of shape"),
+            CHECK(!t && strstr(why, c == 11 ? "a ranking claim's row in no region or in two" : "a recursion's measure's max or min of rows out of shape"),
                   "case %d: a recursion's measure with a %s refused: got \"%s\"", c, c == 11 ? "region" : "cont", why);
             free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
             continue;
@@ -4348,7 +4349,7 @@ int main(void) {
         if (c == 4) { r[0].c0[1] = (__int128)1 << 67; bad = "a recursion's measure's constant out of range"; }
         if (c == 5) { r[0].ncomp = 0; bad = "a recursion's measure of no rows, or of more than it may have"; }
         if (c == 6) { r[0].ncomp = 9; bad = "a recursion's measure of no rows, or of more than it may have"; }
-        if (c == 7) { r[0].reg[2].nt = 1; bad = "a recursion's measure in regions"; }
+        if (c == 7) { r[0].reg[2].nt = 1; bad = "a ranking claim's region past its count"; }
         gen_rk = r; gen_nrk = nr;
         char why[200] = "";
         char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
@@ -4390,6 +4391,132 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a recursion's measure of several rows: every call free, its lexicographic decrease owed\n");
+    // 77. a RECURSION's measure in REGIONS (c43, c38's at a call): TwoWay, all i32, `tw(t, n)`: n < 0
+    // returns; m = n - 1 where t != 0, else n + 1; calls tw(t, m). Regions over the fixed t: t - 1
+    // >= 0 with <n>, -t - 1 >= 0 with <n>, then t >= 0 and -t >= 0 with <2^31 - 1 - n>. (0) at the
+    // call: rec.cover 0 and 1 (the last region's atoms, under `premise rank.cover 0` and 1),
+    // rec.region 1, 2 and 102, rec.lex 0, 1, 1000, 1001, 2000, 2001, nothing else of a recursion;
+    // rec.cover 0's goal t >= 0 at entry, rec.region 2's goal -t' >= 0 failing at the argument t
+    // (the parameter itself), rec.lex 2000 under G_2 before and after (two atoms each). (1) refused:
+    // the regions in tw and a g calling each other (v1). (2) RecursiveMultiplication, `mult(n, m)`:
+    // m < 0 calls mult(n, -m), m == 0 returns, else mult(n, m - 1); regions m >= 0 with <m>, -m - 1
+    // >= 0 with <-m>: at the second call rec.cover 0's goal m <= -1 over the PARAMETER m, and
+    // rec.region 1's goal m' >= 0 over the ARGUMENT m - 1
+    for (int c = 0; c < 3; c++) {
+        if (c == 2) {
+            IrFunc *f = ir_func_new(&A, nm("mult77"), i32t, IR_FUNC_PURE);
+            IrValue *np = ir_add_param(f, i32t, nm("n")), *mp = ir_add_param(f, i32t, nm("m"));
+            IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f);
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SLT, mp, ir_const_int(f, b0, 0, i32t)), b1, b2);
+            IrInstr *k1 = ir_instr(f, IR_CALL, i32t, 2); k1->aux.callee = nm("mult77");
+            k1->operands[0] = np; k1->operands[1] = ir_binop(f, b1, IR_SUB, ir_const_int(f, b1, 0, i32t), mp, i32t); ir_emit(b1, k1);
+            ir_set_ret(b1, k1->result);
+            ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_EQ, mp, ir_const_int(f, b2, 0, i32t)), b3, b4);
+            ir_set_ret(b3, ir_const_int(f, b3, 0, i32t));
+            IrValue *am = ir_binop(f, b4, IR_SUB, mp, ir_const_int(f, b4, 1, i32t), i32t);
+            int ci = nins(b4);
+            IrInstr *k2 = ir_instr(f, IR_CALL, i32t, 2); k2->aux.callee = nm("mult77");
+            k2->operands[0] = np; k2->operands[1] = am; ir_emit(b4, k2);
+            ir_set_ret(b4, k2->result);
+            ir_finalize_cfg(f);
+            gen_mod = f;
+            JRank r; memset(&r, 0, sizeof r);
+            r.blk = JRANK_ENTRY; r.fn = f; r.nt = 1; r.key[0] = mp->id; r.ncomp = 4; r.nreg = 2;
+            r.coef[0][0] = 1; r.coef[1][0] = 1; r.coef[2][0] = -1; r.c0[2] = -1; r.coef[3][0] = -1;
+            r.reg[0].g0 = 0; r.reg[0].ng = 1; r.reg[0].t0 = 1; r.reg[0].nt = 1;
+            r.reg[1].g0 = 2; r.reg[1].ng = 1; r.reg[1].t0 = 3; r.reg[1].nt = 1;
+            gen_rk = &r; gen_nrk = 1;
+            char why[200] = "", key[48], g1[48], g2[48];
+            char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+            snprintf(key, sizeof key, "bb%d.%d rec.cover 0", b4->id, ci);
+            const char *v = vc_of(t ? t : "", key);
+            snprintf(g1, sizeof g1, "goal 1*%%v%d <= -1\n", mp->id);
+            CHECK(t && strstr(v, g1) && count(v, "premise rank.cover 0 : ") == 1, "case 2: rec.cover 0, m <= -1 over the parameter m:\n%s", *v ? v : (t ? t : why));
+            snprintf(key, sizeof key, "bb%d.%d rec.region 1", b4->id, ci);
+            v = vc_of(t ? t : "", key);
+            snprintf(g2, sizeof g2, "goal -1*%%v%d <= 0\n", am->id);
+            CHECK(t && strstr(v, g2) && count(v, "premise rank.region 0 pre : ") == 1, "case 2: rec.region 1, m - 1 >= 0 over the argument:\n%s", *v ? v : (t ? t : why));
+            free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+            continue;
+        }
+        IrFunc *f = ir_func_new(&A, nm("tw77"), i32t, IR_FUNC_PURE);
+        IrValue *tp = ir_add_param(f, i32t, nm("t")), *np = ir_add_param(f, i32t, nm("n"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f), *b5 = ir_new_block(f);
+        IrValue *mc = ir_alloca(f, b0, i32t);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SLT, np, ir_const_int(f, b0, 0, i32t)), b1, b2);
+        ir_set_ret(b1, ir_const_int(f, b1, 1, i32t));
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_NE, tp, ir_const_int(f, b2, 0, i32t)), b3, b4);
+        ir_store(f, b3, mc, ir_binop(f, b3, IR_SUB, np, ir_const_int(f, b3, 1, i32t), i32t)); ir_set_br(b3, b5);
+        ir_store(f, b4, mc, ir_binop(f, b4, IR_ADD, np, ir_const_int(f, b4, 1, i32t), i32t)); ir_set_br(b4, b5);
+        IrValue *lm = ir_load(f, b5, mc, i32t);
+        int ci = nins(b5);
+        IrInstr *k_ = ir_instr(f, IR_CALL, i32t, 2); k_->aux.callee = nm(c == 1 ? "g77" : "tw77");
+        k_->operands[0] = tp; k_->operands[1] = lm; ir_emit(b5, k_);
+        ir_set_ret(b5, k_->result);
+        ir_finalize_cfg(f);
+        IrFunc *other = NULL;
+        if (c == 1) {                                           // g77(t, n) calls tw77(t, n - 1)
+            other = ir_func_new(&A, nm("g77"), i32t, IR_FUNC_PURE);
+            IrValue *gt = ir_add_param(other, i32t, nm("t")), *gn = ir_add_param(other, i32t, nm("n"));
+            IrBlock *g0 = other->entry, *g1 = ir_new_block(other), *g2 = ir_new_block(other);
+            ir_set_br_cond(g0, ir_icmp(other, g0, IR_CMP_SLT, gn, ir_const_int(other, g0, 0, i32t)), g1, g2);
+            ir_set_ret(g1, ir_const_int(other, g1, 1, i32t));
+            IrInstr *gk = ir_instr(other, IR_CALL, i32t, 2); gk->aux.callee = nm("tw77");
+            gk->operands[0] = gt; gk->operands[1] = ir_binop(other, g2, IR_SUB, gn, ir_const_int(other, g2, 1, i32t), i32t); ir_emit(g2, gk);
+            ir_set_ret(g2, gk->result);
+            ir_finalize_cfg(other);
+            f->next = other;
+        }
+        gen_mod = f;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = JRANK_ENTRY; r.fn = f; r.nt = 2; r.key[0] = tp->id; r.key[1] = np->id; r.ncomp = 7; r.nreg = 3;
+        r.coef[0][0] = 1; r.c0[0] = -1; r.coef[1][1] = 1;                        // t - 1 >= 0: <n>
+        r.coef[2][0] = -1; r.c0[2] = -1; r.coef[3][1] = 1;                       // -t - 1 >= 0: <n>
+        r.coef[4][0] = 1; r.coef[5][0] = -1; r.coef[6][1] = -1; r.c0[6] = 2147483647;   // t = 0: <2^31 - 1 - n>
+        r.reg[0].g0 = 0; r.reg[0].ng = 1; r.reg[0].t0 = 1; r.reg[0].nt = 1;
+        r.reg[1].g0 = 2; r.reg[1].ng = 1; r.reg[1].t0 = 3; r.reg[1].nt = 1;
+        r.reg[2].g0 = 4; r.reg[2].ng = 2; r.reg[2].t0 = 6; r.reg[2].nt = 1;
+        gen_rk = &r; gen_nrk = 1;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        if (c == 1) {
+            CHECK(!t && strstr(why, "a recursion's measure of several rows in a mutual recursion (v1)"), "case 1: regions in a mutual recursion refused: got \"%s\"", why);
+            free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+            continue;
+        }
+        const char *ids[11] = { "rec.cover 0", "rec.cover 1", "rec.region 1", "rec.region 2", "rec.region 102", "rec.lex 0", "rec.lex 1",
+                                "rec.lex 1000", "rec.lex 1001", "rec.lex 2000", "rec.lex 2001" };
+        bool ok = t && !strstr(t, " rec.fall ") && !strstr(t, " rec.bound ") && !strstr(t, " rec.le ") && count(t, " rec.") == 11;
+        for (int q = 0; ok && q < 11; q++) { char key[48]; snprintf(key, sizeof key, "bb%d.%d %s\n", b5->id, ci, ids[q]); ok = count(t, key) == 1; }
+        CHECK(ok, "case 0: the eleven VCs at the call, each once, nothing else of a recursion:\n%s", t ? t : why);
+        char key[48], g1[48], g2[48];
+        snprintf(key, sizeof key, "bb%d.%d rec.cover 0", b5->id, ci);
+        const char *v = vc_of(t ? t : "", key);
+        snprintf(g1, sizeof g1, "goal -1*%%v%d <= 0\n", tp->id);
+        CHECK(count(v, "premise rank.cover 0 : ") == 1 && count(v, "premise rank.cover 1 : ") == 1 && strstr(v, g1), "case 0: rec.cover 0, t >= 0 where no region before holds:\n%s", v);
+        snprintf(key, sizeof key, "bb%d.%d rec.region 2", b5->id, ci);
+        v = vc_of(t ? t : "", key);
+        snprintf(g2, sizeof g2, "goal -1*%%v%d <= -1\n", tp->id);
+        CHECK(count(v, "premise rank.region 0 pre : ") == 1 && count(v, "premise rank.region 2 post : ") == 1 && strstr(v, g2),
+              "case 0: rec.region 2, from t >= 1 the argument t not in t = 0 (its last atom fails):\n%s", v);
+        snprintf(key, sizeof key, "bb%d.%d rec.lex 2000", b5->id, ci);
+        v = vc_of(t ? t : "", key);
+        CHECK(count(v, "premise rank.region 2 pre : ") == 2 && count(v, "premise rank.region 2 post : ") == 2 && !strstr(v, "premise rank.lex"),
+              "case 0: rec.lex 2000 under t = 0 before and after:\n%s", v);
+        // region 0's tuple is <n> alone: rec.lex 0 its fall (n before, less 1), rec.lex 1 its bound
+        snprintf(key, sizeof key, "bb%d.%d rec.lex 0", b5->id, ci);
+        v = vc_of(t ? t : "", key);
+        const char *gl = strstr(v, "goal "), *ge = gl ? strchr(gl, '\n') : NULL;
+        char nn[24]; snprintf(nn, sizeof nn, "-1*%%v%d ", np->id);
+        CHECK(gl && ge && strstr(gl, nn) && strstr(gl, nn) < ge && !strncmp(ge - 5, "<= -1", 5) && count(v, "premise rank.region 0 pre : ") == 1,
+              "case 0: rec.lex 0, n falls in t >= 1:\n%s", v);
+        snprintf(key, sizeof key, "bb%d.%d rec.lex 1", b5->id, ci);
+        v = vc_of(t ? t : "", key);
+        snprintf(g2, sizeof g2, "goal -1*%%v%d <= 0\n", np->id);
+        CHECK(strstr(v, g2) != NULL, "case 0: rec.lex 1, n >= 0 in t >= 1:\n%s", v);
+        free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a recursion's measure in regions: c38's VCs at each call, from the parameters to the arguments\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

@@ -1369,6 +1369,77 @@ int main(void) {
         }
     }
 
+    // a RECURSION's measure in REGIONS (c43), all i32. (0) TwoWay, `tw(t, n)`: n < 0 returns; m = n
+    // - 1 where t != 0, else n + 1; calls tw(t, m); regions t >= 1 with <n>, t <= -1 with <n>, t = 0
+    // with <2^31 - 1 - n>: its eleven VCs at the call proved; (1) the call passing 1 - t (t = 1 goes
+    // to t = 0, a region up): rec.region not implied. (2) RecursiveMultiplication, `mult(n, m)`:
+    // regions m >= 0 with <m>, then m <= -1 with <-m> (its one step from region 1 to 0 lowers rho):
+    // both calls' six VCs proved; (3) the m < 0 call passing m: a rec.lex not implied
+    for (int c = 0; c < 4; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true);
+        const char *fnm = c < 2 ? "tw43" : "mult43";
+        IrFunc *rf = ir_func_new(&A, nm(fnm), mi32, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(rf, mi32, nm("x")), *y = ir_add_param(rf, mi32, nm("y"));
+        IrBlock *q0 = rf->entry, *q1 = ir_new_block(rf), *q2 = ir_new_block(rf), *q3 = ir_new_block(rf), *q4 = ir_new_block(rf), *q5 = ir_new_block(rf);
+        IrBlock *cb[2]; int ci[2], ncall = 0;
+        #define K(b, v) ir_const_int(rf, (b), (v), mi32)
+        #define CALL2(b, a0, a1) do { IrValue *a0_ = (a0), *a1_ = (a1); cb[ncall] = (b); ci[ncall] = nins_m(b); \
+                                     IrInstr *k_ = ir_instr(rf, IR_CALL, mi32, 2); k_->aux.callee = nm(fnm); \
+                                     k_->operands[0] = a0_; k_->operands[1] = a1_; ir_emit((b), k_); ncall++; } while (0)
+        if (c < 2) {                                           // x is t, y is n
+            IrValue *mc = ir_alloca(rf, q0, mi32);
+            ir_set_br_cond(q0, ir_icmp(rf, q0, IR_CMP_SLT, y, K(q0, 0)), q1, q2);
+            ir_set_ret(q1, K(q1, 1));
+            ir_set_br_cond(q2, ir_icmp(rf, q2, IR_CMP_NE, x, K(q2, 0)), q3, q4);
+            ir_store(rf, q3, mc, ir_binop(rf, q3, IR_SUB, y, K(q3, 1), mi32)); ir_set_br(q3, q5);
+            ir_store(rf, q4, mc, ir_binop(rf, q4, IR_ADD, y, K(q4, 1), mi32)); ir_set_br(q4, q5);
+            IrValue *lm = ir_load(rf, q5, mc, mi32);
+            CALL2(q5, c == 1 ? ir_binop(rf, q5, IR_SUB, K(q5, 1), x, mi32) : x, lm); ir_set_ret(q5, K(q5, 0));
+        } else {                                               // x is n, y is m
+            ir_set_br_cond(q0, ir_icmp(rf, q0, IR_CMP_SLT, y, K(q0, 0)), q1, q2);
+            CALL2(q1, x, c == 3 ? y : ir_binop(rf, q1, IR_SUB, K(q1, 0), y, mi32)); ir_set_ret(q1, K(q1, 0));
+            ir_set_br_cond(q2, ir_icmp(rf, q2, IR_CMP_EQ, y, K(q2, 0)), q3, q4);
+            ir_set_ret(q3, K(q3, 0));
+            CALL2(q4, x, ir_binop(rf, q4, IR_SUB, y, K(q4, 1), mi32)); ir_set_ret(q4, K(q4, 0));
+            ir_set_ret(q5, K(q5, 0));
+        }
+        #undef CALL2
+        #undef K
+        ir_finalize_cfg(rf);
+        Stub sr; memset(&sr, 0, sizeof sr);
+        sr.propose = P_RANK; sr.nrank = 1;
+        JRank *rr = &sr.rank[0];
+        rr->blk = JRANK_ENTRY; rr->fn = rf; rr->nt = 2; rr->key[0] = x->id; rr->key[1] = y->id;
+        if (c < 2) {
+            rr->ncomp = 7; rr->nreg = 3;
+            rr->coef[0][0] = 1; rr->c0[0] = -1; rr->coef[1][1] = 1;
+            rr->coef[2][0] = -1; rr->c0[2] = -1; rr->coef[3][1] = 1;
+            rr->coef[4][0] = 1; rr->coef[5][0] = -1; rr->coef[6][1] = -1; rr->c0[6] = 2147483647;
+            rr->reg[0].g0 = 0; rr->reg[0].ng = 1; rr->reg[0].t0 = 1; rr->reg[0].nt = 1;
+            rr->reg[1].g0 = 2; rr->reg[1].ng = 1; rr->reg[1].t0 = 3; rr->reg[1].nt = 1;
+            rr->reg[2].g0 = 4; rr->reg[2].ng = 2; rr->reg[2].t0 = 6; rr->reg[2].nt = 1;
+        } else {
+            rr->ncomp = 4; rr->nreg = 2;
+            rr->coef[0][1] = 1; rr->coef[1][1] = 1;                // m >= 0: <m>
+            rr->coef[2][1] = -1; rr->c0[2] = -1; rr->coef[3][1] = -1;   // m <= -1: <-m>
+            rr->reg[0].g0 = 0; rr->reg[0].ng = 1; rr->reg[0].t0 = 1; rr->reg[0].nt = 1;
+            rr->reg[1].g0 = 2; rr->reg[1].ng = 1; rr->reg[1].t0 = 3; rr->reg[1].nt = 1;
+        }
+        CHECK(run(rf, &sr, true, sizeof region, err), "judges: %s", err);
+        int want = c < 2 ? 11 : 6, proved = 0, rec = 0;
+        for (int w = 0; w < ncall; w++) {
+            char pl[64]; snprintf(pl, sizeof pl, "proved bb%d.%d rec.", cb[w]->id, ci[w]);
+            proved += count_in(recs, pl);
+        }
+        for (const char *l = recs; (l = strstr(l, " rec.")); l++) { const char *b = l; while (b > recs && b[-1] != '\n') b--; if (!strncmp(b, "proved", 6) || !strncmp(b, "not-implied", 11)) rec++; }
+        bool good = c == 0 || c == 2;
+        if (good) CHECK(proved == ncall * want && rec == ncall * want, "case %d: every call's %d VCs proved (%d of %d):\n%s", c, want, proved, ncall * want, recs);
+        else {
+            char k2[64]; snprintf(k2, sizeof k2, "not-implied bb%d.%d rec.%s", cb[0]->id, ci[0], c == 1 ? "region" : "lex");
+            CHECK(strstr(recs, k2) != NULL, "case %d: a rec.%s not implied:\n%s", c, c == 1 ? "region" : "lex", recs);
+        }
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));
