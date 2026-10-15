@@ -18,4 +18,9 @@ cd "$(dirname "$0")/../.."
 N="${1:-400}"
 SEED=${RANDOM_SEED:-$$}
 echo "fuzz_cycles: RANDOM_SEED=$SEED"
-python3 scripts/fuzz/fuzz_cycles.py ./lain "$N" "$SEED"
+# Two legs over the same programs and the same ground truth: the verdict as compiled by default (the
+# range analysis decides), and under --judge=authority (the judge decides). Until 2026-10-14 only the
+# first ran, so the judge's ranking rules (c35..c37) had no ground-truth oracle at all.
+python3 scripts/fuzz/fuzz_cycles.py ./lain "$N" "$SEED"; r1=$?
+LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_cycles.py ./lain "$N" "$SEED"; r2=$?
+[ $r1 -eq 0 ] && [ $r2 -eq 0 ]

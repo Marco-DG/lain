@@ -30,7 +30,8 @@ for g in "$HERE"/fuzz_*.py; do
   # an operator and a seed) and is run by its own driver, as fuzz_metamorphic.py will be; taken for a
   # generator it failed every call and counted 30 GENERATOR-FAIL. Named, not detected by failure: a
   # generator that breaks must still be reported.
-  case "$gn" in fuzz_malformed|fuzz_metamorphic) continue ;; esac
+  # fuzz_regions.py's programs call externs (its choices), so they do not link.
+  case "$gn" in fuzz_malformed|fuzz_metamorphic|fuzz_regions) continue ;; esac
   for ((k=0; k<N; k++)); do
     seed=$((BASE * 1000 + k)); f="$SC/${gn}_$k.ln"
     python3 "$g" "$seed" > "$f" 2>/dev/null || { genfail=$((genfail+1)); continue; }

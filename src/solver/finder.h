@@ -733,6 +733,165 @@ static bool fd_rank_max(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, const
     }
     return false;
 }
+// PE.13 (2), with the generator's REGIONS (c38): a PIECEWISE lexicographic ranking, for a loop whose
+// paths test the sign of one header version and rank differently on each side (UrbanMine-ESOP2014
+// Fig3: in x >= 1 the pair <x, y> falls, in x <= -1 the pair <y, -x>, and one path may jump from the
+// second side to the first, never back). Two regions, each guarded by one atom `s*v >= t` that the
+// paths themselves state on v's pre value, of opposite signs; region 1 is the side trips may leave
+// for region 0. Every obligation the generator will owe is asked here first, on the flattened paths,
+// which hold no more facts than its VCs (slices and dropped disjunctions only weaken them), so what
+// holds here holds there: every trip starts in a region (rank.cover), none moves up (rank.region),
+// and the paths that stay in a region fall in a tuple of their own (rank.lex: lia_rank_lex over
+// those paths with both of the region's guards added). A ranking claim the judge refutes refuses
+// the loop, so nothing is proposed that these questions did not show.
+typedef struct { int32_t q; int8_t s; int64_t t; } FdAtom;           // s * pair q >= t
+#define FD_MAXATOM 32
+static void fd_atom_hyp(JHyp *h, JTerm *t, const FdLoop *L, const FdAtom *a, bool post, bool neg) {
+    memset(h, 0, sizeof *h); h->origin = "region";                  // -s*v <= -t; negated, s*v <= t - 1
+    t->var = post ? L->post[a->q] : L->pre[a->q]; fd_jint(&t->coef, neg ? a->s : -a->s);
+    h->cons.t = t; h->cons.nt = 1; h->cons.op = J_LE; fd_jint(&h->cons.rhs, neg ? (__int128)a->t - 1 : -(__int128)a->t);
+}
+// P with the atoms added (each at pre or post, as stated or negated) is infeasible
+static bool fd_refutes(JFinder *F, const JVc *P, const FdLoop *L, const FdAtom *const *a, const bool *post, const bool *neg, int32_t na) {
+    JHyp *h = malloc(sizeof *h * (size_t)(P->nhyps + na)); JTerm *t = malloc(sizeof *t * (size_t)na);
+    if (!h || !t) { free(h); free(t); F->oom = true; return false; }
+    if (P->nhyps) memcpy(h, P->hyps, sizeof *h * (size_t)P->nhyps);
+    for (int32_t i = 0; i < na; i++) fd_atom_hyp(&h[P->nhyps + i], &t[i], L, a[i], post[i], neg[i]);
+    JVc q = *P; q.hyps = h; q.nhyps = P->nhyps + na;
+    memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; fd_jint(&q.goal.rhs, -1);
+    bool r = lia_solve(&q, F->lim, F->work, F->worksz).k == J_ANS_CERT;
+    free(h); free(t);
+    return r;
+}
+// Region g's tuple, its rows copied out of the solver's memory (the next search reuses it) into
+// rc[j * npairs + i] and rc0[j]: false when no path stays in the region, or no tuple the judge
+// can state ranks the ones that do
+static bool fd_region_tuple(JFinder *F, FdLoop *L, const FdAtom *g, __int128 *rc, __int128 *rc0, int32_t room, int32_t *n) {
+    const JVc **sp = fd_bump(L, sizeof(JVc *) * (size_t)L->npaths);
+    if (!sp) return false;
+    int32_t ns = 0;
+    for (int32_t k = 0; k < L->npaths; k++) {
+        const JVc *P = L->paths[k];
+        const FdAtom *a[2] = { g, g }; bool post[2] = { false, true }, neg[2] = { false, false };
+        if (fd_refutes(F, P, L, a, post, neg, 2)) continue;          // leaves the region (or cannot run in it)
+        if (F->oom) return false;
+        JVc *v = fd_bump(L, sizeof *v); JHyp *h = fd_bump(L, sizeof(JHyp) * (size_t)(P->nhyps + 2));
+        JTerm *t = fd_bump(L, sizeof(JTerm) * 2);
+        if (!v || !h || !t) return false;
+        if (P->nhyps) memcpy(h, P->hyps, sizeof *h * (size_t)P->nhyps);
+        fd_atom_hyp(&h[P->nhyps], &t[0], L, g, false, false); fd_atom_hyp(&h[P->nhyps + 1], &t[1], L, g, true, false);
+        *v = *P; v->hyps = h; v->nhyps = P->nhyps + 2;
+        sp[ns++] = v;
+    }
+    if (ns == 0) return false;
+    LRankLex R = lia_rank_lex(sp, ns, L->pre, L->post, L->npairs, F->lim, F->work, F->worksz);
+    bool fits = R.k == LIA_RANK_FOUND && R.ncomp <= room;
+    for (int32_t j = 0; fits && j < R.ncomp; j++)
+        for (int32_t i = 0; fits && i <= L->npairs; i++) {
+            __int128 v;
+            fits = fd_i128(i < L->npairs ? &R.coef[j][i] : &R.c0[j], &v);
+        }
+    if (R.k == LIA_RANK_FOUND && !fits)
+        R = lia_rank_lex_bounded(sp, ns, L->pre, L->post, L->npairs, (int64_t)1 << 20, F->lim, F->work, F->worksz);
+    if (R.k != LIA_RANK_FOUND || R.ncomp > room) return false;
+    for (int32_t j = 0; j < R.ncomp; j++) {
+        if (!fd_i128(&R.c0[j], &rc0[j])) return false;
+        for (int32_t i = 0; i < L->npairs; i++) if (!fd_i128(&R.coef[j][i], &rc[(size_t)j * (size_t)L->npairs + (size_t)i])) return false;
+    }
+    *n = R.ncomp;
+    return true;
+}
+static bool fd_rank_regions(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
+    if (L->nedges > JRANK_MAXE || L->npaths == 0) return false;
+    FdAtom at[FD_MAXATOM]; int32_t na = 0, on[FD_MAXATOM], last[FD_MAXATOM];   // the atoms the paths state on a version's pre value, by how many paths
+    for (int32_t i = 0; i < FD_MAXATOM; i++) last[i] = -1;
+    for (int32_t k = 0; k < L->npaths; k++)
+        for (int32_t x = 0; x < L->paths[k]->nhyps; x++) {
+            const JVc *P = L->paths[k];
+            const JCons *c = &P->hyps[x].cons;
+            if (P->hyps[x].disj || c->op != J_LE || c->nt < 1 || c->nt > 2) continue;
+            // `x > 0` reaches the path as x - z <= -1 beside z == 0 (the constant's own variable): a
+            // term over a variable the path fixes to a constant is folded into the bound
+            __int128 b, cf = 0; int32_t q = -1; bool fold = true;
+            if (!fd_i128(&c->rhs, &b)) continue;
+            for (int32_t t = 0; t < c->nt && fold; t++) {
+                int32_t v = c->t[t].var, z = -1;
+                for (int32_t y = 0; y < L->npk && z < 0; y++) if (L->pre[y] == v && L->ptk[y] == JTERM_VALUE) z = y;
+                if (z >= 0 && q < 0) { q = z; cf = fd_int128(&c->t[t].coef); continue; }
+                bool fixed = false;
+                for (int32_t y = 0; y < P->nhyps && !fixed; y++) {
+                    const JCons *e = &P->hyps[y].cons;
+                    __int128 ev, ec;
+                    if (P->hyps[y].disj || e->op != J_EQ || e->nt != 1 || e->t[0].var != v || !fd_i128(&e->rhs, &ev)) continue;
+                    ec = fd_int128(&e->t[0].coef);
+                    if (ec != 1 && ec != -1) continue;
+                    b -= fd_int128(&c->t[t].coef) * (ec * ev); fixed = true;
+                }
+                fold = fixed;
+            }
+            if (!fold || q < 0 || (cf != 1 && cf != -1) || b > ((__int128)1 << 40) || b < -((__int128)1 << 40)) continue;
+            FdAtom A = { q, (int8_t)(cf > 0 ? -1 : 1), (int64_t)-b };      // c*v <= b: -c*v >= -b
+            int32_t seen = -1;
+            for (int32_t i = 0; i < na && seen < 0; i++) if (at[i].q == A.q && at[i].s == A.s && at[i].t == A.t) seen = i;
+            if (seen < 0 && na < FD_MAXATOM) { seen = na; at[na] = A; on[na++] = 0; }
+            if (seen >= 0 && last[seen] != k) { last[seen] = k; on[seen]++; }
+        }
+    // a region tells paths apart: an atom every path states (a type's bound, the loop's guard) is
+    // no case of the loop's, and eight of them crowded the cases out (an i32 port of Fig3)
+    int32_t nk = 0;
+    for (int32_t i = 0; i < na; i++) if (on[i] < L->npaths) at[nk++] = at[i];
+    na = nk;
+    int32_t np = L->npairs;
+    __int128 *rc = fd_bump(L, sizeof(__int128) * (size_t)JRANK_MAXC * (size_t)(np ? np : 1) * 2);
+    if (!rc) return false;
+    __int128 *rc1 = rc + (size_t)JRANK_MAXC * (size_t)(np ? np : 1), rc0[2][JRANK_MAXC];
+    for (int32_t i = 0; i < na; i++)
+        for (int32_t j = 0; j < na; j++) {
+            if (at[i].q != at[j].q || at[i].s == at[j].s) continue;   // one version, opposite sides
+            const FdAtom *g0 = &at[i], *g1 = &at[j];
+            bool ok = true;
+            for (int32_t k = 0; k < L->npaths && ok; k++) {
+                const FdAtom *a[2] = { g0, g1 };
+                bool pre2[2] = { false, false }, neg2[2] = { true, true }, up[2] = { false, true }, as[2] = { false, false };
+                ok = fd_refutes(F, L->paths[k], L, a, pre2, neg2, 2)        // rank.cover: in some region
+                  && fd_refutes(F, L->paths[k], L, a, up, as, 2);           // rank.region: 0 never to 1
+            }
+            if (F->oom) return false;
+            int32_t n0 = 0, n1 = 0;
+            if (!ok || !fd_region_tuple(F, L, g0, rc, rc0[0], JRANK_MAXC - 3, &n0)) { if (F->oom) return false; continue; }
+            if (!fd_region_tuple(F, L, g1, rc1, rc0[1], JRANK_MAXC - 2 - n0, &n1)) { if (F->oom) return false; continue; }
+            // the rows: region 0's guard and tuple, then region 1's; the terms, every pair a row reads
+            int32_t idx[JRANK_MAXT], nt = 0;
+            for (int32_t z = 0; z < np; z++) {
+                bool used = z == g0->q;
+                for (int32_t r = 0; r < n0 && !used; r++) used = rc[(size_t)r * (size_t)np + (size_t)z] != 0;
+                for (int32_t r = 0; r < n1 && !used; r++) used = rc1[(size_t)r * (size_t)np + (size_t)z] != 0;
+                if (!used) continue;
+                if (nt == JRANK_MAXT) { nt = -1; break; }
+                idx[nt++] = z;
+            }
+            if (nt < 1) continue;
+            memset(out, 0, sizeof *out);
+            out->blk = H; out->fn = f; out->nedge = L->nedges; out->nt = nt; out->ncomp = 2 + n0 + n1;
+            for (int32_t t = 0; t < nt; t++) { out->key[t] = L->pkey[idx[t]]; out->tk[t] = L->ptk[idx[t]]; }
+            for (int32_t e = 0; e < L->nedges; e++) { out->from[e] = L->edges[e]; out->fall[e] = -1; }
+            out->nreg = 2;
+            out->reg[0].g0 = 0; out->reg[0].ng = 1; out->reg[0].t0 = 1; out->reg[0].nt = (uint8_t)n0;
+            out->reg[1].g0 = (uint8_t)(1 + n0); out->reg[1].ng = 1; out->reg[1].t0 = (uint8_t)(2 + n0); out->reg[1].nt = (uint8_t)n1;
+            for (int32_t g = 0; g < 2; g++) {
+                const FdAtom *ga = g ? g1 : g0; int32_t row = out->reg[g].g0, n = g ? n1 : n0;
+                const __int128 *src = g ? rc1 : rc;
+                for (int32_t t = 0; t < nt; t++) if (idx[t] == ga->q) out->coef[row][t] = ga->s;   // s*v - t >= 0
+                out->c0[row] = -(__int128)ga->t;
+                for (int32_t r = 0; r < n; r++) {
+                    out->c0[out->reg[g].t0 + r] = rc0[g][r];
+                    for (int32_t t = 0; t < nt; t++) out->coef[out->reg[g].t0 + r][t] = src[(size_t)r * (size_t)np + (size_t)idx[t]];
+                }
+            }
+            return true;
+        }
+    return false;
+}
 static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (fd_rank_on(F, f, H, L, out)) return true;
     int32_t np = L->npaths;
@@ -817,7 +976,8 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         bool got = fd_rank_on(F, f, H, &V, out);
         if (got) return true;
     }
-    return fd_rank_max(F, f, H, L, step, out);             // no tuple: a max component (c36)
+    if (fd_rank_max(F, f, H, L, step, out)) return true;   // no tuple: a max component (c36)
+    return !F->oom && fd_rank_regions(F, f, H, L, out);    // nor a max: a tuple per region (c38)
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);

@@ -91,7 +91,7 @@ def main():
     for k in range(N):
         gs, body = gen(random.Random(seed * 1000003 + k))
         p = os.path.join(tmp, "t.ln"); text = src(gs, body); open(p, "w").write(text)
-        r = subprocess.run([lain, p, "-o", os.path.join(tmp, "t.c")], capture_output=True, text=True)
+        r = subprocess.run([lain, p, "-o", os.path.join(tmp, "t.c")] + os.environ.get("LAIN_FLAGS", "").split(), capture_output=True, text=True)
         forever = can_run_forever(gs, body)
         if not forever: term += 1
         if r.returncode == 0:
