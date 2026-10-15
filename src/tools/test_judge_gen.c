@@ -1133,7 +1133,9 @@ int main(void) {
         }
         gen_rk = NULL; gen_nrk = 0;
         // 32. the paths a proposer is offered: the entry edge (no `pre`) and the back edge, each
-        // with the header's version of i before and after; a block that heads no loop has none
+        // with the header's version of i before and after, and i's ENTRY value (i is written in the
+        // loop: a fixed pair, pre and post one variable on the back edge, on the entry edge i's
+        // value there); a block that heads no loop has none
         {   memset(region, 0x5a, sizeof region);                                // the region is not zeroed
             JMem m = jmem_over(region, sizeof region);
             JPaths P; char err[200];
@@ -1142,9 +1144,12 @@ int main(void) {
             for (int32_t k = 0; ok && k < P.n; k++) {
                 const JPath *p = &P.p[k];
                 CHECK(p->at == -1 && !p->callee && !p->entry && p->nentry == 0, "a loop's path names no call (path %d)", k);
-                CHECK(p->npairs == 1 && p->pairs[0].key == i->id, "one pair, i's (path %d)", k);
-                if (p->npairs != 1) continue;
-                const JPathPair *q = &p->pairs[0];
+                CHECK(p->npairs == 2 && p->pairs[0].key == i->id && p->pairs[0].tk == JTERM_VALUE && p->pairs[1].key == i->id &&
+                      p->pairs[1].tk == JTERM_ENTRY, "two pairs, i's and i's entry value (path %d)", k);
+                if (p->npairs != 2) continue;
+                const JPathPair *q = &p->pairs[0], *qe = &p->pairs[1];
+                if (p->back) CHECK(qe->pre >= 0 && qe->pre == qe->post && qe->pre != q->pre && qe->pre != q->post, "the back edge: i's entry value fixed, neither i before nor after");
+                else CHECK(qe->pre == -1 && qe->post == q->post, "the entry edge: i's entry value is i's value there");
                 if (p->back) {
                     CHECK(p->from == b2->id && q->pre >= 0 && q->post >= 0 && q->pre != q->post, "the back edge: i before and after differ");
                     CHECK(q->pre < p->vc->nvars && strstr(p->vc->vars[q->pre], "@head"), "pre is the header's version");
@@ -1241,7 +1246,7 @@ int main(void) {
         struct { JClaim c; const char *why; } bad[3];
         for (int k = 0; k < 3; k++) bad[k].c = c;
         bad[0].c.tk[0] = JTERM_LEN; bad[0].why = "not a cell or a value fixed at its block";       // i is no slice
-        bad[1].c.tk[0] = 4; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
+        bad[1].c.tk[0] = 5; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
         memset(&bad[2].c, 0, sizeof bad[2].c);
         bad[2].c.blk = JCLAIM_RET; bad[2].c.fn = f; bad[2].c.nt = 2; bad[2].c.key[0] = JKEY_RET; bad[2].c.coef[0] = 1;
         bad[2].c.key[1] = xs->id; bad[2].c.tk[1] = JTERM_LEN; bad[2].c.coef[1] = -1; bad[2].why = "a return claim over a length";
@@ -1854,12 +1859,14 @@ int main(void) {
         CHECK(ok && !P.refused && P.n == 2, "two edges into the header (%s)", ok ? "" : err);
         for (int32_t k = 0; ok && k < P.n; k++) {
             const JPath *p = &P.p[k]; const JPathPair *pi = NULL, *pc = NULL; int other = 0;
+            int ient = 0;                                       // i's ENTRY pair (i is written; c is not)
             for (int32_t q = 0; q < p->npairs; q++) {
-                if (p->pairs[q].key == i->id) pi = &p->pairs[q];
-                else if (p->pairs[q].key == c->id) pc = &p->pairs[q];
+                if (p->pairs[q].key == i->id && p->pairs[q].tk == JTERM_ENTRY) ient++;
+                else if (p->pairs[q].key == i->id) pi = &p->pairs[q];
+                else if (p->pairs[q].key == c->id && p->pairs[q].tk == JTERM_VALUE) pc = &p->pairs[q];
                 else other++;
             }
-            CHECK(pi && pc && other == 0, "path %d: the pairs are i and c, not z (%d pairs)", k, p->npairs);
+            CHECK(pi && pc && ient == 1 && other == 0, "path %d: the pairs are i, i's entry and c, not z (%d pairs)", k, p->npairs);
             if (!pi || !pc) continue;
             if (p->back) CHECK(pc->pre >= 0 && pc->pre == pc->post && pi->pre != pi->post, "the back edge: c's pre is its post, i's is not");
             else CHECK(pc->pre == -1 && pc->post >= 0, "the entry edge: c's pre is -1, its post its value");
@@ -4036,6 +4043,70 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  every obligation of a function has its own ID\n");
+    // 74. an ENTRY term: LarrazOliveras' Fig. 1, `while y >= 1 { x = x - 1; while y < z { x++; z-- };
+    // y = x + y }` over i32 cells, its inner header b3 entered from b2 alone. (0) x + z - entry(x) -
+    // entry(z) <= 0 at b3: entry(x) the store x - 1 (b2's version), entry(z) z's outer-header version,
+    // the same variables in the statement, the keep and the entry, whose goal is 0 <= 0; (1) a ranking
+    // at b3 <z - y + entry(z)>: accepted, entry(z) gone from its fall's goal (fixed, it cancels).
+    // Refused: (2) ENTRY at b5 (no loop header); (3) a header entered from two blocks; (4) ENTRY over
+    // a parameter (no cell); (5) a claim of entry(x) alone; (6) entry(x) and a parameter (no version
+    // b3 makes); (7) x twice, both VALUE (one term twice); (8) entry(x) twice
+    for (int c = 0; c < 9; c++) {
+        IrFunc *f = ir_func_new(&A, nm("lz74"), i32t, IR_FUNC_PURE);
+        IrValue *x0 = ir_add_param(f, i32t, nm("x0")), *y0 = ir_add_param(f, i32t, nm("y0")), *z0 = ir_add_param(f, i32t, nm("z0"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f), *b7 = ir_new_block(f);
+        IrValue *x = ir_alloca(f, b0, i32t), *y = ir_alloca(f, b0, i32t), *z = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, x, x0); ir_store(f, b0, y, y0); ir_store(f, b0, z, z0); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SGE, ir_load(f, b1, y, i32t), ir_const_int(f, b1, 1, i32t)), b2, b6);
+        ir_store(f, b2, x, ir_binop(f, b2, IR_SUB, ir_load(f, b2, x, i32t), ir_const_int(f, b2, 1, i32t), i32t));
+        if (c == 3) ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_EQ, x0, ir_const_int(f, b2, 0, i32t)), b3, b7);   // two ways into b3
+        else ir_set_br(b2, b3);
+        ir_set_br(b7, b3);
+        ir_set_br_cond(b3, ir_icmp(f, b3, IR_CMP_SLT, ir_load(f, b3, y, i32t), ir_load(f, b3, z, i32t)), b4, b5);
+        ir_store(f, b4, x, ir_binop(f, b4, IR_ADD, ir_load(f, b4, x, i32t), ir_const_int(f, b4, 1, i32t), i32t));
+        ir_store(f, b4, z, ir_binop(f, b4, IR_SUB, ir_load(f, b4, z, i32t), ir_const_int(f, b4, 1, i32t), i32t)); ir_set_br(b4, b3);
+        ir_store(f, b5, y, ir_binop(f, b5, IR_ADD, ir_load(f, b5, x, i32t), ir_load(f, b5, y, i32t), i32t)); ir_set_br(b5, b1);
+        ir_set_ret(b6, ir_const_int(f, b6, 0, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JClaim cl; memset(&cl, 0, sizeof cl);
+        cl.blk = b3->id; cl.fn = f; cl.nt = 4; cl.key[0] = x->id; cl.key[1] = z->id; cl.key[2] = x->id; cl.key[3] = z->id;
+        cl.tk[2] = JTERM_ENTRY; cl.tk[3] = JTERM_ENTRY; cl.coef[0] = 1; cl.coef[1] = 1; cl.coef[2] = -1; cl.coef[3] = -1;
+        const char *bad = NULL;
+        JRank r; memset(&r, 0, sizeof r);
+        switch (c) {
+            case 1: r.blk = b3->id; r.fn = f; r.ncomp = 1; r.nt = 3; r.key[0] = z->id; r.key[1] = y->id; r.key[2] = z->id; r.tk[2] = JTERM_ENTRY;
+                    r.coef[0][0] = 1; r.coef[0][1] = -1; r.coef[0][2] = 1; r.nedge = 1; r.from[0] = b4->id; break;
+            case 2: cl.blk = b5->id; bad = "ENTRY term at a block that is no loop header"; break;
+            case 3: bad = "ENTRY term at a loop entered by more than one edge"; break;
+            case 4: cl.key[2] = x0->id; bad = "ENTRY term is no integer cell"; break;
+            case 5: cl.nt = 1; cl.key[0] = x->id; cl.tk[0] = JTERM_ENTRY; cl.coef[0] = 1; cl.rhs = 100; bad = "no version its block makes afresh"; break;
+            case 6: cl.nt = 2; cl.key[0] = x->id; cl.tk[0] = JTERM_ENTRY; cl.key[1] = x0->id; cl.tk[1] = JTERM_VALUE; cl.coef[1] = -1; bad = "no version its block makes afresh"; break;
+            case 7: cl.tk[2] = JTERM_VALUE; bad = "naming one term twice"; break;
+            case 8: cl.tk[0] = JTERM_ENTRY; bad = "naming one term twice"; break;
+        }
+        if (c == 1) { gen_rk = &r; gen_nrk = 1; }
+        char why[200] = "";
+        char *t = gen_with(f, &cl, 1, JGEN_ALL, why);
+        if (bad) { CHECK(!t && strstr(why, bad), "case %d: refused (%s): got \"%s\"", c, bad, why); free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL; continue; }
+        char ex[40], ez[40]; snprintf(ex, sizeof ex, "%%s%d@bb%d.", x->id, b2->id); snprintf(ez, sizeof ez, "%%s%d@head.bb%d", z->id, b1->id);
+        if (c == 0) {
+            char k1[48], k2[48]; snprintf(k1, sizeof k1, "bb%d.%d inv.keep", b4->id, nins(b4)); snprintf(k2, sizeof k2, "bb%d.%d inv.entry", b2->id, nins(b2));
+            const char *vk = t ? vc_of(t, k1) : "", *gk = strstr(vk, "goal ");   // vc_of's buffer is one: check before the next
+            CHECK(gk && strstr(gk, ex) && strstr(gk, ez) && strstr(vk, "claim bb"), "case 0: the keep's goal names entry(x) and entry(z):\n%s", vk);
+            const char *ve = t ? vc_of(t, k2) : "", *ge = strstr(ve, "goal ");
+            CHECK(ge && !strncmp(ge, "goal 0 <= 0\n", 12), "case 0: the entry's goal is 0 <= 0:\n%s", ve);
+        } else {
+            char kf[48]; snprintf(kf, sizeof kf, "bb%d.%d rank.fall", b4->id, nins(b4));
+            const char *vf = t ? vc_of(t, kf) : "", *gf = strstr(vf, "goal ");
+            char zv[40]; snprintf(zv, sizeof zv, "%%s%d@head.bb%d", z->id, b1->id);
+            CHECK(gf && !strstr(gf, zv), "case 1: a ranking's ENTRY term cancels from its fall:\n%s", vf);
+        }
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  an ENTRY term: a cell's version on its loop's entry edge, fixed in the loop\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

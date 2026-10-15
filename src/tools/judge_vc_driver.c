@@ -175,6 +175,30 @@ static int hk_cmp(const void *a, const void *b) {
     uintptr_t x = (uintptr_t)((const HK *)a)->at, y = (uintptr_t)((const HK *)b)->at;
     return x < y ? -1 : x > y;
 }
+// ENTRY snapshots (the generator's vent/vente): a cell's content as the edge E -> H into a loop was
+// taken, per frame, overwritten at every entry, so a version the cell held on entering the loop
+// can be read later in it. The registry names which (H, E, cell, offset) the obligations need.
+typedef struct { int32_t H, E, cell, off; } HkEnt;
+static HkEnt *hk_ent; static int64_t nhk_ent, chk_ent;
+typedef struct { const IVal *v; int32_t H, cell, off; bool ok; IVal iv; } HkSnap;
+#define HK_SNAP (1 << 14)
+static HkSnap hk_snap[HK_SNAP];
+static long long snaps;
+static uint32_t hk_snap_slot(const IVal *v, int32_t H, int32_t cell, int32_t off) {
+    uint64_t x = (uint64_t)(uintptr_t)v * 0x9E3779B97F4A7C15ull ^ (uint64_t)(uint32_t)H * 0xC2B2AE3D27D4EB4Full ^
+                 (uint64_t)(uint32_t)cell * 0x165667B19E3779F9ull ^ (uint64_t)(uint32_t)(off + 1) * 0x27D4EB2F165667C5ull;
+    return (uint32_t)(x >> 32) & (HK_SNAP - 1);
+}
+static void hk_ent_add(int32_t H, int32_t E, int32_t cell, int32_t off) {
+    for (int64_t i = 0; i < nhk_ent; i++) if (hk_ent[i].H == H && hk_ent[i].E == E && hk_ent[i].cell == cell && hk_ent[i].off == off) return;
+    if (nhk_ent == chk_ent) {
+        int64_t nc = chk_ent ? 2 * chk_ent : 16;
+        HkEnt *x = realloc(hk_ent, sizeof *x * (size_t)nc);
+        if (!x) return;                                  // a missing snapshot reads as unknown
+        hk_ent = x; chk_ent = nc;
+    }
+    hk_ent[nhk_ent++] = (HkEnt){ H, E, cell, off };
+}
 // A variable's value at the instruction, or false when it cannot be read (not an integer yet).
 static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
     int32_t k = o->vkind[x], key = o->vkey[x];
@@ -192,9 +216,15 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
             IPtr p = c->p;                             // an element no address names: its root's + k
             if (o->voff && o->voff[x] >= 0) p.p[p.d - 1] += o->voff[x];
             c = ip_cell(&p, NULL);
-        } else {
-            if (o->vaux[x] < 0 || o->vaux[x] >= nv) return false;
+        } else if (o->vaux[x] >= 0) {
+            if (o->vaux[x] >= nv) return false;
             c = &v[o->vaux[x]];
+        } else {                                       // a loop's ENTRY version: its snapshot, if taken
+            if (!o->vent || o->vent[x] < 0 || k != 1) return false;
+            int32_t off = o->voff ? o->voff[x] : -1;
+            const HkSnap *s = &hk_snap[hk_snap_slot(v, o->vent[x], key, off)];
+            if (!s->ok || s->v != v || s->H != o->vent[x] || s->cell != key || s->off != off) return false;
+            c = (IVal *)&s->iv;                        // read as any version, by its type below
         }
     }
     if (k == 2 || k == 4) { if (c->k != IV_SLICE) return false; *out = c->len; return true; }
@@ -342,6 +372,18 @@ static void hk_on_block(IrFunc *f, IrBlock *to, IVal *v, int nv) {
     hk_last = NULL;
     if (b && bv == v) { HkLast *e = &hk_lastpred[hk_lp_slot(v, to->id)]; e->v = v; e->blk = to->id; e->pred = b->id; }
     if (!b || bv != v) return;
+    for (int64_t i = 0; i < nhk_ent; i++) {              // entering a loop: its cells' ENTRY values
+        const HkEnt *en = &hk_ent[i];
+        if (en->H != to->id || en->E != b->id || en->cell < 0 || en->cell >= nv) continue;
+        IVal *c = &v[en->cell];
+        if (c->k != IV_PTR || !c->p.o || !c->p.o->live) continue;
+        IPtr p = c->p;
+        if (en->off >= 0) p.p[p.d - 1] += en->off;
+        IVal *cv = ip_cell(&p, NULL);
+        HkSnap *s = &hk_snap[hk_snap_slot(v, en->H, en->cell, en->off)];
+        s->v = v; s->H = en->H; s->cell = en->cell; s->off = en->off; s->ok = cv && cv->k == IV_INT;
+        if (s->ok) { s->iv = *cv; snaps++; }
+    }
     char where[64]; snprintf(where, sizeof where, "on the edge bb%d->bb%d", b->id, to->id);
     // A CLAIM's goal is a fact other VCs assume, so it must hold where its edge is taken. An
     // obligation owed on an edge (a loop's `rank.*`, a written measure's `measure.*`; its `claim`
@@ -593,6 +635,8 @@ int main(int argc, char **argv) {
                 if (o[i].outside) continue;
                 if (o[i].to || !o[i].at) { he[nhe].from = o[i].blk; he[nhe].o = &o[i]; nhe++; }
                 else { hk[nhk].at = o[i].at; hk[nhk].o = &o[i]; nhk++; }
+                for (int32_t x = 0; o[i].vent && x < o[i].vc.nvars; x++)
+                    if (o[i].vent[x] >= 0) hk_ent_add(o[i].vent[x], o[i].vente[x], o[i].vkey[x], o[i].voff ? o[i].voff[x] : -1);
             }
             continue;
         }
@@ -655,9 +699,9 @@ int main(int argc, char **argv) {
         fflush(stdout);
         fprintf(stderr, "SUMMARY obligations=%lld reached=%lld hyps-checked=%lld false=%lld not-evaluable=%lld premises=%lld status=%d"
                 " claims=%lld claims-dropped=%lld claim-obligations=%lld edges=%lld claim-hyps-checked=%lld claim-goals-checked=%lld"
-               " returns=%lld return-goals-checked=%lld contract-hyps-checked=%lld\n",
+               " returns=%lld return-goals-checked=%lld contract-hyps-checked=%lld entry-snapshots=%lld\n",
                (long long)nhk, reached, checked, falsec, unknown, premises, st, F.kept, F.dropped, (long long)nhe, edges,
-               claimchk, claimgoals, posts, postgoals, contractchk);
+               claimchk, claimgoals, posts, postgoals, contractchk, snaps);
         if (falsec) rc = 3;
     } else if (claims) printf("# claims proposed %lld, kept %lld, dropped %lld\n", F.proposed, F.kept, F.dropped);
     if (cover) printf("COVER\tchecks %lld\tstated %lld\toutside %lld\tuncovered %lld\n", cv_checks, cv_cov, cv_cov_out, cv_unc);

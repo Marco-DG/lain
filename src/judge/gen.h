@@ -106,6 +106,9 @@ typedef struct {
     // for a version: the SSA value its store wrote when the version equals it (-1 otherwise), and
     // whether it is the cell's version current at the point (a VC may name an older one)
     const int32_t *vaux; const uint8_t *vcur;
+    // for an older version that is a loop's ENTRY version (its value on the edge E -> H into a loop
+    // the point is in), H and E: a harness reads it from the cell as that edge was taken (-1 else)
+    const int32_t *vent, *vente;
     const JRecipe **vrec;                    // kind 3 (a fresh variable): its recipe
     // per hypothesis, for a harness that knows the path taken: an R7 join's block (-1 for any other
     // hypothesis), and the predecessor each of its disjuncts is the path through
@@ -1557,6 +1560,36 @@ static int32_t jb_term(JB *B, int32_t key, uint8_t tk, const int32_t *row) {
     if (g->cell[key] >= 0) return tk == JTERM_LEN ? jb_cell_len(B, row[g->cell[key]]) : jb_ver(B, row[g->cell[key]]);
     return tk == JTERM_LEN ? jb_len(B, jg_value(g, key)) : jb_val(B, jg_value(g, key));
 }
+// Loop header H's ENTRY predecessor: its one predecessor that is no back edge (both arms of one
+// branch into H count once), or -1 where it has none or several. It dominates H (every first
+// arrival at H comes through it), so a version it ends with is one value through a run of H's loop.
+static bool jg_back_edge(const JG *g, int32_t P, int32_t H);
+static int32_t jg_entry_pred(JG *g, int32_t H) {
+    int32_t e = -1;
+    for (IrEdge *pe = g->blk[H]->preds; pe; pe = pe->next) {
+        int32_t P = pe->block->id;
+        if (g->rpoix[P] < 0 || jg_back_edge(g, P, H)) continue;
+        if (e >= 0 && e != P) return -1;
+        e = P;
+    }
+    return e;
+}
+// A claim's term at its block H: as jb_term, but an ENTRY term is the cell's version on H's entry
+// edge (jg_claims_ok has checked H has one), the same variable at every row.
+static bool jg_loop_header(JG *g, int32_t b);
+// Can an ENTRY term over `key` be stated at H: an integer cell, H a loop header with one entry
+// predecessor E, the cell with a version where E ends.
+static bool jg_entry_ok(JG *g, int32_t H, int32_t key) {
+    if (key < 0 || key >= g->nv || g->cell[key] < 0 || !jg_is_int(g->cty[g->cell[key]]) || !jg_loop_header(g, H)) return false;
+    int32_t E = jg_entry_pred(g, H);
+    return E >= 0 && g->outstate[(size_t)E * (size_t)g->ncells + (size_t)g->cell[key]] >= 0;
+}
+static int32_t jb_cterm(JB *B, int32_t key, uint8_t tk, const int32_t *row, int32_t H) {
+    JG *g = B->g;
+    if (tk != JTERM_ENTRY) return jb_term(B, key, tk, row);
+    int32_t E = jg_entry_pred(g, H);
+    return jb_ver(B, g->outstate[(size_t)E * (size_t)g->ncells + (size_t)g->cell[key]]);
+}
 // A cut-point claim of the function being generated (block ids are per function: another
 // function's claim at the same id is none of this one's).
 static bool jg_mine(const JG *g, const JClaim *c) { return c->blk >= 0 && (!c->fn || c->fn == g->f); }
@@ -1611,7 +1644,7 @@ static void jb_claims(JB *B, const JVer *v) {
             JLT t[JCLAIM_MAXT]; int n = 0;
             for (int k = 0; k < c->nt; k++) {
                 if (k == gk) continue;
-                t[n].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_term(B, c->key[k], c->tk[k], row);
+                t[n].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_cterm(B, c->key[k], c->tk[k], row, c->blk);
                 t[n].c = c->coef[k]; n++;
             }
             if (gk < 0) { jb_atom(B, o, t, n, J_LE, c->rhs); continue; }
@@ -2616,6 +2649,21 @@ static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *
             cur[i] = cv == B->key[i];
         }
         o->vaux = aux; o->vcur = cur; o->vrec = B->vrec;
+        // an older version no store gives: a loop's ENTRY version where the point is in that loop
+        // (the cell held it as the edge E -> H was taken: ventry), else -1
+        int32_t *ent = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1), *ente = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1);
+        if (!ent || !ente) return false;
+        for (int32_t i = 0; i < B->nvars; i++) {
+            ent[i] = ente[i] = -1;
+            if (B->kind[i] != 1 || cur[i] || aux[i] >= 0) continue;
+            int32_t cell = g->ver[B->key[i]].cell;
+            for (int32_t H = 0; H < g->nb && ent[i] < 0; H++) {
+                if (!g->blk[H] || !g->inloop[(size_t)H * (size_t)g->nb + (size_t)H] || !g->inloop[(size_t)H * (size_t)g->nb + (size_t)B->blk]) continue;
+                int32_t E = jg_entry_pred(g, H);
+                if (E >= 0 && g->outstate[(size_t)E * (size_t)g->ncells + (size_t)cell] == B->key[i]) { ent[i] = H; ente[i] = E; }
+            }
+        }
+        o->vent = ent; o->vente = ente;
         int32_t *hj = JG_NEW(g, int32_t, B->nhyps ? B->nhyps : 1);
         const int32_t **hp = JG_NEW(g, const int32_t *, B->nhyps ? B->nhyps : 1);
         if (!hj || !hp) return false;
@@ -3165,12 +3213,13 @@ static bool jg_made_at(JG *g, int32_t blk, int32_t cell) {
     return jv >= 0 && (g->ver[jv].kind == JV_JOIN || g->ver[jv].kind == JV_HEAD) && g->ver[jv].blk == blk;
 }
 // Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
-// Its terms: one to `max`, no key twice (a sum names each term once).
-static bool jg_claim_shape(JG *g, const int32_t *key, int32_t nt, int32_t max) {
+// Its terms: one to `max`, no key twice (a sum names each term once), but a cell beside its ENTRY
+// value (`x - entry(x)`: two terms, its version at the block and the one its loop was entered with).
+static bool jg_claim_shape(JG *g, const int32_t *key, const uint8_t *tk, int32_t nt, int32_t max) {
     if (nt < 1 || nt > max) return jg_fail(g, "a claim of no terms, or of more than it may have");
     for (int32_t i = 0; i < nt; i++)
         for (int32_t j = i + 1; j < nt; j++)
-            if (key[i] == key[j]) return jg_fail(g, "a claim naming one term twice");
+            if (key[i] == key[j] && (tk[i] == JTERM_ENTRY) == (tk[j] == JTERM_ENTRY)) return jg_fail(g, "a claim naming one term twice");
     return true;
 }
 // A return claim of h: its terms, the returned value among them and any other an integer
@@ -3181,7 +3230,7 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
     if (!h || h->is_extern || !jg_is_int(h->ret_type)) return jg_fail(g, "a return claim on a function returning no integer");
     // lowered with a construct dropped, the IR is not the function: it could return anything
     if (h->incomplete) return jg_fail(g, "a return claim on a function lowered incompletely");
-    if (!jg_claim_shape(g, c->key, c->nt, JCLAIM_MAXT)) return false;
+    if (!jg_claim_shape(g, c->key, c->tk, c->nt, JCLAIM_MAXT)) return false;
     if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
     for (int k = 0; k < c->nt; k++) if (c->tk[k] != JTERM_VALUE) return jg_fail(g, "a return claim over a length");
     bool ret = false;
@@ -3215,7 +3264,7 @@ static bool jg_claims_ok(JG *g) {
         // a header (the `made` rule below)
         if (c->blk < 0 || c->blk >= g->nb || !g->blk[c->blk] || g->rpoix[c->blk] < 0 || c->blk == g->f->entry->id)
             return jg_fail(g, "a claim not at a block entered by edges only");
-        if (!jg_claim_shape(g, c->key, c->nt, JCLAIM_MAXT)) return false;
+        if (!jg_claim_shape(g, c->key, c->tk, c->nt, JCLAIM_MAXT)) return false;
         if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
         bool made = false;
         int each = 0, upto = 0;
@@ -3228,6 +3277,13 @@ static bool jg_claims_ok(JG *g) {
                 if (!en) return jg_fail(g, "a claim's EACH term is not a fixed array with an element cell");
                 for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && jg_made_at(g, c->blk, ec[q])) made = true;
                 continue;
+            }
+            if (c->tk[k] == JTERM_ENTRY) {                   // a cell's version on the loop's entry edge
+                if (key < 0 || key >= g->nv || g->cell[key] < 0 || !jg_is_int(g->cty[g->cell[key]])) return jg_fail(g, "a claim's ENTRY term is no integer cell");
+                if (!jg_loop_header(g, c->blk)) return jg_fail(g, "a claim's ENTRY term at a block that is no loop header");
+                if (jg_entry_pred(g, c->blk) < 0) return jg_fail(g, "a claim's ENTRY term at a loop entered by more than one edge");
+                if (!jg_entry_ok(g, c->blk, key)) return jg_fail(g, "a claim's ENTRY term of a cell with no version on the entry edge");
+                continue;                                    // fixed: no version the block makes
             }
             if (c->tk[k] == JTERM_UPTO) {                    // a value guarding each instance
                 if (++upto > 1) return jg_fail(g, "a claim of two UPTO terms");
@@ -3300,7 +3356,7 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
                 JLT t[JCLAIM_MAXT]; JCons goal; int nt = 0;
                 for (int k = 0; k < c->nt; k++) {
                     if (k == gk) continue;
-                    t[nt].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_term(&B, c->key[k], c->tk[k], row);
+                    t[nt].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_cterm(&B, c->key[k], c->tk[k], row, c->blk);
                     t[nt].c = c->coef[k]; nt++;
                 }
                 int32_t gv = -1;
@@ -3376,8 +3432,8 @@ static void jb_region_premises(JB *B, const JRank *r, int32_t k, const int32_t *
 static void jb_rank_terms(JB *B, const JRank *r, IrBlock *H, IrBlock *P, int32_t *pre, int32_t *post) {
     JG *g = B->g;
     for (int32_t i = 0; i < r->nt; i++) {
-        pre[i] = jb_term(B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells);
-        post[i] = jb_term(B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
+        pre[i] = jb_cterm(B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells, H->id);
+        post[i] = jb_cterm(B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells, H->id);
     }
 }
 // A FREE edge's lexicographic decrease over the tuple rows t0 .. t0 + n - 1 (c35): some j with each
@@ -3595,9 +3651,10 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
         if (r->nle != 0) return jg_fail(g, "a loop's ranking claim lists calls (a recursion's measure does)");
         // a CONSTANT one (no terms), written or proposed, falls on no edge that is ever taken: it is
         // how a loop whose back edges are dead (`while false`, a fixed guard) is shown to end
-        if (r->nt != 0 && !jg_claim_shape(g, r->key, r->nt, JRANK_MAXT)) return false;
+        if (r->nt != 0 && !jg_claim_shape(g, r->key, r->tk, r->nt, JRANK_MAXT)) return false;
         for (int32_t i = 0; i < r->nt; i++)                    // a written measure's: a fixed quotient too
-            if (!jg_term_ok(g, H->id, r->key[i], r->tk[i]) && !(r == &mr && r->tk[i] == JTERM_VALUE && jg_fixed_quot(g, H->id, r->key[i])))
+            if (!jg_term_ok(g, H->id, r->key[i], r->tk[i]) && !(r == &mr && r->tk[i] == JTERM_VALUE && jg_fixed_quot(g, H->id, r->key[i])) &&
+                !(r->tk[i] == JTERM_ENTRY && jg_entry_ok(g, H->id, r->key[i])))   // ENTRY: fixed in the loop
                 return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
         for (int32_t j = 0; j < r->ncomp; j++) {
             if (r->c0[j] > big || r->c0[j] < -big) return jg_fail(g, "a ranking claim's constant out of range");
@@ -3673,8 +3730,8 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                     B.to = H->id;
                     int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
                     for (int32_t i = 0; i < r->nt; i++) {
-                        pre[i] = jb_term(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells);
-                        post[i] = jb_term(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
+                        pre[i] = jb_cterm(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells, H->id);
+                        post[i] = jb_cterm(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells, H->id);
                     }
                     int32_t last = c0r[j] + cn[j] - 1, a = c0r[j] + q, d = what == 1 ? 1 : 0;
                     JCons goal; bool ok;
@@ -4166,6 +4223,7 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const 
             for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && jg_made_at(&g, blk, ec[q])) kind[i] = 2;
             continue;
         }
+        if (tk && tk[i] == JTERM_ENTRY) { if (jg_entry_ok(&g, blk, keys[i])) kind[i] = 1; continue; }   // never made
         if (!jg_term_ok(&g, blk, keys[i], tk && tk[i] != JTERM_UPTO ? tk[i] : JTERM_VALUE)) continue;
         kind[i] = 1;
         if (g.cell[keys[i]] < 0) continue;
@@ -4191,8 +4249,8 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
     if (!jg_loop_header(&g, header)) { out->refused = "not a loop header"; return true; }
     IrBlock *H = g.blk[header];
-    int32_t nk = 0, *keys = JG_NEW(&g, int32_t, g.ncells ? g.ncells : 1);
-    uint8_t *tks = JG_NEW(&g, uint8_t, g.ncells ? g.ncells : 1);
+    int32_t nk = 0, *keys = JG_NEW(&g, int32_t, g.ncells ? 2 * g.ncells : 1);
+    uint8_t *tks = JG_NEW(&g, uint8_t, g.ncells ? 2 * g.ncells : 1);
     int32_t np = 0;
     for (IrEdge *e = H->preds; e; e = e->next) np++;
     JPath *P = JG_NEW(&g, JPath, np ? np : 1);
@@ -4215,6 +4273,14 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
         if (jg_is_int(st)) { tks[nk] = JTERM_VALUE; keys[nk++] = g.cellv[c]->id; }
         else if (st && st->kind == IRT_SLICE) { tks[nk] = JTERM_LEN; keys[nk++] = g.cellv[c]->id; }   // its length
     }
+    // and each integer cell the loop WRITES at its ENTRY value (a header of one entry edge): fixed in
+    // the loop, its pre and post one variable on a back edge, what an equality relative to the
+    // entry (Karr) is about; a cell only read is its header version already
+    for (int32_t q = 0, n0 = nk; q < n0; q++) {
+        int32_t c = g.cell[keys[q]], jv = c >= 0 ? g.instate[(size_t)header * (size_t)g.ncells + (size_t)c] : -1;
+        if (tks[q] != JTERM_VALUE || jv < 0 || g.ver[jv].blk != header || g.ver[jv].kind != JV_HEAD || !jg_entry_ok(&g, header, keys[q])) continue;
+        tks[nk] = JTERM_ENTRY; keys[nk++] = keys[q];
+    }
     int32_t n = 0;
     for (IrEdge *e = H->preds; e; e = e->next) {
         IrBlock *Pb = e->block;
@@ -4231,8 +4297,8 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
         if (B.fail || !pp) return jg_fail(&g, "out of memory");
         for (int32_t k = 0; k < nk; k++) {
             pp[k].key = keys[k];
-            pp[k].post = jb_term(&B, keys[k], tks[k], g.outstate + (size_t)Pb->id * (size_t)g.ncells);
-            pp[k].pre = back ? jb_term(&B, keys[k], tks[k], g.instate + (size_t)header * (size_t)g.ncells) : -1;
+            pp[k].post = jb_cterm(&B, keys[k], tks[k], g.outstate + (size_t)Pb->id * (size_t)g.ncells, header);
+            pp[k].pre = back ? jb_cterm(&B, keys[k], tks[k], g.instate + (size_t)header * (size_t)g.ncells, header) : -1;
             pp[k].tk = tks[k];
         }
         JLT none[1]; JCons goal; JObl o;

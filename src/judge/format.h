@@ -98,7 +98,8 @@ struct IrFunc; struct IrType;
 // instance: it holds where g <= k or the sum holds, a prefix `for each k < g`. gen.h states and
 // owes them; nothing here is believed.
 enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
-enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3 };
+// JTERM_ENTRY: an integer cell's version on the claim's loop's single entry edge (fixed in the loop)
+enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
                  struct IrFunc *fn; } JClaim;
 // A RANKING claim at a loop header: a tuple of components f_j = sum coef[j][i] * term_i + c0[j]

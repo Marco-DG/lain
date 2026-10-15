@@ -35,7 +35,7 @@ static IrType *u32t;
 
 // ── the stub callbacks ──────────────────────────────────────────────────────────────────────
 enum { S_HONEST, S_CORRUPT, S_GOAL_MODEL, S_HYP_MODEL, S_BUDGET };
-typedef struct { int mode; int propose; JClaim claim; JRank rank[3]; int32_t nrank; } Stub;
+typedef struct { int mode; int propose; JClaim claim; JRank rank[3]; int32_t nrank; JClaim claims[4]; int32_t nclaims; } Stub;
 enum { P_NONE, P_CLAIM, P_FAIL, P_RANK };
 static int nins_m(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
 static JInt jv(int64_t v) { JInt x; memset(&x, 0, sizeof x); uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v; x.neg = v < 0; while (u) { x.limb[x.n++] = (uint32_t)u; u >>= 32; } return x; }
@@ -69,6 +69,7 @@ static bool stub_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **o
     *rk = s->nrank ? s->rank : NULL; *nrk = s->nrank;
     if (s->propose == P_FAIL) return false;
     if (s->propose == P_CLAIM) { *out = &s->claim; *n = 1; } else { *out = NULL; *n = 0; }      // P_RANK: ranks only
+    if (s->nclaims) { *out = s->claims; *n = s->nclaims; }                                      // several, with the ranks
     return true;
 }
 static int count_in(const char *all, const char *key) { int n = 0; for (const char *p = all; (p = strstr(p, key)); p++) n++; return n; }
@@ -1122,6 +1123,97 @@ int main(void) {
                           "Fig. 3: its eight rank VCs proved:\n%s", recs);
         else if (c == 4) CHECK(nn == 1 && nkind == 1 && count_in(recs, "not-implied") == 1, "overlap: rank.region alone not implied:\n%s", recs);
         else CHECK(nkind >= 1, "case %d: %s not implied:\n%s", c, kind, recs);
+    }
+
+    // an ENTRY term (c40). (A) LarrazOliveras' Fig. 1, all i32: `while y >= 1 { x = x - 1; while y < z
+    // { x++; z-- }; y = x + y }`. At the inner header x + z - entry(x) - entry(z) <= 0 and its mirror
+    // (entry(x) the store x - 1, entry(z) z's outer-header version), rankings z - y (inner) and
+    // x + z + 2^32 (outer, bounded by the types): every claim and rank VC proved; (A') no claims: the
+    // outer rank.fall not implied. (B) nestedLoop-1's middle loop, all u32: `i = 0; while i < n { j =
+    // 0; while j < m { j++; k = i; while k < N { k++ }; i = k }; i++ }`, claims k - i >= 0 at the
+    // inner header and i - entry(i) >= 0 at the middle one (entry(i) i's outer-header version),
+    // rankings n - i, m - j, N - k: all proved; (B') without the middle claim: the outer's rank.fall
+    // not implied
+    for (int c = 0; c < 4; c++) {
+        IrType *T = c < 2 ? ir_type_int(&A, 32, true) : u32t;
+        IrFunc *ef = ir_func_new(&A, nm(c < 2 ? "larraz40" : "nest40"), T, IR_FUNC_PURE);
+        Stub se; memset(&se, 0, sizeof se);
+        se.propose = P_RANK;
+        IrBlock *latch_out, *latch_in, *H1, *H2;
+        if (c < 2) {
+            IrValue *x0 = ir_add_param(ef, T, nm("x0")), *y0 = ir_add_param(ef, T, nm("y0")), *z0 = ir_add_param(ef, T, nm("z0"));
+            IrBlock *e0 = ef->entry, *e1 = ir_new_block(ef), *e2 = ir_new_block(ef), *e3 = ir_new_block(ef), *e4 = ir_new_block(ef),
+                    *e5 = ir_new_block(ef), *e6 = ir_new_block(ef);
+            IrValue *x = ir_alloca(ef, e0, T), *y = ir_alloca(ef, e0, T), *z = ir_alloca(ef, e0, T);
+            ir_store(ef, e0, x, x0); ir_store(ef, e0, y, y0); ir_store(ef, e0, z, z0); ir_set_br(e0, e1);
+            ir_set_br_cond(e1, ir_icmp(ef, e1, IR_CMP_SGE, ir_load(ef, e1, y, T), ir_const_int(ef, e1, 1, T)), e2, e6);
+            ir_store(ef, e2, x, ir_binop(ef, e2, IR_SUB, ir_load(ef, e2, x, T), ir_const_int(ef, e2, 1, T), T)); ir_set_br(e2, e3);
+            ir_set_br_cond(e3, ir_icmp(ef, e3, IR_CMP_SLT, ir_load(ef, e3, y, T), ir_load(ef, e3, z, T)), e4, e5);
+            ir_store(ef, e4, x, ir_binop(ef, e4, IR_ADD, ir_load(ef, e4, x, T), ir_const_int(ef, e4, 1, T), T));
+            ir_store(ef, e4, z, ir_binop(ef, e4, IR_SUB, ir_load(ef, e4, z, T), ir_const_int(ef, e4, 1, T), T)); ir_set_br(e4, e3);
+            ir_store(ef, e5, y, ir_binop(ef, e5, IR_ADD, ir_load(ef, e5, x, T), ir_load(ef, e5, y, T), T)); ir_set_br(e5, e1);
+            ir_set_ret(e6, ir_const_int(ef, e6, 0, T));
+            ir_finalize_cfg(ef);
+            H1 = e1; H2 = e3; latch_out = e5; latch_in = e4;
+            for (int q = 0; q < 2 && c == 0; q++) {                // x + z - entry(x) - entry(z), both ways
+                JClaim *cl = &se.claims[q]; cl->blk = e3->id; cl->fn = ef; cl->nt = 4;
+                cl->key[0] = x->id; cl->key[1] = z->id; cl->key[2] = x->id; cl->key[3] = z->id;
+                cl->tk[2] = JTERM_ENTRY; cl->tk[3] = JTERM_ENTRY;
+                int sg = q ? -1 : 1; cl->coef[0] = sg; cl->coef[1] = sg; cl->coef[2] = -sg; cl->coef[3] = -sg; cl->rhs = 0;
+            }
+            se.nclaims = c == 0 ? 2 : 0;
+            JRank *ri = &se.rank[0], *ro = &se.rank[1];
+            ri->blk = e3->id; ri->fn = ef; ri->ncomp = 1; ri->nt = 2; ri->key[0] = z->id; ri->key[1] = y->id; ri->coef[0][0] = 1; ri->coef[0][1] = -1;
+            ri->nedge = 1; ri->from[0] = e4->id;
+            ro->blk = e1->id; ro->fn = ef; ro->ncomp = 1; ro->nt = 2; ro->key[0] = x->id; ro->key[1] = z->id; ro->coef[0][0] = 1; ro->coef[0][1] = 1;
+            ro->c0[0] = (__int128)1 << 32; ro->nedge = 1; ro->from[0] = e5->id;
+            se.nrank = 2;
+        } else {
+            IrValue *n = ir_add_param(ef, T, nm("n")), *m = ir_add_param(ef, T, nm("m")), *N = ir_add_param(ef, T, nm("N"));
+            IrBlock *b0 = ef->entry, *b1 = ir_new_block(ef), *b2 = ir_new_block(ef), *b3 = ir_new_block(ef), *b4 = ir_new_block(ef),
+                    *b5 = ir_new_block(ef), *b6 = ir_new_block(ef), *b7 = ir_new_block(ef), *b8 = ir_new_block(ef), *b9 = ir_new_block(ef);
+            IrValue *i = ir_alloca(ef, b0, T), *j = ir_alloca(ef, b0, T), *k = ir_alloca(ef, b0, T);
+            ir_store(ef, b0, i, ir_const_int(ef, b0, 0, T)); ir_store(ef, b0, j, ir_const_int(ef, b0, 0, T)); ir_store(ef, b0, k, ir_const_int(ef, b0, 0, T));
+            ir_set_br(b0, b1);
+            ir_set_br_cond(b1, ir_icmp(ef, b1, IR_CMP_ULT, ir_load(ef, b1, i, T), n), b2, b9);              // outer
+            ir_store(ef, b2, j, ir_const_int(ef, b2, 0, T)); ir_set_br(b2, b3);
+            IrValue *lj = ir_load(ef, b3, j, T);
+            ir_set_br_cond(b3, ir_icmp(ef, b3, IR_CMP_ULT, lj, m), b4, b8);                                // middle
+            ir_store(ef, b4, j, ir_binop(ef, b4, IR_ADD, lj, ir_const_int(ef, b4, 1, T), T));
+            ir_store(ef, b4, k, ir_load(ef, b4, i, T)); ir_set_br(b4, b5);
+            IrValue *lk = ir_load(ef, b5, k, T);
+            ir_set_br_cond(b5, ir_icmp(ef, b5, IR_CMP_ULT, lk, N), b6, b7);                                // inner
+            ir_store(ef, b6, k, ir_binop(ef, b6, IR_ADD, lk, ir_const_int(ef, b6, 1, T), T)); ir_set_br(b6, b5);
+            ir_store(ef, b7, i, ir_load(ef, b7, k, T)); ir_set_br(b7, b3);
+            ir_store(ef, b8, i, ir_binop(ef, b8, IR_ADD, ir_load(ef, b8, i, T), ir_const_int(ef, b8, 1, T), T)); ir_set_br(b8, b1);
+            ir_set_ret(b9, ir_const_int(ef, b9, 0, T));
+            ir_finalize_cfg(ef);
+            H1 = b1; H2 = b3; latch_out = b8; latch_in = b7;
+            JClaim *ci = &se.claims[0], *cm = &se.claims[1];
+            ci->blk = b5->id; ci->fn = ef; ci->nt = 2; ci->key[0] = k->id; ci->key[1] = i->id; ci->coef[0] = -1; ci->coef[1] = 1; ci->rhs = 0;   // k - i >= 0
+            cm->blk = b3->id; cm->fn = ef; cm->nt = 2; cm->key[0] = i->id; cm->key[1] = i->id; cm->tk[1] = JTERM_ENTRY;
+            cm->coef[0] = -1; cm->coef[1] = 1; cm->rhs = 0;                                                                         // i - entry(i) >= 0
+            se.nclaims = c == 2 ? 2 : 1;
+            JRank *r = se.rank;
+            IrBlock *hs[3] = { b1, b3, b5 }, *ls[3] = { b8, b7, b6 }; IrValue *cs[3] = { i, j, k }, *bs[3] = { n, m, N };
+            for (int q = 0; q < 3; q++) { r[q].blk = hs[q]->id; r[q].fn = ef; r[q].ncomp = 1; r[q].nt = 2; r[q].key[0] = bs[q]->id; r[q].key[1] = cs[q]->id;
+                                          r[q].coef[0][0] = 1; r[q].coef[0][1] = -1; r[q].nedge = 1; r[q].from[0] = ls[q]->id; }
+            se.nrank = 3;
+        }
+        (void)latch_in; (void)H2;
+        CHECK(run(ef, &se, true, sizeof region, err), "judges: %s", err);
+        // the claims' and rankings' records (the programs' own + and - are unbounded here, their
+        // narrowings not implied, and beside the point)
+        int ni = 0;
+        for (const char *l = recs; (l = strstr(l, "not-implied ")); l++) { const char *e = strchr(l, '\n'), *k1 = strstr(l, " inv."), *k2 = strstr(l, " rank.");
+                                                                           if ((k1 && (!e || k1 < e)) || (k2 && (!e || k2 < e))) ni++; }
+        char fo[64]; snprintf(fo, sizeof fo, "not-implied bb%d.%d rank.fall", latch_out->id, nins_m(latch_out));
+        int nr = c < 2 ? 2 : 3;
+        if (c == 0 || c == 2) CHECK(ni == 0 && !strstr(recs, "outside") && !strstr(recs, "uncertified") && count_in(recs, "proved bb") > 0 &&
+                                    count_in(recs, " inv.entry") == 2 && count_in(recs, " inv.keep") == 2 && count_in(recs, "rank.fall") == nr && count_in(recs, "rank.bound") == nr,
+                                    "case %d: every claim and ranking VC proved:\n%s", c, recs);
+        else CHECK(strstr(recs, fo) != NULL, "case %d: without the entry claim, the outer rank.fall not implied:\n%s", c, recs);
+        (void)H1;
     }
 
     printf("── a function the generator refuses, a region too small ──\n");
