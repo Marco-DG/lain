@@ -1,0 +1,48 @@
+vc rec1_23 84f38d5b bb2.9 post 3
+  var %v12
+  var %v0
+  var %v10
+  var %v11
+  var %v7
+  var %v9
+  var %v4
+  var %v8
+  var %v6
+  var %v5
+  var %v1
+  hyp h1 type %v12 i32 : -1*%v12 <= 2147483648
+  hyp h2 type %v12 i32 : 1*%v12 <= 2147483647
+  hyp h3 def %v12 add : 1*%v12 + -1*%v10 + -1*%v11 = 0
+  hyp h4 type %v0 i32 : -1*%v0 <= 2147483648
+  hyp h5 type %v0 i32 : 1*%v0 <= 2147483647
+  hyp h6 type %v10 i32 : -1*%v10 <= 2147483648
+  hyp h7 type %v10 i32 : 1*%v10 <= 2147483647
+  hyp h8 contract rec1_23 #0 : -1*%v10 <= 0
+  hyp h9 contract rec1_23 #1 : 1*%v10 <= 1
+  hyp h10 contract rec1_23 #2 : 2147483649*%v10 + -1*%v7 <= 2147483648
+  hyp h11 contract rec1_23 #3 : 1*%v10 + -1*%v7 <= 2147483648
+  hyp h12 def %v11 const : 1*%v11 = 1
+  hyp h13 type %v7 i32 : -1*%v7 <= 2147483648
+  hyp h14 type %v7 i32 : 1*%v7 <= 2147483647
+  hyp h15 contract rec1_23 #0 : -1*%v7 <= 0
+  hyp h16 contract rec1_23 #1 : 1*%v7 <= 1
+  hyp h17 contract rec1_23 #2 : 2147483649*%v7 + -1*%v9 <= 2147483648
+  hyp h18 contract rec1_23 #3 : 1*%v7 + -1*%v9 <= 2147483648
+  hyp h19 type %v9 i32 : -1*%v9 <= 2147483648
+  hyp h20 type %v9 i32 : 1*%v9 <= 2147483647
+  hyp h21 def %v9 sub : 1*%v9 + -1*%v4 + 1*%v8 = 0
+  hyp h22 type %v4 i32 : -1*%v4 <= 2147483648
+  hyp h23 type %v4 i32 : 1*%v4 <= 2147483647
+  hyp h24 contract rec1_23 #0 : -1*%v4 <= 0
+  hyp h25 contract rec1_23 #1 : 1*%v4 <= 1
+  hyp h26 contract rec1_23 #2 : 2147483649*%v4 + -1*%v6 <= 2147483648
+  hyp h27 contract rec1_23 #3 : 1*%v4 + -1*%v6 <= 2147483648
+  hyp h28 def %v8 const : 1*%v8 = 1
+  hyp h29 type %v6 i32 : -1*%v6 <= 2147483648
+  hyp h30 type %v6 i32 : 1*%v6 <= 2147483647
+  hyp h31 def %v6 sub : -1*%v0 + 1*%v6 + 1*%v5 = 0
+  hyp h32 def %v5 const : 1*%v5 = 2
+  hyp h33 guard bb0->bb2 : -1*%v0 + 1*%v1 <= -1
+  hyp h34 def %v1 const : 1*%v1 = 0
+  goal 1*%v12 + -1*%v0 <= 2147483648
+end

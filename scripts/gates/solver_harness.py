@@ -2,7 +2,8 @@
 """solver_harness.py — the untrusted solver (src/solver/lia.h) against an INDEPENDENT kernel and
 brute force. run_ir_tests.sh runs the gate form.
 
-  solver_harness.py SOLVE_VC                       the gate: the worked examples, then fixed seeds
+  solver_harness.py SOLVE_VC                       the gate: the worked examples, the sliced retry's
+                                                   cases, then fixed seeds
   solver_harness.py SOLVE_VC N SEED [bounded|free] one random run
   solver_harness.py --check VCS ANSWERS [MODELS]   check solve_vc's answers to a file of VCs, with
                                                    counts per obligation kind; MODELS lists the
@@ -17,6 +18,9 @@ Generates N random VCs (seeded), runs SOLVE_VC on them, and checks every answer:
     Branch and bound over a box always ends, so a solver that refuses here has lost strength (a
     mutant that splits the same point forever did exactly that, and only a count saw it). The
     budget is a few times the most a correct solver used on these seeds, so such a mutant stops.
+The SLICED RETRY (lia.h, PE.13) is checked on solver_capacity/: VCs whose whole search stops on
+CAPACITY. A certificate from a slice must pass this kernel against the WHOLE VC, and where no slice
+holds the proof the answer must stay CAPACITY, never a model of a slice.
 Prints the counts; exit 1 on any wrong answer. The kernel here is written from the format's
 document, in another language, and shares nothing with the C: a solver bug that the C kernel
 would also miss still has to get past this one.
@@ -205,12 +209,12 @@ LIMITS = ["40000", "512", "512"]     # pivots, nodes, leaves; the seeds below ne
 # sees that. A correct solver runs each set below in a few seconds.
 TIMEOUT = 120
 
-def run(exe, vcs, bounded, B, expect=None):
+def run(exe, vcs, bounded, B, expect=None, limits=None):
     with tempfile.NamedTemporaryFile("w", suffix=".vc", delete=False) as f:
         for vc in vcs: f.write(vc_text(vc))
         path = f.name
     try:
-        out = subprocess.run([exe, path] + LIMITS, capture_output=True, text=True, timeout=TIMEOUT)
+        out = subprocess.run([exe, path] + (limits or LIMITS), capture_output=True, text=True, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         os.unlink(path); print(f"  WRONG: the solver did not finish {len(vcs)} VCs within {TIMEOUT} s"); return 1
     os.unlink(path)
@@ -246,7 +250,47 @@ def run(exe, vcs, bounded, B, expect=None):
             bad += 1
             if bad <= 5: print("WRONG:", e); print(vc_text(vc) + head + "\n" + "\n".join(body))
     print("  " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + f"; wrong {bad}; max work {work}")
+    run.work = work
     return 1 if bad else 0
+
+# ── the sliced retry (lia.h, PE.13) ────────────────────────────────────────────────────────────
+# Each VC's whole search stops on CAPACITY (a product past 128 bits), and the answer each must get:
+CAPACITY_CASES = [
+    # NestedRecursion's rec1, the post VC of its return claims (MCW's f14), two claim sets: S_2, 20
+    # and 26 of the facts, is refuted in 10 pivots; the certificate is checked against all of them
+    ("rec1_0x17.vc", "cert"), ("rec1_0x7f.vc", "cert"),
+    # the same with five claims: valid (refuted over the rationals), but no slice below the whole VC
+    # holds the proof (S_1 to S_3 are satisfiable): CAPACITY, never a slice's model
+    ("rec1_0x7c.vc", "capacity"),
+    # valid only through a part the goal never reaches (rec1 0x17's refutation over other
+    # variables, whose search overflows), while the goal's own part `y <= 5 => y <= 3` is not:
+    # CAPACITY, never the model y = 4 of the slice
+    ("twoparts.vc", "capacity"),
+    # the proof is a case split on h36, after 35 facts the slice leaves out: the `case` names the
+    # disjunction by its index in the WHOLE VC, which this kernel reads
+    ("caselast.vc", "cert"),
+]
+def run_capacity(exe):
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "solver_capacity")
+    vcs = [read_vcs(open(os.path.join(d, f)).read())[0] for f, _ in CAPACITY_CASES]
+    rc = run(exe, vcs, False, 4, [k for _, k in CAPACITY_CASES])
+    # the retries share the call's one budget: rec1 0x17 needs 13 pivots to fail whole, 5 for S_1
+    # and 10 for S_2, so 20 leave S_2 too few (CAPACITY, at most 20 used), while a budget the
+    # whole search exhausts is BUDGET, and is not retried
+    for lim, kind in ((["20", "512", "512"], "capacity"), (["5", "512", "512"], "budget")):
+        print(f"  rec1_0x17 within {lim[0]} pivots:")
+        r = run(exe, vcs[:1], False, 4, [kind], lim)
+        if r == 0 and run.work["pivot"] > int(lim[0]):
+            print(f"  WRONG: {run.work['pivot']} pivots used of {lim[0]}"); r = 1
+        rc |= r
+    # deterministic: the same VCs twice, byte for byte
+    with tempfile.NamedTemporaryFile("w", suffix=".vc", delete=False) as f:
+        for vc in vcs: f.write(vc_text(vc))
+        path = f.name
+    outs = [subprocess.run([exe, path] + LIMITS, capture_output=True, text=True, timeout=TIMEOUT).stdout for _ in range(2)]
+    os.unlink(path)
+    if outs[0] != outs[1]: print("  WRONG: two runs answered differently"); rc = 1
+    return rc
 
 # ── reading the texts (for --check over a generator's VCs) ─────────────────────────────────────
 def parse_cons(tokens, names):
@@ -380,6 +424,8 @@ def main():
     vcs = [{"id": f"{n} 0 bb0.0 worked 0", "names": names, "hyps": hyps, "goal": goal} for n, _, names, hyps, goal in WORKED]
     print("worked examples:")
     rc |= run(exe, vcs, False, 4, [k for _, k, _, _, _ in WORKED])
+    print("the sliced retry (solver_capacity/):")
+    rc |= run_capacity(exe)
     for seed, mode in ((1, "bounded"), (2, "bounded"), (3, "free")):
         rng = random.Random(seed)
         print(f"seed {seed}, 1000 VCs, {mode}:")

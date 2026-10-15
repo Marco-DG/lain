@@ -28,6 +28,9 @@
 // own, Bland's rule throughout; no hash, no pointer order, no time. The same VC and the same
 // limits give the same answer, byte for byte.
 //
+// A VC that stops on CAPACITY is asked again on fewer of its hypotheses (the sliced retry, at the
+// end of this file), and only a certificate from that is answered.
+//
 // Only judge/format.h is included from the judge (scripts/gates/judge_includes.py checks it).
 // Memory is the caller's region: the search's scratch grows up from its start and is released
 // node by node, and the answer grows down from its end, so it outlives the search that built it.
@@ -47,6 +50,7 @@ typedef struct {
     JWork used, limit;
     int32_t nf, ns;             // the f and s numbers given so far
     int32_t nv;                 // the VC's variables
+    const uint8_t *on;          // the hypotheses in play, by index (NULL: all): the sliced retry's
 } LSol;
 
 // ── memory ──────────────────────────────────────────────────────────────────────────────────────
@@ -404,7 +408,7 @@ static LRes ls_node(LSol *S, const JVc *vc, LCon *cons, int32_t ncons, int32_t f
     int32_t hd = -1;
     for (int32_t h = 0; h < vc->nhyps && hd < 0; h++) {
         const JHyp *H = &vc->hyps[h];
-        if (!H->disj) continue;
+        if (!H->disj || (S->on && !S->on[h])) continue;
         bool any = false;
         for (int32_t d = 0; d < H->ndis && !any; d++) {
             bool all = true;
@@ -440,14 +444,14 @@ static LRes ls_node(LSol *S, const JVc *vc, LCon *cons, int32_t ncons, int32_t f
     S->lo = mark; return LS_UNSAT;
 }
 
-// Solve `vc` within `limit`, in the caller's region of `size` bytes. Every pointer in the answer
-// points into that region.
-static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
+// One search over the hypotheses `on` names (NULL: every one). A reference keeps its hypothesis's
+// index in the full list, so a certificate over a slice is the full VC's.
+static JAnswer ls_solve(const JVc *vc, const uint8_t *on, JWork limit, void *mem, size_t size) {
     JAnswer A; memset(&A, 0, sizeof A);
     LSol S; memset(&S, 0, sizeof S);
-    S.lo = (char *)mem; S.hi = (char *)mem + size; S.limit = limit; S.nv = vc->nvars;
+    S.lo = (char *)mem; S.hi = (char *)mem + size; S.limit = limit; S.nv = vc->nvars; S.on = on;
     int32_t nc = 1;
-    for (int32_t h = 0; h < vc->nhyps; h++) if (!vc->hyps[h].disj) nc++;
+    for (int32_t h = 0; h < vc->nhyps; h++) if (!vc->hyps[h].disj && (!on || on[h])) nc++;
     LCon *cons = (LCon *)ls_scratch(&S, sizeof(LCon), nc);
     LSi *model = (LSi *)ls_scratch(&S, sizeof(LSi), S.nv);
     LRes r = LS_STOP;
@@ -455,7 +459,7 @@ static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
     if (cons && model) {
         int32_t k = 0;
         for (int32_t h = 0; h < vc->nhyps && !S.cap; h++)
-            if (!vc->hyps[h].disj) ls_con(&S, &vc->hyps[h].cons, ls_ref(J_REF_H, h + 1, 0), &cons[k++]);
+            if (!vc->hyps[h].disj && (!on || on[h])) ls_con(&S, &vc->hyps[h].cons, ls_ref(J_REF_H, h + 1, 0), &cons[k++]);
         // g, the goal's negation: `-lin <= -c - 1` for `lin <= c`, `lin = c` for `lin != c`
         if (!S.cap && ls_con(&S, &vc->goal, ls_ref(J_REF_G, 0, 0), &cons[k])) {
             if (vc->goal.op == J_LE) {
@@ -475,6 +479,89 @@ static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
     }
     if (r == LS_STOP) A.k = S.cap || !S.out ? J_ANS_CAPACITY : J_ANS_BUDGET;
     A.used = S.used;
+    return A;
+}
+
+// ── the sliced retry (PE.13) ──────────────────────────────────────────────────────────────────
+// A pivot through a fact the proof never needs can leave 128 bits where the proof's own numbers
+// are small. NestedRecursion's rec1 is one: its post VC stops at pivot 13 on a product past 127
+// bits (whose sum is back under 125), through the contract rows `2147483649*ret - i <= 2^31`,
+// while five small facts refute it. So a VC that stops on CAPACITY is asked again on its slices:
+// S_1, the hypotheses naming a variable of the goal; S_2, those naming a variable of S_1's; and so
+// on, until a round adds none (the goal's connected part) or the slice is the whole VC, whose
+// answer is known. rec1's S_2, 20 of its 34 facts, is refuted in 10 pivots. A disjunction names
+// every variable of every disjunct. A goal with no variable has no slice.
+//
+// Only a CERTIFICATE from a slice is answered, and it is the full VC's as it stands: a slice is a
+// mask over the full list, so every `h<k>` and every `case` names its hypothesis by its index in
+// the FULL VC, and the kernel, which is given the full VC, checks it there (a refutation need not
+// cite every fact). A slice's MODEL is no model of the full VC: a dropped fact may be false at it,
+// or contradict the rest in a part the goal never reaches. A slice's BUDGET or CAPACITY says
+// nothing new. Each goes on to the next slice; when none certifies, the answer is the full VC's
+// own CAPACITY. The attempts share the call's one budget, `used` their sum, and the slices are a
+// function of the VC alone, so the answer stays deterministic.
+static bool ls_names(const JCons *c, const uint8_t *seen) {
+    for (int32_t t = 0; t < c->nt; t++) if (seen[c->t[t].var]) return true;
+    return false;
+}
+static void ls_see(const JCons *c, uint8_t *seen) {
+    for (int32_t t = 0; t < c->nt; t++) seen[c->t[t].var] = 1;
+}
+static bool ls_in_range(const JCons *c, int32_t nv) {
+    for (int32_t t = 0; t < c->nt; t++) if (c->t[t].var < 0 || c->t[t].var >= nv) return false;
+    return true;
+}
+static uint64_t ls_left(uint64_t limit, uint64_t used) { return used < limit ? limit - used : 0; }
+
+// Solve `vc` within `limit`, in the caller's region of `size` bytes. Every pointer in the answer
+// points into that region.
+static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
+    JAnswer A = ls_solve(vc, NULL, limit, mem, size);
+    if (A.k != J_ANS_CAPACITY || vc->goal.nt == 0 || vc->nhyps == 0 || vc->nvars <= 0) return A;
+    // a VC the search refused as malformed (a variable out of range) is not sliced
+    bool ok = ls_in_range(&vc->goal, vc->nvars);
+    for (int32_t h = 0; h < vc->nhyps && ok; h++) {
+        const JHyp *H = &vc->hyps[h];
+        if (!H->disj) ok = ls_in_range(&H->cons, vc->nvars);
+        else for (int32_t d = 0; d < H->ndis && ok; d++)
+            for (int32_t q = 0; q < H->dis[d].nc && ok; q++) ok = ls_in_range(&H->dis[d].c[q], vc->nvars);
+    }
+    // the masks at the region's start (the failed search kept nothing), the searches after them
+    size_t mk = ((size_t)vc->nhyps + (size_t)vc->nvars + 15u) & ~(size_t)15u;
+    if (!ok || size < mk + 4096) return A;
+    uint8_t *on = (uint8_t *)mem, *seen = on + vc->nhyps;
+    memset(mem, 0, mk);
+    ls_see(&vc->goal, seen);
+    JWork used = A.used;
+    for (int32_t in = 0;;) {
+        int32_t added = 0;
+        for (int32_t h = 0; h < vc->nhyps; h++) {      // this round: what names a variable seen before it
+            const JHyp *H = &vc->hyps[h];
+            bool names = false;
+            if (on[h]) continue;
+            if (!H->disj) names = ls_names(&H->cons, seen);
+            else for (int32_t d = 0; d < H->ndis && !names; d++)
+                for (int32_t q = 0; q < H->dis[d].nc && !names; q++) names = ls_names(&H->dis[d].c[q], seen);
+            if (names) { on[h] = 2; added++; }
+        }
+        if (!added) break;
+        for (int32_t h = 0; h < vc->nhyps; h++) {      // its variables are seen by the next round
+            const JHyp *H = &vc->hyps[h];
+            if (on[h] != 2) continue;
+            on[h] = 1;
+            if (!H->disj) ls_see(&H->cons, seen);
+            else for (int32_t d = 0; d < H->ndis; d++)
+                for (int32_t q = 0; q < H->dis[d].nc; q++) ls_see(&H->dis[d].c[q], seen);
+        }
+        in += added;
+        if (in == vc->nhyps) break;
+        JWork left = { ls_left(limit.pivot, used.pivot), ls_left(limit.node, used.node), ls_left(limit.leaf, used.leaf) };
+        if (!left.pivot || !left.node || !left.leaf) break;
+        JAnswer B = ls_solve(vc, on, left, (char *)mem + mk, size - mk);
+        used.pivot += B.used.pivot; used.node += B.used.node; used.leaf += B.used.leaf;
+        if (B.k == J_ANS_CERT) { B.used = used; return B; }
+    }
+    A.used = used;
     return A;
 }
 

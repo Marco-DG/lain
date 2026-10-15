@@ -1,0 +1,51 @@
+vc twoparts 0 bb0.0 post 0
+  var y
+  var w12
+  var w0
+  var w10
+  var w11
+  var w7
+  var w9
+  var w4
+  var w8
+  var w6
+  var w5
+  var w1
+  hyp h1 def : 1*y <= 5
+  hyp h2 def : -1*w12 <= 2147483648
+  hyp h3 def : 1*w12 <= 2147483647
+  hyp h4 def : 1*w12 + -1*w10 + -1*w11 = 0
+  hyp h5 def : -1*w0 <= 2147483648
+  hyp h6 def : 1*w0 <= 2147483647
+  hyp h7 def : -1*w10 <= 2147483648
+  hyp h8 def : 1*w10 <= 2147483647
+  hyp h9 def : -1*w10 <= 0
+  hyp h10 def : 1*w10 <= 1
+  hyp h11 def : 2147483649*w10 + -1*w7 <= 2147483648
+  hyp h12 def : 1*w10 + -1*w7 <= 2147483648
+  hyp h13 def : 1*w11 = 1
+  hyp h14 def : -1*w7 <= 2147483648
+  hyp h15 def : 1*w7 <= 2147483647
+  hyp h16 def : -1*w7 <= 0
+  hyp h17 def : 1*w7 <= 1
+  hyp h18 def : 2147483649*w7 + -1*w9 <= 2147483648
+  hyp h19 def : 1*w7 + -1*w9 <= 2147483648
+  hyp h20 def : -1*w9 <= 2147483648
+  hyp h21 def : 1*w9 <= 2147483647
+  hyp h22 def : 1*w9 + -1*w4 + 1*w8 = 0
+  hyp h23 def : -1*w4 <= 2147483648
+  hyp h24 def : 1*w4 <= 2147483647
+  hyp h25 def : -1*w4 <= 0
+  hyp h26 def : 1*w4 <= 1
+  hyp h27 def : 2147483649*w4 + -1*w6 <= 2147483648
+  hyp h28 def : 1*w4 + -1*w6 <= 2147483648
+  hyp h29 def : 1*w8 = 1
+  hyp h30 def : -1*w6 <= 2147483648
+  hyp h31 def : 1*w6 <= 2147483647
+  hyp h32 def : -1*w0 + 1*w6 + 1*w5 = 0
+  hyp h33 def : 1*w5 = 2
+  hyp h34 def : -1*w0 + 1*w1 <= -1
+  hyp h35 def : 1*w1 = 0
+  hyp h36 def : -1*w12 + 1*w0 <= -2147483649
+  goal 1*y <= 3
+end
