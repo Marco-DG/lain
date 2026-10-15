@@ -864,8 +864,10 @@ static bool fd_rank_regions(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *
     __int128 *rc = fd_bump(L, sizeof(__int128) * (size_t)JRANK_MAXC * (size_t)(np ? np : 1) * 2);
     if (!rc) return false;
     __int128 *rc1 = rc + (size_t)JRANK_MAXC * (size_t)(np ? np : 1), rc0[2][JRANK_MAXC];
+    char *mark = L->cur;                                     // each pair's scratch, reclaimed by the next
     for (int32_t i = 0; i < na; i++)
         for (int32_t j = 0; j < na; j++) {
+            L->cur = mark;
             if (at[i].q != at[j].q || at[i].w != at[j].w || at[i].s == at[j].s) continue;   // one form, opposite sides
             const FdAtom *g0 = &at[i], *g1 = &at[j];
             bool ok = true;
@@ -913,6 +915,201 @@ static bool fd_rank_regions(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *
             return true;
         }
     return false;
+}
+// PE.13, with c41's MIN components on free edges: versions a trip rotates OUTWARD
+// (4NestedWith3Variables: (a, b) <- (3a - 4b, 4a + 3b) scales |a| + |b| by at least 3.5, or leaves
+// (0, 0) where it is while q falls). The ranking <min(C - s1*v - s2*w), the rest>: the min over the
+// sign rows is C - (|v| + |w|), C the most s1*v + s2*w is on any path (the types), and the rest
+// ranks the trips that keep |v| + |w|. Checked here first, per back-edge path and each pair of sign
+// cases before and after the trip: |v'| + |w'| >= |v| + |w| + 1, or, under |v'| + |w'| <= |v| + |w|,
+// equality and the rest's own ranking (lia_rank_lex over exactly those cases). Before the trip each
+// version is >= 1, <= -1 or 0 (cases of x >= 0 all hold 0, where nothing grows, and every case fell to
+// the rest: 32 paths, past lia_rank_lex's budget); after it, >= 0 or <= 0. One version alone is the
+// two rows C - v and C + v.
+static bool fd_case_holds(JFinder *F, const JVc *P, const JCons *ex, int32_t nex, const JCons *goal, JWork lim) {
+    JHyp *h = malloc(sizeof *h * (size_t)(P->nhyps + nex + 1));
+    if (!h) { F->oom = true; return false; }
+    if (P->nhyps) memcpy(h, P->hyps, sizeof *h * (size_t)P->nhyps);
+    for (int32_t i = 0; i < nex; i++) { memset(&h[P->nhyps + i], 0, sizeof *h); h[P->nhyps + i].origin = "case"; h[P->nhyps + i].cons = ex[i]; }
+    JVc q = *P; q.hyps = h; q.nhyps = P->nhyps + nex;
+    memset(&q.goal, 0, sizeof q.goal);
+    if (goal) q.goal = *goal; else { q.goal.op = J_LE; fd_jint(&q.goal.rhs, -1); }   // none: refute
+    bool r = lia_solve(&q, lim, F->work, F->worksz).k == J_ANS_CERT;
+    free(h);
+    return r;
+}
+static JCons fd_cons_of(JTerm *t, int32_t nt, __int128 rhs) {
+    JCons c; memset(&c, 0, sizeof c); c.t = t; c.nt = nt; c.op = J_LE; fd_jint(&c.rhs, rhs); return c;
+}
+static int fd_no_templates;                                 // fd_rank inside a template: its search only
+static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out);
+// a kept case: path k with the case's facts added, sliced (as L->paths) and whole (as L->full)
+static const JVc *fd_with_case(FdLoop *L, const JVc *P, const JCons *ex, int32_t ne, const JTerm *tt, int32_t ntt) {
+    JVc *v = fd_bump(L, sizeof *v); JHyp *h = fd_bump(L, sizeof(JHyp) * (size_t)(P->nhyps + ne));
+    JTerm *rt = fd_bump(L, sizeof(JTerm) * (size_t)ntt);
+    if (!v || !h || !rt) return NULL;
+    memcpy(rt, tt, sizeof(JTerm) * (size_t)ntt);
+    if (P->nhyps) memcpy(h, P->hyps, sizeof *h * (size_t)P->nhyps);
+    for (int32_t e = 0; e < ne; e++) {
+        JHyp *y = &h[P->nhyps + e];
+        memset(y, 0, sizeof *y); y->origin = "case"; y->cons = ex[e];
+        y->cons.t = rt + (ex[e].t - tt);                     // into the copy
+    }
+    *v = *P; v->hyps = h; v->nhyps = P->nhyps + ne;
+    return v;
+}
+static bool fd_rank_absgrow(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
+    if (L->nedges > JRANK_MAXE || L->npaths == 0 || L->npaths > 8) return false;
+    JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
+    // the candidates: versions a trip changes, each with M, a bound on |v| before a trip: on every
+    // path, the least of the bounds it states on v alone (its type's, at the least). Any upper bound
+    // serves (it only keeps the rows >= 0), and reading the stated ones costs no search: maximizing
+    // on the whole paths took most of this template's time on 4NestedWith3Variables
+    int32_t cand[6], nc = 0; __int128 M[6];
+    for (int32_t z = 0; z < L->npk && nc < 6; z++) {
+        if (L->ptk[z] != JTERM_VALUE || L->pre[z] == L->post[z]) continue;
+        bool okM = true; __int128 m = 0;
+        for (int32_t k = 0; k < L->npaths && okM; k++) {
+            __int128 hi = 0, lo = 0; bool hh = false, hl = false;
+            for (int32_t x = 0; x < L->paths[k]->nhyps; x++) {
+                const JHyp *y = &L->paths[k]->hyps[x];
+                if (y->disj || y->cons.op != J_LE || y->cons.nt != 1 || y->cons.t[0].var != L->pre[z]) continue;
+                __int128 c = fd_int128(&y->cons.t[0].coef), r;
+                if (!fd_i128(&y->cons.rhs, &r)) continue;
+                if (c == 1 && (!hh || r < hi)) { hi = r; hh = true; }          // v <= r
+                if (c == -1 && (!hl || -r > lo)) { lo = -r; hl = true; }       // v >= -r
+            }
+            if (!hh || !hl) { okM = false; break; }
+            __int128 b = hi > -lo ? hi : -lo;
+            if (b > m) m = b;
+        }
+        if (okM && m <= ((__int128)1 << 39)) { M[nc] = m; cand[nc++] = z; }
+    }
+    char *mark = L->cur;                                     // each pair's scratch, reclaimed by the next
+    for (int32_t i = 0; i < nc; i++)
+        for (int32_t j = i; j < nc; j++) {                   // j == i: the version alone
+            L->cur = mark;
+            int32_t qv[2] = { cand[i], j == i ? -1 : cand[j] }, nq = j == i ? 1 : 2, ns = 1 << nq;
+            __int128 C = M[i] + (j == i ? 0 : M[j]);         // at least the most s . (v, w) before a trip
+            int32_t npre = nq == 1 ? 3 : 9;                  // before: per version 0 (>= 1), 1 (<= -1), 2 (= 0)
+            int32_t cap = L->npaths * npre * ns;
+            const JVc **resp = fd_bump(L, sizeof(JVc *) * (size_t)cap), **resf = fd_bump(L, sizeof(JVc *) * (size_t)cap);
+            int32_t *rese = fd_bump(L, sizeof(int32_t) * (size_t)cap);
+            if (!resp || !resf || !rese) return false;
+            int32_t nres = 0; bool ok = true;
+            uint8_t rep[8 * 9];                              // per (path, signs before): a same case kept
+            memset(rep, 0, sizeof rep);
+            for (int32_t k = 0; k < L->npaths && ok; k++)
+                for (int32_t a = 0; a < npre && ok; a++)
+                    for (int32_t b = 0; b < ns && ok; b++) {
+                        JTerm tt[16]; JCons ex[8];           // this case's scratch; a kept case is copied out
+                        int32_t ne = 0, used = 0;
+                        int sa[2];
+                        for (int32_t u = 0; u < nq; u++) {   // sign cases, before and after
+                            int da = u ? a / 3 : a % 3, sb = (b >> u) & 1 ? -1 : 1;
+                            sa[u] = da == 0 ? 1 : da == 1 ? -1 : 0;
+                            JTerm *t1 = tt + used; used += 1; t1[0].var = L->pre[qv[u]];
+                            if (sa[u]) { fd_jint(&t1[0].coef, -sa[u]); ex[ne++] = fd_cons_of(t1, 1, -1); }   // -s*x <= -1
+                            else {                            // x <= 0 and -x <= 0
+                                fd_jint(&t1[0].coef, 1); ex[ne++] = fd_cons_of(t1, 1, 0);
+                                JTerm *t3 = tt + used; used += 1; t3[0].var = L->pre[qv[u]]; fd_jint(&t3[0].coef, -1);
+                                ex[ne++] = fd_cons_of(t3, 1, 0);
+                            }
+                            JTerm *t2 = tt + used; used += 1; t2[0].var = L->post[qv[u]]; fd_jint(&t2[0].coef, -sb);
+                            ex[ne++] = fd_cons_of(t2, 1, 0);
+                        }
+                        if (fd_case_holds(F, L->paths[k], ex, ne, NULL, slim)) continue;   // no such case
+                        if (F->oom) return false;
+                        JTerm *g = tt + used; int32_t ng = 0;   // A - B <= -1: |v'| + |w'| >= |v| + |w| + 1
+                        for (int32_t u = 0; u < nq; u++) {
+                            if (sa[u]) ng = fd_lin(g, ng, L->pre[qv[u]], sa[u]);
+                            ng = fd_lin(g, ng, L->post[qv[u]], (b >> u) & 1 ? 1 : -1);
+                        }
+                        used += 4;
+                        JCons grow = fd_cons_of(g, ng, -1);
+                        if (fd_case_holds(F, L->paths[k], ex, ne, &grow, slim)) continue;
+                        if (F->oom) return false;
+                        JTerm *kp = tt + used;               // otherwise B - A <= 0, and then A - B <= 0 too
+                        for (int32_t u = 0; u < ng; u++) { kp[u] = g[u]; fd_jint(&kp[u].coef, -fd_int128(&g[u].coef)); }
+                        used += 4;
+                        ex[ne++] = fd_cons_of(kp, ng, 0);
+                        JCons keep = fd_cons_of(g, ng, 0);
+                        if (!fd_case_holds(F, L->paths[k], ex, ne, &keep, slim)) { ok = false; break; }
+                        // a kept case that leaves v and w as they were (4Nested's (0, 0)) is one case per
+                        // path and pre-trip signs, whatever the signs after: the others repeat it. The
+                        // first FEASIBLE one stands for them: with v <= -1 kept, the case of every
+                        // version >= 0 after the trip cannot run, and taking it as the representative
+                        // dropped v's case from the rest's search (the Secondary Compiler Worker's review)
+                        bool same = true;
+                        for (int32_t u = 0; u < nq && same; u++)
+                            for (int sg = 1; sg >= -1 && same; sg -= 2) {
+                                JTerm d[2]; int32_t nd = fd_lin(d, 0, L->pre[qv[u]], sg); nd = fd_lin(d, nd, L->post[qv[u]], -sg);
+                                JCons eq = fd_cons_of(d, nd, 0);
+                                same = fd_case_holds(F, L->paths[k], ex, ne, &eq, slim);
+                            }
+                        if (same && rep[k * npre + a]) continue;
+                        if (same) rep[k * npre + a] = 1;
+                        resp[nres] = fd_with_case(L, L->paths[k], ex, ne, tt, used);
+                        resf[nres] = fd_with_case(L, L->full[k], ex, ne, tt, used);
+                        if (!resp[nres] || !resf[nres]) return false;
+                        rese[nres++] = L->edge[k];
+                    }
+            if (F->oom) return false;
+            if (!ok) continue;
+            // the rest: the finder's own search over the kept cases, a loop of their own (its
+            // templates aside); none kept, the min alone
+            JRank rt; memset(&rt, 0, sizeof rt);
+            if (nres > 0) {
+                FdLoop V = *L;
+                V.paths = resp; V.full = (JVc **)resf; V.edge = rese; V.npaths = nres; V.dead = false;
+                fd_no_templates++;
+                bool got = fd_rank(F, f, H, &V, &rt);
+                fd_no_templates--;
+                if (F->oom) return false;
+                // the rest's own groups stay as they are (c41 reads several in one tuple); its first
+                // row starts a component of its own
+                if (!got || rt.nreg || ns + rt.ncomp > JRANK_MAXC || rt.cont[0] != 0) continue;
+            }
+            // the terms: v, w, and the rest's
+            int32_t nt = 0, key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT]; bool room = true;
+            for (int32_t u = 0; u < nq; u++) { key[nt] = L->pkey[qv[u]]; tk[nt] = JTERM_VALUE; nt++; }
+            for (int32_t t = 0; t < rt.nt && room; t++) {
+                bool seen = false;
+                for (int32_t x = 0; x < nt && !seen; x++) seen = key[x] == rt.key[t] && tk[x] == rt.tk[t];
+                if (seen) continue;
+                if (nt == JRANK_MAXT) room = false; else { key[nt] = rt.key[t]; tk[nt] = rt.tk[t]; nt++; }
+            }
+            if (!room) continue;
+            memset(out, 0, sizeof *out);
+            out->blk = H; out->fn = f; out->nedge = L->nedges; out->nt = nt; out->ncomp = ns + rt.ncomp;
+            for (int32_t t = 0; t < nt; t++) { out->key[t] = key[t]; out->tk[t] = tk[t]; }
+            for (int32_t e = 0; e < L->nedges; e++) { out->from[e] = L->edges[e]; out->fall[e] = -1; }
+            for (int32_t sg = 0; sg < ns; sg++) {             // row sg: C - s . (v, w), a MIN group
+                out->c0[sg] = C; out->cont[sg] = sg ? 2 : 0;
+                for (int32_t u = 0; u < nq; u++) out->coef[sg][u] = (sg >> u) & 1 ? 1 : -1;
+            }
+            for (int32_t r = 0; r < rt.ncomp; r++) {
+                out->c0[ns + r] = rt.c0[r]; out->cont[ns + r] = rt.cont[r];
+                for (int32_t t = 0; t < rt.nt; t++)
+                    for (int32_t x = 0; x < nt; x++) if (key[x] == rt.key[t] && tk[x] == rt.tk[t]) out->coef[ns + r][x] = rt.coef[r][t];
+            }
+            return true;
+        }
+    return false;
+}
+// A late template in an arena of its own: the passes before it fill L's (4 MB less 11 KB left on
+// 4NestedWith3Variables), and a template that cannot allocate proposes nothing, silently. L's paths
+// and pairs stay where they are; only what the template bumps goes to the new arena, freed after.
+static bool fd_in_arena(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out,
+                        bool (*fn)(JFinder *, IrFunc *, int32_t, FdLoop *, JRank *)) {
+    size_t cap = (size_t)1 << 22;
+    char *arena = malloc(cap), *cur = L->cur, *end = L->end;
+    if (!arena) { F->oom = true; return false; }
+    L->cur = arena; L->end = arena + cap;
+    bool got = fn(F, f, H, L, out);
+    L->cur = cur; L->end = end;
+    free(arena);
+    return got;
 }
 static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (fd_rank_on(F, f, H, L, out)) return true;
@@ -1002,7 +1199,9 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         if (got) return true;
     }
     if (fd_rank_max(F, f, H, L, step, out)) return true;   // no tuple: a max component (c36)
-    return !F->oom && fd_rank_regions(F, f, H, L, out);    // nor a max: a tuple per region (c38)
+    if (fd_no_templates) return false;                     // inside a template: its search only
+    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_regions)) return true;   // nor a max: a tuple per region (c38)
+    return !F->oom && fd_in_arena(F, f, H, L, out, fd_rank_absgrow);              // nor regions: |v| + |w| growing (c41)
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);
