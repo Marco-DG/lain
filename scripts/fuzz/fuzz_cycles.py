@@ -85,7 +85,7 @@ def main():
     lain, N, seed = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
     keep = sys.argv[4] if len(sys.argv) > 4 else None
     tmp = tempfile.mkdtemp(prefix="fuzz_cycles.")
-    acc = ref = other = unsound = term = lost = 0
+    acc = ref = other = internal = unsound = term = lost = 0
     for k in range(N):
         rng = random.Random(seed * 1000003 + k)
         m, ty, fs = gen(rng)
@@ -100,6 +100,11 @@ def main():
                 print("  ★ UNSOUND: accepted, and runs for ever from some input (seed %d, k %d)" % (seed, k))
                 print("".join("      " + l + "\n" for l in text.splitlines()), end="")
                 if keep: open(os.path.join(keep, "unsound.%d.%d.ln" % (seed, k)), "w").write(text)
+        elif r.returncode == 70 or r.returncode < 0 or "internal error" in r.stderr:
+            # the compiler failing (an internal error, a signal) is no verdict on the program: until
+            # 2026-10-14 it counted as refused-other, and 31 duplicate-ID refusals hid there
+            internal += 1
+            print("  ★ INTERNAL: exit %d (seed %d, k %d): %s" % (r.returncode, seed, k, r.stderr.strip().splitlines()[0][:160] if r.stderr.strip() else ""))
         elif "[E011]" in r.stderr or "[E082]" in r.stderr:
             ref += 1
             if not forever: lost += 1
@@ -110,10 +115,10 @@ def main():
     os.rmdir(tmp)
     print("fuzz_cycles: seed=%d gens=%d accepted=%d refused-termination=%d refused-other=%d" % (seed, N, acc, ref, other))
     print("  ground truth: %d end from every input; %d of those refused (the cost: they end, by no measure the rule looks for)" % (term, lost))
-    print("  bugs:  UNSOUND(accepted, runs for ever)=%d" % unsound)
+    print("  bugs:  UNSOUND(accepted, runs for ever)=%d INTERNAL(exit 70 or a signal)=%d" % (unsound, internal))
     if other > N // 2:
         print("  ★ FUZZER DID NOT RUN: %d/%d refused for another reason" % (other, N)); sys.exit(1)
-    sys.exit(1 if unsound else 0)
+    sys.exit(1 if unsound or internal else 0)
 
 if __name__ == "__main__":
     main()
