@@ -3348,6 +3348,113 @@ static bool jg_rank_cross(JB *B, const JRank *r, int32_t a, int32_t b, const int
     }
     return jb_cons(B, t, n, J_LE, k - s * (r->c0[a] - r->c0[b]), c);
 }
+// A guard row of a PIECEWISE ranking over `v` (pre or post): f(v) >= 0, or with `neg` f(v) <= -1.
+static bool jg_row_atom(JB *B, const JRank *r, int32_t j, const int32_t *v, bool neg, JCons *c) {
+    JLT t[JRANK_MAXT]; int n = 0;
+    for (int32_t i = 0; i < r->nt; i++) if (r->coef[j][i] != 0) { t[n].var = v[i]; t[n].c = neg ? r->coef[j][i] : -r->coef[j][i]; n++; }
+    return jb_cons(B, t, n, J_LE, neg ? -1 - r->c0[j] : r->c0[j], c);
+}
+// Region k's guard G_k over `v` as premises, one atom each but the last `skip` (`premise rank.region
+// k pre` or `post`).
+static void jb_region_premises(JB *B, const JRank *r, int32_t k, const int32_t *v, bool post, int32_t skip) {
+    for (int32_t a = 0; a + skip < r->reg[k].ng && !B->fail; a++) {
+        JCons c;
+        if (!jg_row_atom(B, r, r->reg[k].g0 + a, v, false, &c)) { B->fail = true; return; }
+        JHyp *h = jb_hyp(B, jb_str(B, post ? "premise rank.region %lld post" : "premise rank.region %lld pre", k, 0, 0));
+        if (h) h->cons = c;
+    }
+}
+// The terms' variables before (pre, at H's entry) and after (post, at P's end) one trip.
+static void jb_rank_terms(JB *B, const JRank *r, IrBlock *H, IrBlock *P, int32_t *pre, int32_t *post) {
+    JG *g = B->g;
+    for (int32_t i = 0; i < r->nt; i++) {
+        pre[i] = jb_term(B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells);
+        post[i] = jb_term(B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
+    }
+}
+// A FREE edge's lexicographic decrease over the tuple rows t0 .. t0 + n - 1 (c35): some j with each
+// row before it kept, j fallen by 1 at least and j >= 0 before. Under the premises that no j < n - 1
+// did (`premise rank.lex j`, each a disjunction of how it did not), the last did, each of its
+// conjuncts one VC (`rank.lex`, ordinal ob + q: row q kept for q < n - 1, row n - 1 fallen at
+// q = n - 1 and >= 0 at q = n). In region `reg` (>= 0) each VC is also under G_reg before and after.
+static bool jg_lex_vcs(JG *g, JObls *L, const JRank *r, IrBlock *P, int32_t np, IrBlock *H, int32_t t0, int32_t n, int32_t reg, int32_t ob) {
+    for (int32_t q = 0; q <= n; q++) {
+        JB B = jb_begin(g, P->id, np, -1);
+        B.to = H->id;
+        int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
+        jb_rank_terms(&B, r, H, P, pre, post);
+        if (reg >= 0) { jb_region_premises(&B, r, reg, pre, false, 0); jb_region_premises(&B, r, reg, post, true, 0); }
+        for (int32_t j = 0; j + 1 < n && !B.fail; j++) {
+            JCons cs[JRANK_MAXC + 1];
+            for (int32_t i = 0; i <= j; i++)                       // i < j rose, or j did not fall
+                if (!jg_rank_not(&B, r, t0 + i, pre, post, false, i < j ? -1 : 0, &cs[i])) B.fail = true;
+            if (!B.fail && !jg_rank_not(&B, r, t0 + j, pre, post, true, 0, &cs[j + 1])) B.fail = true;   // or j < 0
+            if (!B.fail) jb_orn(&B, jb_str(&B, "premise rank.lex %lld", j, 0, 0), cs, j + 2);
+        }
+        int32_t last = n - 1;
+        JCons goal;
+        if (B.fail || !jg_rank_goal(&B, r, t0 + (q < last ? q : last), pre, post, q < last ? 0 : q == last ? 1 : 2, &goal))
+            return jg_fail(g, "out of memory building a ranking VC");
+        JObl *o = jg_push(g, L);
+        if (!o || !jb_finish(&B, NULL, "rank.lex", ob + q, &goal, o)) return jg_fail(g, "out of memory building a VC");
+        o->to = H; o->claim = -1;
+    }
+    return true;
+}
+// A PIECEWISE ranking's back edge P -> H, its regions 0 .. m - 1 (validated by the caller). With
+// rho(s) the largest k whose guard holds, the ranking is <rho, tuple_rho>, lexicographic:
+// (A) `rank.cover`: the trip starts in some region, under the premises that it is in none of 0 ..
+//     m - 2 (`premise rank.cover k`, the disjunction of G_k's atoms negated) G_{m-1}'s atoms, one VC
+//     each (ordinal the atom);
+// (B) `rank.region`: for each k < l, G_k before and G_l after cannot both hold: under G_k(pre) and
+//     G_l(post) but its last atom, that atom fails (ordinal 100*k + l);
+// (C) within region k, its tuple falls as a free edge's (`rank.lex`, ordinal 1000*k + q), under
+//     G_k before and after.
+// For s -> s' with k = rho(s), l = rho(s'): (B) rules out l > k, and l = k is (C)'s case. INCOMPLETE
+// where guards overlap: (B) is owed from every guard true before the trip, so a state in G_0 and
+// G_1 (rho 1) that stays in G_1 is refused, though legal; overlap is accepted only where no such
+// stay exists. A trip that ends in no region (its loop's exit) owes nothing.
+typedef char jg_rank_ordinals_fit[(JRANK_MAXC < 1000 && JRANK_MAXR < 100) ? 1 : -1];
+static bool jg_region_vcs(JG *g, JObls *L, const JRank *r, IrBlock *P, int32_t np, IrBlock *H) {
+    int32_t m = r->nreg;
+    for (int32_t a = 0; a < r->reg[m - 1].ng; a++) {           // (A)
+        JB B = jb_begin(g, P->id, np, -1);
+        B.to = H->id;
+        int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
+        jb_rank_terms(&B, r, H, P, pre, post);
+        for (int32_t k = 0; k + 1 < m && !B.fail; k++) {
+            JCons cs[JRANK_MAXC];
+            for (int32_t i = 0; i < r->reg[k].ng && !B.fail; i++)
+                if (!jg_row_atom(&B, r, r->reg[k].g0 + i, pre, true, &cs[i])) B.fail = true;
+            const char *o = jb_str(&B, "premise rank.cover %lld", k, 0, 0);
+            if (B.fail) break;
+            if (r->reg[k].ng == 1) { JHyp *h = jb_hyp(&B, o); if (h) h->cons = cs[0]; }
+            else jb_orn(&B, o, cs, r->reg[k].ng);
+        }
+        JCons goal;
+        if (B.fail || !jg_row_atom(&B, r, r->reg[m - 1].g0 + a, pre, false, &goal)) return jg_fail(g, "out of memory building a ranking VC");
+        JObl *o = jg_push(g, L);
+        if (!o || !jb_finish(&B, NULL, "rank.cover", a, &goal, o)) return jg_fail(g, "out of memory building a VC");
+        o->to = H; o->claim = -1;
+    }
+    for (int32_t k = 0; k < m; k++)                              // (B)
+        for (int32_t l = k + 1; l < m; l++) {
+            JB B = jb_begin(g, P->id, np, -1);
+            B.to = H->id;
+            int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
+            jb_rank_terms(&B, r, H, P, pre, post);
+            jb_region_premises(&B, r, k, pre, false, 0);
+            jb_region_premises(&B, r, l, post, true, 1);
+            JCons goal;
+            if (B.fail || !jg_row_atom(&B, r, r->reg[l].g0 + r->reg[l].ng - 1, post, true, &goal)) return jg_fail(g, "out of memory building a ranking VC");
+            JObl *o = jg_push(g, L);
+            if (!o || !jb_finish(&B, NULL, "rank.region", 100 * k + l, &goal, o)) return jg_fail(g, "out of memory building a VC");
+            o->to = H; o->claim = -1;
+        }
+    for (int32_t k = 0; k < m; k++)                              // (C)
+        if (!jg_lex_vcs(g, L, r, P, np, H, r->reg[k].t0, r->reg[k].nt, k, 1000 * k)) return false;
+    return true;
+}
 // The WRITTEN measure (`while c decreasing m`, D-44), read as a ranking claim's one component:
 // lowering computes m at the start of the body, under the guard (lower.h, I.74), so m is a sum over
 // what the trip starts from: a load of a cell reading the version the header makes or keeps, a value
@@ -3497,6 +3604,24 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             if (k > 2 || (j == 0 && k) || (k && cn[nc - 1] > 1 && gk[nc - 1] != k)) return jg_fail(g, "a ranking claim's max or min of rows out of shape");
             if (k) { cn[nc - 1]++; gk[nc - 1] = k; } else { c0r[nc] = j; cn[nc] = 1; gk[nc] = 0; nc++; }
         }
+        // a PIECEWISE one (JRank.nreg): every region field checked, none skipped (I.197): at most
+        // JRANK_MAXR regions, each with guard and tuple rows inside the rows, every row in exactly
+        // one of them, no MAX or MIN, every edge free; past nreg, every field 0
+        if (r->nreg > JRANK_MAXR) return jg_fail(g, "a ranking claim of more regions than it may have");
+        for (int32_t k = r->nreg; k < JRANK_MAXR; k++)
+            if (r->reg[k].g0 || r->reg[k].ng || r->reg[k].t0 || r->reg[k].nt) return jg_fail(g, "a ranking claim's region past its count");
+        if (r->nreg) {
+            int32_t uses[JRANK_MAXC] = { 0 };
+            for (int32_t k = 0; k < r->nreg; k++) {
+                int32_t g0 = r->reg[k].g0, ng = r->reg[k].ng, t0 = r->reg[k].t0, nt = r->reg[k].nt;
+                if (ng < 1 || nt < 1 || g0 + ng > r->ncomp || t0 + nt > r->ncomp) return jg_fail(g, "a ranking claim's region out of shape");
+                for (int32_t j = g0; j < g0 + ng; j++) uses[j]++;
+                for (int32_t j = t0; j < t0 + nt; j++) uses[j]++;
+            }
+            for (int32_t j = 0; j < r->ncomp; j++) if (uses[j] != 1) return jg_fail(g, "a ranking claim's row in no region or in two");
+            if (nc != r->ncomp) return jg_fail(g, "a ranking claim's region over a max or min of rows");
+            for (int32_t e = 0; e < r->nedge; e++) if (r->fall[e] != -1) return jg_fail(g, "a piecewise ranking claim with a fixed falling component");
+        }
         for (int32_t e = 0; e < r->nedge; e++) {
             if (r->fall[e] < -1 || r->fall[e] >= nc) return jg_fail(g, "a ranking claim's falling component out of range");
             if (r->fall[e] < 0 && nc != r->ncomp) return jg_fail(g, "a free back edge over a component that is a max or min of rows");
@@ -3519,36 +3644,10 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             for (IrInstr *i = P->instrs; i; i = i->next) np++;
             int32_t fall = r->fall[e];
             // a FREE edge (fall -1): its trips may lower different components, one per path; owed
-            // the lexicographic decrease itself, some j with each component before it kept, j
-            // fallen by 1 at least and j >= 0 before. With n components: under the premises that
-            // no j < n - 1 did (`premise rank.lex j`, each a disjunction of how it did not), the
-            // last did, each of its conjuncts one VC (`rank.lex`, ordinal q: component q kept for
-            // q < n - 1, component n - 1 fallen at q = n - 1 and >= 0 at q = n). Then a run lowers,
-            // at its least component falling infinitely often, a value bounded below while every
-            // component before it stays: ADFG's argument
-            for (int32_t q = 0; fall < 0 && q <= r->ncomp; q++) {
-                JB B = jb_begin(g, P->id, np, -1);
-                B.to = H->id;
-                int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
-                for (int32_t i = 0; i < r->nt; i++) {
-                    pre[i] = jb_term(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells);
-                    post[i] = jb_term(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells);
-                }
-                for (int32_t j = 0; j + 1 < r->ncomp && !B.fail; j++) {
-                    JCons cs[JRANK_MAXC + 1];
-                    for (int32_t i = 0; i <= j; i++)                   // i < j rose, or j did not fall
-                        if (!jg_rank_not(&B, r, i, pre, post, false, i < j ? -1 : 0, &cs[i])) B.fail = true;
-                    if (!B.fail && !jg_rank_not(&B, r, j, pre, post, true, 0, &cs[j + 1])) B.fail = true;   // or j < 0
-                    if (!B.fail) jb_orn(&B, jb_str(&B, "premise rank.lex %lld", j, 0, 0), cs, j + 2);
-                }
-                int32_t last = r->ncomp - 1;
-                JCons goal;
-                if (B.fail || !jg_rank_goal(&B, r, q < last ? q : last, pre, post, q < last ? 0 : q == last ? 1 : 2, &goal))
-                    return jg_fail(g, "out of memory building a ranking VC");
-                JObl *o = jg_push(g, L);
-                if (!o || !jb_finish(&B, NULL, "rank.lex", q, &goal, o)) return jg_fail(g, "out of memory building a VC");
-                o->to = H; o->claim = -1;
-            }
+            // the lexicographic decrease itself (jg_lex_vcs). Then a run lowers, at its least
+            // component falling infinitely often, a value bounded below while every component
+            // before it stays: ADFG's argument. A PIECEWISE ranking's edges are all free (jg_region_vcs)
+            if (r->nreg ? !jg_region_vcs(g, L, r, P, np, H) : fall < 0 && !jg_lex_vcs(g, L, r, P, np, H, 0, r->ncomp, -1, 0)) return false;
             // a component that is the MAX of rows R: keeping or falling by d is, for each row a,
             // f_a(post) <= f_b(pre) - d for some b in R: one VC per a (ordinal 1000*(q + 1) + c, a
             // the q-th row), its goal against R's last row under the premises that no other b
@@ -3633,7 +3732,7 @@ static const JRank *jg_entry_rank(JG *g, const JRank *rk, int32_t nrk, const IrF
     // its listed calls are jg_rec_cut's to check, over the whole component (this function's own
     // too); its edges are not read (the finder fills them as for a loop: they mean nothing here)
     const __int128 big = (__int128)1 << 66;
-    bool ok = r->ncomp == 1 && r->nt >= 0 && r->nt <= JRANK_MAXT && r->c0[0] <= big && r->c0[0] >= -big;
+    bool ok = r->ncomp == 1 && r->nreg == 0 && r->cont[0] == 0 && r->nt >= 0 && r->nt <= JRANK_MAXT && r->c0[0] <= big && r->c0[0] >= -big;
     for (int32_t i = 0; ok && i < r->nt; i++) {
         int pk = jg_param_at(h, r->key[i]);
         const IrParam *pp = h->params;

@@ -1052,6 +1052,78 @@ int main(void) {
         else CHECK(strstr(recs, nf) != NULL, "case %d: a rank.fall not implied:\n%s", c, recs);
     }
 
+    // a PIECEWISE ranking (c38), UrbanMine's Fig. 3 over i32 cells: `while x != 0 and y > 0 { if x > 0
+    // { if p { x--; y = v1 } else { y-- } } else { if q { x++ } else { y--; x = v2 } } }`, regions
+    // P (x >= 1, <x, y>) and N (x <= -1, <y, -x>). (0) its rank.cover, rank.region and six rank.lex
+    // proved; a trip from x = 1 ending at x = 0 is in no region and owes nothing; (1) P's x-- made
+    // x - 3 (P can move to N): rank.region not implied; (2) P's y-- made y = y (that path lowers
+    // nothing): a rank.lex not implied; (3) P's guard x >= 2 (x = 1 starts a trip in no region):
+    // rank.cover not implied; (4) overlap: `while x > 0 { x-- }`, regions x >= 3 and x >= 1 both
+    // <x>, a legal ranking (rho is 1 throughout) refused, since (B) is owed from x >= 3 too
+    for (int c = 0; c < 5; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true);
+        IrFunc *uf = ir_func_new(&A, nm("um38"), mi32, IR_FUNC_PURE);
+        IrValue *ux0 = ir_add_param(uf, mi32, nm("x0")), *uy0 = ir_add_param(uf, mi32, nm("y0")), *up = ir_add_param(uf, mi32, nm("p")),
+                *uq = ir_add_param(uf, mi32, nm("q")), *uv1 = ir_add_param(uf, mi32, nm("v1")), *uv2 = ir_add_param(uf, mi32, nm("v2"));
+        IrBlock *u0 = uf->entry, *u1 = ir_new_block(uf);
+        IrValue *ux = ir_alloca(uf, u0, mi32), *uy = ir_alloca(uf, u0, mi32);
+        ir_store(uf, u0, ux, ux0); ir_store(uf, u0, uy, uy0); ir_set_br(u0, u1);
+        IrBlock *latch;
+        if (c == 4) {                                          // while x > 0 { x-- }
+            IrBlock *u2 = ir_new_block(uf), *u3 = ir_new_block(uf);
+            IrValue *lx = ir_load(uf, u1, ux, mi32);
+            ir_set_br_cond(u1, ir_icmp(uf, u1, IR_CMP_SGT, lx, ir_const_int(uf, u1, 0, mi32)), u2, u3);
+            ir_store(uf, u2, ux, ir_binop(uf, u2, IR_SUB, lx, ir_const_int(uf, u2, 1, mi32), mi32)); ir_set_br(u2, u1);
+            ir_set_ret(u3, ir_const_int(uf, u3, 0, mi32));
+            latch = u2;
+        } else {
+            IrBlock *u2 = ir_new_block(uf), *u3 = ir_new_block(uf), *u4 = ir_new_block(uf), *u5 = ir_new_block(uf), *u6 = ir_new_block(uf),
+                    *u7 = ir_new_block(uf), *u8 = ir_new_block(uf), *u9 = ir_new_block(uf), *u10 = ir_new_block(uf), *u11 = ir_new_block(uf);
+            IrValue *lx = ir_load(uf, u1, ux, mi32);
+            ir_set_br_cond(u1, ir_icmp(uf, u1, IR_CMP_NE, lx, ir_const_int(uf, u1, 0, mi32)), u2, u9);
+            IrValue *ly = ir_load(uf, u2, uy, mi32);
+            ir_set_br_cond(u2, ir_icmp(uf, u2, IR_CMP_SGT, ly, ir_const_int(uf, u2, 0, mi32)), u3, u9);
+            ir_set_br_cond(u3, ir_icmp(uf, u3, IR_CMP_SGT, lx, ir_const_int(uf, u3, 0, mi32)), u4, u5);
+            ir_set_br_cond(u4, ir_icmp(uf, u4, IR_CMP_NE, up, ir_const_int(uf, u4, 0, mi32)), u6, u7);
+            ir_store(uf, u6, ux, ir_binop(uf, u6, IR_SUB, lx, ir_const_int(uf, u6, c == 1 ? 3 : 1, mi32), mi32)); ir_store(uf, u6, uy, uv1); ir_set_br(u6, u8);
+            ir_store(uf, u7, uy, c == 2 ? ly : ir_binop(uf, u7, IR_SUB, ly, ir_const_int(uf, u7, 1, mi32), mi32)); ir_set_br(u7, u8);
+            ir_set_br_cond(u5, ir_icmp(uf, u5, IR_CMP_NE, uq, ir_const_int(uf, u5, 0, mi32)), u10, u11);
+            ir_store(uf, u10, ux, ir_binop(uf, u10, IR_ADD, lx, ir_const_int(uf, u10, 1, mi32), mi32)); ir_set_br(u10, u8);
+            ir_store(uf, u11, uy, ir_binop(uf, u11, IR_SUB, ly, ir_const_int(uf, u11, 1, mi32), mi32)); ir_store(uf, u11, ux, uv2); ir_set_br(u11, u8);
+            ir_set_br(u8, u1);
+            ir_set_ret(u9, ir_const_int(uf, u9, 0, mi32));
+            latch = u8;
+        }
+        ir_finalize_cfg(uf);
+        Stub su; memset(&su, 0, sizeof su);
+        su.propose = P_RANK; su.nrank = 1;
+        JRank *rr = &su.rank[0];
+        rr->blk = u1->id; rr->fn = uf; rr->nt = 2; rr->key[0] = ux->id; rr->key[1] = uy->id; rr->nedge = 1; rr->from[0] = latch->id; rr->fall[0] = -1;
+        if (c == 4) {                                          // x - 3 >= 0, <x> | x - 1 >= 0, <x>
+            rr->ncomp = 4; rr->coef[0][0] = 1; rr->c0[0] = -3; rr->coef[1][0] = 1; rr->coef[2][0] = 1; rr->c0[2] = -1; rr->coef[3][0] = 1;
+            rr->nreg = 2; rr->reg[0].g0 = 0; rr->reg[0].ng = 1; rr->reg[0].t0 = 1; rr->reg[0].nt = 1;
+            rr->reg[1].g0 = 2; rr->reg[1].ng = 1; rr->reg[1].t0 = 3; rr->reg[1].nt = 1;
+        } else {
+            rr->ncomp = 6;
+            rr->coef[0][0] = 1; rr->c0[0] = c == 3 ? -2 : -1; rr->coef[1][0] = 1; rr->coef[2][1] = 1;
+            rr->coef[3][0] = -1; rr->c0[3] = -1; rr->coef[4][1] = 1; rr->coef[5][0] = -1;
+            rr->nreg = 2; rr->reg[0].g0 = 0; rr->reg[0].ng = 1; rr->reg[0].t0 = 1; rr->reg[0].nt = 2;
+            rr->reg[1].g0 = 3; rr->reg[1].ng = 1; rr->reg[1].t0 = 4; rr->reg[1].nt = 2;
+        }
+        CHECK(run(uf, &su, true, sizeof region, err), "judges: %s", err);
+        char pk[48], nk[48];
+        const char *kind = c == 0 ? "rank." : c == 1 || c == 4 ? "rank.region" : c == 2 ? "rank.lex" : "rank.cover";
+        snprintf(pk, sizeof pk, "proved bb%d.0 rank.", latch->id); snprintf(nk, sizeof nk, "not-implied bb%d.", latch->id);
+        char nkk[64]; snprintf(nkk, sizeof nkk, "%s", kind);
+        // a record names its point and kind: the latch's not-implied ones, by kind
+        int nn = 0, nkind = 0;
+        for (const char *l = recs; (l = strstr(l, nk)); l++) { nn++; const char *e = strchr(l, '\n'), *k = strstr(l, nkk); if (k && (!e || k < e)) nkind++; }
+        if (c == 0) CHECK(count_in(recs, " rank.") == 8 && count_in(recs, pk) == 8 && nn == 0 && !strstr(recs, "not-implied") && !strstr(recs, "outside"),
+                          "Fig. 3: its eight rank VCs proved:\n%s", recs);
+        else if (c == 4) CHECK(nn == 1 && nkind == 1 && count_in(recs, "not-implied") == 1, "overlap: rank.region alone not implied:\n%s", recs);
+        else CHECK(nkind >= 1, "case %d: %s not implied:\n%s", c, kind, recs);
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

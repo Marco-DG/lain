@@ -3760,6 +3760,153 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a ranking component that is the min of rows: under premises, one VC per row before the trip\n");
+    // 72. a PIECEWISE ranking (regions): UrbanMine's Fig. 3, `while x != 0 and y > 0 { if x > 0 { if
+    // p { x--; y = v1 } else { y-- } } else { if q { x++ } else { y--; x = v2 } } }` over i32 cells,
+    // region 0 P (x - 1 >= 0, <x, y>), region 1 N (-x - 1 >= 0, <y, -x>), the edge free. (0) on the
+    // back edge: rank.cover 0 under `premise rank.cover 0` (x - 1 <= -1), rank.region 1 under
+    // `premise rank.region 0 pre` with the goal x' >= 0 (N's atom failing after the trip),
+    // rank.lex 0..2 and 1000..1002 each under its region's pre and post premise and one
+    // `premise rank.lex 0`; nothing else, each (kind, ordinal) once. Refused, each region field
+    // probed in memory: (1) nreg 5; (2) a region past nreg not 0; (3) g0 + ng past the rows; (4)
+    // t0 + nt past them; (5) ng 0; (6) nt 0; (7) a row in two regions; (8) a row in none; (9) a
+    // fixed fall; (10) a cont; and a recursion's measure with (11) a region, (12) a cont. (13) two
+    // atoms in each guard (P: x - 1 >= 0, y - 1 >= 0; N: -x - 1 >= 0, y - 1 >= 0): rank.cover 0 and
+    // 1, each under a two-case `premise rank.cover 0`; rank.region 1 under two pre premises and one
+    // post (all of N's but the last); each rank.lex under two pre and two post. (14) three regions
+    // (P, N, then y - 1 >= 0 with <y>): rank.region 1, 2 and 102, one per pair k < l
+    for (int c = 0; c < 15; c++) {
+        IrFunc *f = ir_func_new(&A, nm("um72"), i32t, IR_FUNC_PURE);
+        IrValue *x0 = ir_add_param(f, i32t, nm("x0")), *y0 = ir_add_param(f, i32t, nm("y0")), *pp = ir_add_param(f, i32t, nm("p")),
+                *qp = ir_add_param(f, i32t, nm("q")), *v1 = ir_add_param(f, i32t, nm("v1")), *v2 = ir_add_param(f, i32t, nm("v2"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f), *b7 = ir_new_block(f), *b8 = ir_new_block(f), *b9 = ir_new_block(f),
+                *b10 = ir_new_block(f), *b11 = ir_new_block(f);
+        IrValue *x = ir_alloca(f, b0, i32t), *y = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, x, x0); ir_store(f, b0, y, y0); ir_set_br(b0, b1);
+        IrValue *lx = ir_load(f, b1, x, i32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_NE, lx, ir_const_int(f, b1, 0, i32t)), b2, b9);
+        IrValue *ly = ir_load(f, b2, y, i32t);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_SGT, ly, ir_const_int(f, b2, 0, i32t)), b3, b9);
+        ir_set_br_cond(b3, ir_icmp(f, b3, IR_CMP_SGT, lx, ir_const_int(f, b3, 0, i32t)), b4, b5);
+        ir_set_br_cond(b4, ir_icmp(f, b4, IR_CMP_NE, pp, ir_const_int(f, b4, 0, i32t)), b6, b7);
+        ir_store(f, b6, x, ir_binop(f, b6, IR_SUB, lx, ir_const_int(f, b6, 1, i32t), i32t)); ir_store(f, b6, y, v1); ir_set_br(b6, b8);
+        ir_store(f, b7, y, ir_binop(f, b7, IR_SUB, ly, ir_const_int(f, b7, 1, i32t), i32t)); ir_set_br(b7, b8);
+        ir_set_br_cond(b5, ir_icmp(f, b5, IR_CMP_NE, qp, ir_const_int(f, b5, 0, i32t)), b10, b11);
+        ir_store(f, b10, x, ir_binop(f, b10, IR_ADD, lx, ir_const_int(f, b10, 1, i32t), i32t)); ir_set_br(b10, b8);
+        ir_store(f, b11, y, ir_binop(f, b11, IR_SUB, ly, ir_const_int(f, b11, 1, i32t), i32t)); ir_store(f, b11, x, v2); ir_set_br(b11, b8);
+        ir_set_br(b8, b1);
+        ir_set_ret(b9, ir_const_int(f, b9, 0, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.nt = 2; r.key[0] = x->id; r.key[1] = y->id; r.nedge = 1; r.from[0] = b8->id; r.fall[0] = -1;
+        r.ncomp = 6;
+        r.coef[0][0] = 1; r.c0[0] = -1; r.coef[1][0] = 1; r.coef[2][1] = 1;          // P: x - 1 >= 0; <x, y>
+        r.coef[3][0] = -1; r.c0[3] = -1; r.coef[4][1] = 1; r.coef[5][0] = -1;        // N: -x - 1 >= 0; <y, -x>
+        r.nreg = 2; r.reg[0].g0 = 0; r.reg[0].ng = 1; r.reg[0].t0 = 1; r.reg[0].nt = 2;
+        r.reg[1].g0 = 3; r.reg[1].ng = 1; r.reg[1].t0 = 4; r.reg[1].nt = 2;
+        const char *bad = NULL;
+        switch (c) {
+            case 1: r.nreg = 5; bad = "more regions than it may have"; break;
+            case 2: r.reg[2].nt = 1; bad = "region past its count"; break;
+            case 3: r.reg[1].ng = 4; bad = "region out of shape"; break;
+            case 4: r.reg[1].nt = 3; bad = "region out of shape"; break;
+            case 5: r.reg[0].ng = 0; bad = "region out of shape"; break;
+            case 6: r.reg[0].nt = 0; bad = "region out of shape"; break;
+            case 7: r.reg[1].t0 = 3; bad = "row in no region or in two"; break;
+            case 8: r.ncomp = 7; bad = "row in no region or in two"; break;
+            case 9: r.fall[0] = 0; bad = "a piecewise ranking claim with a fixed falling component"; break;
+            case 10: r.cont[2] = 1; bad = "region over a max or min of rows"; break;
+            case 13:                                            // P rows 0, 1 | 2, 3; N rows 4, 5 | 6, 7
+                memset(r.coef, 0, sizeof r.coef); memset(r.c0, 0, sizeof r.c0); r.ncomp = 8;
+                r.coef[0][0] = 1; r.c0[0] = -1; r.coef[1][1] = 1; r.c0[1] = -1; r.coef[2][0] = 1; r.coef[3][1] = 1;
+                r.coef[4][0] = -1; r.c0[4] = -1; r.coef[5][1] = 1; r.c0[5] = -1; r.coef[6][1] = 1; r.coef[7][0] = -1;
+                r.reg[0].g0 = 0; r.reg[0].ng = 2; r.reg[0].t0 = 2; r.reg[0].nt = 2; r.reg[1].g0 = 4; r.reg[1].ng = 2; r.reg[1].t0 = 6; r.reg[1].nt = 2;
+                break;
+            case 14:                                            // P 0 | 1; N 2 | 3; Y 4 | 5, one-row tuples
+                memset(r.coef, 0, sizeof r.coef); memset(r.c0, 0, sizeof r.c0); r.ncomp = 6;
+                r.coef[0][0] = 1; r.c0[0] = -1; r.coef[1][0] = 1; r.coef[2][0] = -1; r.c0[2] = -1; r.coef[3][1] = 1;
+                r.coef[4][1] = 1; r.c0[4] = -1; r.coef[5][1] = 1;
+                r.nreg = 3; for (int k = 0; k < 3; k++) { r.reg[k].g0 = (uint8_t)(2 * k); r.reg[k].ng = 1; r.reg[k].t0 = (uint8_t)(2 * k + 1); r.reg[k].nt = 1; }
+                break;
+        }
+        gen_rk = &r; gen_nrk = 1;
+        if (c == 11 || c == 12) {                              // a recursion: rec(n) calls rec(n - 1)
+            IrFunc *h = ir_func_new(&A, nm("rec72"), u32t, IR_FUNC_PURE);
+            IrValue *hn = ir_add_param(h, u32t, nm("n"));
+            IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+            ir_set_br_cond(h0, ir_icmp(h, h0, IR_CMP_EQ, hn, ir_const_int(h, h0, 0, u32t)), h1, h2);
+            ir_set_ret(h1, ir_const_int(h, h1, 0, u32t));
+            IrInstr *call = ir_instr(h, IR_CALL, u32t, 1); call->aux.callee = nm("rec72");
+            call->operands[0] = ir_binop(h, h2, IR_SUB, hn, ir_const_int(h, h2, 1, u32t), u32t); ir_emit(h2, call);
+            ir_set_ret(h2, call->result);
+            ir_finalize_cfg(h);
+            JRank e; memset(&e, 0, sizeof e);
+            e.blk = JRANK_ENTRY; e.fn = h; e.ncomp = 1; e.nt = 1; e.key[0] = hn->id; e.coef[0][0] = 1;
+            if (c == 11) { e.nreg = 1; e.reg[0].ng = 1; e.reg[0].nt = 1; } else e.cont[0] = 1;
+            gen_mod = h; gen_rk = &e; gen_nrk = 1;
+            char why[200] = "";
+            char *t = gen_with(h, NULL, 0, JGEN_ALL, why);
+            CHECK(!t && strstr(why, "not one component over its function's parameters"), "case %d: a recursion's measure with a %s refused: got \"%s\"", c, c == 11 ? "region" : "cont", why);
+            free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+            continue;
+        }
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        if (bad) { CHECK(!t && strstr(why, bad), "case %d: refused (%s): got \"%s\"", c, bad, why); free(t); gen_rk = NULL; gen_nrk = 0; continue; }
+        if (c == 13) {
+            bool ok2 = t != NULL;
+            for (int k = 0; ok2 && k < 2; k++) {
+                char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.cover %d", b8->id, k);
+                const char *v = vc_of(t, key), *pr = strstr(v, "premise rank.cover 0 : or { "), *nl = pr ? strchr(pr, '\n') : NULL;
+                int bars = 0;
+                for (const char *u = pr; u && nl && (u = strstr(u, " | ")) && u < nl; u++) bars++;
+                ok2 = *v && bars == 1 && count(v, "premise rank.") == 1;
+            }
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.region 1", b8->id);
+            const char *v = ok2 ? vc_of(t, key) : "";
+            ok2 = ok2 && count(v, "premise rank.region 0 pre : ") == 2 && count(v, "premise rank.region 1 post : ") == 1 && count(v, "premise rank.") == 3;
+            for (int k = 0; ok2 && k < 6; k++) {
+                snprintf(key, sizeof key, "bb%d.0 rank.lex %d", b8->id, k < 3 ? k : 1000 + k - 3);
+                const char *w = vc_of(t, key); int rk = k < 3 ? 0 : 1;
+                char rp[48], rq[48]; snprintf(rp, sizeof rp, "premise rank.region %d pre : ", rk); snprintf(rq, sizeof rq, "premise rank.region %d post : ", rk);
+                ok2 = count(w, rp) == 2 && count(w, rq) == 2;
+            }
+            CHECK(ok2 && count(t, " rank.") == 9 + count(t, "premise rank."), "case 13: two-atom guards:\n%s", t ? t : why);
+            free(t); gen_rk = NULL; gen_nrk = 0; continue;
+        }
+        if (c == 14) {
+            bool ok3 = t != NULL;
+            const int pairs[3] = { 1, 2, 102 };
+            for (int k = 0; ok3 && k < 3; k++) { char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.region %d\n", b8->id, pairs[k]); ok3 = count(t, key) == 1; }
+            char hk[48]; snprintf(hk, sizeof hk, "bb%d.0 rank.region ", b8->id);   // a VC's header line
+            CHECK(ok3 && count(t, hk) == 3, "case 14: one rank.region per pair k < l:\n%s", t ? t : why);
+            free(t); gen_rk = NULL; gen_nrk = 0; continue;
+        }
+        const char *want[8] = { "rank.cover 0", "rank.region 1", "rank.lex 0", "rank.lex 1", "rank.lex 2", "rank.lex 1000", "rank.lex 1001", "rank.lex 1002" };
+        bool ok = t && count(t, " rank.") == 8 + count(t, "premise rank.");
+        for (int k = 0; ok && k < 8; k++) {
+            char key[48]; snprintf(key, sizeof key, "bb%d.0 %s\n", b8->id, want[k]);
+            ok = count(t, key) == 1;                            // each (kind, ordinal) once
+            snprintf(key, sizeof key, "bb%d.0 %s", b8->id, want[k]);
+            const char *v = ok ? vc_of(t, key) : "";
+            if (k == 0) ok = ok && count(v, "premise rank.cover 0 : ") == 1 && count(v, "premise rank.") == 1;
+            else if (k == 1) {
+                const char *g = strstr(v, "goal ");
+                char jx[32]; snprintf(jx, sizeof jx, "-1*%%s%d@join.bb%d <= 0\n", x->id, b8->id);
+                ok = ok && count(v, "premise rank.region 0 pre : ") == 1 && count(v, "premise rank.") == 1 && g && strstr(g, jx);
+            } else {
+                char rp[48], rq[48]; int rk = k < 5 ? 0 : 1;
+                snprintf(rp, sizeof rp, "premise rank.region %d pre : ", rk); snprintf(rq, sizeof rq, "premise rank.region %d post : ", rk);
+                ok = ok && count(v, rp) == 1 && count(v, rq) == 1 && count(v, "premise rank.lex 0 : or { ") == 1 && count(v, "premise rank.") == 3;
+            }
+            if (!ok) CHECK(false, "case 0: %s, its premises:\n%s", want[k], v);
+        }
+        CHECK(ok && !strstr(t, "rank.keep") && !strstr(t, "rank.fall") && !strstr(t, "rank.bound"), "case 0: the eight region VCs only:\n%s", t ? t : why);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a piecewise ranking: covered, never up a region, each region's tuple falling\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

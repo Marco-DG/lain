@@ -112,19 +112,25 @@ typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MA
 // never a hypothesis: gen.h owes it on every back edge (`rank.keep`, `rank.fall`, `rank.bound`),
 // and a loop of a function that must terminate with none is `outside`. A back edge it does not
 // list refuses it.
+// With nreg >= 1 it is PIECEWISE: region k is its guard rows reg[k].g0 .. + ng - 1 (each row >= 0,
+// their conjunction G_k) and its tuple rows reg[k].t0 .. + nt - 1 (lexicographic), every row in
+// exactly one of them, every edge free and every cont 0. The ranking is <rho, tuple_rho> with rho
+// the largest k whose guard holds: a trip starts in some region (`rank.cover`), never moves to a
+// higher one (`rank.region`), and within one lowers its tuple (`rank.lex`). Loops only.
 // At blk JRANK_ENTRY it is a function's measure for its recursion: one component over its integer
 // parameters (or their slices' lengths) at entry, owed at every call that may close a cycle
 // through it (`rec.fall`, `rec.bound`); its edges are not read. The calls `le` lists, each by its
 // block and instruction index, owe only that the callee's measure not rise (`rec.le`); over the
 // whole component the calls listed must close no cycle (spec 12), or the claim is refused. A loop's
 // ranking claim lists none.
-enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8, JRANK_MAXL = 16, JRANK_ENTRY = -1 };
+enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8, JRANK_MAXL = 16, JRANK_MAXR = 4, JRANK_ENTRY = -1 };
 typedef struct {
     int32_t blk, ncomp, nt, nedge;
     int32_t key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT];             // as a claim's terms
     __int128 coef[JRANK_MAXC][JRANK_MAXT], c0[JRANK_MAXC];
     int32_t from[JRANK_MAXE]; int8_t fall[JRANK_MAXE];
     uint8_t cont[JRANK_MAXC];                                    // row j continues a MAX (1), a MIN (2)
+    uint8_t nreg; struct { uint8_t g0, ng, t0, nt; } reg[JRANK_MAXR];   // PIECEWISE regions, 0: none
     int32_t nle, le_blk[JRANK_MAXL], le_idx[JRANK_MAXL];      // at JRANK_ENTRY: the calls owed `<=`
     struct IrFunc *fn;
 } JRank;
