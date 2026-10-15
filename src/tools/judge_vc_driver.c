@@ -171,6 +171,7 @@ static void cover_func(IrFunc *f, Vra *V, JObl *o, int32_t n) {
 typedef struct { IrInstr *at; JObl *o; } HK;
 static HK *hk; static int64_t nhk;
 static long long reached, checked, falsec, unknown, premises, claimchk, claimgoals, contractchk, postgoals, mmevals, refusedrk;
+static long long rankedges, rankchk;                   // a ranking's VCs (rank.*) reached on their edge, their hypotheses checked
 static int hk_cmp(const void *a, const void *b) {
     uintptr_t x = (uintptr_t)((const HK *)a)->at, y = (uintptr_t)((const HK *)b)->at;
     return x < y ? -1 : x > y;
@@ -434,7 +435,10 @@ static void hk_on_block(IrFunc *f, IrBlock *to, IVal *v, int nv) {
     for (HE *h = hk_from(b); h && h < he + nhe && h->from == b; h++)
         if (h->o->to == to) {
             edges++;
-            if (h->o->claim >= 0) hk_claim(h->o, v, nv, where, &claimgoals); else hk_check(h->o, v, nv);
+            if (h->o->claim >= 0) { hk_claim(h->o, v, nv, where, &claimgoals); continue; }
+            long long c0 = checked;
+            hk_check(h->o, v, nv);
+            if (!strncmp(h->o->vc.id.kind, "rank.", 5)) { rankedges++; rankchk += checked - c0; }
         }
 }
 static void hk_on_instr(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) {
@@ -763,9 +767,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "SUMMARY obligations=%lld reached=%lld hyps-checked=%lld false=%lld not-evaluable=%lld premises=%lld status=%d"
                 " claims=%lld claims-dropped=%lld claim-obligations=%lld edges=%lld claim-hyps-checked=%lld claim-goals-checked=%lld"
                " returns=%lld return-goals-checked=%lld contract-hyps-checked=%lld entry-snapshots=%lld"
-               " rankings=%lld refused-rankings=%lld minmax-evaluated=%lld\n",
+               " rankings=%lld refused-rankings=%lld minmax-evaluated=%lld rank-edges=%lld rank-hyps-checked=%lld\n",
                (long long)nhk, reached, checked, falsec, unknown, premises, st, F.kept, F.dropped, (long long)nhe, edges,
-               claimchk, claimgoals, posts, postgoals, contractchk, snaps, ranks ? (long long)F.nrk : -1LL, refusedrk, mmevals);
+               claimchk, claimgoals, posts, postgoals, contractchk, snaps, ranks ? (long long)F.nrk : -1LL, refusedrk, mmevals,
+               rankedges, rankchk);
         if (falsec) rc = 3;
     } else if (claims) printf("# claims proposed %lld, kept %lld, dropped %lld\n", F.proposed, F.kept, F.dropped);
     if (cover) printf("COVER\tchecks %lld\tstated %lld\toutside %lld\tuncovered %lld\n", cv_checks, cv_cov, cv_cov_out, cv_unc);
