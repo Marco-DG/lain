@@ -206,6 +206,9 @@ typedef struct {
     JVc **full;                             // each path before slicing, for a retry on fewer pairs
     int32_t nedges, edges[FD_MAXEDGES];     // a loop's back edges (at most JRANK_MAXE), a cycle's calls
     int32_t npk;                            // the first npk pairs are the header's versions (cells)
+    uint8_t *moves;                         // per version: some path gives it a new value (its pre and
+                                            // post differ there); NULL on fd_rank's subset loops, whose
+                                            // pairs are renumbered
     bool dead;                              // every flattened path the solver refuted: no trip can
                                             // run, and a constant measure falls on every one (c2)
 } FdLoop;
@@ -445,6 +448,12 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
     for (int32_t q = 0; q < nval; q++) if (kind[q] == 1) vals[nshared] = vals[q], kind[nshared++] = 1;
     // 3. the merged list: the header's versions (pre, post), the shared values, then each path's own
     L->npk = npk;
+    // which versions a trip may change: a path leaving one unchanged gives it ONE variable (pre ==
+    // post); every version pair has its own two slots below, so the merged pre and post never say it
+    L->moves = fd_bump(L, (size_t)(npk ? npk : 1));
+    if (!L->moves) return false;
+    for (int32_t k = 0; k < nraw; k++)
+        for (int32_t q = 0; q < npk; q++) if (raw[k].pre[q] != raw[k].post[q]) L->moves[q] = 1;
     int32_t nv = 2 * npk + nshared, base_local = nv;
     for (int32_t k = 0; k < nraw; k++) nv += raw[k].nv;
     L->nv = nv;
@@ -474,10 +483,17 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
         if (!map) return false;
         for (int32_t x = 0; x < w->nv; x++) {
             map[x] = -1;
+            // (two pairs with ONE pre variable cannot happen: one pair per parameter or cell, each its
+            // own value on entry, so a pre never needs the tie below)
             // a quantity the path leaves unchanged has ONE variable for both sides (a recursive call
             // passing a parameter through, `f(lo + 1, hi)`): it is the pre-state's, and the post's is
-            // tied to it below, or `hi` would have no pre-state and no measure could read it
-            for (int32_t q = 0; q < npk; q++) { if (w->pre[q] == x) map[x] = 2 * q; if (w->post[q] == x && w->pre[q] != x) map[x] = 2 * q + 1; }
+            // tied to it below, or `hi` would have no pre-state and no measure could read it. So is
+            // one pair's pre that is ANOTHER's post (`p(m, r - 1, n)` passes n as r; a loop's `x = y`
+            // leaves y): the pre-state's, every pre before any post, and the other's post tied to it
+            // below. Mapped to whichever pair came last, the pre lost its variable (LeeJonesBen-Amram
+            // Ex4: m + n + r falls at both calls, and no measure was found)
+            for (int32_t q = 0; q < npk && map[x] < 0; q++) if (w->pre[q] == x) map[x] = 2 * q;
+            for (int32_t q = 0; q < npk && map[x] < 0; q++) if (w->post[q] == x) map[x] = 2 * q + 1;
             for (int32_t q = 0; q < nshared && map[x] < 0; q++) if (w->val[x] == vals[q]) map[x] = 2 * npk + q;
             if (map[x] < 0) map[x] = local++;
         }
@@ -555,15 +571,17 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
                 for (int32_t d = 0; d < pick; d++) z += o->dn[d];
                 for (int32_t c = 0; c < o->dn[pick]; c++) { hy[m].origin = "path case"; if (!fd_map_cons(L, &o->dc[z + c].c, map, &hy[m].cons)) return false; m++; }
             }
-            for (int32_t q = 0; q < npk; q++) {               // ...post - pre <= 0 and pre - post <= 0
-                if (w->pre[q] != w->post[q]) continue;
+            for (int32_t q = 0; q < npk; q++) {               // ...post - v <= 0 and v - post <= 0, v the
+                int32_t at = map[w->post[q]];                // variable its post value was given
+                if (at == 2 * q + 1) continue;
+                int32_t lo = at < 2 * q + 1 ? at : 2 * q + 1, hi = at < 2 * q + 1 ? 2 * q + 1 : at;   // ascending
                 for (int sg = 0; sg < 2; sg++) {
                     JTerm *t = fd_bump(L, sizeof(JTerm) * 2);
                     if (!t) return false;
-                    t[0].var = 2 * q;     fd_jint(&t[0].coef, sg ? 1 : -1);
-                    t[1].var = 2 * q + 1; fd_jint(&t[1].coef, sg ? -1 : 1);
+                    t[0].var = lo; fd_jint(&t[0].coef, sg ? 1 : -1);
+                    t[1].var = hi; fd_jint(&t[1].coef, sg ? -1 : 1);
                     memset(&hy[m], 0, sizeof hy[m]);
-                    hy[m].origin = "unchanged"; hy[m].cons.t = t; hy[m].cons.nt = 2; hy[m].cons.op = J_LE; fd_jint(&hy[m].cons.rhs, 0);
+                    hy[m].origin = at == 2 * q ? "unchanged" : "passed"; hy[m].cons.t = t; hy[m].cons.nt = 2; hy[m].cons.op = J_LE; fd_jint(&hy[m].cons.rhs, 0);
                     m++;
                 }
             }
@@ -967,7 +985,7 @@ static bool fd_rank_absgrow(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *
     // on the whole paths took most of this template's time on 4NestedWith3Variables
     int32_t cand[6], nc = 0; __int128 M[6];
     for (int32_t z = 0; z < L->npk && nc < 6; z++) {
-        if (L->ptk[z] != JTERM_VALUE || L->pre[z] == L->post[z]) continue;
+        if (L->ptk[z] != JTERM_VALUE || !L->moves || !L->moves[z]) continue;
         bool okM = true; __int128 m = 0;
         for (int32_t k = 0; k < L->npaths && okM; k++) {
             __int128 hi = 0, lo = 0; bool hh = false, hl = false;
@@ -1189,6 +1207,7 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         }
         if (!ok) break;
         FdLoop V = *L; int32_t nn = 0;                       // only the pairs `on` names
+        V.moves = NULL;
         V.paths = sl; V.npaths = ns; V.edge = sedge;
         V.pkey = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.ptk = fd_bump(L, (size_t)L->npairs);
         V.pre = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.post = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs);
@@ -2338,7 +2357,7 @@ static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const
             if (L.ptk[v] != JTERM_VALUE) continue;
             int32_t e = -1;
             for (int32_t z = 0; z < L.npk && e < 0; z++) if (L.ptk[z] == JTERM_ENTRY && L.pkey[z] == L.pkey[v]) e = z;
-            if (e < 0 || L.pre[v] == L.post[v]) continue;
+            if (e < 0 || !L.moves || !L.moves[v]) continue;
             int dir = 0;                                     // +1: never falls, -1: never rises
             for (int sg = 1; sg >= -1 && !dir; sg -= 2) {
                 bool all = L.npaths > 0;
