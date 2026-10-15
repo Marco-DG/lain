@@ -1115,6 +1115,154 @@ static bool fd_rank_absgrow(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *
         }
     return false;
 }
+// PE.13 kind (4), with c43's regions at a call: a recursion whose calls all pass one parameter on
+// UNCHANGED and rank differently by its sign (TwoWay: `terminate` picks n falling, n >= 0 the
+// bound, or n rising to the type's bound). Three regions, z >= 1, z <= -1 and z = 0 (its two atoms),
+// each its own tuple from the finder's own search over the calls its guard leaves (templates off),
+// a region no call meets its first guard row. No call moves between them (z is passed on, the same
+// variable on both sides), they cover the integers, and each tuple ranks exactly the calls in its
+// region: what c43 owes. Recursion only, in this version: a loop's read-only cells would each cost
+// three more searches on every loop the finder cannot rank.
+static bool fd_rank_split(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
+    if (H != JRANK_ENTRY || !L->moves || L->npaths == 0) return false;
+    char *mark = L->cur;
+    for (int32_t z = 0; z < L->npk; z++) {
+        L->cur = mark;
+        if (L->ptk[z] != JTERM_VALUE || L->moves[z]) continue;
+        // the three guards, each row s*z - t >= 0: z - 1, -z - 1; z and -z
+        static const int8_t gs[4] = { 1, -1, 1, -1 }; static const int8_t gt[4] = { 1, 1, 0, 0 };
+        static const int8_t g0[3] = { 0, 1, 2 }, gn[3] = { 1, 1, 2 };
+        JRank rt[3]; bool ok = true;
+        for (int32_t k = 0; k < 3 && ok; k++) {
+            memset(&rt[k], 0, sizeof rt[k]);
+            const JVc **rp = fd_bump(L, sizeof(JVc *) * (size_t)L->npaths), **rf = fd_bump(L, sizeof(JVc *) * (size_t)L->npaths);
+            int32_t *re = fd_bump(L, sizeof(int32_t) * (size_t)L->npaths);
+            if (!rp || !rf || !re) return false;
+            int32_t nr = 0;
+            for (int32_t p = 0; p < L->npaths; p++) {
+                JTerm tt[4]; JCons ex[4]; int32_t ne = 0;
+                memset(tt, 0, sizeof tt);
+                for (int32_t a = 0; a < gn[k]; a++) {       // the guard before and after (z the same)
+                    int32_t gi = g0[k] + a;
+                    tt[2 * a].var = L->pre[z]; fd_jint(&tt[2 * a].coef, -gs[gi]);
+                    ex[ne++] = fd_cons_of(&tt[2 * a], 1, -gt[gi]);
+                    tt[2 * a + 1].var = L->post[z]; fd_jint(&tt[2 * a + 1].coef, -gs[gi]);
+                    ex[ne++] = fd_cons_of(&tt[2 * a + 1], 1, -gt[gi]);
+                }
+                if (fd_case_holds(F, L->paths[p], ex, ne, NULL, F->lim)) continue;   // no such call
+                if (F->oom) return false;
+                rp[nr] = fd_with_case(L, L->paths[p], ex, ne, tt, 4);
+                rf[nr] = fd_with_case(L, L->full[p], ex, ne, tt, 4);
+                if (!rp[nr] || !rf[nr]) return false;
+                re[nr++] = L->edge[p];
+            }
+            if (nr == 0) {                                   // no call in the region: its first guard row
+                rt[k].ncomp = 1; rt[k].nt = 1; rt[k].key[0] = L->pkey[z]; rt[k].tk[0] = JTERM_VALUE;
+                rt[k].coef[0][0] = gs[g0[k]]; rt[k].c0[0] = -gt[g0[k]];
+                continue;
+            }
+            FdLoop V = *L;
+            V.paths = rp; V.full = (JVc **)rf; V.edge = re; V.npaths = nr; V.dead = false;
+            fd_no_templates++;
+            bool got = fd_rank(F, f, H, &V, &rt[k]);
+            fd_no_templates--;
+            if (F->oom) return false;
+            ok = got && !rt[k].nreg && rt[k].cont[0] == 0;
+        }
+        if (!ok || 4 + rt[0].ncomp + rt[1].ncomp + rt[2].ncomp > JRANK_MAXC) continue;
+        // the terms: z, then every tuple's
+        int32_t nt = 1, key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT]; bool room = true;
+        key[0] = L->pkey[z]; tk[0] = JTERM_VALUE;
+        for (int32_t k = 0; k < 3 && room; k++)
+            for (int32_t t = 0; t < rt[k].nt && room; t++) {
+                bool seen = false;
+                for (int32_t x = 0; x < nt && !seen; x++) seen = key[x] == rt[k].key[t] && tk[x] == rt[k].tk[t];
+                if (seen) continue;
+                if (nt == JRANK_MAXT) room = false; else { key[nt] = rt[k].key[t]; tk[nt] = rt[k].tk[t]; nt++; }
+            }
+        if (!room) continue;
+        memset(out, 0, sizeof *out);
+        out->blk = H; out->fn = f; out->nedge = L->nedges; out->nt = nt; out->nreg = 3;
+        for (int32_t t = 0; t < nt; t++) { out->key[t] = key[t]; out->tk[t] = tk[t]; }
+        for (int32_t e = 0; e < L->nedges; e++) { out->from[e] = L->edges[e]; out->fall[e] = -1; }
+        int32_t row = 0;
+        for (int32_t k = 0; k < 3; k++) {
+            out->reg[k].g0 = (uint8_t)row; out->reg[k].ng = (uint8_t)gn[k];
+            for (int32_t a = 0; a < gn[k]; a++, row++) { out->coef[row][0] = gs[g0[k] + a]; out->c0[row] = -gt[g0[k] + a]; }
+            out->reg[k].t0 = (uint8_t)row; out->reg[k].nt = (uint8_t)rt[k].ncomp;
+            for (int32_t r = 0; r < rt[k].ncomp; r++, row++) {
+                out->c0[row] = rt[k].c0[r]; out->cont[row] = rt[k].cont[r];
+                for (int32_t t = 0; t < rt[k].nt; t++)
+                    for (int32_t x = 0; x < nt; x++) if (key[x] == rt[k].key[t] && tk[x] == rt[k].tk[t]) out->coef[row][x] = rt[k].coef[r][t];
+            }
+        }
+        out->ncomp = row;
+        return true;
+    }
+    return false;
+}
+// PE.13 kind (4), with c42's max groups at a call: a recursion falling in the MAX of two affine
+// rows (LeeJonesBen-Amram POPL 2001 Ex5: f(y, y - 1) and f(y, x - 1) fall in max(2x, 2y + 1)). Rows
+// a0*v + b0 + C and a1*w + b1 + C over two parameters, a in {1, 2} and b in {0, 1}, C the most a*|v|
+// is (the bounds the calls state, the types at the least), so every row is >= 0. Checked first per
+// call and per row k that is the max before it: every row after the call is at most row k before,
+// less one; so the max falls and is bounded, what c42 owes. Recursion only, as fd_rank_split.
+static bool fd_rank_affmax(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
+    if (H != JRANK_ENTRY || L->npaths == 0 || L->npaths > 8) return false;
+    int32_t cand[4], nc = 0; __int128 M[4];
+    for (int32_t z = 0; z < L->npk && nc < 4; z++) {      // the parameters, each with a bound on |z|
+        if (L->ptk[z] != JTERM_VALUE) continue;
+        bool okM = true; __int128 m = 0;
+        for (int32_t k = 0; k < L->npaths && okM; k++) {
+            __int128 hi = 0, lo = 0; bool hh = false, hl = false;
+            for (int32_t x = 0; x < L->paths[k]->nhyps; x++) {
+                const JHyp *y = &L->paths[k]->hyps[x];
+                if (y->disj || y->cons.op != J_LE || y->cons.nt != 1 || y->cons.t[0].var != L->pre[z]) continue;
+                __int128 c = fd_int128(&y->cons.t[0].coef), r;
+                if (!fd_i128(&y->cons.rhs, &r)) continue;
+                if (c == 1 && (!hh || r < hi)) { hi = r; hh = true; }
+                if (c == -1 && (!hl || -r > lo)) { lo = -r; hl = true; }
+            }
+            if (!hh || !hl) { okM = false; break; }
+            __int128 b = hi > -lo ? hi : -lo;
+            if (b > m) m = b;
+        }
+        if (okM && m <= ((__int128)1 << 38)) { M[nc] = m; cand[nc++] = z; }
+    }
+    for (int32_t i = 0; i < nc; i++)
+        for (int32_t j = 0; j < nc; j++) {
+            if (i == j) continue;
+            int32_t qv[2] = { cand[i], cand[j] };
+            __int128 C = 2 * (M[i] > M[j] ? M[i] : M[j]) + 1;
+            for (int32_t g = 0; g < 16; g++) {               // a0, a1 in {1, 2}; b0, b1 in {0, 1}
+                int a[2] = { 1 + (g & 1), 1 + ((g >> 1) & 1) }, b[2] = { (g >> 2) & 1, (g >> 3) & 1 };
+                bool ok = true;
+                for (int32_t p = 0; p < L->npaths && ok; p++)
+                    for (int32_t k = 0; k < 2 && ok; k++) {  // row k the max before the call...
+                        JTerm tk[4]; int32_t nk = 0;         // row (1-k) - row k <= 0, before
+                        nk = fd_lin(tk, nk, L->pre[qv[1 - k]], a[1 - k]); nk = fd_lin(tk, nk, L->pre[qv[k]], -a[k]);
+                        JCons ex = fd_cons_of(tk, nk, b[k] - b[1 - k]);
+                        if (fd_case_holds(F, L->paths[p], &ex, 1, NULL, F->lim)) continue;   // never the max
+                        if (F->oom) return false;
+                        for (int32_t r = 0; r < 2 && ok; r++) {   // ...every row after: row r' <= row k - 1
+                            JTerm tg[4]; int32_t ng = 0;
+                            ng = fd_lin(tg, ng, L->post[qv[r]], a[r]); ng = fd_lin(tg, ng, L->pre[qv[k]], -a[k]);
+                            JCons goal = fd_cons_of(tg, ng, b[k] - b[r] - 1);
+                            ok = fd_case_holds(F, L->paths[p], &ex, 1, &goal, F->lim);
+                            if (F->oom) return false;
+                        }
+                    }
+                if (!ok) continue;
+                memset(out, 0, sizeof *out);
+                out->blk = H; out->fn = f; out->nedge = L->nedges; out->nt = 2; out->ncomp = 2;
+                for (int32_t u = 0; u < 2; u++) { out->key[u] = L->pkey[qv[u]]; out->tk[u] = JTERM_VALUE; out->coef[u][u] = a[u]; out->c0[u] = b[u] + C; }
+                out->cont[1] = 1;                            // one MAX group
+                for (int32_t e = 0; e < L->nedges; e++) { out->from[e] = L->edges[e]; out->fall[e] = 0; }
+                return true;
+            }
+        }
+    return false;
+}
 // A late template in an arena of its own: the passes before it fill L's (4 MB less 11 KB left on
 // 4NestedWith3Variables), and a template that cannot allocate proposes nothing, silently. L's paths
 // and pairs stay where they are; only what the template bumps goes to the new arena, freed after.
@@ -1220,7 +1368,9 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (fd_rank_max(F, f, H, L, step, out)) return true;   // no tuple: a max component (c36)
     if (fd_no_templates) return false;                     // inside a template: its search only
     if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_regions)) return true;   // nor a max: a tuple per region (c38)
-    return !F->oom && fd_in_arena(F, f, H, L, out, fd_rank_absgrow);              // nor regions: |v| + |w| growing (c41)
+    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_absgrow)) return true;   // nor regions: |v| + |w| growing (c41)
+    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_split)) return true;     // a recursion split by a parameter (c43)
+    return !F->oom && fd_rank_affmax(F, f, H, L, out);                            // or a max of two affine rows (c42)
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);
@@ -2464,6 +2614,8 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     }
     free(cd); free(cl);
     // PE.5: a ranking claim per loop header, under the claims Houdini kept (owed, never believed)
+    IrCallGraph CG0; memset(&CG0, 0, sizeof CG0);
+    bool cg0 = ir_cg_build(&CG0, mod);
     for (IrFunc *f = mod; f; f = f->next) {
         if (f->is_extern || !f->entry) continue;
         for (IrBlock *b = f->blocks; b; b = b->next) {
@@ -2482,19 +2634,23 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
             free(L.mem);
             if (!got) continue;
             JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
-            if (!x) goto oom;
+            if (!x) { ir_cg_free(&CG0); goto oom; }
             F->rk = x; F->rk[F->nrk++] = r;
         }
         // ...and a measure for its recursion, if it has one to rank: one component over its
         // parameters at entry, falling at every self-call (the judge owes rec.fall and rec.bound)
         FdLoop L; JRank r;
-        bool got = fd_loop_build(F, f, JRANK_ENTRY, as, nv, &L) && fd_rank(F, f, JRANK_ENTRY, &L, &r) && r.ncomp == 1;
+        // a measure of several rows (a tuple, groups, regions: c42/c43) only for a function whose
+        // component is itself alone: gen.h refuses one in a component of several, from either side
+        bool alone = cg0 && ir_cg_members(&CG0, ir_cg_index(&CG0, f), NULL, 0) == 1;
+        bool got = fd_loop_build(F, f, JRANK_ENTRY, as, nv, &L) && fd_rank(F, f, JRANK_ENTRY, &L, &r) && (r.ncomp == 1 || alone);
         free(L.mem);
         if (!got) continue;
         JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
-        if (!x) goto oom;
+        if (!x) { ir_cg_free(&CG0); goto oom; }
         F->rk = x; F->rk[F->nrk++] = r;
     }
+    ir_cg_free(&CG0);
     // ...and a cycle of several functions, jointly (fd_rank_cycle), over the module's components
     {   IrCallGraph G; memset(&G, 0, sizeof G);
         if (ir_cg_build(&G, mod)) {

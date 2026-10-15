@@ -15,7 +15,11 @@
 # - shrink: |a| grows on one path and shrinks to 0 on the other (the template's keep check). It ends
 #   on every input (c > 0 at the overflow panic, else q falls), by <q, C - |a|>, so a finder that
 #   ranks it so may: only the template's <min, rest> order is wrong;
-# - gap, over, larraz, swap: twins from judge_finder_regions, _regions_fixed, _entry and _absgrow.
+# - gap, over, larraz, swap: twins from judge_finder_regions, _regions_fixed, _entry and _absgrow;
+# - multr, twowayr, ex5r: recursions from judge_finder_recursion, each passing on what should fall
+#   (the regions, the parameter split and the max of affine rows at a call); swapr, 4Nested's swap as
+#   a recursion (a recursion of several rows reaches every template; the recursive 4Nested itself is
+#   ranked by one row, so it does not reach |v| + |w| growing).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
@@ -147,8 +151,55 @@ LN
 # The teeth are this revision's: K1 (a kept case's representative taken as b = 0) fails negkeep and
 # K2 (no keep check) fails shrink. Rerun both whenever the templates in finder.h change: a filter
 # that stops a template reaching these loops leaves this test green and vacuous.
+cat > "$T/multr.ln" <<'LN'
+func mult(n i32, m i32) i32 effects raises {
+    if m < 0 {
+        return -1 *? mult(n, m) else panic("overflow")
+    }
+    if m == 0 {
+        return 0
+    }
+    return n +? mult(n, (m -? 1 else panic("overflow"))) else panic("overflow")
+}
+LN
+cat > "$T/twowayr.ln" <<'LN'
+func twoWay(terminate i32, n i32) i32 effects raises {
+    if n < 0 {
+        return 1
+    } else {
+        var m i32 = n
+        if terminate != 0 {
+            m = m
+        } else {
+            m = m +? 1 else panic("overflow")
+        }
+        return m *? twoWay(terminate, m) else panic("overflow")
+    }
+}
+LN
+cat > "$T/ex5r.ln" <<'LN'
+func f(x i32, y i32) i32 effects raises {
+    if y == 0 {
+        return x
+    } else {
+        if x == 0 {
+            return f(y, (y -? 1 else panic("overflow")))
+        } else {
+            return f(y, x)
+        }
+    }
+}
+LN
+cat > "$T/swapr.ln" <<'LN'
+func f(q i32, a i32, b i32) i32 effects raises {
+    if q <= 0 {
+        return 0
+    }
+    return f((q +? a else panic("overflow")) -? 1 else panic("overflow"), b, a)
+}
+LN
 bad=0
-for p in negkeep shrink gap over larraz swap; do
+for p in negkeep shrink gap over larraz swap multr twowayr ex5r swapr; do
     out=$("$T/jvc" "$T/$p.ln" --judge 2>&1)
     echo "$out" | grep -q '^# judge proved=' || { echo "$p: the driver gave no summary:"; echo "$out" | tail -3; bad=1; continue; }
     recs=$(echo "$out" | awk '$1 == "v1" && $5 ~ /^(rank|rec)\./')
