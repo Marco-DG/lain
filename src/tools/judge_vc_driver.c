@@ -170,7 +170,7 @@ static void cover_func(IrFunc *f, Vra *V, JObl *o, int32_t n) {
 // ── --check-hyps ───────────────────────────────────────────────────────────────────────────
 typedef struct { IrInstr *at; JObl *o; } HK;
 static HK *hk; static int64_t nhk;
-static long long reached, checked, falsec, unknown, premises, claimchk, claimgoals, contractchk, postgoals;
+static long long reached, checked, falsec, unknown, premises, claimchk, claimgoals, contractchk, postgoals, mmevals, refusedrk;
 static int hk_cmp(const void *a, const void *b) {
     uintptr_t x = (uintptr_t)((const HK *)a)->at, y = (uintptr_t)((const HK *)b)->at;
     return x < y ? -1 : x > y;
@@ -202,6 +202,24 @@ static void hk_ent_add(int32_t H, int32_t E, int32_t cell, int32_t off) {
 // A variable's value at the instruction, or false when it cannot be read (not an integer yet).
 static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
     int32_t k = o->vkind[x], key = o->vkey[x];
+    const JRecipe *rm = k == 3 && o->vrec ? o->vrec[x] : NULL;
+    if (rm && rm->mm) {                                // the MAX (MIN) of linear forms: a ranking
+        const JMinMax *mf = rm->mmf;                   // component's rows (c41), checked at registration
+        if (!mf || mf->nf < 1 || mf->nf > JRANK_MAXC) return false;
+        __int128 best = 0;
+        for (int32_t f = 0; f < mf->nf; f++) {
+            __int128 s = mf->fc0[f];
+            for (int i = 0; i < mf->fn[f] && i < JRANK_MAXT; i++) {
+                __int128 y, p;
+                int32_t t = mf->fvar[f][i];
+                if (t < 0 || t >= o->vc.nvars || o->vkind[t] == 3 || !hk_var(o, t, v, nv, &y)) return false;
+                if (__builtin_mul_overflow(mf->fcoef[f][i], y, &p) || __builtin_add_overflow(s, p, &s)) return false;
+            }
+            if (f == 0 || (rm->mm > 0 ? s > best : s < best)) best = s;
+        }
+        mmevals++;
+        *out = best; return true;
+    }
     if (key < 0 || key >= nv) return false;
     // the obligation's own result does not exist yet: the hook runs before the instruction, and
     // the VC's variable for it is the exact value the instruction is about to settle
@@ -256,6 +274,30 @@ static __int128 hk_jint(const JInt *x) {             // the generator's constant
     unsigned __int128 m = 0;
     for (int i = x->n - 1; i >= 0; i--) m = (m << 32) | x->limb[i];
     return x->neg ? -(__int128)m : (__int128)m;
+}
+// A fresh variable's recipe as stored (I.197: every field checked, none trusted by construction):
+// mm -1, 0 or 1, its forms present exactly when mm is not 0, and then no float part, 1 ..
+// JRANK_MAXC forms of at most JRANK_MAXT terms each, every term a variable of the VC that is not
+// itself fresh. NULL when it is well formed, else what is wrong.
+static const char *hk_recipe_bad(const JObl *o, int32_t x) {
+    const JRecipe *r = o->vrec ? o->vrec[x] : NULL;
+    if (!r) return NULL;
+    if (o->vkind[x] != 3) return "a recipe on a variable that is not fresh";
+    if (r->mm < -1 || r->mm > 1) return "mm is not -1, 0 or 1";
+    if ((r->mm != 0) != (r->mmf != NULL)) return "mm and its forms disagree";
+    if (!r->mm) return NULL;
+    const JMinMax *mf = r->mmf;
+    if (r->fval >= 0) return "a max or min with a float part";
+    if (mf->nf < 1 || mf->nf > JRANK_MAXC) return "a max or min of no forms, or of more than JRANK_MAXC";
+    for (int32_t f = 0; f < mf->nf; f++) {
+        if (mf->fn[f] > JRANK_MAXT) return "a form of more terms than JRANK_MAXT";
+        for (int i = 0; i < mf->fn[f]; i++) {
+            int32_t t = mf->fvar[f][i];
+            if (t < 0 || t >= o->vc.nvars) return "a form's term that is no variable of the VC";
+            if (o->vkind[t] == 3) return "a form's term that is a fresh variable";
+        }
+    }
+    return NULL;
 }
 // 1 true, 0 false, -1 not evaluable
 static int hk_cons(JObl *o, const JCons *c, IVal *v, int nv) {
@@ -525,8 +567,13 @@ static void why_val(IrFunc *f, IrValue *v, int depth, char *b, size_t cap) {
     strcat(b, ")");
 }
 int main(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr, "usage: %s <file.ln> [--smt | --stats | --why | --check-hyps] [--no-claims]\n", argv[0]); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: %s <file.ln> [--smt | --stats | --why | --check-hyps [--ranks | --ranks-free]] [--no-claims]\n", argv[0]); return 2; }
     bool smt = false, stats = false, check = false, why = false, claims = true, show = false, finder = true, judge = false, corrupt = false, cover = false;
+    // --check-hyps: the finder's rankings too (their VCs' hypotheses); --ranks-free, each of their
+    // back edges made free, so the lexicographic VCs (rank.lex) are run on loops the finder ranks
+    // with a fixed falling component, a MAX or MIN of rows among them (its definitions, c41). A
+    // ranking whose fixed edges hold owes nothing more there: its hypotheses are facts all the same
+    bool ranks = false, ranks_free = false;
     for (int k = 2; k < argc; k++) {
         if (!strcmp(argv[k], "--no-claims")) claims = false;
         if (!strcmp(argv[k], "--claims")) show = true;
@@ -534,6 +581,8 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--smt")) smt = true;
         if (!strcmp(argv[k], "--stats")) stats = true;
         if (!strcmp(argv[k], "--check-hyps")) check = true;
+        if (!strcmp(argv[k], "--ranks")) ranks = true;
+        if (!strcmp(argv[k], "--ranks-free")) ranks = ranks_free = true;
         if (!strcmp(argv[k], "--why")) why = true;
         if (!strcmp(argv[k], "--judge")) judge = true;
         if (!strcmp(argv[k], "--judge-corrupt")) judge = corrupt = true;
@@ -590,6 +639,8 @@ int main(int argc, char **argv) {
         if (!judge) {
             cl = finder_propose(&F, &ncl);
             if (F.oom) fprintf(stderr, "finder_propose: out of memory\n");
+            for (int32_t k = 0; ranks_free && k < F.nrk; k++)
+                for (int32_t e = 0; e < F.rk[k].nedge; e++) F.rk[k].fall[e] = -1;
         }
     }
     if (judge) {
@@ -624,7 +675,14 @@ int main(int argc, char **argv) {
         char err[200]; err[0] = 0;
         if (check) {
             JObl *o; int32_t n;
-            if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
+            // with --ranks, the finder's rankings: a VC owed on a back edge is checked like any other.
+            // One the generator refuses is a finder bug (a compile refuses the function over it):
+            // reported and counted, then the function's other hypotheses are checked without them
+            bool gen_ok = ranks && jgen_func(&m, f, irmod, cl, ncl, F.rk, F.nrk, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err);
+            if (ranks && !gen_ok) {
+                fprintf(stderr, "REFUSED-RANKING %.*s: %s\n", (int)f->name->length, f->name->name, err); refusedrk++; rc = 1;
+            }
+            if (!gen_ok && !jgen_func(&m, f, irmod, cl, ncl, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
                 fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; continue;
             }
             HK *nh = realloc(hk, sizeof *hk * (size_t)(nhk + n + 1));
@@ -637,6 +695,11 @@ int main(int argc, char **argv) {
                 else { hk[nhk].at = o[i].at; hk[nhk].o = &o[i]; nhk++; }
                 for (int32_t x = 0; o[i].vent && x < o[i].vc.nvars; x++)
                     if (o[i].vent[x] >= 0) hk_ent_add(o[i].vent[x], o[i].vente[x], o[i].vkey[x], o[i].voff ? o[i].voff[x] : -1);
+                for (int32_t x = 0; x < o[i].vc.nvars; x++) {   // a recipe the generator stored malformed
+                    const char *bad = hk_recipe_bad(&o[i], x);
+                    if (bad) { fprintf(stderr, "ERROR %.*s: %s %s %s, variable %s: %s\n", (int)f->name->length, f->name->name,
+                                       o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal, o[i].vc.vars[x], bad); rc = 1; }
+                }
             }
             continue;
         }
@@ -699,9 +762,10 @@ int main(int argc, char **argv) {
         fflush(stdout);
         fprintf(stderr, "SUMMARY obligations=%lld reached=%lld hyps-checked=%lld false=%lld not-evaluable=%lld premises=%lld status=%d"
                 " claims=%lld claims-dropped=%lld claim-obligations=%lld edges=%lld claim-hyps-checked=%lld claim-goals-checked=%lld"
-               " returns=%lld return-goals-checked=%lld contract-hyps-checked=%lld entry-snapshots=%lld\n",
+               " returns=%lld return-goals-checked=%lld contract-hyps-checked=%lld entry-snapshots=%lld"
+               " rankings=%lld refused-rankings=%lld minmax-evaluated=%lld\n",
                (long long)nhk, reached, checked, falsec, unknown, premises, st, F.kept, F.dropped, (long long)nhe, edges,
-               claimchk, claimgoals, posts, postgoals, contractchk, snaps);
+               claimchk, claimgoals, posts, postgoals, contractchk, snaps, ranks ? (long long)F.nrk : -1LL, refusedrk, mmevals);
         if (falsec) rc = 3;
     } else if (claims) printf("# claims proposed %lld, kept %lld, dropped %lld\n", F.proposed, F.kept, F.dropped);
     if (cover) printf("COVER\tchecks %lld\tstated %lld\toutside %lld\tuncovered %lld\n", cv_checks, cv_cov, cv_cov_out, cv_unc);

@@ -44,6 +44,28 @@ static char *gen_ids(IrFunc *f, char *why) {
         len += (size_t)snprintf(t + len, cap - len, "%s %s %s%s\n", o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal, o[i].outside ? " outside" : "");
     return t;
 }
+// Every MAX or MIN variable's recipe (c41), one line each: "point kind ordinal var mm M:" then each
+// form as " {c0 coef*var ...}"; NULL when refused.
+static char *gen_recipes(IrFunc *f, char *why) {
+    JMem m = jmem_over(region, sizeof region);
+    JObl *o; int32_t n; char err[200];
+    if (!jgen_func(&m, f, gen_mod, NULL, 0, gen_rk, gen_nrk, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { strcpy(why, err); return NULL; }
+    size_t cap = 1 << 16, len = 0; char *t = malloc(cap); t[0] = 0;
+    for (int32_t i = 0; i < n; i++)
+        for (int32_t x = 0; !o[i].outside && x < o[i].vc.nvars; x++) {
+            const JRecipe *r = o[i].vrec ? o[i].vrec[x] : NULL;
+            if (!r || !r->mm || len + 512 > cap) continue;
+            len += (size_t)snprintf(t + len, cap - len, "%s %s %s %s mm %d:", o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal, o[i].vc.vars[x], r->mm);
+            for (int32_t k = 0; r->mmf && k < r->mmf->nf; k++) {
+                len += (size_t)snprintf(t + len, cap - len, " {%lld", (long long)r->mmf->fc0[k]);
+                for (int q = 0; q < r->mmf->fn[k]; q++)
+                    len += (size_t)snprintf(t + len, cap - len, " %lld*%s", (long long)r->mmf->fcoef[k][q], o[i].vc.vars[r->mmf->fvar[k][q]]);
+                len += (size_t)snprintf(t + len, cap - len, "}");
+            }
+            len += (size_t)snprintf(t + len, cap - len, "\n");
+        }
+    return t;
+}
 static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
@@ -3637,9 +3659,12 @@ int main(void) {
     // per row, each under one `premise rank.max 0`, and rank.bound 0 under one; no rank.keep; (1)
     // <0, max(x, -x)>, falling at 1: rank.keep 0 (a row of its own), rank.fall 1001 and 2001,
     // rank.bound 1; refused: (2) cont[0] = 1; (3) cont[1] = 3; (4) fall 1 (one component, two
-    // rows); (5) a free edge over the max; (6) max(x + 5, -x + 2), the constants moved right: the
-    // row x's goal x' + x <= -4, the row -x's premise x + x' <= -3
-    for (int c = 0; c < 7; c++) {
+    // rows); (6) max(x + 5, -x + 2), the constants moved right: the row x's goal x' + x <= -4, the
+    // row -x's premise x + x' <= -3; a FREE edge (c41): (5) over the max, rank.lex 0 (m' <= m - 1)
+    // and 1 (m >= 0), each under m and m' defined exactly (`def rank.max 0 pre` and `post`: m >= x,
+    // m >= -x, m <= x or m <= -x; the bound names m alone) and nothing per row; (7) over min(x + 5,
+    // -x + 2), its definitions' signs and constants (m <= x + 5, m <= -x + 2, m >= x + 5 or m >= -x + 2)
+    for (int c = 0; c < 8; c++) {
         IrFunc *f = ir_func_new(&A, nm("abs71"), i32t, IR_FUNC_PURE);
         IrValue *xp = ir_add_param(f, i32t, nm("xp"));
         IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
@@ -3659,16 +3684,65 @@ int main(void) {
         r.blk = b1->id; r.fn = f; r.nt = 1; r.key[0] = x->id; r.nedge = 1; r.from[0] = b6->id;
         int o1 = c == 1 ? 1 : 0;                                // <0, ...>: row 0 all zero
         r.ncomp = 2 + o1; r.coef[o1][0] = 1; r.coef[o1 + 1][0] = -1; r.cont[o1 + 1] = 1; r.fall[0] = (int8_t)o1;
-        if (c == 6) { r.c0[0] = 5; r.c0[1] = 2; }
+        if (c == 6 || c == 7) { r.c0[0] = 5; r.c0[1] = 2; }
         const char *bad = NULL;
         if (c == 2) { r.cont[0] = 1; bad = "max or min of rows out of shape"; }
         if (c == 3) { r.cont[1] = 3; bad = "max or min of rows out of shape"; }
         if (c == 4) { r.fall[0] = 1; bad = "falling component out of range"; }
-        if (c == 5) { r.fall[0] = -1; bad = "a free back edge over a component that is a max or min of rows"; }
+        if (c == 5 || c == 7) r.fall[0] = -1;
+        if (c == 7) r.cont[1] = 2;
         gen_rk = &r; gen_nrk = 1;
         char why[200] = "";
         char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
         if (bad) { CHECK(!t && strstr(why, bad), "case %d: refused (%s): got \"%s\"", c, bad, why); free(t); gen_rk = NULL; gen_nrk = 0; continue; }
+        if (c == 5 || c == 7) {                                // a free edge: rank.lex 0 and 1, over m
+            const char *k = c == 5 ? "max" : "min";
+            bool ok = t && !strstr(t, "rank.fall") && !strstr(t, "rank.keep") && !strstr(t, "rank.bound") && !strstr(t, "premise ");
+            for (int q = 0; ok && q < 2; q++) {
+                char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.lex %d", b6->id, q);
+                const char *v = vc_of(t, key);
+                char d[8][200]; int nd = 0;
+                for (int side = 0; side < (q == 0 ? 2 : 1); side++) {
+                    char xv[40], m[24];
+                    snprintf(xv, sizeof xv, side ? "%%s%d@join.bb%d" : "%%s%d@head.bb%d", x->id, side ? b6->id : b1->id);
+                    snprintf(m, sizeof m, "rank.%s.0.%s", k, side ? "post" : "pre");
+                    const char *o = side ? "post" : "pre";
+                    if (c == 5) {
+                        snprintf(d[nd++], 200, "def rank.max 0 %s : 1*%s + -1*%s <= 0\n", o, xv, m);
+                        snprintf(d[nd++], 200, "def rank.max 0 %s : -1*%s + -1*%s <= 0\n", o, xv, m);
+                        snprintf(d[nd++], 200, "def rank.max 0 %s : or { -1*%s + 1*%s <= 0 | 1*%s + 1*%s <= 0 }\n", o, xv, m, xv, m);
+                    } else {
+                        snprintf(d[nd++], 200, "def rank.min 0 %s : -1*%s + 1*%s <= 5\n", o, xv, m);
+                        snprintf(d[nd++], 200, "def rank.min 0 %s : 1*%s + 1*%s <= 2\n", o, xv, m);
+                        snprintf(d[nd++], 200, "def rank.min 0 %s : or { 1*%s + -1*%s <= -5 | -1*%s + -1*%s <= -2 }\n", o, xv, m, xv, m);
+                    }
+                }
+                char dk[24]; snprintf(dk, sizeof dk, "def rank.%s 0 ", k);
+                ok = count(v, dk) == (q == 0 ? 6 : 3) && (q == 0 || !strstr(v, ".0.post"));
+                for (int i = 0; ok && i < nd; i++) ok = strstr(v, d[i]) != NULL;
+                char gl[80];
+                if (q == 0) snprintf(gl, sizeof gl, "goal -1*rank.%s.0.pre + 1*rank.%s.0.post <= -1\n", k, k);
+                else snprintf(gl, sizeof gl, "goal -1*rank.%s.0.pre <= 0\n", k);
+                ok = ok && strstr(v, gl);
+                if (!ok) CHECK(false, "case %d: rank.lex %d over m, defined exactly on each side:\n%s", c, q, v);
+            }
+            char k2[48]; snprintf(k2, sizeof k2, "bb%d.0 rank.lex 2", b6->id);
+            CHECK(ok && !strstr(t, k2), "case %d: rank.lex 0 and 1, nothing per row:\n%s", c, t ? t : why);
+            free(t);
+            // each m's recipe, for a run-time checker: its kind, and the rows x + c0[0], -x + c0[1]
+            // on its own side (rank.lex 0: pre and post; 1: pre)
+            char *rc = gen_recipes(f, why), want[3][200];
+            const char *xs[3] = { "head", "join", "head" };
+            int bs[3] = { b1->id, b6->id, b1->id };
+            int c0a = c == 7 ? 5 : 0, c0b = c == 7 ? 2 : 0;
+            for (int q = 0; q < 3; q++)
+                snprintf(want[q], 200, "bb%d.0 rank.lex %d rank.%s.0.%s mm %d: {%d 1*%%s%d@%s.bb%d} {%d -1*%%s%d@%s.bb%d}\n", b6->id, q < 2 ? 0 : 1, k,
+                         q == 1 ? "post" : "pre", c == 7 ? -1 : 1, c0a, x->id, xs[q], bs[q], c0b, x->id, xs[q], bs[q]);
+            CHECK(rc && count(rc, " mm ") == 3 && strstr(rc, want[0]) && strstr(rc, want[1]) && strstr(rc, want[2]),
+                  "case %d: the recipes, three, each the rows on its side:\n%s\nwanted e.g.\n%s", c, rc ? rc : why, want[0]);
+            free(rc); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+            continue;
+        }
         const char *want[4] = { "rank.fall 1000", "rank.fall 2000", "rank.bound 0", NULL };
         const char *want1[5] = { "rank.keep 0", "rank.fall 1001", "rank.fall 2001", "rank.bound 1", NULL };
         const char **w = c == 1 ? want1 : want;
@@ -3787,12 +3861,17 @@ int main(void) {
     // `premise rank.lex 0`; nothing else, each (kind, ordinal) once. Refused, each region field
     // probed in memory: (1) nreg 5; (2) a region past nreg not 0; (3) g0 + ng past the rows; (4)
     // t0 + nt past them; (5) ng 0; (6) nt 0; (7) a row in two regions; (8) a row in none; (9) a
-    // fixed fall; (10) a cont; and a recursion's measure with (11) a region, (12) a cont. (13) two
-    // atoms in each guard (P: x - 1 >= 0, y - 1 >= 0; N: -x - 1 >= 0, y - 1 >= 0): rank.cover 0 and
-    // 1, each under a two-case `premise rank.cover 0`; rank.region 1 under two pre premises and one
-    // post (all of N's but the last); each rank.lex under two pre and two post. (14) three regions
-    // (P, N, then y - 1 >= 0 with <y>): rank.region 1, 2 and 102, one per pair k < l
-    for (int c = 0; c < 15; c++) {
+    // fixed fall; (10) a guard row in a max (P's last tuple row, then N's guard); (15) a max across
+    // a region's start (N's guard, then its tuple's first row); (16) rows laid out P's guard, N's,
+    // P's tuple, N's, a max over P's last tuple row and N's first; and a recursion's measure with
+    // (11) a region, (12) a cont. (13) two atoms in each guard (P: x - 1 >= 0, y - 1 >= 0; N: -x - 1
+    // >= 0, y - 1 >= 0): rank.cover 0 and 1, each under a two-case `premise rank.cover 0`;
+    // rank.region 1 under two pre premises and one post (all of N's but the last); each rank.lex
+    // under two pre and two post. (14) three regions (P, N, then y - 1 >= 0 with <y>): rank.region
+    // 1, 2 and 102, one per pair k < l. (17) c41: P's tuple <max(x, y)>, one component: rank.lex 0
+    // and 1 under P's premises, over m (`def rank.max 1`: component 1, the guard row is 0), its
+    // after defined only where it falls; N's rank.lex 1000 .. 1002 as in (0), no definition
+    for (int c = 0; c < 18; c++) {
         IrFunc *f = ir_func_new(&A, nm("um72"), i32t, IR_FUNC_PURE);
         IrValue *x0 = ir_add_param(f, i32t, nm("x0")), *y0 = ir_add_param(f, i32t, nm("y0")), *pp = ir_add_param(f, i32t, nm("p")),
                 *qp = ir_add_param(f, i32t, nm("q")), *v1 = ir_add_param(f, i32t, nm("v1")), *v2 = ir_add_param(f, i32t, nm("v2"));
@@ -3834,7 +3913,15 @@ int main(void) {
             case 7: r.reg[1].t0 = 3; bad = "row in no region or in two"; break;
             case 8: r.ncomp = 7; bad = "row in no region or in two"; break;
             case 9: r.fall[0] = 0; bad = "a piecewise ranking claim with a fixed falling component"; break;
-            case 10: r.cont[2] = 1; bad = "region over a max or min of rows"; break;
+            case 10: r.cont[3] = 1; bad = "region guard in a max or min of rows"; break;
+            case 15: r.cont[4] = 1; bad = "max or min of rows across a region's start"; break;
+            case 16:                                            // P's guard 0, N's 1; P's tuple 2, 3; N's 4, 5
+                memset(r.coef, 0, sizeof r.coef); memset(r.c0, 0, sizeof r.c0);
+                r.coef[0][0] = 1; r.c0[0] = -1; r.coef[1][0] = -1; r.c0[1] = -1; r.coef[2][0] = 1; r.coef[3][1] = 1;
+                r.coef[4][1] = 1; r.coef[5][0] = -1;
+                r.reg[0].g0 = 0; r.reg[0].t0 = 2; r.reg[1].g0 = 1; r.reg[1].t0 = 4;
+                r.cont[4] = 1; bad = "max or min of rows across a region's start"; break;
+            case 17: r.cont[2] = 1; break;
             case 13:                                            // P rows 0, 1 | 2, 3; N rows 4, 5 | 6, 7
                 memset(r.coef, 0, sizeof r.coef); memset(r.c0, 0, sizeof r.c0); r.ncomp = 8;
                 r.coef[0][0] = 1; r.c0[0] = -1; r.coef[1][1] = 1; r.c0[1] = -1; r.coef[2][0] = 1; r.coef[3][1] = 1;
@@ -3899,6 +3986,24 @@ int main(void) {
             for (int k = 0; ok3 && k < 3; k++) { char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.region %d\n", b8->id, pairs[k]); ok3 = count(t, key) == 1; }
             char hk[48]; snprintf(hk, sizeof hk, "bb%d.0 rank.region ", b8->id);   // a VC's header line
             CHECK(ok3 && count(t, hk) == 3, "case 14: one rank.region per pair k < l:\n%s", t ? t : why);
+            free(t); gen_rk = NULL; gen_nrk = 0; continue;
+        }
+        if (c == 17) {
+            bool ok4 = t != NULL;
+            for (int k = 0; ok4 && k < 5; k++) {
+                char key[48]; snprintf(key, sizeof key, "bb%d.0 rank.lex %d\n", b8->id, k < 2 ? k : 1000 + k - 2);
+                ok4 = count(t, key) == 1;
+                snprintf(key, sizeof key, "bb%d.0 rank.lex %d", b8->id, k < 2 ? k : 1000 + k - 2);
+                const char *v = ok4 ? vc_of(t, key) : "";
+                if (k < 2)
+                    ok4 = ok4 && count(v, "def rank.max 1 pre : ") == 3 && count(v, "def rank.max 1 post : ") == (k ? 0 : 3) &&
+                          count(v, "premise rank.region 0 pre : ") == 1 && count(v, "premise rank.region 0 post : ") == 1 &&
+                          count(v, "premise rank.") == 2 && strstr(v, k ? "goal -1*rank.max.1.pre <= 0\n" : "goal -1*rank.max.1.pre + 1*rank.max.1.post <= -1\n");
+                else ok4 = ok4 && !strstr(v, "def rank.") && count(v, "premise rank.region 1 pre : ") == 1 && count(v, "premise rank.lex 0 : or { ") == 1;
+                if (!ok4) CHECK(false, "case 17: rank.lex %d:\n%s", k < 2 ? k : 1000 + k - 2, v);
+            }
+            char k2[48]; snprintf(k2, sizeof k2, "bb%d.0 rank.lex 2\n", b8->id);
+            CHECK(ok4 && !strstr(t, k2), "case 17: P's tuple one component:\n%s", t ? t : why);
             free(t); gen_rk = NULL; gen_nrk = 0; continue;
         }
         const char *want[8] = { "rank.cover 0", "rank.region 1", "rank.lex 0", "rank.lex 1", "rank.lex 2", "rank.lex 1000", "rank.lex 1001", "rank.lex 1002" };
@@ -4107,6 +4212,70 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  an ENTRY term: a cell's version on its loop's entry edge, fixed in the loop\n");
+    // 75. a FREE edge over a MAX or MIN component in a tuple of two (c41): 4NestedWith3Variables, all
+    // i32, `while q > 0 { q = q + a - 1; (a, b) = (3a - 4b, 4a + 3b) }`. (0) <min(2^32 -+ a -+ b), q>:
+    // rank.lex 0 .. 2, each under m and m' defined (five hypotheses a side: four atoms, a four-way
+    // disjunction; m <= 2^32 - a - b the first atom) and `premise rank.lex 0` over m alone (m did
+    // not fall, or m < 0); goals m' <= m, then q's fall and bound. (1) <q, max(a, -a)>: the max is
+    // named only where its VC uses it: not in rank.lex 0 (q kept), m and m' in rank.lex 1 (it
+    // falls), m alone in rank.lex 2 (bounded)
+    for (int c = 0; c < 2; c++) {
+        IrFunc *f = ir_func_new(&A, nm("nest75"), i32t, IR_FUNC_PURE);
+        IrValue *a0p = ir_add_param(f, i32t, nm("a0")), *b0p = ir_add_param(f, i32t, nm("b0")), *q0p = ir_add_param(f, i32t, nm("q0"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *a = ir_alloca(f, b0, i32t), *b = ir_alloca(f, b0, i32t), *q = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, a, a0p); ir_store(f, b0, b, b0p); ir_store(f, b0, q, q0p); ir_set_br(b0, b1);
+        IrValue *lq = ir_load(f, b1, q, i32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SGT, lq, ir_const_int(f, b1, 0, i32t)), b2, b3);
+        IrValue *la = ir_load(f, b2, a, i32t), *lb = ir_load(f, b2, b, i32t);
+        IrValue *k3 = ir_const_int(f, b2, 3, i32t), *k4 = ir_const_int(f, b2, 4, i32t);
+        IrValue *q1 = ir_binop(f, b2, IR_SUB, ir_binop(f, b2, IR_ADD, lq, la, i32t), ir_const_int(f, b2, 1, i32t), i32t);
+        IrValue *a1 = ir_binop(f, b2, IR_SUB, ir_binop(f, b2, IR_MUL, k3, la, i32t), ir_binop(f, b2, IR_MUL, k4, lb, i32t), i32t);
+        IrValue *bb1 = ir_binop(f, b2, IR_ADD, ir_binop(f, b2, IR_MUL, k4, la, i32t), ir_binop(f, b2, IR_MUL, k3, lb, i32t), i32t);
+        ir_store(f, b2, q, q1); ir_store(f, b2, a, a1); ir_store(f, b2, b, bb1); ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, i32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        int ni = 0; for (IrInstr *i = b2->instrs; i; i = i->next) ni++;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.nt = 3; r.key[0] = a->id; r.key[1] = b->id; r.key[2] = q->id;
+        r.nedge = 1; r.from[0] = b2->id; r.fall[0] = -1;
+        if (c == 0) {
+            r.ncomp = 5;
+            for (int k = 0; k < 4; k++) { r.coef[k][0] = (k & 2) ? 1 : -1; r.coef[k][1] = (k & 1) ? 1 : -1; r.c0[k] = (__int128)1 << 32; if (k) r.cont[k] = 2; }
+            r.coef[4][2] = 1;
+        } else {
+            r.ncomp = 3; r.coef[0][2] = 1; r.coef[1][0] = 1; r.coef[2][0] = -1; r.cont[2] = 1;
+        }
+        gen_rk = &r; gen_nrk = 1;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        bool ok = t != NULL;
+        const char *k = c == 0 ? "min" : "max";
+        int dc = c == 0 ? 0 : 1, rows = c == 0 ? 4 : 2;      // the group's component, its rows
+        for (int qq = 0; ok && qq < 3; qq++) {
+            char key[48]; snprintf(key, sizeof key, "bb%d.%d rank.lex %d", b2->id, ni, qq);
+            const char *v = vc_of(t, key);
+            char dp[40], dq[40]; snprintf(dp, sizeof dp, "def rank.%s %d pre : ", k, dc); snprintf(dq, sizeof dq, "def rank.%s %d post : ", k, dc);
+            int wp = c == 0 || qq > 0 ? rows + 1 : 0, wq = c == 0 || qq == 1 ? rows + 1 : 0;
+            ok = *v && count(v, dp) == wp && count(v, dq) == wq && count(v, "premise rank.lex 0 : or { ") == 1 && count(v, "premise rank.") == 1;
+            if (ok && c == 0) {                                // over m alone; the first atom; four disjuncts
+                char pr[120], at[160];
+                snprintf(pr, sizeof pr, "premise rank.lex 0 : or { 1*rank.min.0.pre + -1*rank.min.0.post <= 0 | 1*rank.min.0.pre <= -1 }\n");
+                snprintf(at, sizeof at, "def rank.min 0 pre : 1*%%s%d@head.bb%d + 1*%%s%d@head.bb%d + 1*rank.min.0.pre <= 4294967296\n", a->id, b1->id, b->id, b1->id);
+                const char *d = strstr(v, "def rank.min 0 pre : or { "), *e = d ? strchr(d, '\n') : NULL;
+                int bars = 0;
+                for (const char *u = d; u && e && (u = strstr(u, " | ")) && u < e; u++) bars++;
+                ok = strstr(v, pr) && strstr(v, at) && bars == 3 &&
+                     (qq > 0 || strstr(v, "goal -1*rank.min.0.pre + 1*rank.min.0.post <= 0\n"));
+            }
+            if (!ok) CHECK(false, "case %d: rank.lex %d, its definitions and premise:\n%s", c, qq, v);
+        }
+        char k3s[48]; snprintf(k3s, sizeof k3s, "bb%d.%d rank.lex 3", b2->id, ni);
+        CHECK(ok && !strstr(t, k3s), "case %d: rank.lex 0 .. 2 only:\n%s", c, t ? t : why);
+        free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a free edge over a max or min: a fresh value a side, defined exactly, where its VC uses it\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

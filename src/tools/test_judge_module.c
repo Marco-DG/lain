@@ -81,8 +81,10 @@ static void sink(void *ctx, const JRecord *r) {
     nrec[r->k]++;
     char line[600]; int o = snprintf(line, sizeof line, "%s %s %s %s", kn[r->k], r->id ? r->id->point : "-", r->id ? r->id->kind : "-", r->reason ? r->reason : "");
     if (r->k == JREC_NOT_IMPLIED && r->model) for (int32_t i = 0; i < r->model->n && o < 500; i++) {
-        JInt *x = &r->model->val[i]; long long v = x->n ? (long long)x->limb[0] : 0; if (x->neg) v = -v;
-        o += snprintf(line + o, sizeof line - (size_t)o, " %s=%lld", r->vc->vars[i], v);
+        JInt *x = &r->model->val[i];                         // 32-bit limbs: two fit, more are marked
+        unsigned long long u = x->n ? x->limb[0] : 0; if (x->n >= 2) u |= (unsigned long long)x->limb[1] << 32;
+        if (x->n > 2) o += snprintf(line + o, sizeof line - (size_t)o, " %s=%s(past 2^64)", r->vc->vars[i], x->neg ? "-" : "");
+        else o += snprintf(line + o, sizeof line - (size_t)o, " %s=%s%llu", r->vc->vars[i], x->neg ? "-" : "", u);
     }
     if (r->k == JREC_BUDGET) snprintf(line + o, sizeof line - (size_t)o, " used=%llu,%llu,%llu", (unsigned long long)r->used.pivot, (unsigned long long)r->used.node, (unsigned long long)r->used.leaf);
     size_t l = strlen(line);
@@ -1214,6 +1216,85 @@ int main(void) {
                                     "case %d: every claim and ranking VC proved:\n%s", c, recs);
         else CHECK(strstr(recs, fo) != NULL, "case %d: without the entry claim, the outer rank.fall not implied:\n%s", c, recs);
         (void)H1;
+    }
+
+    // a FREE edge over a MAX or MIN component (c41). (A) 4NestedWith3Variables, all i32: `while q > 0
+    // { q = q + a - 1; (a, b) = (3a - 4b, 4a + 3b) }`, ranked <2^32 - |a| - |b|, q>, the first
+    // component the MIN of the four rows 2^32 -+ a -+ b, the edge free: |a| + |b| grows unless
+    // (a, b) = 0, where q falls. (0) rank.lex 0 .. 2 proved; (1) the rotation made the reflection
+    // (b, a), which keeps |a| + |b| while q may rise: a rank.lex not implied; (2) the MAX of the four
+    // rows (2^32 + |a| + |b|, rising): a rank.lex not implied. (B) a region's tuple with a MAX: `while
+    // x != 0 and y >= 0 { if y > 0 { if x > 0 { x-- } else { x++ } } else { y = 1 } }`, regions
+    // y >= 1 with <max(x, -x)> and -y >= 0 with <y>. (3) its rank.cover, rank.region and four rank.lex
+    // proved; (4) the else path x + 2 (-1 goes to 1): a rank.lex not implied
+    for (int c = 0; c < 5; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true);
+        Stub sn; memset(&sn, 0, sizeof sn);
+        sn.propose = P_RANK; sn.nrank = 1;
+        JRank *rr = &sn.rank[0];
+        IrFunc *nf;
+        IrBlock *latch;
+        if (c < 3) {
+            nf = ir_func_new(&A, nm("nest41"), mi32, IR_FUNC_PURE);
+            IrValue *a0p = ir_add_param(nf, mi32, nm("a0")), *b0p = ir_add_param(nf, mi32, nm("b0")), *q0p = ir_add_param(nf, mi32, nm("q0"));
+            IrBlock *n0 = nf->entry, *n1 = ir_new_block(nf), *n2 = ir_new_block(nf), *n3 = ir_new_block(nf);
+            IrValue *na = ir_alloca(nf, n0, mi32), *nb = ir_alloca(nf, n0, mi32), *nq = ir_alloca(nf, n0, mi32);
+            ir_store(nf, n0, na, a0p); ir_store(nf, n0, nb, b0p); ir_store(nf, n0, nq, q0p); ir_set_br(n0, n1);
+            IrValue *lq = ir_load(nf, n1, nq, mi32);
+            ir_set_br_cond(n1, ir_icmp(nf, n1, IR_CMP_SGT, lq, ir_const_int(nf, n1, 0, mi32)), n2, n3);
+            IrValue *la = ir_load(nf, n2, na, mi32), *lb = ir_load(nf, n2, nb, mi32);
+            IrValue *q1 = ir_binop(nf, n2, IR_SUB, ir_binop(nf, n2, IR_ADD, lq, la, mi32), ir_const_int(nf, n2, 1, mi32), mi32);
+            IrValue *k3 = ir_const_int(nf, n2, 3, mi32), *k4 = ir_const_int(nf, n2, 4, mi32);
+            IrValue *a1 = ir_binop(nf, n2, IR_SUB, ir_binop(nf, n2, IR_MUL, k3, la, mi32), ir_binop(nf, n2, IR_MUL, k4, lb, mi32), mi32);
+            IrValue *b1 = ir_binop(nf, n2, IR_ADD, ir_binop(nf, n2, IR_MUL, k4, la, mi32), ir_binop(nf, n2, IR_MUL, k3, lb, mi32), mi32);
+            ir_store(nf, n2, nq, q1); ir_store(nf, n2, na, c == 1 ? lb : a1); ir_store(nf, n2, nb, c == 1 ? la : b1); ir_set_br(n2, n1);
+            ir_set_ret(n3, ir_const_int(nf, n3, 0, mi32));
+            ir_finalize_cfg(nf);
+            latch = n2;
+            rr->blk = n1->id; rr->fn = nf; rr->nt = 3; rr->key[0] = na->id; rr->key[1] = nb->id; rr->key[2] = nq->id;
+            rr->nedge = 1; rr->from[0] = n2->id; rr->fall[0] = -1; rr->ncomp = 5;
+            for (int k = 0; k < 4; k++) {                      // 2^32 - a - b, - a + b, + a - b, + a + b
+                rr->coef[k][0] = (k & 2) ? 1 : -1; rr->coef[k][1] = (k & 1) ? 1 : -1; rr->c0[k] = (__int128)1 << 32;
+                if (k) rr->cont[k] = c == 2 ? 1 : 2;
+            }
+            rr->coef[4][2] = 1;                                // q
+        } else {
+            nf = ir_func_new(&A, nm("reg41"), mi32, IR_FUNC_PURE);
+            IrValue *x0p = ir_add_param(nf, mi32, nm("x0")), *y0p = ir_add_param(nf, mi32, nm("y0"));
+            IrBlock *r0 = nf->entry, *r1 = ir_new_block(nf), *r2 = ir_new_block(nf), *r3 = ir_new_block(nf), *r4 = ir_new_block(nf),
+                    *r5 = ir_new_block(nf), *r6 = ir_new_block(nf), *r7 = ir_new_block(nf), *r8 = ir_new_block(nf), *r9 = ir_new_block(nf);
+            IrValue *rx = ir_alloca(nf, r0, mi32), *ry = ir_alloca(nf, r0, mi32);
+            ir_store(nf, r0, rx, x0p); ir_store(nf, r0, ry, y0p); ir_set_br(r0, r1);
+            IrValue *lx = ir_load(nf, r1, rx, mi32);
+            ir_set_br_cond(r1, ir_icmp(nf, r1, IR_CMP_NE, lx, ir_const_int(nf, r1, 0, mi32)), r2, r9);
+            IrValue *ly = ir_load(nf, r2, ry, mi32);
+            ir_set_br_cond(r2, ir_icmp(nf, r2, IR_CMP_SGE, ly, ir_const_int(nf, r2, 0, mi32)), r3, r9);
+            ir_set_br_cond(r3, ir_icmp(nf, r3, IR_CMP_SGT, ly, ir_const_int(nf, r3, 0, mi32)), r4, r7);
+            ir_set_br_cond(r4, ir_icmp(nf, r4, IR_CMP_SGT, lx, ir_const_int(nf, r4, 0, mi32)), r5, r6);
+            ir_store(nf, r5, rx, ir_binop(nf, r5, IR_SUB, lx, ir_const_int(nf, r5, 1, mi32), mi32)); ir_set_br(r5, r8);
+            ir_store(nf, r6, rx, ir_binop(nf, r6, IR_ADD, lx, ir_const_int(nf, r6, c == 4 ? 2 : 1, mi32), mi32)); ir_set_br(r6, r8);
+            ir_store(nf, r7, ry, ir_const_int(nf, r7, 1, mi32)); ir_set_br(r7, r8);
+            ir_set_br(r8, r1);
+            ir_set_ret(r9, ir_const_int(nf, r9, 0, mi32));
+            ir_finalize_cfg(nf);
+            latch = r8;
+            rr->blk = r1->id; rr->fn = nf; rr->nt = 2; rr->key[0] = rx->id; rr->key[1] = ry->id;
+            rr->nedge = 1; rr->from[0] = r8->id; rr->fall[0] = -1; rr->ncomp = 5;
+            rr->coef[0][1] = 1; rr->c0[0] = -1;                // y - 1 >= 0: <max(x, -x)>
+            rr->coef[1][0] = 1; rr->coef[2][0] = -1; rr->cont[2] = 1;
+            rr->coef[3][1] = -1;                               // -y >= 0: <y>
+            rr->coef[4][1] = 1;
+            rr->nreg = 2; rr->reg[0].g0 = 0; rr->reg[0].ng = 1; rr->reg[0].t0 = 1; rr->reg[0].nt = 2;
+            rr->reg[1].g0 = 3; rr->reg[1].ng = 1; rr->reg[1].t0 = 4; rr->reg[1].nt = 1;
+        }
+        CHECK(run(nf, &sn, true, sizeof region, err), "judges: %s", err);
+        char pl[48], nl[48];                                  // a record names its kind, not its ordinal
+        snprintf(pl, sizeof pl, "proved bb%d.%d rank.", latch->id, nins_m(latch)); snprintf(nl, sizeof nl, "not-implied bb%d.%d rank.lex", latch->id, nins_m(latch));
+        int nrk = 0;                                           // every rank.* record, whatever its verdict
+        for (const char *l = recs; (l = strstr(l, " rank.")); l++) nrk++;
+        if (c == 0) CHECK(count_in(recs, pl) == 3 && nrk == 3 && count_in(recs, "rank.lex") == 3, "4NestedWith3Variables: rank.lex 0 .. 2 proved:\n%s", recs);
+        else if (c == 3) CHECK(count_in(recs, pl) == 6 && nrk == 6 && count_in(recs, "rank.lex") == 4, "a region's max: cover, region and four rank.lex proved:\n%s", recs);
+        else CHECK(strstr(recs, nl) != NULL, "case %d: a rank.lex not implied:\n%s", c, recs);
     }
 
     printf("── a function the generator refuses, a region too small ──\n");
