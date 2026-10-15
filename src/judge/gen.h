@@ -2639,7 +2639,8 @@ static JObl *jg_push(JG *g, JObls *L) {
 }
 // An obligation the generator cannot state, `why`; its id names the KIND it stands for, as a VC's
 // does (jb_finish), so a record says which rule went unjudged and an authority maps it to a code.
-static bool jg_outside(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, const char *kind, const char *why) {
+// `ordinal` as the VC it stands for would have (a call's target, jg_rec_obligations), else 0.
+static bool jg_outside_n(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, const char *kind, const char *why, int32_t ordinal) {
     JObl *o = jg_push(g, L);
     if (!o) return jg_fail(g, "out of memory");
     o->at = at; o->blk = g->blk[blk]; o->idx = idx; o->outside = why; o->claim = -1;
@@ -2650,8 +2651,15 @@ static bool jg_outside(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, c
     if (!fn || !ps || !hh) return jg_fail(g, "out of memory");
     memcpy(fn, g->f->name->name, (size_t)g->f->name->length); fn[g->f->name->length] = 0;
     strcpy(ps, pt); strcpy(hh, hs);
-    o->vc.id.fn = fn; o->vc.id.irhash = hh; o->vc.id.point = ps; o->vc.id.kind = kind; o->vc.id.ordinal = "0";
+    o->vc.id.fn = fn; o->vc.id.irhash = hh; o->vc.id.point = ps; o->vc.id.kind = kind;
+    char os[24]; snprintf(os, sizeof os, "%lld", (long long)ordinal);
+    char *od = JG_NEW(g, char, strlen(os) + 1);
+    if (!od) return jg_fail(g, "out of memory");
+    strcpy(od, os); o->vc.id.ordinal = od;
     return true;
+}
+static bool jg_outside(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, const char *kind, const char *why) {
+    return jg_outside_n(g, L, at, blk, idx, kind, why, 0);
 }
 // One goal: a VC whose goal is `sum(t) op rhs`, built by `mk` over a fresh builder.
 typedef bool (*JGoalFn)(JB *B, IrInstr *at, void *arg, JCons *goal);
@@ -3993,7 +4001,9 @@ static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, co
                 const IrFunc *t = cg->idx[tg[tq]];
                 const JRank *rt = r; JGhost *gt = gf; const char *whyt = whyf;
                 if (t != g->f && !jg_rec_measure(g, rk, nrk, t, &rt, &gt, &whyt)) return false;
-                if (!r || !rt) { if (!jg_outside(g, L, i, b->id, k, "rec.fall", r ? whyt : whyf)) return false; continue; }
+                // unmeasured: the caller (once per call, whatever its targets) or this target (its
+                // ordinal, as its rec.fall would have: one ID per obligation)
+                if (!r || !rt) { if ((r || tq == 0) && !jg_outside_n(g, L, i, b->id, k, "rec.fall", r ? whyt : whyf, r ? tq : 0)) return false; continue; }
                 for (int w = 0; w < 2; w++) {                     // rec.bound is the caller's alone: once
                     if (w == 1 && tq > 0) continue;
                     JRecArg a = { r, rt, g->f, t, w == 1 ? 1 : le ? 2 : 0 };
@@ -4016,6 +4026,28 @@ static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, co
     return true;
 }
 
+// Obligations by their ID's point, kind and ordinal (the function is one), for jg_ids_unique.
+static int jg_id_cmp(const void *x, const void *y) {
+    const JId *a = &(*(const JObl *const *)x)->vc.id, *b = &(*(const JObl *const *)y)->vc.id;
+    int c = strcmp(a->point, b->point);
+    if (!c) c = strcmp(a->kind, b->kind);
+    return c ? c : strcmp(a->ordinal, b->ordinal);
+}
+// Every obligation of a function has its own ID: a record, a certificate and the shadow's matching
+// all name an obligation by it, so two of one ID would let one's answer stand for the other's. The
+// ordinal schemes make them distinct by construction; this checks it (a block closing two loops'
+// back edges at once would give both loops' ranking VCs one point), sorting pointers so the
+// obligations keep their order. Refused, never skipped.
+static bool jg_ids_unique(JG *g, const JObls *L) {
+    if (L->n < 2) return true;
+    const JObl **p = JG_NEW(g, const JObl *, L->n);
+    if (!p) return jg_fail(g, "out of memory");
+    for (int32_t i = 0; i < L->n; i++) p[i] = &L->o[i];
+    qsort(p, (size_t)L->n, sizeof *p, jg_id_cmp);
+    for (int32_t i = 1; i < L->n; i++)
+        if (!jg_id_cmp(&p[i - 1], &p[i])) return jg_fail(g, "two obligations of one ID (point, kind and ordinal)");
+    return true;
+}
 // The obligations of `f`, their VCs in `m`: with `only` JGEN_ALL, every obligation and every
 // claim's; JGEN_CLAIMS, the claims' only; JGEN_POST, f's return claims' only; a block id, the
 // claims' at that block only. `rk` are the module's ranking claims, owed with the obligations (a
@@ -4042,6 +4074,7 @@ static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t
         ir_cg_free(&own);
         if (!ok) return false;
     }
+    if (!jg_ids_unique(&g, &L)) return false;
     *out = L.o; *nout = L.n;
     return true;
 }

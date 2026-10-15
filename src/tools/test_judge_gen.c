@@ -33,6 +33,17 @@ static IrType *slice_of(IrType *e) { IrType *t = ir_type_new(&A, IRT_SLICE); t->
 // ir_finalize_cfg adds the edges again on each call).
 static IrFunc *gen_mod = NULL;   // the module the generator looks callees up in (none: every call unknown)
 static const JRank *gen_rk = NULL; static int32_t gen_nrk = 0;   // the ranking claims gen_with owes
+// Every obligation's ID of `f`, one line each, "point kind ordinal" and " outside" for one the
+// generator cannot state (gen_with prints an outside by its reason alone); NULL when refused.
+static char *gen_ids(IrFunc *f, char *why) {
+    JMem m = jmem_over(region, sizeof region);
+    JObl *o; int32_t n; char err[200];
+    if (!jgen_func(&m, f, gen_mod, NULL, 0, gen_rk, gen_nrk, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { strcpy(why, err); return NULL; }
+    size_t cap = 64 * (size_t)(n + 1), len = 0; char *t = malloc(cap); t[0] = 0;
+    for (int32_t i = 0; i < n; i++)
+        len += (size_t)snprintf(t + len, cap - len, "%s %s %s%s\n", o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal, o[i].outside ? " outside" : "");
+    return t;
+}
 static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
@@ -3907,6 +3918,124 @@ int main(void) {
         gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a piecewise ranking: covered, never up a region, each region's tuple falling\n");
+    // 73. every obligation of a function has its own ID. Loops headed by b1 (outer) and b2 (inner),
+    // b3 their body: (0) b3 closes BOTH, `br c ? b2 : b1`, so both loops' ranking VCs are at b3's end
+    // with one kind and ordinal: refused, two obligations of one ID; (1) b3 closes the inner alone
+    // (`br b2`, the outer closed by b2's exit): generated, every (point, kind, ordinal) once
+    for (int c = 0; c < 2; c++) {
+        IrFunc *f = ir_func_new(&A, nm("dup73"), u32t, IR_FUNC_PURE);
+        IrValue *cp = ir_add_param(f, u32t, nm("c"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u32t), *j = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u32t)); ir_store(f, b0, j, ir_const_int(f, b0, 0, u32t)); ir_set_br(b0, b1);
+        IrValue *li = ir_load(f, b1, i, u32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, li, ir_const_int(f, b1, 10, u32t)), b2, b4);
+        IrValue *lj = ir_load(f, b2, j, u32t);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_ULT, lj, ir_const_int(f, b2, 5, u32t)), b3, b1);
+        ir_store(f, b3, j, ir_binop(f, b3, IR_ADD, lj, ir_const_int(f, b3, 1, u32t), u32t));
+        ir_store(f, b3, i, ir_binop(f, b3, IR_ADD, ir_load(f, b3, i, u32t), ir_const_int(f, b3, 1, u32t), u32t));
+        if (c == 0) ir_set_br_cond(b3, ir_icmp(f, b3, IR_CMP_NE, cp, ir_const_int(f, b3, 0, u32t)), b2, b1);
+        else ir_set_br(b3, b2);
+        ir_set_ret(b4, ir_const_int(f, b4, 0, u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JRank r2[2]; memset(r2, 0, sizeof r2);
+        r2[0].blk = b1->id; r2[0].fn = f; r2[0].ncomp = 1; r2[0].nt = 1; r2[0].key[0] = i->id; r2[0].coef[0][0] = -1; r2[0].c0[0] = 10;
+        r2[0].nedge = c == 0 ? 2 : 1; r2[0].from[0] = b2->id; r2[0].from[1] = b3->id;
+        r2[1].blk = b2->id; r2[1].fn = f; r2[1].ncomp = 1; r2[1].nt = 1; r2[1].key[0] = j->id; r2[1].coef[0][0] = -1; r2[1].c0[0] = 5;
+        r2[1].nedge = 1; r2[1].from[0] = b3->id;
+        gen_rk = r2; gen_nrk = 2;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        if (c == 0) CHECK(!t && strstr(why, "two obligations of one ID"), "case 0: a block closing two loops, refused: got \"%s\"", why);
+        else {
+            bool ok = t != NULL;
+            for (const char *h = t; ok && (h = strstr(h, "\nvc ")); h++) {   // each VC header once
+                const char *e = strchr(h + 1, '\n'); char line[160];
+                snprintf(line, sizeof line, "%.*s\n", (int)(e - h - 1), h + 1);
+                ok = count(t, line) == 1;
+            }
+            CHECK(ok && strstr(t, "rank.fall"), "case 1: generated, every ID once:\n%s", t ? t : why);
+        }
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    // (2) the duplicate pair sorted first: the closing block made first (bb1, nothing before it
+    // owes), the inner ranking a max (its falls ordinals 1000 and 2000), so the two loops share only
+    // `rank.bound 0`, which sorts before every other ID: refused all the same
+    {   IrFunc *f = ir_func_new(&A, nm("dup73b"), u32t, IR_FUNC_PURE);
+        IrValue *cp = ir_add_param(f, u32t, nm("c"));
+        IrBlock *b0 = f->entry, *bl = ir_new_block(f), *h1 = ir_new_block(f), *h2 = ir_new_block(f), *bx = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u32t), *j = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u32t)); ir_store(f, b0, j, ir_const_int(f, b0, 0, u32t)); ir_set_br(b0, h1);
+        IrValue *li = ir_load(f, h1, i, u32t);
+        ir_set_br_cond(h1, ir_icmp(f, h1, IR_CMP_ULT, li, ir_const_int(f, h1, 10, u32t)), h2, bx);
+        IrValue *lj = ir_load(f, h2, j, u32t);
+        ir_store(f, h2, j, ir_binop(f, h2, IR_ADD, lj, ir_const_int(f, h2, 1, u32t), u32t));
+        ir_set_br_cond(h2, ir_icmp(f, h2, IR_CMP_ULT, lj, ir_const_int(f, h2, 5, u32t)), bl, h1);
+        ir_set_br_cond(bl, ir_icmp(f, bl, IR_CMP_NE, cp, ir_const_int(f, bl, 0, u32t)), h2, h1);
+        ir_set_ret(bx, ir_const_int(f, bx, 0, u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JRank r2[2]; memset(r2, 0, sizeof r2);
+        r2[0].blk = h1->id; r2[0].fn = f; r2[0].ncomp = 1; r2[0].nt = 1; r2[0].key[0] = i->id; r2[0].coef[0][0] = -1; r2[0].c0[0] = 10;
+        r2[0].nedge = 2; r2[0].from[0] = h2->id; r2[0].from[1] = bl->id;
+        r2[1].blk = h2->id; r2[1].fn = f; r2[1].ncomp = 2; r2[1].nt = 1; r2[1].key[0] = j->id; r2[1].coef[0][0] = -1; r2[1].c0[0] = 5;
+        r2[1].coef[1][0] = -1; r2[1].c0[1] = 4; r2[1].cont[1] = 1; r2[1].nedge = 1; r2[1].from[0] = bl->id;
+        gen_rk = r2; gen_nrk = 2;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        CHECK(!t && strstr(why, "two obligations of one ID"), "case 2: the duplicate sorted first, refused: got \"%s\"", why);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    // (3), (4): a call through a pointer that may close a recursion (test 67's shape: h(fp, x) calls
+    // fp(x); p and q each call h(&self, x - 1), so h's call has the targets p and q). (3) no measure
+    // at all: h's call is `outside` ONCE, not once per target; (4) measures for h and p, none for q:
+    // at h's call p's rec.fall (a goal) and q's (outside) under their own ordinals, generated
+    for (int c = 3; c < 5; c++) {
+        IrType *fnt = ir_type_new(&A, IRT_FUNC); fnt->elem = u32t;
+        IrType *fpt = ir_type_new(&A, IRT_PTR); fpt->elem = fnt;
+        IrFunc *h = ir_func_new(&A, nm("h73"), u32t, IR_FUNC_PURE), *fp = ir_func_new(&A, nm("p73"), u32t, IR_FUNC_PURE),
+               *fq = ir_func_new(&A, nm("q73"), u32t, IR_FUNC_PURE);
+        IrValue *hf = ir_add_param(h, fpt, nm("fp")), *hx = ir_add_param(h, u32t, nm("x"));
+        IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+        ir_set_br_cond(h0, ir_icmp(h, h0, IR_CMP_EQ, hx, ir_const_int(h, h0, 0, u32t)), h1, h2);
+        ir_set_ret(h1, ir_const_int(h, h1, 0, u32t));
+        IrInstr *ic = ir_instr(h, IR_CALL, u32t, 2); ic->operands[0] = hf; ic->operands[1] = hx; ir_emit(h2, ic);
+        int hci = nins(h2) - 1;
+        ir_set_ret(h2, ic->result);
+        ir_finalize_cfg(h);
+        IrFunc *pq[2] = { fp, fq }; IrValue *px[2];
+        for (int w = 0; w < 2; w++) {
+            IrFunc *u = pq[w];
+            px[w] = ir_add_param(u, u32t, nm("x"));
+            IrBlock *u0 = u->entry;
+            IrValue *self = ir_func_ref(u, u0, nm(w ? "q73" : "p73"), fpt);
+            IrValue *xm = ir_binop(u, u0, IR_SUB, px[w], ir_const_int(u, u0, 1, u32t), u32t);
+            IrInstr *dc = ir_instr(u, IR_CALL, u32t, 2); dc->aux.callee = nm("h73"); dc->operands[0] = self; dc->operands[1] = xm; ir_emit(u0, dc);
+            ir_set_ret(u0, dc->result);
+            ir_finalize_cfg(u);
+        }
+        h->next = fp; fp->next = fq; gen_mod = h;
+        JRank r3[2]; memset(r3, 0, sizeof r3);
+        IrFunc *fs[2] = { h, fp }; IrValue *ks[2] = { hx, px[0] };
+        for (int w = 0; w < 2; w++) { r3[w].blk = JRANK_ENTRY; r3[w].fn = fs[w]; r3[w].ncomp = 1; r3[w].nt = 1; r3[w].key[0] = ks[w]->id;
+                                      r3[w].coef[0][0] = 2; r3[w].c0[0] = w == 0 ? 1 : 0; }
+        gen_rk = c == 4 ? r3 : NULL; gen_nrk = c == 4 ? 2 : 0;
+        char why[200] = "";
+        char *t = gen_ids(h, why);
+        char g0[48], g1[48], o0[48], o1[48];                 // a goal's ID, an outside's
+        snprintf(g0, sizeof g0, "bb%d.%d rec.fall 0\n", h2->id, hci); snprintf(g1, sizeof g1, "bb%d.%d rec.fall 1\n", h2->id, hci);
+        snprintf(o0, sizeof o0, "bb%d.%d rec.fall 0 outside\n", h2->id, hci); snprintf(o1, sizeof o1, "bb%d.%d rec.fall 1 outside\n", h2->id, hci);
+        if (c == 3) CHECK(t && count(t, o0) == 1 && count(t, " outside") == 1 && !strstr(t, "rec.fall 1"),
+                          "case 3: one outside for h's call, not one per target:\n%s", t ? t : why);
+        else CHECK(t && count(t, g0) == 1 && count(t, o1) == 1 && !strstr(t, o0) && !strstr(t, g1) && count(t, " outside") == 1,
+                   "case 4: p's rec.fall (a goal, ordinal 0) and q's (outside, ordinal 1):\n%s", t ? t : why);
+        free(t);
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  every obligation of a function has its own ID\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

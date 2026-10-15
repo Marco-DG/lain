@@ -54,6 +54,22 @@ printf 'func g(a i32) i32 {\n    assert a > 0\n    return a\n}\nfunc main() i32 
 printf 'func g(n i32) i32 {\n    var i = 0\n    while i < n {\n        i = i + 0\n    }\n    return i\n}\nfunc main() i32 { return g(4) }\n' > lp.ln; want lp.ln E011
 printf 'func g(n u32) u32 {\n    var i u32 = 0\n    while i < n decreasing i {\n        i = i + 1\n    }\n    return i\n}\nfunc main() i32 { return g(4) as i32 }\n' > ms.ln; want ms.ln E082
 printf 'func s(n i32) i32 {\n    if n <= 0 { return 0 }\n    a = s(n - 1)\n    return s(n)\n}\nfunc main() i32 { return s(3) }\n' > rc.ln; want rc.ln E011
+# a recursion through a pointer with two targets and no measure: one `outside` per call (two of one
+# ID, one per target, were an internal error, exit 70, once IDs were checked unique)
+cat > pr.ln <<'LN'
+func a(x i32) i32 {
+    if x <= 0 { return 0 }
+    var p *func(i32) i32 = b
+    return p(x)
+}
+func b(x i32) i32 {
+    if x <= 0 { return 0 }
+    var p *func(i32) i32 = a
+    return p(x)
+}
+func main() i32 { return a(3) }
+LN
+want pr.ln E011
 cat > lex.ln <<'LN'
 func f(n i32 >= 0 and <= 100) i32 {
     var i = 0
