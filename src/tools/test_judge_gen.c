@@ -1438,9 +1438,9 @@ int main(void) {
     // 36. a RECURSION's termination, at the calls that may close a cycle (callgraph.h): f(n) calls
     // f(n - 1) past `n == 0`. With no measure, outside at the call; with the measure n, `rec.fall`
     // ((n - 1) - n <= -1) and `rec.bound` (n >= 0); nothing where the function may diverge unless it
-    // wrote `decreasing`; refused: a second measure, a term no parameter; p and q calling each other
-    // owe at each call, outside where either has no measure; a call through a pointer that may close
-    // the cycle is outside; the paths a proposer is offered
+    // wrote `decreasing`; refused: a second measure, a term no parameter, a group of kind 3; p and q
+    // calling each other owe at each call, outside where either has no measure; a call through a
+    // pointer that may close the cycle is outside; the paths a proposer is offered
     {   IrFunc *f = ir_func_new(&A, nm("f36"), u32t, IR_FUNC_PURE);
         IrValue *n = ir_add_param(f, u32t, nm("n"));
         IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
@@ -1490,8 +1490,8 @@ int main(void) {
         struct { JRank r; int n; const char *why; } bad[3];
         for (int k = 0; k < 3; k++) { bad[k].r = rr; bad[k].n = 1; }
         bad[0].n = 2; bad[0].why = "two measures for one function's recursion";
-        bad[1].r.key[0] = m->id; bad[1].why = "not one component over its function's parameters";
-        bad[2].r.ncomp = 2; bad[2].why = "not one component over its function's parameters";
+        bad[1].r.key[0] = m->id; bad[1].why = "not over its function's parameters";
+        bad[2].r.ncomp = 2; bad[2].r.cont[1] = 3; bad[2].why = "max or min of rows out of shape";
         for (int k = 0; k < 3; k++) {
             JRank two[2] = { bad[k].r, bad[k].r };
             gen_rk = two; gen_nrk = bad[k].n;
@@ -3952,7 +3952,8 @@ int main(void) {
             gen_mod = h; gen_rk = &e; gen_nrk = 1;
             char why[200] = "";
             char *t = gen_with(h, NULL, 0, JGEN_ALL, why);
-            CHECK(!t && strstr(why, "not one component over its function's parameters"), "case %d: a recursion's measure with a %s refused: got \"%s\"", c, c == 11 ? "region" : "cont", why);
+            CHECK(!t && strstr(why, c == 11 ? "a recursion's measure in regions" : "a recursion's measure's max or min of rows out of shape"),
+                  "case %d: a recursion's measure with a %s refused: got \"%s\"", c, c == 11 ? "region" : "cont", why);
             free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
             continue;
         }
@@ -4276,6 +4277,119 @@ int main(void) {
         free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  a free edge over a max or min: a fresh value a side, defined exactly, where its VC uses it\n");
+    // 76. a RECURSION's measure of several rows (c42): every call free, owing c35's lexicographic
+    // decrease (`rec.lex` q) from the caller's parameters at entry to the arguments, a MAX or MIN
+    // c41's exact m. (0) LeeJonesBen-Amram Ex5, all i32: `f(x, y)`: y == 0 returns; x == 0 calls
+    // f(y, y - 1), else f(y, x - 1); ranked MAX(2x + 2^33, 2y + 1 + 2^33): at each call rec.lex 0
+    // (m' <= m - 1, m and m' defined, m' over the arguments: x's row at y) and 1 (m >= 0, m alone), no
+    // rec.fall, rec.bound or premise; m's recipe the two rows. (1) Parts, `parts(p, q)`: p <= 0 or q
+    // <= 0 return; q > p calls parts(p, p), else parts(p - q, q) and parts(p, q - 1); ranked <p, q>:
+    // at each call rec.lex 0 .. 2 under `premise rank.lex 0`, no definition. Refused: (2) Ex5's
+    // max in p and q calling each other, from either side (v1); (3) a row's coefficient past 2^66;
+    // (4) a row's constant past it; (5) no rows; (6) nine; (7) a region field past nreg 0
+    for (int c = 0; c < 8; c++) {
+        IrFunc *f = ir_func_new(&A, nm(c == 1 ? "parts76" : "f76"), i32t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, i32t, nm("x")), *y = ir_add_param(f, i32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f), *b5 = ir_new_block(f);
+        IrBlock *cb[3] = { NULL, NULL, NULL }; int ci[3] = { 0, 0, 0 }, ncall = 0;
+        IrFunc *other = NULL;
+        const char *self = c == 1 ? "parts76" : "f76", *callee = c == 2 ? "g76" : self;
+        #define CALL2(b, a0, a1) do { IrValue *a0_ = (a0), *a1_ = (a1); cb[ncall] = (b); ci[ncall] = nins(b);   /* after its arguments */ \
+                                     IrInstr *k_ = ir_instr(f, IR_CALL, i32t, 2); k_->aux.callee = nm(callee); \
+                                     k_->operands[0] = a0_; k_->operands[1] = a1_; ir_emit((b), k_); ncall++; } while (0)
+        if (c != 1) {                                           // Ex5
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_EQ, y, ir_const_int(f, b0, 0, i32t)), b1, b2);
+            ir_set_ret(b1, x);
+            ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_EQ, x, ir_const_int(f, b2, 0, i32t)), b3, b4);
+            CALL2(b3, y, ir_binop(f, b3, IR_SUB, y, ir_const_int(f, b3, 1, i32t), i32t));
+            ir_set_ret(b3, ir_const_int(f, b3, 0, i32t));
+            CALL2(b4, y, ir_binop(f, b4, IR_SUB, x, ir_const_int(f, b4, 1, i32t), i32t));
+            ir_set_ret(b4, ir_const_int(f, b4, 0, i32t));
+            ir_set_ret(b5, ir_const_int(f, b5, 0, i32t));
+        } else {                                                // Parts
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SLE, x, ir_const_int(f, b0, 0, i32t)), b1, b2);
+            ir_set_ret(b1, ir_const_int(f, b1, 1, i32t));
+            ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_SLE, y, ir_const_int(f, b2, 0, i32t)), b5, b3);
+            ir_set_ret(b5, ir_const_int(f, b5, 0, i32t));
+            ir_set_br_cond(b3, ir_icmp(f, b3, IR_CMP_SGT, y, x), b4, ir_new_block(f));
+            CALL2(b4, x, x);
+            ir_set_ret(b4, ir_const_int(f, b4, 0, i32t));
+            IrBlock *b6 = b3->term.b;
+            CALL2(b6, ir_binop(f, b6, IR_SUB, x, y, i32t), y);
+            CALL2(b6, x, ir_binop(f, b6, IR_SUB, y, ir_const_int(f, b6, 1, i32t), i32t));
+            ir_set_ret(b6, ir_const_int(f, b6, 0, i32t));
+        }
+        #undef CALL2
+        ir_finalize_cfg(f);
+        if (c == 2) {                                           // g76(x, y) calls f76(y, x - 1)
+            other = ir_func_new(&A, nm("g76"), i32t, IR_FUNC_PURE);
+            IrValue *gx = ir_add_param(other, i32t, nm("x")), *gy = ir_add_param(other, i32t, nm("y"));
+            IrBlock *g0 = other->entry, *g1 = ir_new_block(other), *g2 = ir_new_block(other);
+            ir_set_br_cond(g0, ir_icmp(other, g0, IR_CMP_EQ, gy, ir_const_int(other, g0, 0, i32t)), g1, g2);
+            ir_set_ret(g1, gx);
+            IrInstr *k_ = ir_instr(other, IR_CALL, i32t, 2); k_->aux.callee = nm("f76");
+            k_->operands[0] = gy; k_->operands[1] = ir_binop(other, g2, IR_SUB, gx, ir_const_int(other, g2, 1, i32t), i32t); ir_emit(g2, k_);
+            ir_set_ret(g2, k_->result);
+            ir_finalize_cfg(other);
+            f->next = other;
+        }
+        gen_mod = f;
+        JRank r[2]; memset(r, 0, sizeof r);
+        r[0].blk = JRANK_ENTRY; r[0].fn = f; r[0].nt = 2; r[0].key[0] = x->id; r[0].key[1] = y->id; r[0].ncomp = 2;
+        if (c != 1) { r[0].coef[0][0] = 2; r[0].c0[0] = (__int128)1 << 33; r[0].coef[1][1] = 2; r[0].c0[1] = ((__int128)1 << 33) + 1; r[0].cont[1] = 1; }
+        else { r[0].coef[0][0] = 1; r[0].coef[1][1] = 1; }
+        int nr = 1;
+        const char *bad = NULL;
+        if (c == 2) {                                           // g76's measure plain: x + y
+            r[1].blk = JRANK_ENTRY; r[1].fn = other; r[1].nt = 2; r[1].key[0] = other->params->value->id; r[1].key[1] = other->params->next->value->id;
+            r[1].ncomp = 1; r[1].coef[0][0] = 1; r[1].coef[0][1] = 1; nr = 2; bad = "a recursion's measure of several rows in a mutual recursion (v1)";
+        }
+        if (c == 3) { r[0].coef[1][1] = (__int128)1 << 67; bad = "a recursion's measure's coefficient out of range"; }
+        if (c == 4) { r[0].c0[1] = (__int128)1 << 67; bad = "a recursion's measure's constant out of range"; }
+        if (c == 5) { r[0].ncomp = 0; bad = "a recursion's measure of no rows, or of more than it may have"; }
+        if (c == 6) { r[0].ncomp = 9; bad = "a recursion's measure of no rows, or of more than it may have"; }
+        if (c == 7) { r[0].reg[2].nt = 1; bad = "a recursion's measure in regions"; }
+        gen_rk = r; gen_nrk = nr;
+        char why[200] = "";
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        if (bad) {
+            CHECK(!t && strstr(why, bad), "case %d: refused (%s): got \"%s\"", c, bad, why);
+            free(t);
+            if (c == 2) {                                       // and from g76's side, f76 its callee
+                why[0] = 0;
+                t = gen_with(other, NULL, 0, JGEN_ALL, why);
+                CHECK(!t && strstr(why, bad), "case 2: refused from the plain side too: got \"%s\"", why);
+                free(t);
+            }
+            gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+            continue;
+        }
+        bool ok = t && !strstr(t, " rec.fall ") && !strstr(t, " rec.bound ") && !strstr(t, " rec.le ");   // not rec.lex
+        int nq = c == 0 ? 2 : 3;
+        for (int w = 0; ok && w < ncall; w++)
+            for (int q = 0; ok && q < nq; q++) {
+                char key[48]; snprintf(key, sizeof key, "bb%d.%d rec.lex %d", cb[w]->id, ci[w], q);
+                const char *v = vc_of(t, key);
+                char hx[48]; snprintf(hx, sizeof hx, "2*%%v%d + -1*rank.max.0.pre <= -8589934592\n", x->id);
+                char hy[64]; snprintf(hy, sizeof hy, "post : 2*%%v%d + -1*rank.max.0.post <= -8589934592\n", y->id);   // x's row at the arguments: y
+                if (c == 0)
+                    ok = *v && count(v, "def rank.max 0 pre : ") == 3 && count(v, "def rank.max 0 post : ") == (q ? 0 : 3) && !strstr(v, "premise ") &&
+                         strstr(v, hx) && (q || strstr(v, hy)) && strstr(v, q ? "goal -1*rank.max.0.pre <= 0\n" : "goal -1*rank.max.0.pre + 1*rank.max.0.post <= -1\n");
+                else ok = *v && count(v, "premise rank.lex 0 : or { ") == 1 && count(v, "premise rank.") == 1 && !strstr(v, "def rank.");
+                if (!ok) CHECK(false, "case %d: call %d's rec.lex %d:\n%s", c, w, q, v);
+            }
+        char k3[48]; snprintf(k3, sizeof k3, "rec.lex %d\n", nq);
+        CHECK(ok && !strstr(t, k3) && count(t, " rec.lex ") == ncall * nq, "case %d: rec.lex 0 .. %d at each of %d calls, nothing else of a recursion:\n%s", c, nq - 1, ncall, t ? t : why);
+        free(t);
+        if (c == 0) {                                           // m's recipe: the two rows at the caller's entry
+            char *rc = gen_recipes(f, why), want[160];
+            snprintf(want, sizeof want, "rank.max.0.pre mm 1: {8589934592 2*%%v%d} {8589934593 2*%%v%d}\n", x->id, y->id);
+            CHECK(rc && count(rc, want) == 4, "case 0: the recipe of m before, at each call's two VCs:\n%s", rc ? rc : why);
+            free(rc);
+        }
+        gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  a recursion's measure of several rows: every call free, its lexicographic decrease owed\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

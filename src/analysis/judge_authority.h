@@ -197,9 +197,19 @@ static int judge_authority_report(IrFunc *f, const char *file, Vra *V) {
         if (rec) {
             c.kind = VRA_TERMINATION; c.recursion = true; c.had_measure = f->has_decreasing;
             // a written measure's failing part (I.206): rec.fall its descent, rec.le that it does
-            // not grow (a call off the cut), rec.bound its bound, rec.def its definedness
-            if (f->has_decreasing)
-                c.judge_measure = strstr(q->kind, "bound") ? 2 : strstr(q->kind, "def") ? 3 : strstr(q->kind, ".le") ? 4 : 1;
+            // not grow (a call off the cut), rec.bound its bound, rec.def its definedness. By exact
+            // name (`.le` was a substring of rec.lex, c42's), and FAIL CLOSED on any other: a written
+            // measure is one row, so it owes none (rec.lex is a measure of several rows')
+            if (f->has_decreasing) {
+                const char *k = q->kind;
+                c.judge_measure = !strcmp(k, "rec.fall") ? 1 : !strcmp(k, "rec.bound") ? 2 : !strcmp(k, "rec.def") ? 3 : !strcmp(k, "rec.le") ? 4 : 0;
+                if (!c.judge_measure) {
+                    snprintf(jau_internal, sizeof jau_internal, "a written measure's obligation of a kind --judge=authority does not map (%s, in %.*s)",
+                             k, (int)f->name->length, f->name->name);
+                    fprintf(stderr, "internal error: the judge: %s; refusing to emit\n", jau_internal);
+                    free(it); free(noterm); return 1;     // main.c exits 70 on jau_internal
+                }
+            }
             c.via_pointer = rptr;
             IrCallGraph G; memset(&G, 0, sizeof G);
             int kf = ir_cg_build(&G, vra_mod) ? ir_cg_index(&G, f) : -1;

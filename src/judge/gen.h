@@ -3506,46 +3506,60 @@ static bool jg_lexc_goal(JB *B, const JRank *r, const JLexC *C, const int32_t *p
     t[n].var = C->mpre; t[n].c = -1; n++;
     return jb_cons(B, t, n, J_LE, what == 1 ? -1 : 0, goal);
 }
-// A FREE edge's lexicographic decrease over the tuple rows t0 .. t0 + nr - 1 (c35), its components
-// the rows a MAX or MIN does not join (JRank.cont, c41): some j with each component before it kept,
-// j fallen by 1 at least and j >= 0 before. Under the premises that no j < n - 1 did (`premise
-// rank.lex j`, each a disjunction of how it did not), the last did, each of its conjuncts one VC
-// (`rank.lex`, ordinal ob + q: component q kept for q < n - 1, n - 1 fallen at q = n - 1 and >= 0
-// at q = n). A MAX or MIN component is the fresh variable jb_rank_mm defines, on each side, in the
-// VCs that name it. In region `reg` (>= 0) each VC is also under G_reg before and after. A group
-// starts inside the tuple (the caller checked cont[t0] == 0).
-static bool jg_lex_vcs(JG *g, JObls *L, const JRank *r, IrBlock *P, int32_t np, IrBlock *H, int32_t t0, int32_t nr, int32_t reg, int32_t ob) {
-    int32_t s0[JRANK_MAXC], sn[JRANK_MAXC], n = 0, cb = 0;     // component k: rows s0[k] .. + sn[k] - 1
-    for (int32_t j = 0; j < t0; j++) if (!r->cont[j]) cb++;    // components before the tuple: c's base
+// The components of the tuple rows t0 .. t0 + nr - 1: component k is rows s0[k] .. s0[k] + sn[k] - 1,
+// a row no MAX or MIN joins starting one (JRank.cont); their count, and in *cb how many come before
+// t0 (a component's number in the whole ranking is cb + k).
+static int32_t jg_lex_comps(const JRank *r, int32_t t0, int32_t nr, int32_t *s0, int32_t *sn, int32_t *cb) {
+    int32_t n = 0;
+    *cb = 0;
+    for (int32_t j = 0; j < t0; j++) if (!r->cont[j]) (*cb)++;
     for (int32_t j = t0; j < t0 + nr; j++) {
         if (r->cont[j] && n) { sn[n - 1]++; continue; }
         s0[n] = j; sn[n] = 1; n++;
     }
+    return n;
+}
+// VC q of a FREE edge's lexicographic decrease over the tuple rows t0 .. t0 + nr - 1 (c35), into B,
+// whose terms before and after are pre and post: some component j with each one before it kept, j
+// fallen by 1 at least and j >= 0 before. Under the premises that no j < n - 1 did (`premise
+// rank.lex j`, each a disjunction of how it did not), the last did, each of its conjuncts one VC: q
+// < n - 1 component q kept, n - 1 fallen at q = n - 1 and >= 0 at q = n. A MAX or MIN component
+// (c41) is the fresh variable jb_rank_mm defines on each side, where the VC uses it: the premises,
+// each side of k < last; the goal, its after only where it falls (q = last). A group starts inside
+// the tuple (the caller checked cont[t0] == 0). A loop's back edge (jg_lex_vcs) and a recursion's
+// call (jgk_rec_lex, c42) state it alike.
+static bool jb_lex_vc(JB *B, const JRank *r, const int32_t *pre, const int32_t *post, int32_t t0, int32_t nr, int32_t q, JCons *goal) {
+    int32_t s0[JRANK_MAXC], sn[JRANK_MAXC], cb, n = jg_lex_comps(r, t0, nr, s0, sn, &cb);
+    int32_t last = n - 1, gc = q < last ? q : last;
+    JLexC C[JRANK_MAXC];
+    for (int32_t k = 0; k < n && !B->fail; k++) {             // a group is named where its VC uses it
+        C[k].row = sn[k] == 1 ? s0[k] : -1; C[k].mpre = C[k].mpost = -1;
+        if (sn[k] == 1 || (k == last && k != gc)) continue;
+        uint8_t kind = r->cont[s0[k] + 1];
+        C[k].mpre = jb_rank_mm(B, r, cb + k, s0[k], sn[k], kind, pre, false);
+        if (k < last || q == last) C[k].mpost = jb_rank_mm(B, r, cb + k, s0[k], sn[k], kind, post, true);
+    }
+    for (int32_t j = 0; j + 1 < n && !B->fail; j++) {
+        JCons cs[JRANK_MAXC + 1];
+        for (int32_t i = 0; i <= j; i++)                       // i < j rose, or j did not fall
+            if (!jg_lexc_not(B, r, &C[i], pre, post, false, i < j ? -1 : 0, &cs[i])) B->fail = true;
+        if (!B->fail && !jg_lexc_not(B, r, &C[j], pre, post, true, 0, &cs[j + 1])) B->fail = true;   // or j < 0
+        if (!B->fail) jb_orn(B, jb_str(B, "premise rank.lex %lld", j, 0, 0), cs, j + 2);
+    }
+    return !B->fail && jg_lexc_goal(B, r, &C[gc], pre, post, q < last ? 0 : q == last ? 1 : 2, goal);
+}
+// A loop's FREE back edge P -> H (fall -1): its n + 1 `rank.lex` VCs (ordinal ob + q), jb_lex_vc's,
+// at P's end on the edge; in region `reg` (>= 0) each also under G_reg before and after.
+static bool jg_lex_vcs(JG *g, JObls *L, const JRank *r, IrBlock *P, int32_t np, IrBlock *H, int32_t t0, int32_t nr, int32_t reg, int32_t ob) {
+    int32_t s0[JRANK_MAXC], sn[JRANK_MAXC], cb, n = jg_lex_comps(r, t0, nr, s0, sn, &cb);
     for (int32_t q = 0; q <= n; q++) {
         JB B = jb_begin(g, P->id, np, -1);
         B.to = H->id;
         int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
         jb_rank_terms(&B, r, H, P, pre, post);
         if (reg >= 0) { jb_region_premises(&B, r, reg, pre, false, 0); jb_region_premises(&B, r, reg, post, true, 0); }
-        int32_t last = n - 1, gc = q < last ? q : last;
-        JLexC C[JRANK_MAXC];
-        for (int32_t k = 0; k < n && !B.fail; k++) {           // a group is named where its VC uses it:
-            C[k].row = sn[k] == 1 ? s0[k] : -1; C[k].mpre = C[k].mpost = -1;   // the premises, each side
-            if (sn[k] == 1 || (k == last && k != gc)) continue;   // of k < last; the goal, its after
-            uint8_t kind = r->cont[s0[k] + 1];                    // only where it falls (q = last)
-            C[k].mpre = jb_rank_mm(&B, r, cb + k, s0[k], sn[k], kind, pre, false);
-            if (k < last || q == last) C[k].mpost = jb_rank_mm(&B, r, cb + k, s0[k], sn[k], kind, post, true);
-        }
-        for (int32_t j = 0; j + 1 < n && !B.fail; j++) {
-            JCons cs[JRANK_MAXC + 1];
-            for (int32_t i = 0; i <= j; i++)                       // i < j rose, or j did not fall
-                if (!jg_lexc_not(&B, r, &C[i], pre, post, false, i < j ? -1 : 0, &cs[i])) B.fail = true;
-            if (!B.fail && !jg_lexc_not(&B, r, &C[j], pre, post, true, 0, &cs[j + 1])) B.fail = true;   // or j < 0
-            if (!B.fail) jb_orn(&B, jb_str(&B, "premise rank.lex %lld", j, 0, 0), cs, j + 2);
-        }
         JCons goal;
-        if (B.fail || !jg_lexc_goal(&B, r, &C[gc], pre, post, q < last ? 0 : q == last ? 1 : 2, &goal))
-            return jg_fail(g, "out of memory building a ranking VC");
+        if (B.fail || !jb_lex_vc(&B, r, pre, post, t0, nr, q, &goal)) return jg_fail(g, "out of memory building a ranking VC");
         JObl *o = jg_push(g, L);
         if (!o || !jb_finish(&B, NULL, "rank.lex", ob + q, &goal, o)) return jg_fail(g, "out of memory building a VC");
         o->to = H; o->claim = -1;
@@ -3871,7 +3885,9 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
 // calls of the whole component close no cycle (jg_rec_cut), so every cycle of calls falls at one
 // call at least: spec 12's constraint (`a -> b(n - 1) -> c(n) -> a`, only b -> c listed). Then a
 // chain of activations in the component, |component| calls long, lowers a measure bounded below,
-// read in Z as every fact is. A
+// read in Z as every fact is. A self-recursion's measure may have several rows (c42): a tuple, a
+// MAX or MIN of rows among its components, every call FREE and owing the lexicographic decrease
+// (`rec.lex`, jgk_rec_lex); refused in a mutual recursion (v1). A
 // call through a pointer that may close the cycle, or a member with no measure, is `outside` there.
 // A measure the generator cannot state (a term no parameter of its function, a second one for the
 // same function) refuses the function. No test of the function's KIND: every lowered body is a
@@ -3888,18 +3904,30 @@ static const JRank *jg_entry_rank(JG *g, const JRank *rk, int32_t nrk, const IrF
     }
     if (!r) return NULL;
     // its listed calls are jg_rec_cut's to check, over the whole component (this function's own
-    // too); its edges are not read (the finder fills them as for a loop: they mean nothing here)
+    // too); its edges are not read (the finder fills them as for a loop: they mean nothing here).
+    // Its rows: one component, or (c42) several, a MAX or MIN of rows among them (JRank.cont, as a
+    // loop's); no regions; every field checked (I.197)
     const __int128 big = (__int128)1 << 66;
-    bool ok = r->ncomp == 1 && r->nreg == 0 && r->cont[0] == 0 && r->nt >= 0 && r->nt <= JRANK_MAXT && r->c0[0] <= big && r->c0[0] >= -big;
-    for (int32_t i = 0; ok && i < r->nt; i++) {
+    const char *why = NULL;
+    if (r->ncomp < 1 || r->ncomp > JRANK_MAXC || r->nt < 0 || r->nt > JRANK_MAXT) why = "a recursion's measure of no rows, or of more than it may have";
+    for (int32_t k = 0; !why && k < JRANK_MAXR; k++)
+        if (r->nreg || r->reg[k].g0 || r->reg[k].ng || r->reg[k].t0 || r->reg[k].nt) why = "a recursion's measure in regions";
+    for (int32_t j = 0; !why && j < r->ncomp; j++) {
+        uint8_t k = r->cont[j];
+        if (k > 2 || (j == 0 && k) || (k && j >= 2 && r->cont[j - 1] && r->cont[j - 1] != k)) why = "a recursion's measure's max or min of rows out of shape";
+        if (!why && (r->c0[j] > big || r->c0[j] < -big)) why = "a recursion's measure's constant out of range";
+        for (int32_t i = 0; !why && i < r->nt; i++)
+            if (r->coef[j][i] > big || r->coef[j][i] < -big) why = "a recursion's measure's coefficient out of range";
+    }
+    for (int32_t i = 0; !why && i < r->nt; i++) {
         int pk = jg_param_at(h, r->key[i]);
         const IrParam *pp = h->params;
         for (int q = 0; q < pk && pp; q++) pp = pp->next;
-        ok = pk >= 0 && pp && pp->value && jg_term_kind(pp->value->type, r->tk[i]) &&
-             r->coef[0][i] <= big && r->coef[0][i] >= -big;
+        bool ok = pk >= 0 && pp && pp->value && jg_term_kind(pp->value->type, r->tk[i]);
         for (int32_t j = 0; ok && j < i; j++) ok = r->key[j] != r->key[i] || r->tk[j] != r->tk[i];
+        if (!ok) why = "a recursion's measure is not over its function's parameters";
     }
-    if (!ok) { *bad = true; jg_fail(g, "a recursion's measure is not one component over its function's parameters"); return NULL; }
+    if (why) { *bad = true; jg_fail(g, why); return NULL; }
     return r;
 }
 // The value of h's parameter `key` at the call `c` (an argument), or at h's own entry.
@@ -3931,6 +3959,26 @@ static bool jgk_rec(JB *B, IrInstr *at, void *arg, JCons *goal) {
         t[n].var = a->r->tk[i] == JTERM_LEN ? jb_len(B, pv) : jb_val(B, pv); t[n].c = -a->r->coef[0][i]; n++;
     }
     return jb_cons(B, t, n, J_LE, rhs, goal);
+}
+// A measure of several components or a MAX or MIN of rows (c42) at a call of its own function:
+// every call is FREE, owing the lexicographic decrease (jb_lex_vc, `rec.lex` q) from the caller's
+// parameters at entry (pre) to the arguments (post), a MAX or MIN the exact fresh value of c41.
+// A chain of activations is then a sequence of entry states, each step a call's relation, along
+// which c35's argument holds as along a loop's trips.
+typedef struct { const JRank *r; const IrFunc *f; int32_t q; } JRecLexArg;
+static bool jgk_rec_lex(JB *B, IrInstr *at, void *arg, JCons *goal) {
+    JRecLexArg *a = arg; int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
+    int base = at->aux.callee ? 0 : 1;                          // op[0]: the pointer
+    for (int32_t i = 0; i < a->r->nt; i++) {
+        IrValue *pv = jg_param_value(a->f, a->r->key[i]);
+        int pk = jg_param_at(a->f, a->r->key[i]);
+        if (!pv || pk < 0 || base + pk >= at->n_operands) return false;   // as jgk_rec: fail closed
+        IrValue *av = at->operands[base + pk];
+        bool len = a->r->tk[i] == JTERM_LEN;
+        pre[i] = len ? jb_len(B, pv) : jb_val(B, pv);
+        post[i] = len ? jb_len(B, av) : jb_val(B, av);
+    }
+    return jb_lex_vc(B, a->r, pre, post, 0, a->r->ncomp, a->q, goal);
 }
 // The functions a call listed in u's measure reaches (u is function ku of the call graph): the
 // instruction at (blk, idx) of u, a call into u's component, direct or through a pointer (every
@@ -4132,6 +4180,13 @@ static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, co
     if (kf < 0 || !ir_cg_on_cycle(cg, kf) || (g->f->may_diverge && !g->f->has_decreasing)) return true;
     const JRank *r; JGhost *gf; const char *whyf;
     if (!jg_rec_measure(g, rk, nrk, g->f, &r, &gf, &whyf) || !jg_rec_cut(g, rk, nrk, cg, kf)) return false;
+    // v1 (c42): a measure of several components or a MAX or MIN of rows is a SELF-recursion's, its
+    // component the function alone. It lists no call: every call it could list is a self-call,
+    // which jg_rec_cut has refused (a cycle of one)
+    int32_t nmem = 0;
+    for (int j = 0; j < cg->n; j++) if (cg->comp[j] == cg->comp[kf]) nmem++;
+    bool lexm = r && r->ncomp > 1;
+    if (lexm && nmem > 1) return jg_fail(g, "a recursion's measure of several rows in a mutual recursion (v1)");
     for (int32_t ri = 0; ri < g->nrpo; ri++) {
         IrBlock *b = g->blk[g->rpo[ri]];
         int32_t k = 0;
@@ -4154,6 +4209,15 @@ static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, co
                 // unmeasured: the caller (once per call, whatever its targets) or this target (its
                 // ordinal, as its rec.fall would have: one ID per obligation)
                 if (!r || !rt) { if ((r || tq == 0) && !jg_outside_n(g, L, i, b->id, k, "rec.fall", r ? whyt : whyf, r ? tq : 0)) return false; continue; }
+                if (rt->ncomp > 1 && t != g->f) return jg_fail(g, "a recursion's measure of several rows in a mutual recursion (v1)");
+                if (lexm) {                                       // t is f: c35's VCs, n + 1 of them
+                    int32_t s0[JRANK_MAXC], sn[JRANK_MAXC], cb, n = jg_lex_comps(r, 0, r->ncomp, s0, sn, &cb);
+                    for (int32_t q = 0; q <= n; q++) {
+                        JRecLexArg a = { r, g->f, q };
+                        if (!jg_goal(g, L, i, b->id, k, -1, "rec.lex", tq * 100000 + q, jgk_rec_lex, &a)) return false;
+                    }
+                    continue;
+                }
                 for (int w = 0; w < 2; w++) {                     // rec.bound is the caller's alone: once
                     if (w == 1 && tq > 0) continue;
                     JRecArg a = { r, rt, g->f, t, w == 1 ? 1 : le ? 2 : 0 };
