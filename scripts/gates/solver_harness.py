@@ -18,6 +18,8 @@ Generates N random VCs (seeded), runs SOLVE_VC on them, and checks every answer:
     Branch and bound over a box always ends, so a solver that refuses here has lost strength (a
     mutant that splits the same point forever did exactly that, and only a count saw it). The
     budget is a few times the most a correct solver used on these seeds, so such a mutant stops.
+lia_cone (lia.h, s2: a system closed under scaling, by one rational search) is checked with
+`solve_vc --cone`, on worked shapes and seeded random systems, every answer by this kernel.
 The SLICED RETRY (lia.h, PE.13) is checked on solver_capacity/: VCs whose whole search stops on
 CAPACITY. A certificate from a slice must pass this kernel against the WHOLE VC, and where no slice
 holds the proof the answer must stay CAPACITY, never a model of a slice.
@@ -209,12 +211,12 @@ LIMITS = ["40000", "512", "512"]     # pivots, nodes, leaves; the seeds below ne
 # sees that. A correct solver runs each set below in a few seconds.
 TIMEOUT = 120
 
-def run(exe, vcs, bounded, B, expect=None, limits=None):
+def run(exe, vcs, bounded, B, expect=None, limits=None, cone=False):
     with tempfile.NamedTemporaryFile("w", suffix=".vc", delete=False) as f:
         for vc in vcs: f.write(vc_text(vc))
         path = f.name
     try:
-        out = subprocess.run([exe, path] + (limits or LIMITS), capture_output=True, text=True, timeout=TIMEOUT)
+        out = subprocess.run([exe] + (["--cone"] if cone else []) + [path] + (limits or LIMITS), capture_output=True, text=True, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         os.unlink(path); print(f"  WRONG: the solver did not finish {len(vcs)} VCs within {TIMEOUT} s"); return 1
     os.unlink(path)
@@ -270,6 +272,37 @@ CAPACITY_CASES = [
     # disjunction by its index in the WHOLE VC, which this kernel reads
     ("caselast.vc", "cert"),
 ]
+# ── lia_cone (lia.h, s2): a system closed under scaling, by one rational search, its model scaled ──
+# Each answer is checked as any other (a certificate by this kernel, a model at every row); the
+# worked ones pin the shapes: a model only scaling gives (x >= 1/2 and 3y = x: the numerators (1, 1)
+# break 3y = x, and the answer must be (3, 1) or another integer point), a refutation, and systems
+# lia_cone must not accept (a positive `<=` constant, an `=` with a nonzero one, a disjunction, a
+# goal other than `0 <= -1`), each `capacity`.
+CONE_WORKED = [
+    ("scaled", "model", ["x", "y"], [("sample", ({0: -2}, "<=", -1)), ("sample", ({0: -1, 1: 3}, "=", 0))], ({}, "<=", -1)),
+    ("refuted", "cert", ["c"], [("sample", ({0: 1}, "<=", -1)), ("sample", ({0: -1}, "<=", -1))], ({}, "<=", -1)),
+    ("positive", "capacity", ["x"], [("sample", ({0: 1}, "<=", 1))], ({}, "<=", -1)),
+    ("eqconst", "capacity", ["x"], [("sample", ({0: 1}, "=", -2))], ({}, "<=", -1)),
+    ("disj", "capacity", ["x"], [("path", [[({0: 1}, "<=", -1)], [({0: -1}, "<=", -1)]])], ({}, "<=", -1)),
+    ("goal", "capacity", ["x"], [("sample", ({0: 1}, "<=", -1))], ({0: 1}, "<=", 0)),
+]
+def gen_cone(rng, idx):
+    nv = rng.randint(1, 4)
+    hyps = []
+    for _ in range(rng.randint(1, 6)):
+        k = rng.randint(1, nv); vs = sorted(rng.sample(range(nv), k))
+        terms = {v: rng.choice([c for c in range(-6, 7) if c]) for v in vs}
+        if rng.random() < 0.2: hyps.append(("sample", (terms, "=", 0)))
+        else: hyps.append(("sample", (terms, "<=", rng.randint(-5, 0))))
+    return {"id": f"c{idx} 0 bb0.0 cone 0", "names": [f"x{i}" for i in range(nv)], "hyps": hyps, "goal": ({}, "<=", -1)}
+def run_cone(exe):
+    vcs = [{"id": f"{n} 0 bb0.0 cone 0", "names": names, "hyps": hyps, "goal": goal} for n, _, names, hyps, goal in CONE_WORKED]
+    rc = run(exe, vcs, False, 4, [k for _, k, _, _, _ in CONE_WORKED], cone=True)
+    rng = random.Random(5)
+    print("  seed 5, 1000 systems closed under scaling:")
+    rc |= run(exe, [gen_cone(rng, i) for i in range(1000)], False, 4, cone=True)
+    return rc
+
 def run_capacity(exe):
     d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "solver_capacity")
     vcs = [read_vcs(open(os.path.join(d, f)).read())[0] for f, _ in CAPACITY_CASES]
@@ -426,6 +459,8 @@ def main():
     rc |= run(exe, vcs, False, 4, [k for _, k, _, _, _ in WORKED])
     print("the sliced retry (solver_capacity/):")
     rc |= run_capacity(exe)
+    print("lia_cone:")
+    rc |= run_cone(exe)
     for seed, mode in ((1, "bounded"), (2, "bounded"), (3, "free")):
         rng = random.Random(seed)
         print(f"seed {seed}, 1000 VCs, {mode}:")

@@ -59,25 +59,33 @@ static bool ranks(const Path *p, const LRank *R, const int *pre, const int *post
         if (v == nv) return true;
     }
 }
-static void expect(const char *name, Path *ps, int npaths, const char **names, const int *pre, const int *post, int np, bool want_found) {
+// want: LIA_RANK_FOUND (checked by brute force), _NONE (with its certificate) or _STOP; by: the
+// search that must answer (0 the Farkas LP, 1 the samples), -1 for a STOP. `size` is the region.
+static void expect_in(const char *name, Path *ps, int npaths, const char **names, const int *pre, const int *post, int np,
+                      LRankKind want, int by, size_t size) {
     const JVc *vcs[4];
     for (int k = 0; k < npaths; k++) vcs[k] = to_vc(&ps[k], names);
     JWork lim = { 100000, 4096, 4096 };
-    LRank R = lia_rank(vcs, npaths, pre, post, np, lim, region, sizeof region);
-    bool ok;
+    LRank R = lia_rank(vcs, npaths, pre, post, np, lim, region, size);
+    bool ok = R.k == want && (by < 0 || R.by == by);
     long pts = 0;
-    if (want_found) {
-        ok = R.k == LIA_RANK_FOUND;
+    if (ok && want == LIA_RANK_FOUND)                  // the layout the finder reads: coef[np] is c0 again
+        ok = jv(&R.coef[np]) == jv(&R.c0) && R.coef[np].n == R.c0.n;
+    if (ok && want == LIA_RANK_FOUND)
         for (int k = 0; k < npaths && ok; k++) ok = ranks(&ps[k], &R, pre, post, np, 6, &pts);
-    } else ok = R.k == LIA_RANK_NONE && R.none.body.n > 0;
+    if (ok && want == LIA_RANK_NONE) ok = R.none.body.n > 0;
     printf("  %-58s %s", name, ok ? "ok" : "WRONG");
     if (R.k == LIA_RANK_FOUND) {
         printf("  f =");
         for (int i = 0; i < np; i++) if (jv(&R.coef[i])) printf(" %+lld*%s", (long long)jv(&R.coef[i]), names[pre[i]]);
         printf(" %+lld  (checked at %ld points)", (long long)jv(&R.c0), pts);
     } else printf("  (%s)", R.k == LIA_RANK_NONE ? "no linear ranking function, certified" : "stopped or unsupported");
+    if (R.k == LIA_RANK_FOUND || R.k == LIA_RANK_NONE) printf(" [%s]", R.by ? "by samples" : "by the Farkas LP");
     printf("\n");
     if (!ok) fails++;
+}
+static void expect(const char *name, Path *ps, int npaths, const char **names, const int *pre, const int *post, int np, bool want_found) {
+    expect_in(name, ps, npaths, names, pre, post, np, want_found ? LIA_RANK_FOUND : LIA_RANK_NONE, 0, sizeof region);
 }
 
 // Lexicographic: for each path k with component j = fall[k], at every point of the box it allows,
@@ -219,6 +227,60 @@ int main(void) {
         row(&p[1], (int64_t[]){ 0, 0, -1, 0, 0 }, 0, 0);
         int pre[] = { 0, 1, 2 }, post[] = { 3, 4, 2 };
         expect("nested countdown (needs a lexicographic ranking)", p, 2, nm, pre, post, 3, false);
+    }
+    // ── by counterexamples (rk_cegis, s2): the same loops in a region too small for the Farkas
+    // tableau, which grows with every path's facts together (four paths of eight rows: about 400
+    // KB), while each path's own solve needs a few KB. SMALL is that region.
+    const size_t SMALL = 1 << 17;
+    {   // Gothenburg_v2-1's shape: while x >= 0 or y >= 0 { x = x + a - b - 1; y = y + b - a - 1 },
+        // a - b = 1 kept, x < 0 a header fact: x stays, y falls by 2 (or 3); the x >= 0 paths are empty.
+        // z = (x, y, x', y')
+        const char *nm[] = { "x", "y", "x'", "y'" }; Path p[4] = { { .nv = 4 }, { .nv = 4 }, { .nv = 4 }, { .nv = 4 } };
+        for (int k = 0; k < 4; k++) {
+            if (k < 2) row(&p[k], (int64_t[]){ 0, -1, 0, 0 }, 0, 0);                  // y >= 0
+            else { row(&p[k], (int64_t[]){ -1, 0, 0, 0 }, 0, 0); row(&p[k], (int64_t[]){ 0, 1, 0, 0 }, 0, -1); }   // x >= 0, y < 0
+            row(&p[k], (int64_t[]){ 1, 0, 0, 0 }, 0, -1);                             // x <= -1, the header's
+            row(&p[k], (int64_t[]){ -1, 0, 1, 0 }, 1, 0);                             // x' = x
+            row(&p[k], (int64_t[]){ 0, -1, 0, 1 }, 1, k % 2 ? -3 : -2);               // y' = y - 2 | y - 3
+            row(&p[k], (int64_t[]){ -1, 0, 0, 0 }, 0, 1000); row(&p[k], (int64_t[]){ 0, 1, 0, 0 }, 0, 1000);
+            row(&p[k], (int64_t[]){ 0, -1, 0, 0 }, 0, 1000);                          // boxes, as types give
+        }
+        int pre[] = { 0, 1 }, post[] = { 2, 3 };
+        expect_in("Gothenburg_v2-1's shape, by the Farkas LP", p, 4, nm, pre, post, 2, LIA_RANK_FOUND, 0, sizeof region);
+        expect_in("Gothenburg_v2-1's shape, too big for it: by samples", p, 4, nm, pre, post, 2, LIA_RANK_FOUND, 1, SMALL);
+    }
+    {   // x rises on two paths and falls on two, inside [0, 10]: no linear ranking, and the samples
+        // show it (a fall of +1 needs c <= -1, of -1 needs c >= 1). z = (x, x')
+        const char *nm[] = { "x", "x'" }; Path p[4] = { { .nv = 2 }, { .nv = 2 }, { .nv = 2 }, { .nv = 2 } };
+        for (int k = 0; k < 4; k++) {
+            row(&p[k], (int64_t[]){ -1, 0 }, 0, 0); row(&p[k], (int64_t[]){ 1, 0 }, 0, 10);
+            row(&p[k], (int64_t[]){ -1, 1 }, 1, k % 2 ? -1 : 1);
+            for (int b = 1; b <= 5; b++) row(&p[k], (int64_t[]){ 0, 1 }, 0, 10 + b);  // the post's box, five times
+        }
+        int pre[] = { 0 }, post[] = { 1 };
+        expect_in("x += 1 | x -= 1 in [0, 10], by the Farkas LP: none", p, 4, nm, pre, post, 1, LIA_RANK_NONE, 0, sizeof region);
+        expect_in("x += 1 | x -= 1 in [0, 10], by samples: none", p, 4, nm, pre, post, 1, LIA_RANK_NONE, 1, SMALL);
+    }
+    {   // while i > -5 { i = i - 1 }: f = i + 4, and only a BOUND sample (i = -4 under f = i) makes
+        // the search raise c0
+        const char *nm[] = { "i", "i'" }; Path p[4] = { { .nv = 2 }, { .nv = 2 }, { .nv = 2 }, { .nv = 2 } };
+        for (int k = 0; k < 4; k++) {
+            row(&p[k], (int64_t[]){ -1, 0 }, 0, 4); row(&p[k], (int64_t[]){ -1, 1 }, 1, -1);
+            for (int b = 1; b <= 6; b++) row(&p[k], (int64_t[]){ 1, 0 }, 0, 100 * b);  // i < 100*b, redundant
+        }
+        int pre[] = { 0 }, post[] = { 1 };
+        expect_in("while i > -5 { i = i - 1 }, by samples (needs c0)", p, 4, nm, pre, post, 1, LIA_RANK_FOUND, 1, SMALL);
+    }
+    {   // while x > 0 { x = x + 1 }, unbounded: the Farkas LP says none; the samples only raise c0,
+        // round after round, and the search must STOP, never answer a candidate
+        const char *nm[] = { "x", "x'" }; Path p[4] = { { .nv = 2 }, { .nv = 2 }, { .nv = 2 }, { .nv = 2 } };
+        for (int k = 0; k < 4; k++) {
+            row(&p[k], (int64_t[]){ -1, 0 }, 0, -1); row(&p[k], (int64_t[]){ -1, 1 }, 1, 1);
+            for (int b = 1; b <= 6; b++) row(&p[k], (int64_t[]){ -1, 0 }, 0, b);    // x > -b, redundant
+        }
+        int pre[] = { 0 }, post[] = { 1 };
+        expect_in("x = x + 1 under x > 0, by the Farkas LP: none", p, 4, nm, pre, post, 1, LIA_RANK_NONE, 0, sizeof region);
+        expect_in("x = x + 1 under x > 0, by samples: STOP", p, 4, nm, pre, post, 1, LIA_RANK_STOP, -1, SMALL);
     }
     printf("── relations a loop keeps (PE.7) ──\n");
     {   // for i < n { s = s + e }, e in [1, 3]:  z = (s, i, n, e, s', i')

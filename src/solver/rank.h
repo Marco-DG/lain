@@ -24,13 +24,17 @@
 
 typedef enum { LIA_RANK_FOUND, LIA_RANK_NONE, LIA_RANK_STOP, LIA_RANK_UNSUPPORTED } LRankKind;
 typedef struct {
-    LRankKind k;      // FOUND: coef, c0. NONE: no linear ranking function (lia_solve's certificate
-                      // of that, over the LP, is in `none`). STOP: a budget or capacity ran out.
+    LRankKind k;      // FOUND: coef, c0. NONE: no linear ranking function, with a certificate in
+                      // `none` (see `by`). STOP: a budget or capacity ran out.
                       // UNSUPPORTED: a path holds a disjunctive hypothesis (split it into paths).
-    JInt *coef;       // coef[i] multiplies pair i's pre value
+    JInt *coef;       // coef[i] multiplies pair i's pre value; coef[ncoef] is c0 again (the Farkas model's
+                      // layout, which the finder reads up to ncoef inclusive)
     int32_t ncoef;
     JInt c0;
-    JCert none;
+    JCert none;       // by 0: lia_solve's refutation of the Farkas LP; by 1: of rk_cegis's SAMPLE LP,
+                      // a certificate of that LP alone. No caller reads it beyond its presence: the
+                      // finder reads `k`, and test_rank.c checks the certificate is there
+    uint8_t by;       // the search that answered FOUND or NONE: 0 the Farkas LP, 1 the samples (rk_cegis)
     JWork used;
     JAnswerKind stop;
 } LRank;
@@ -167,7 +171,123 @@ static bool rk_check_paths(const JVc *const *paths, int32_t npaths) {
     return true;
 }
 
-// `paths` share one variable list (paths[0]'s); pre[i] and post[i] index it.
+// ── by counterexamples (s2, PE.13): when the Farkas system does not fit ───────────────────────
+// lia_rank's one LP holds two multipliers per hypothesis of every path, in lia_solve's dense
+// tableau. On Gothenburg_v2-1, 12 flattened paths of about 300 facts, that is 7250 variables by 7968
+// rows, and it stops on the region at pivot 0, with y's version alone as large. The conditions it
+// encodes can be asked path by path instead, and each path's own VC fits. A candidate (c, c0) comes
+// from the SAMPLES found so far; then each path gets the fall VC `sum c_i (post_i - pre_i) <= -1` and
+// the bound VC `-sum c_i pre_i <= c0` over its facts. A path's model is a transition of that path
+// the candidate does not rank, and its pairs' values become a sample:
+//   fall   d = post - pre:   sum d_i c_i <= -1
+//   bound  p = pre:          -sum p_i c_i - c0 <= 0
+// - A round that finds no sample is FOUND.
+// - A sample LP with no solution is NONE: the samples are models of the paths, so no linear function
+//   ranks the paths either. Its certificate refutes the SAMPLE LP, not the Farkas system (`by` 1).
+// - A candidate past 2^66 (what a ranking claim may state), or RK_CG_ROUNDS rounds without either,
+//   is STOP. A loop that does not terminate need not make its samples infeasible: under x > 0,
+//   x = x + 1 only raises c0, round after round.
+// The sample LP is closed under scaling, so lia_cone answers it over the rationals. One budget for
+// the whole search; the samples, the LP and one solve region all in the caller's region;
+// deterministic (paths in order, samples in the order found).
+#define RK_CG_ROUNDS 16
+#define RK_CG_MAXS 2048
+static LRank rk_cegis(const JVc *const *paths, int32_t npaths, const int32_t *pre, const int32_t *post,
+                      int32_t npairs, JWork limit, void *mem, size_t size) {
+    LRank R; memset(&R, 0, sizeof R);
+    R.k = LIA_RANK_STOP; R.stop = J_ANS_CAPACITY; R.by = 1;
+    int32_t nv = paths[0]->nvars, n1 = npairs + 1;
+    int64_t want = 2 * (int64_t)npaths * RK_CG_ROUNDS;
+    int32_t maxs = want < RK_CG_MAXS ? (int32_t)want : RK_CG_MAXS, ns = 0;
+    char *cur = (char *)mem, *end = (char *)mem + size;
+    JInt *coef = (JInt *)rk_bump(&cur, end, sizeof(JInt) * (size_t)n1);          // the answer's, kept
+    LSi *smp = (LSi *)rk_bump(&cur, end, sizeof(LSi) * (size_t)maxs * (size_t)npairs);
+    uint8_t *isb = (uint8_t *)rk_bump(&cur, end, (size_t)maxs);
+    JHyp *lh = (JHyp *)rk_bump(&cur, end, sizeof(JHyp) * (size_t)maxs);
+    JTerm *lt = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)maxs * (size_t)n1);
+    const char **ln = (const char **)rk_bump(&cur, end, sizeof(char *) * (size_t)n1);
+    char *lnb = (char *)rk_bump(&cur, end, (size_t)n1 * 24);
+    LSi *cand = (LSi *)rk_bump(&cur, end, sizeof(LSi) * (size_t)n1);
+    LSi *acc = (LSi *)rk_bump(&cur, end, sizeof(LSi) * (size_t)(nv > 0 ? nv : 1));
+    JTerm *gt = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)(nv > 0 ? nv : 1));
+    char *wrk = (char *)(((uintptr_t)cur + 15u) & ~(uintptr_t)15u);
+    if (!coef || !smp || !isb || !lh || !lt || !ln || !lnb || !cand || !acc || !gt || wrk + 4096 > end) return R;
+    size_t wsz = (size_t)(end - wrk);
+    for (int32_t i = 0; i < n1; i++) { snprintf(lnb + (size_t)i * 24, 24, i < npairs ? "c.%d" : "c0", i); ln[i] = lnb + (size_t)i * 24; }
+    LSol N; memset(&N, 0, sizeof N);                         // checked arithmetic only
+    const LSi big = (LSi)1 << 66;
+    #define RK_CG_LEFT(W) do { (W).pivot = limit.pivot > R.used.pivot ? limit.pivot - R.used.pivot : 0;              \
+        (W).node = limit.node > R.used.node ? limit.node - R.used.node : 0;                                           \
+        (W).leaf = limit.leaf > R.used.leaf ? limit.leaf - R.used.leaf : 0; } while (0)
+    #define RK_CG_USE(A) do { R.used.pivot += (A).used.pivot; R.used.node += (A).used.node; R.used.leaf += (A).used.leaf; } while (0)
+    for (int32_t round = 0; round < RK_CG_ROUNDS; round++) {
+        // the candidate: the sample LP over c_0 .. c_{n-1}, c0
+        int32_t nh = 0, tu = 0;
+        for (int32_t k = 0; k < ns; k++) {
+            JHyp *h = &lh[nh++]; memset(h, 0, sizeof *h);
+            h->origin = isb[k] ? "sample bound" : "sample fall"; h->cons.op = J_LE; h->cons.t = &lt[tu];
+            for (int32_t i = 0; i < npairs; i++) {
+                LSi a = smp[(size_t)k * (size_t)npairs + (size_t)i];
+                if (a) { lt[tu].var = i; ls_to_j(isb[k] ? ls_sub(&N, 0, a) : a, &lt[tu].coef); tu++; h->cons.nt++; }
+            }
+            if (isb[k]) { lt[tu].var = npairs; ls_to_j(-1, &lt[tu].coef); tu++; h->cons.nt++; }
+            ls_to_j(isb[k] ? 0 : -1, &h->cons.rhs);
+        }
+        if (N.cap) return R;
+        JVc lp; memset(&lp, 0, sizeof lp);
+        lp.id = paths[0]->id; lp.vars = ln; lp.nvars = n1; lp.hyps = lh; lp.nhyps = nh;
+        lp.goal.op = J_LE; ls_to_j(-1, &lp.goal.rhs);
+        JWork left; RK_CG_LEFT(left);
+        JAnswer A = lia_cone(&lp, left, wrk, wsz);
+        RK_CG_USE(A);
+        if (A.k == J_ANS_CERT) { R.k = LIA_RANK_NONE; R.none = A.cert; return R; }
+        if (A.k != J_ANS_MODEL) { R.stop = A.k; return R; }
+        for (int32_t i = 0; i < n1; i++) {
+            cand[i] = ls_from_j(&N, &A.model.val[i]);
+            if (N.cap || cand[i] > big || cand[i] < -big) return R;
+        }
+        // the candidate on each path: its fall, then its bound
+        int32_t added = 0;
+        for (int32_t k = 0; k < npaths; k++)
+            for (int what = 0; what < 2; what++) {
+                memset(acc, 0, sizeof(LSi) * (size_t)nv);
+                for (int32_t i = 0; i < npairs; i++) {
+                    if (what == 0) acc[post[i]] = ls_add(&N, acc[post[i]], cand[i]);
+                    acc[pre[i]] = ls_sub(&N, acc[pre[i]], cand[i]);
+                }
+                int32_t m = 0;
+                for (int32_t v = 0; v < nv; v++) if (acc[v]) { gt[m].var = v; ls_to_j(acc[v], &gt[m].coef); m++; }
+                if (N.cap) return R;
+                JVc q = *paths[k];
+                q.goal.t = gt; q.goal.nt = m; q.goal.op = J_LE; ls_to_j(what == 0 ? -1 : cand[npairs], &q.goal.rhs);
+                RK_CG_LEFT(left);
+                JAnswer B = lia_solve(&q, left, wrk, wsz);
+                RK_CG_USE(B);
+                if (B.k == J_ANS_CERT) continue;
+                if (B.k != J_ANS_MODEL) { R.stop = B.k; return R; }
+                if (ns == maxs) { R.stop = J_ANS_BUDGET; return R; }
+                for (int32_t i = 0; i < npairs; i++) {
+                    LSi a = ls_from_j(&N, &B.model.val[pre[i]]), b = ls_from_j(&N, &B.model.val[post[i]]);
+                    smp[(size_t)ns * (size_t)npairs + (size_t)i] = what == 0 ? ls_sub(&N, b, a) : a;
+                }
+                if (N.cap) return R;
+                isb[ns++] = (uint8_t)what; added++;
+            }
+        if (!added) {
+            for (int32_t i = 0; i < n1; i++) ls_to_j(cand[i], &coef[i]);
+            R.k = LIA_RANK_FOUND; R.coef = coef; R.ncoef = npairs; ls_to_j(cand[npairs], &R.c0);
+            return R;
+        }
+    }
+    #undef RK_CG_LEFT
+    #undef RK_CG_USE
+    R.stop = J_ANS_BUDGET;
+    return R;
+}
+
+// `paths` share one variable list (paths[0]'s); pre[i] and post[i] index it. The Farkas LP first;
+// when it stops on CAPACITY (it did not fit the region, or its numbers left 128 bits), rk_cegis
+// over the same paths in the whole region, its budget what the first attempt left.
 static LRank lia_rank(const JVc *const *paths, int32_t npaths, const int32_t *pre, const int32_t *post,
                       int32_t npairs, JWork limit, void *mem, size_t size) {
     LRank R; memset(&R, 0, sizeof R);
@@ -177,16 +297,23 @@ static LRank lia_rank(const JVc *const *paths, int32_t npaths, const int32_t *pr
     for (int32_t k = 0; k < npaths; k++) on[k] = true;
     JVc lp;
     if (!rk_build(paths, npaths, on, pre, post, npairs, false, 0, &cur, end, &lp, NULL)) {
-        R.k = LIA_RANK_STOP; R.stop = J_ANS_CAPACITY; return R;
+        R.k = LIA_RANK_STOP; R.stop = J_ANS_CAPACITY;
+    } else {
+        JAnswer A = lia_solve(&lp, limit, cur, (size_t)((char *)mem + size - cur));
+        R.used = A.used;
+        if (A.k == J_ANS_MODEL) {
+            R.k = LIA_RANK_FOUND; R.coef = A.model.val; R.ncoef = npairs; R.c0 = A.model.val[npairs];
+        } else if (A.k == J_ANS_CERT) {
+            R.k = LIA_RANK_NONE; R.none = A.cert;
+        } else { R.k = LIA_RANK_STOP; R.stop = A.k; }
     }
-    JAnswer A = lia_solve(&lp, limit, cur, (size_t)((char *)mem + size - cur));
-    R.used = A.used;
-    if (A.k == J_ANS_MODEL) {
-        R.k = LIA_RANK_FOUND; R.coef = A.model.val; R.ncoef = npairs; R.c0 = A.model.val[npairs];
-    } else if (A.k == J_ANS_CERT) {
-        R.k = LIA_RANK_NONE; R.none = A.cert;
-    } else { R.k = LIA_RANK_STOP; R.stop = A.k; }
-    return R;
+    if (R.k != LIA_RANK_STOP || R.stop != J_ANS_CAPACITY) return R;
+    JWork left = { limit.pivot > R.used.pivot ? limit.pivot - R.used.pivot : 0,
+                   limit.node > R.used.node ? limit.node - R.used.node : 0,
+                   limit.leaf > R.used.leaf ? limit.leaf - R.used.leaf : 0 };
+    LRank C = rk_cegis(paths, npaths, pre, post, npairs, left, mem, size);
+    C.used.pivot += R.used.pivot; C.used.node += R.used.node; C.used.leaf += R.used.leaf;
+    return C;
 }
 
 // ── lexicographic ranking functions (Alias, Darte, Feautrier and Gonnord 2010) ─────────────────

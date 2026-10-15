@@ -51,6 +51,7 @@ typedef struct {
     int32_t nf, ns;             // the f and s numbers given so far
     int32_t nv;                 // the VC's variables
     const uint8_t *on;          // the hypotheses in play, by index (NULL: all): the sliced retry's
+    bool cone;                  // lia_cone's search: a rational model is scaled, never split
 } LSol;
 
 // ── memory ──────────────────────────────────────────────────────────────────────────────────────
@@ -377,6 +378,14 @@ static LRes ls_node(LSol *S, const JVc *vc, LCon *cons, int32_t ncons, int32_t f
     LSi *x = (LSi *)ls_scratch(S, sizeof(LSi), S->nv);
     if (!x) return LS_STOP;
     for (int32_t v = 0; v < t.n; v++) x[v] = t.val[v].n;
+    if (j >= 0 && S->cone) {                         // a cone's: the rational model times its denominators' lcm
+        LSi l = 1;
+        for (int32_t v = 0; v < t.n; v++) l = ls_mul(S, l / (LSi)ls_gcd((LSu)l, (LSu)t.val[v].d), t.val[v].d);
+        for (int32_t v = 0; v < t.n; v++) x[v] = ls_mul(S, t.val[v].n, l / t.val[v].d);
+        if (S->cap) return LS_STOP;
+        memcpy(model, x, sizeof(LSi) * (size_t)S->nv);
+        return LS_SAT;
+    }
     if (j >= 0) {
         S->lo = tabmark;
         if (S->used.node >= S->limit.node) { S->out = true; return LS_STOP; }
@@ -446,10 +455,10 @@ static LRes ls_node(LSol *S, const JVc *vc, LCon *cons, int32_t ncons, int32_t f
 
 // One search over the hypotheses `on` names (NULL: every one). A reference keeps its hypothesis's
 // index in the full list, so a certificate over a slice is the full VC's.
-static JAnswer ls_solve(const JVc *vc, const uint8_t *on, JWork limit, void *mem, size_t size) {
+static JAnswer ls_solve(const JVc *vc, const uint8_t *on, bool cone, JWork limit, void *mem, size_t size) {
     JAnswer A; memset(&A, 0, sizeof A);
     LSol S; memset(&S, 0, sizeof S);
-    S.lo = (char *)mem; S.hi = (char *)mem + size; S.limit = limit; S.nv = vc->nvars; S.on = on;
+    S.lo = (char *)mem; S.hi = (char *)mem + size; S.limit = limit; S.nv = vc->nvars; S.on = on; S.cone = cone;
     int32_t nc = 1;
     for (int32_t h = 0; h < vc->nhyps; h++) if (!vc->hyps[h].disj && (!on || on[h])) nc++;
     LCon *cons = (LCon *)ls_scratch(&S, sizeof(LCon), nc);
@@ -516,7 +525,7 @@ static uint64_t ls_left(uint64_t limit, uint64_t used) { return used < limit ? l
 // Solve `vc` within `limit`, in the caller's region of `size` bytes. Every pointer in the answer
 // points into that region.
 static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
-    JAnswer A = ls_solve(vc, NULL, limit, mem, size);
+    JAnswer A = ls_solve(vc, NULL, false, limit, mem, size);
     if (A.k != J_ANS_CAPACITY || vc->goal.nt == 0 || vc->nhyps == 0 || vc->nvars <= 0) return A;
     // a VC the search refused as malformed (a variable out of range) is not sliced
     bool ok = ls_in_range(&vc->goal, vc->nvars);
@@ -557,12 +566,38 @@ static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
         if (in == vc->nhyps) break;
         JWork left = { ls_left(limit.pivot, used.pivot), ls_left(limit.node, used.node), ls_left(limit.leaf, used.leaf) };
         if (!left.pivot || !left.node || !left.leaf) break;
-        JAnswer B = ls_solve(vc, on, left, (char *)mem + mk, size - mk);
+        JAnswer B = ls_solve(vc, on, false, left, (char *)mem + mk, size - mk);
         used.pivot += B.used.pivot; used.node += B.used.node; used.leaf += B.used.leaf;
         if (B.k == J_ANS_CERT) { B.used = used; return B; }
     }
     A.used = used;
     return A;
+}
+
+// ── a cone's model (s2, PE.13): the rational answer, scaled ────────────────────────────────────
+// For a system CLOSED UNDER SCALING by any k >= 1: conjunctions only, every `<=` constant at most 0,
+// every `=` constant 0, and the goal `0 <= -1` (are the hypotheses satisfiable?). A rational model
+// times the lcm of its denominators is then an integer model, so one rational search answers, with
+// no branch and bound. rank.h's sample LP (rk_cegis) is such a system, and on Gothenburg_v2-1's
+// samples lia_solve's branch and bound overflowed within a few nodes where the rational search needs
+// one pivot. A refutation is the ordinary certificate. The scaled model keeps every row: the gcd
+// test only tightens a row (its rational model satisfies the original), and a row whose constant is
+// at most 0 holds at k times a point where it holds. A scaling past 128 bits is CAPACITY. A system
+// that is not closed under scaling is not asked: CAPACITY. (Its one caller checks each candidate
+// on every path anyway, and solver_harness.py evaluates every model.)
+static bool ls_nonpos(const JInt *x) { return x->n == 0 || x->neg; }
+static JAnswer lia_cone(const JVc *vc, JWork limit, void *mem, size_t size) {
+    JAnswer A; memset(&A, 0, sizeof A); A.k = J_ANS_CAPACITY;
+    bool cone = vc->goal.nt == 0 && vc->goal.op == J_LE && vc->goal.rhs.neg && vc->goal.rhs.n == 1 && vc->goal.rhs.limb[0] == 1;
+    for (int32_t h = 0; h < vc->nhyps && cone; h++) {
+        const JHyp *H = &vc->hyps[h];
+        if (H->disj) cone = false;
+        else if (H->cons.op == J_LE) cone = ls_nonpos(&H->cons.rhs);
+        else cone = H->cons.op == J_EQ && H->cons.rhs.n == 0;
+        for (int32_t t = 0; cone && t < H->cons.nt; t++) cone = H->cons.t[t].var >= 0 && H->cons.t[t].var < vc->nvars;
+    }
+    if (!cone) return A;
+    return ls_solve(vc, NULL, true, limit, mem, size);
 }
 
 // ── optimization (PE.2): the largest value of a linear objective over a VC's hypotheses ─────────
