@@ -31,7 +31,7 @@ Prints the counts; exit 1 on any wrong answer. The kernel here is written from t
 document, in another language, and shares nothing with the C: a solver bug that the C kernel
 would also miss still has to get past this one.
 """
-import random, subprocess, sys, itertools, math, tempfile, os
+import random, subprocess, sys, itertools, math, tempfile, os, re
 
 def fmt_sum(terms, names):
     ts = [(v, c) for v, c in sorted(terms.items()) if c]
@@ -289,6 +289,11 @@ CAPACITY_CASES = [
     ("modelwidth.vc", ["capacity"]),
     # udiv(x u64)'s bound checks (tests/trust/policy_op_literal_left_pass.ln), which store 129 bits
     ("udiv_u64.vc", ["cert", "model", "cert", "cert", "cert", "model", "cert", "cert"]),
+    # a path check of 4NestedWith3Variables' (s2's fallback), 299 rows and 168 variables: the wide
+    # search finds its model only after 1958 pivots, past LS_WIDE_WORK (2^24 entry updates, 118
+    # pivots on this tableau), so lia_solve answers CAPACITY, never the model (checked below:
+    # --wide, uncapped, does find it)
+    ("wide_long.vc", ["capacity"]),
 ]
 # Gothenburg-1's sample LP (s2's fallback): 110 samples, 182-bit numbers, through lia_cone
 CONE_CAPACITY_CASES = [("gothenburg1_samples.vc", ["model"])]
@@ -441,6 +446,14 @@ def run_capacity(exe):
         if r == 0 and run.work["pivot"] > int(lim[0]):
             print(f"  WRONG: {run.work['pivot']} pivots used of {lim[0]}"); r = 1
         rc |= r
+    # the cap is what stops wide_long: the wide search alone, uncapped, finds a model past it
+    wl = read_vcs(open(os.path.join(d, "wide_long.vc")).read())[0]
+    cap = max(32, (1 << 24) // ((len(wl["hyps"]) + 1) * (len(wl["names"]) + len(wl["hyps"]) + 1)))
+    r, blk = answers(exe, [wl], "--wide")
+    m = re.search(r"work pivot:(\d+)", blk[0]) if len(blk) == 1 else None
+    vals = [int(l.split(" = ")[1]) for l in blk[0].split("\n")[1:] if " = " in l] if m else []
+    if r or not m or not blk[0].startswith("model ") or int(m.group(1)) <= cap or not sat_at(wl, vals):
+        print(f"  WRONG: wide_long's uncapped wide search does not find a model past {cap} pivots:\n" + "\n".join(blk)[:400]); rc = 1
     # the ladder's order: rec1_0x17 costs 13 pivots whole, 5 for S_1 and 10 for S_2, so its answer
     # comes from the slices (28 pivots), before the wide search could run
     r, blk = answers(exe, vcs[:1])

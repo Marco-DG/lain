@@ -294,7 +294,8 @@ static JAnswer ls_sliced(const JVc *vc, JWork limit, void *mem, size_t size, JWo
 // stores nothing past 125 bits and needs its whole VC (no slice holds its proof); udiv(x u64)'s
 // bound checks store 129 bits; Gothenburg-1's sample LP 182. So a search that stopped because a
 // NUMBER left 128 bits (not the region, not the budget) is run again by lia_core.h's wide instance,
-// with the budget left. It takes the same steps, so it gives the answer an unbounded search gives.
+// with the budget left, at most LS_WIDE_WORK tableau entry updates (below). It takes the same steps, so it gives
+// the answer an unbounded search gives.
 //
 // The kernel and the judge are 512 bits too, and that binds what the wide search may answer: the
 // kernel sums each `lin` step multiplier times fact in KInt and refuses one that leaves J_LIMBS
@@ -457,6 +458,24 @@ static bool lw_model_fits(const JVc *vc, const JModel *m) {
     }
     return lw_holds_at(&vc->goal, m->val, vc->nvars) >= 0;
 }
+// The wide retry's work. A wide pivot updates the whole tableau, rows times columns, in multi-limb
+// arithmetic: 4NestedWith3Variables' path checks in rank.h's fallback (300 rows, about 470 columns)
+// ran 1958 and 1926 pivots at 512 bits, 3.6 s each, about 77 million entry updates a second, for
+// models no record used. Every answer the wide retry gained over the corpus and the trap ports took
+// at most 99 pivots, on tableaux of 1,600 to 16,000 entries, and the harness's VCs with coefficients
+// near 2^60 (about 200 entries) need up to 1203. So lia_solve and lia_cone give the wide search at
+// most LS_WIDE_WORK entry updates, as pivots for its tableau's size (at least LS_WIDE_MIN): about
+// 0.2 s. One cut off answers the 128-bit search's CAPACITY.
+#define LS_WIDE_WORK ((uint64_t)1 << 24)
+#define LS_WIDE_MIN 32
+static JWork ls_wide_limit(const JVc *vc, JWork left) {
+    uint64_t m = (uint64_t)vc->nhyps + 1, w = (uint64_t)(vc->nvars > 0 ? vc->nvars : 0) + m;
+    uint64_t cap = LS_WIDE_WORK / (m * w);
+    if (cap < LS_WIDE_MIN) cap = LS_WIDE_MIN;
+    if (left.pivot > cap) left.pivot = cap;
+    return left;
+}
+
 // The wide search, in the first three quarters of the region (its answer at their top), its
 // answer followed at the kernel's and the judge's width in the last quarter.
 static JAnswer ls_wide(const JVc *vc, bool cone, JWork limit, void *mem, size_t size) {
@@ -481,7 +500,7 @@ static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
     if (ovf) {
         JWork left = { ls_left(limit.pivot, used.pivot), ls_left(limit.node, used.node), ls_left(limit.leaf, used.leaf) };
         if (left.pivot && left.node && left.leaf) {
-            JAnswer W = ls_wide(vc, false, left, mem, size);
+            JAnswer W = ls_wide(vc, false, ls_wide_limit(vc, left), mem, size);
             used.pivot += W.used.pivot; used.node += W.used.node; used.leaf += W.used.leaf;
             if (W.k == J_ANS_CERT || W.k == J_ANS_MODEL) { W.used = used; return W; }
         }
@@ -518,7 +537,7 @@ static JAnswer lia_cone(const JVc *vc, JWork limit, void *mem, size_t size) {
     if (A.k != J_ANS_CAPACITY || !ovf) return A;
     JWork left = { ls_left(limit.pivot, A.used.pivot), ls_left(limit.node, A.used.node), ls_left(limit.leaf, A.used.leaf) };
     if (!left.pivot || !left.node || !left.leaf) return A;
-    JAnswer W = ls_wide(vc, true, left, mem, size);          // the wide retry, as lia_solve's
+    JAnswer W = ls_wide(vc, true, ls_wide_limit(vc, left), mem, size);   // the wide retry, as lia_solve's
     W.used.pivot += A.used.pivot; W.used.node += A.used.node; W.used.leaf += A.used.leaf;
     if (W.k == J_ANS_CERT || W.k == J_ANS_MODEL) return W;
     A.used = W.used;
