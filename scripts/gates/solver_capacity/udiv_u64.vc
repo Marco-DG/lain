@@ -1,0 +1,144 @@
+vc udiv_udiv 4a5b2ed1 bb2.2 post 1
+  var %v5
+  var %v4
+  var %v0
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 def %v4 const : 1*%v4 = 100
+  hyp h8 type %v0 u64 : -1*%v0 <= 0
+  hyp h9 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal 1*%v5 <= 18446744073709551614
+end
+vc udiv_udiv 4a5b2ed1 bb2.2 post 4
+  var %v5
+  var %v0
+  var %v4
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 type %v0 u64 : -1*%v0 <= 0
+  hyp h8 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h9 def %v4 const : 1*%v4 = 100
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal -1*%v5 + 1*%v0 <= 18446744073709551614
+end
+vc udiv_udiv 4a5b2ed1 bb2.2 post 5
+  var %v5
+  var %v0
+  var %v4
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 type %v0 u64 : -1*%v0 <= 0
+  hyp h8 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h9 def %v4 const : 1*%v4 = 100
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal 1*%v5 + -1*%v0 <= 18446744073709551614
+end
+vc udiv_udiv 4a5b2ed1 bb2.2 post 6
+  var %v5
+  var %v0
+  var %v4
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 type %v0 u64 : -1*%v0 <= 0
+  hyp h8 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h9 def %v4 const : 1*%v4 = 100
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal 1*%v5 + 1*%v0 <= 36893488147419103229
+end
+vc udiv_udiv 4a5b2ed1 bb2.2 post 22
+  var %v5
+  var %v4
+  var %v0
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 def %v4 const : 1*%v4 = 100
+  hyp h8 type %v0 u64 : -1*%v0 <= 0
+  hyp h9 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal 1*%v5 <= 18446744073709551614
+end
+vc udiv_udiv 4a5b2ed1 bb2.2 post 25
+  var %v5
+  var %v0
+  var %v4
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 type %v0 u64 : -1*%v0 <= 0
+  hyp h8 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h9 def %v4 const : 1*%v4 = 100
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal -1*%v5 + 1*%v0 <= 18446744073709551614
+end
+vc udiv_udiv 4a5b2ed1 bb2.2 post 26
+  var %v5
+  var %v0
+  var %v4
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 type %v0 u64 : -1*%v0 <= 0
+  hyp h8 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h9 def %v4 const : 1*%v4 = 100
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal 1*%v5 + -1*%v0 <= 18446744073709551614
+end
+vc udiv_udiv 4a5b2ed1 bb2.2 post 27
+  var %v5
+  var %v0
+  var %v4
+  var %v1
+  hyp h1 type %v5 u64 : -1*%v5 <= 0
+  hyp h2 type %v5 u64 : 1*%v5 <= 18446744073709551615
+  hyp h3 def %v5 div.hull : -1*%v5 <= 0
+  hyp h4 def %v5 div.hull : 1*%v5 <= 100
+  hyp h5 def %v5 div.hull : 1*%v5 + -1*%v4 <= 0
+  hyp h6 def %v5 div.hull : -18446744073709551615*%v5 + 1*%v4 <= 18446744073709551614
+  hyp h7 type %v0 u64 : -1*%v0 <= 0
+  hyp h8 type %v0 u64 : 1*%v0 <= 18446744073709551615
+  hyp h9 def %v4 const : 1*%v4 = 100
+  hyp h10 guard bb0->bb2 : or { 1*%v0 + -1*%v1 <= -1 | -1*%v0 + 1*%v1 <= -1 }
+  hyp h11 def %v1 const : 1*%v1 = 0
+  goal 1*%v5 + 1*%v0 <= 36893488147419103229
+end

@@ -11,7 +11,11 @@
 #      function, so the solver receives no arithmetic of the judge's;
 #   4. nothing under src/judge/ or src/solver/ names the process's streams or ends the process
 #      (judge_interfaces §8, G5): a library reports through its records, an `err` buffer, a flag,
-#      or a FILE * its caller passes, so a compiler that links it decides what reaches the user.
+#      or a FILE * its caller passes, so a compiler that links it decides what reaches the user;
+#   5. src/solver/lia_core.h, the search lia.h includes twice (128 bits, then the wide retry's 512),
+#      names no number type (LSi, LSu, LSW, __int128): every number goes through its includer's
+#      N_* macros, so the two instances cannot drift apart. A C operator on a number does not
+#      compile in the wide instance, whose LSW is a struct; this rule keeps the raw types out too.
 # Includes are followed TRANSITIVELY, since a rule checked one level deep holds only until a header
 # in the middle gains an include. A quoted include that resolves to no file is a violation: the
 # check cannot vouch for what it cannot read.
@@ -104,6 +108,16 @@ for f in judge + solver:
     for m in proc.finditer(text):
         line = text.count('\n', 0, m.start()) + 1
         bad.append(f'{rel(f)}:{line}: `{m.group(0).rstrip("(").strip()}`: the proof engine writes to no process stream and never ends the process')
+
+# rule 5, on the code with comments blanked
+core = os.path.join(src, 'solver', 'lia_core.h')
+if os.path.isfile(core):
+    text = strip_comments(open(core, encoding='utf-8', errors='replace').read())
+    for m in re.finditer(r'\b(LSi|LSu|LSW|__int128)\b', text):
+        line = text.count('\n', 0, m.start()) + 1
+        bad.append(f'src/solver/lia_core.h:{line}: `{m.group(0)}`: the shared search names no number type, only N_T')
+elif os.path.isfile(os.path.join(src, 'solver', 'lia.h')):
+    bad.append('src/solver/lia_core.h is missing: lia.h includes it for both widths')
 
 for b in bad: print('  ' + b)
 print(f'judge include rules: {len(judge)} judge files, {len(solver)} solver files, '

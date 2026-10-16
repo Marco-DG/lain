@@ -18,6 +18,10 @@ Generates N random VCs (seeded), runs SOLVE_VC on them, and checks every answer:
     Branch and bound over a box always ends, so a solver that refuses here has lost strength (a
     mutant that splits the same point forever did exactly that, and only a count saw it). The
     budget is a few times the most a correct solver used on these seeds, so such a mutant stops.
+The WIDE search (lia.h's last retry, s3, PE.13) is checked three ways: its LSW arithmetic against
+Python's integers (`solve_vc --lsw`, with the kernel's own bound and multiply rule), its answers
+byte for byte the 128-bit search's wherever that one finishes (`solve_vc --wide`), and on VCs with
+coefficients near 2^60, where the retry answers, by this kernel and brute force.
 lia_cone (lia.h, s2: a system closed under scaling, by one rational search) is checked with
 `solve_vc --cone`, on worked shapes and seeded random systems, every answer by this kernel.
 The SLICED RETRY (lia.h, PE.13) is checked on solver_capacity/: VCs whose whole search stops on
@@ -255,23 +259,40 @@ def run(exe, vcs, bounded, B, expect=None, limits=None, cone=False):
     run.work = work
     return 1 if bad else 0
 
-# ── the sliced retry (lia.h, PE.13) ────────────────────────────────────────────────────────────
-# Each VC's whole search stops on CAPACITY (a product past 128 bits), and the answer each must get:
+# ── the retries (lia.h, PE.13): the slices (s1) and the wide search (s3) ──────────────────────
+# Each VC's 128-bit search stops on CAPACITY (a product past 128 bits), and the answer each must get.
+# Every certificate is checked by this kernel against the WHOLE VC, every model at every row.
 CAPACITY_CASES = [
-    # NestedRecursion's rec1, the post VC of its return claims (MCW's f14), two claim sets: S_2, 20
-    # and 26 of the facts, is refuted in 10 pivots; the certificate is checked against all of them
-    ("rec1_0x17.vc", "cert"), ("rec1_0x7f.vc", "cert"),
-    # the same with five claims: valid (refuted over the rationals), but no slice below the whole VC
-    # holds the proof (S_1 to S_3 are satisfiable): CAPACITY, never a slice's model
-    ("rec1_0x7c.vc", "capacity"),
-    # valid only through a part the goal never reaches (rec1 0x17's refutation over other
-    # variables, whose search overflows), while the goal's own part `y <= 5 => y <= 3` is not:
-    # CAPACITY, never the model y = 4 of the slice
-    ("twoparts.vc", "capacity"),
+    # NestedRecursion's rec1, the post VC of its return claims, two claim sets: S_2, 20 and 26 of
+    # the facts, is refuted at 128 bits in 10 pivots (s1)
+    ("rec1_0x17.vc", ["cert"]), ("rec1_0x7f.vc", ["cert"]),
+    # the same with five claims: no slice below the whole VC holds the proof, and the wide search
+    # refutes the whole VC (it stores nothing past 125 bits) (s3)
+    ("rec1_0x7c.vc", ["cert"]),
+    # valid only through a part the goal never reaches (rec1's refutation over other variables);
+    # the wide search refutes that part
+    ("twoparts.vc", ["cert"]),
     # the proof is a case split on h36, after 35 facts the slice leaves out: the `case` names the
     # disjunction by its index in the WHOLE VC, which this kernel reads
-    ("caselast.vc", "cert"),
+    ("caselast.vc", ["cert"]),
+    # twoparts with its constants near 2^90: valid only through the far part, which needs 361-bit
+    # numbers and overflows at 512 bits too, while the goal's own part is satisfiable: CAPACITY,
+    # never the model y = 4 of a slice
+    ("deep90.vc", ["capacity"]),
+    # a valid VC whose refutation multiplies 2^250 + 1 by 2^300: the wide search finds it, but the
+    # kernel's 512-bit sums cannot follow it (it would refuse it, a solver-bug record), so CAPACITY
+    ("kernelwidth.vc", ["capacity"]),
+    # x = y = z = 2^251 satisfies every row, and the wide search reaches it without passing 2^511
+    # (Bland's rule raises x, then z, then y), but the judge sums h4 in variable order, x's term
+    # and y's first: 2^512, past its 512 bits, a model it cannot evaluate (a solver-bug record), so
+    # CAPACITY
+    ("modelwidth.vc", ["capacity"]),
+    # udiv(x u64)'s bound checks (tests/trust/policy_op_literal_left_pass.ln), which store 129 bits
+    ("udiv_u64.vc", ["cert", "model", "cert", "cert", "cert", "model", "cert", "cert"]),
 ]
+# Gothenburg-1's sample LP (s2's fallback): 110 samples, 182-bit numbers, through lia_cone
+CONE_CAPACITY_CASES = [("gothenburg1_samples.vc", ["model"])]
+
 # ── lia_cone (lia.h, s2): a system closed under scaling, by one rational search, its model scaled ──
 # Each answer is checked as any other (a certificate by this kernel, a model at every row); the
 # worked ones pin the shapes: a model only scaling gives (x >= 1/2 and 3y = x: the numerators (1, 1)
@@ -303,10 +324,114 @@ def run_cone(exe):
     rc |= run(exe, [gen_cone(rng, i) for i in range(1000)], False, 4, cone=True)
     return rc
 
+# ── s3: the wide search against the 128-bit one, and LSW against Python's integers ─────────────
+def answers(exe, vcs, flag=None, limits=None):
+    """solve_vc's answer blocks, one per VC (the head line through the work line)"""
+    with tempfile.NamedTemporaryFile("w", suffix=".vc", delete=False) as f:
+        for vc in vcs: f.write(vc_text(vc))
+        path = f.name
+    out = subprocess.run([exe] + ([flag] if flag else []) + [path] + (limits or LIMITS), capture_output=True, text=True, timeout=TIMEOUT)
+    os.unlink(path)
+    blocks, cur = [], []
+    for l in out.stdout.split("\n"):
+        if not l: continue
+        cur.append(l)
+        if l.startswith("work "): blocks.append("\n".join(cur)); cur = []
+    return out.returncode, blocks
+def run_wide_property(exe):
+    # The two searches take the same steps, so wherever the 128-bit one finishes (anything but
+    # capacity) the wide one must print the same block, byte for byte, its work included. At 4000
+    # pivots: the wide search is about ten times slower, and a budget stop must match too.
+    rc = 0
+    lim = ["4000", "512", "512"]
+    for seed, mode in ((1, "bounded"), (2, "bounded"), (3, "free")):
+        rng = random.Random(seed)
+        vcs = [gen_vc(rng, i, mode == "bounded", 4) for i in range(1000)]
+        r1, a = answers(exe, vcs, None, lim); r2, b = answers(exe, vcs, "--wide", lim)
+        if r1 or r2 or len(a) != len(vcs) or len(b) != len(vcs):
+            print(f"  WRONG: seed {seed}: exits {r1} {r2}, {len(a)} and {len(b)} answers of {len(vcs)}"); rc = 1; continue
+        cmp = [i for i in range(len(vcs)) if not a[i].startswith("capacity ")]
+        diff = [i for i in cmp if a[i] != b[i]]
+        print(f"  seed {seed}, {mode}: {len(cmp)} finished at 128 bits, the wide search's the same on {len(cmp) - len(diff)}")
+        for i in diff[:3]: print("  WRONG: differs:\n" + a[i] + "\n--- wide:\n" + b[i])
+        if diff: rc = 1
+    return rc
+def gen_big(rng, idx, B, e):
+    # each term's coefficient drawn near 2^e on its own (a common factor would let the gcd test
+    # divide the row back to small numbers), each constant likewise; the box decides it
+    vc = gen_vc(rng, idx, True, B)
+    big = lambda: rng.choice([-1, 1]) * rng.randint(2 ** (e - 2), 2 ** (e + 2))
+    hyps = []
+    for origin, h in vc["hyps"]:
+        if isinstance(h, list) or origin == "type": hyps.append((origin, h)); continue
+        t, o, b = h
+        hyps.append((origin, ({v: big() for v in t}, o, big() if o == "<=" else 0)))
+    vc["hyps"] = hyps
+    return vc
+def run_wide_big(exe):
+    # Coefficients near 2^60: the search's products pass 128 bits on 56 of these 300 (the solver
+    # before s3 answered `capacity` there), so lia_solve's wide retry answers. Each answer is checked
+    # by this kernel (a certificate), at every row (a model), and against brute force over the box
+    # (a refusal on a boxed VC is WRONG, as in `bounded` mode).
+    rng = random.Random(6)
+    vcs = [gen_big(rng, i, 3, 60) for i in range(300)]
+    return run(exe, vcs, True, 3)
+def lsw_expected(op, a, b):
+    LIM = 2 ** (32 * 16)                                   # J_LIMBS 32-bit limbs, the kernel's bound
+    limbs = lambda x: (abs(x).bit_length() + 31) // 32
+    if op == "add": r = a + b; return None if abs(r) >= LIM else r
+    if op == "sub": r = a - b; return None if abs(r) >= LIM else r
+    if op == "mul":
+        if a == 0 or b == 0: return 0
+        if limbs(a) + limbs(b) - 1 > 16: return None        # kint_mul's pre-check
+        r = a * b; return None if abs(r) >= LIM else r
+    if op == "div": q = abs(a) // abs(b); return q if (a < 0) == (b < 0) else -q
+    if op == "floordiv": return a // b
+    if op == "gcd": return math.gcd(a, b)
+    if op == "cmp": return (a > b) - (a < b)
+    if op == "divides": return int(a % b == 0)
+def run_lsw(exe):
+    rng = random.Random(7)
+    widths = [1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 480, 511]
+    num = lambda: rng.choice([-1, 1]) * (rng.getrandbits(rng.choice(widths)) | 1)
+    cases = []
+    for _ in range(4000):
+        op = rng.choice(["add", "sub", "mul", "div", "floordiv", "gcd", "cmp", "divides"])
+        a, b = num(), num()
+        if op == "floordiv": b = abs(b)
+        if rng.random() < 0.1: a = b * rng.choice([-3, -1, 1, 2, 7])   # exact quotients, equal values
+        if abs(a) >= 2 ** 512: a = a % (2 ** 511)
+        cases.append((op, a, b))
+    cases += [("add", 2 ** 512 - 1, 1), ("mul", 2 ** 256, 2 ** 255), ("mul", 2 ** 255, 2 ** 256 - 1), ("sub", -(2 ** 512 - 1), 1),
+              ("floordiv", -7, 2), ("div", -7, 2), ("gcd", 0, 0), ("gcd", 0, -12), ("cmp", -5, -5)]
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        for op, a, b in cases: f.write(f"{op} {a} {b}\n")
+        path = f.name
+    out = subprocess.run([exe, "--lsw", path], capture_output=True, text=True, timeout=TIMEOUT)
+    os.unlink(path)
+    got = out.stdout.split("\n")
+    bad = 0
+    for i, (op, a, b) in enumerate(cases):
+        want = lsw_expected(op, a, b)
+        line = got[i] if i < len(got) else "(none)"
+        ok = line == "overflow" if want is None else line == f"= {want}"
+        if not ok:
+            bad += 1
+            if bad <= 5: print(f"  WRONG: {op} {a} {b}: {line}, expected {'overflow' if want is None else want}")
+    print(f"  {len(cases)} operations, {sum(lsw_expected(o, a, b) is None for o, a, b in cases)} past the bound; wrong {bad}")
+    return 1 if bad or out.returncode else 0
+
 def run_capacity(exe):
     d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "solver_capacity")
-    vcs = [read_vcs(open(os.path.join(d, f)).read())[0] for f, _ in CAPACITY_CASES]
-    rc = run(exe, vcs, False, 4, [k for _, k in CAPACITY_CASES])
+    vcs, kinds = [], []
+    for f, ks in CAPACITY_CASES:
+        got = read_vcs(open(os.path.join(d, f)).read())
+        if len(got) != len(ks): print(f"  WRONG: {f} holds {len(got)} VCs, {len(ks)} expected"); return 1
+        vcs += got; kinds += ks
+    rc = run(exe, vcs, False, 4, kinds)
+    for f, ks in CONE_CAPACITY_CASES:
+        print(f"  {f}, through lia_cone:")
+        rc |= run(exe, read_vcs(open(os.path.join(d, f)).read()), False, 4, ks, cone=True)
     # the retries share the call's one budget: rec1 0x17 needs 13 pivots to fail whole, 5 for S_1
     # and 10 for S_2, so 20 leave S_2 too few (CAPACITY, at most 20 used), while a budget the
     # whole search exhausts is BUDGET, and is not retried
@@ -316,7 +441,12 @@ def run_capacity(exe):
         if r == 0 and run.work["pivot"] > int(lim[0]):
             print(f"  WRONG: {run.work['pivot']} pivots used of {lim[0]}"); r = 1
         rc |= r
-    # deterministic: the same VCs twice, byte for byte
+    # the ladder's order: rec1_0x17 costs 13 pivots whole, 5 for S_1 and 10 for S_2, so its answer
+    # comes from the slices (28 pivots), before the wide search could run
+    r, blk = answers(exe, vcs[:1])
+    if r or len(blk) != 1 or not blk[0].startswith("cert ") or "work pivot:28 " not in blk[0]:
+        print("  WRONG: rec1_0x17 is not certified by its slices in 28 pivots:\n" + "\n".join(blk)); rc = 1
+    # deterministic: the same VCs twice, byte for byte (vcs[0] is rec1_0x17)
     with tempfile.NamedTemporaryFile("w", suffix=".vc", delete=False) as f:
         for vc in vcs: f.write(vc_text(vc))
         path = f.name
@@ -461,6 +591,12 @@ def main():
     rc |= run_capacity(exe)
     print("lia_cone:")
     rc |= run_cone(exe)
+    print("the wide search (s3): LSW's arithmetic against Python's integers:")
+    rc |= run_lsw(exe)
+    print("the wide search, byte for byte the 128-bit one's wherever that finishes:")
+    rc |= run_wide_property(exe)
+    print("coefficients near 2^60, the wide retry answering, 300 boxed VCs:")
+    rc |= run_wide_big(exe)
     for seed, mode in ((1, "bounded"), (2, "bounded"), (3, "free")):
         rng = random.Random(seed)
         print(f"seed {seed}, 1000 VCs, {mode}:")

@@ -4,6 +4,8 @@
 //   solve_vc --smt FILE
 //   solve_vc --max FILE [PIVOT NODE LEAF]
 //   solve_vc --cone FILE [PIVOT NODE LEAF]
+//   solve_vc --wide FILE [PIVOT NODE LEAF]
+//   solve_vc --lsw FILE
 //
 // Reads every VC in FILE (the text form of judge_interfaces.md §2, several in a row), solves each
 // within the budget (default 100000 pivots, 4096 nodes, 4096 leaves) and prints the answer in
@@ -21,6 +23,11 @@
 // or `max-budget <id>` / `max-capacity <id>`.
 // `--cone` answers each VC by lia_cone (a system closed under scaling, rank.h's sample LP), in the
 // default form; a VC it does not accept is `capacity`.
+// `--wide` answers each VC by the wide search alone (lia.h's last retry, 512 bits), in the default
+// form: wherever the 128-bit search finishes, the two print byte for byte alike (solver_harness.py).
+// `--lsw` runs lsw.h's arithmetic, one `OP A B` a line (add, sub, mul, div, floordiv, gcd, cmp,
+// divides; A and B decimal), and prints `= R` or `overflow`, for the harness to check against
+// Python's integers.
 // Exit 0, or 2 for a VC the parser refuses, 3 for memory, 4 for an answer that does not round-trip.
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,15 +53,40 @@ static char *text_of(void (*print)(const void *, const JVc *, FILE *), const voi
 static void print_cert(const void *c, const JVc *v, FILE *o) { jcert_print((const JCert *)c, v, o); }
 static void print_model(const void *m, const JVc *v, FILE *o) { jmodel_print((const JModel *)m, v, o); }
 
+static int lsw_lines(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { perror(path); return 2; }
+    char op[16], a[400], b[400];
+    while (fscanf(f, "%15s %399s %399s", op, a, b) == 3) {
+        JInt x, y, r; bool ok = true; int k = 0;
+        if (!jint_parse(a, strlen(a), &x) || !jint_parse(b, strlen(b), &y)) { fprintf(stderr, "solve_vc: a number it cannot read\n"); fclose(f); return 2; }
+        if (!strcmp(op, "add")) ok = lw_add_to(&r, x, y);
+        else if (!strcmp(op, "sub")) ok = lw_add_to(&r, x, lw_neg(y));
+        else if (!strcmp(op, "mul")) ok = lw_mul_to(&r, x, y);
+        else if (!strcmp(op, "div")) r = lw_div(x, y);
+        else if (!strcmp(op, "floordiv")) ok = lw_floordiv_to(&r, x, y);
+        else if (!strcmp(op, "gcd")) r = lw_gcd(x, y);
+        else if (!strcmp(op, "cmp")) { k = lw_cmp(x, y); r = lw_i(k); }
+        else if (!strcmp(op, "divides")) r = lw_i(lw_divides(x, y));
+        else { fprintf(stderr, "solve_vc: no operation %s\n", op); fclose(f); return 2; }
+        if (!ok) printf("overflow\n");
+        else { printf("= "); jint_print(&r, stdout); printf("\n"); }
+    }
+    fclose(f);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "--lsw") == 0) return lsw_lines(argv[2]);
     bool smt = argc == 3 && strcmp(argv[1], "--smt") == 0;
     bool mx = (argc == 3 || argc == 6) && strcmp(argv[1], "--max") == 0;
     bool cone = (argc == 3 || argc == 6) && strcmp(argv[1], "--cone") == 0;
-    if (argc != 2 && argc != 5 && !smt && !mx && !cone) {
-        fprintf(stderr, "usage: solve_vc FILE [PIVOT NODE LEAF] | solve_vc --smt FILE | solve_vc --max|--cone FILE [PIVOT NODE LEAF]\n");
+    bool wide = (argc == 3 || argc == 6) && strcmp(argv[1], "--wide") == 0;
+    if (argc != 2 && argc != 5 && !smt && !mx && !cone && !wide) {
+        fprintf(stderr, "usage: solve_vc FILE [PIVOT NODE LEAF] | solve_vc --smt FILE | solve_vc --max|--cone|--wide FILE [PIVOT NODE LEAF]\n");
         return 2;
     }
-    const char *path = smt || mx || cone ? argv[2] : argv[1];
+    const char *path = smt || mx || cone || wide ? argv[2] : argv[1];
     FILE *f = fopen(path, "rb");
     if (!f) { perror(path); return 2; }
     size_t cap = 1 << 16, n = 0; char *text = malloc(cap);
@@ -67,7 +99,7 @@ int main(int argc, char **argv) {
     text[n] = 0;
     JWork lim = { 100000, 4096, 4096 };
     if (argc == 5) { lim.pivot = strtoull(argv[2], 0, 10); lim.node = strtoull(argv[3], 0, 10); lim.leaf = strtoull(argv[4], 0, 10); }
-    if ((mx || cone) && argc == 6) { lim.pivot = strtoull(argv[3], 0, 10); lim.node = strtoull(argv[4], 0, 10); lim.leaf = strtoull(argv[5], 0, 10); }
+    if ((mx || cone || wide) && argc == 6) { lim.pivot = strtoull(argv[3], 0, 10); lim.node = strtoull(argv[4], 0, 10); lim.leaf = strtoull(argv[5], 0, 10); }
     JMem m = jmem_over(region, sizeof region);
     JParse ps = jparse_over(&m, text);
     int rc = 0;
@@ -97,7 +129,8 @@ int main(int argc, char **argv) {
             ps = jparse_over(&m, next); ps.line = line;
             continue;
         }
-        JAnswer a = cone ? lia_cone(&v, lim, work, sizeof work) : lia_solve(&v, lim, work, sizeof work);
+        JAnswer a = cone ? lia_cone(&v, lim, work, sizeof work) : wide ? ls_wide(&v, false, lim, work, sizeof work)
+                  : lia_solve(&v, lim, work, sizeof work);
         if (a.k == J_ANS_CERT || a.k == J_ANS_MODEL) {
             char *t = a.k == J_ANS_CERT ? text_of(print_cert, &a.cert, &v) : text_of(print_model, &a.model, &v);
             if (!t) { rc = 3; break; }

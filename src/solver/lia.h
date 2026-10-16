@@ -41,11 +41,10 @@
 
 __extension__ typedef __int128 LSi;
 __extension__ typedef unsigned __int128 LSu;
-typedef struct { LSi n, d; } LQ;            // n / d in lowest terms, d >= 1
-
 typedef struct {
     char *lo, *hi;              // scratch below lo is in use; the answer lives from hi up
-    bool cap;                   // a number left 128 bits, or the region is full
+    bool cap;                   // a number left the type, or the region is full
+    bool ovf;                   // ...and it was a number (the wide retry's cue)
     bool out;                   // a budget counter reached its limit
     JWork used, limit;
     int32_t nf, ns;             // the f and s numbers given so far
@@ -75,51 +74,23 @@ static void *ls_keep(LSol *S, size_t size, int64_t n) {
     return (void *)at;
 }
 
-// ── numbers: checked 128-bit integers and rationals over them ─────────────────────────────────
-static LSi ls_add(LSol *S, LSi a, LSi b) { LSi r; if (__builtin_add_overflow(a, b, &r)) { S->cap = true; return 0; } return r; }
-static LSi ls_sub(LSol *S, LSi a, LSi b) { LSi r; if (__builtin_sub_overflow(a, b, &r)) { S->cap = true; return 0; } return r; }
-static LSi ls_mul(LSol *S, LSi a, LSi b) { LSi r; if (__builtin_mul_overflow(a, b, &r)) { S->cap = true; return 0; } return r; }
+// ── numbers: checked 128-bit integers ───────────────────────────────────────────────────────────
+static void ls_ovf(LSol *S) { S->cap = true; S->ovf = true; }
+static LSi ls_add(LSol *S, LSi a, LSi b) { LSi r; if (__builtin_add_overflow(a, b, &r)) { ls_ovf(S); return 0; } return r; }
+static LSi ls_sub(LSol *S, LSi a, LSi b) { LSi r; if (__builtin_sub_overflow(a, b, &r)) { ls_ovf(S); return 0; } return r; }
+static LSi ls_mul(LSol *S, LSi a, LSi b) { LSi r; if (__builtin_mul_overflow(a, b, &r)) { ls_ovf(S); return 0; } return r; }
 static LSu ls_abs(LSi a) { return a < 0 ? (LSu)0 - (LSu)a : (LSu)a; }
 static LSu ls_gcd(LSu a, LSu b) { while (b) { LSu t = a % b; a = b; b = t; } return a; }
+// the gcd of |a| and |b| as an LSi: 2^127 (both multiples of it) does not fit
+static LSi ls_gcdn(LSol *S, LSi a, LSi b) { LSu g = ls_gcd(ls_abs(a), ls_abs(b)); if (g >> 127) { ls_ovf(S); return 1; } return (LSi)g; }
 // floor(a / b), b > 0
 static LSi ls_floordiv(LSi a, LSi b) { LSi q = a / b; if (a % b != 0 && a < 0) q -= 1; return q; }
 
-static LQ lq_int(LSi v) { LQ q; q.n = v; q.d = 1; return q; }
-static LQ lq_make(LSol *S, LSi n, LSi d) {                   // d != 0
-    if (d < 0) { n = ls_sub(S, 0, n); d = ls_sub(S, 0, d); }
-    LSu g = ls_gcd(ls_abs(n), (LSu)d);
-    if (g > 1) { n /= (LSi)g; d /= (LSi)g; }
-    LQ q; q.n = n; q.d = d;
-    if (S->cap || d <= 0) { S->cap = true; q.n = 0; q.d = 1; }
-    return q;
-}
-static LQ lq_add(LSol *S, LQ a, LQ b) {
-    if (a.n == 0) return b;
-    if (b.n == 0) return a;
-    LSi g = (LSi)ls_gcd((LSu)a.d, (LSu)b.d);
-    LSi n = ls_add(S, ls_mul(S, a.n, b.d / g), ls_mul(S, b.n, a.d / g));
-    return lq_make(S, n, ls_mul(S, a.d / g, b.d));
-}
-static LQ lq_neg(LSol *S, LQ a) { a.n = ls_sub(S, 0, a.n); return a; }
-static LQ lq_sub(LSol *S, LQ a, LQ b) { return lq_add(S, a, lq_neg(S, b)); }
-static LQ lq_mul(LSol *S, LQ a, LQ b) {
-    if (a.n == 0 || b.n == 0) return lq_int(0);
-    LSi g1 = (LSi)ls_gcd(ls_abs(a.n), (LSu)b.d), g2 = (LSi)ls_gcd(ls_abs(b.n), (LSu)a.d);
-    return lq_make(S, ls_mul(S, a.n / g1, b.n / g2), ls_mul(S, a.d / g2, b.d / g1));
-}
-static LQ lq_div(LSol *S, LQ a, LQ b) {                     // b != 0
-    return lq_mul(S, a, lq_make(S, b.d, b.n));
-}
-static int lq_cmp(LSol *S, LQ a, LQ b) {
-    LQ d = lq_sub(S, a, b);
-    return (d.n > 0) - (d.n < 0);
-}
-
 static LSi ls_from_j(LSol *S, const JInt *x) {
-    if (x->n > 4) { S->cap = true; return 0; }
+    if (x->n > 4) { ls_ovf(S); return 0; }
     LSu m = 0;
     for (int i = x->n - 1; i >= 0; i--) m = (m << 32) | x->limb[i];
-    if (m >> 127) { S->cap = true; return 0; }
+    if (m >> 127) { ls_ovf(S); return 0; }
     return x->neg ? -(LSi)m : (LSi)m;
 }
 static void ls_to_j(LSi v, JInt *x) {
@@ -129,23 +100,7 @@ static void ls_to_j(LSi v, JInt *x) {
     while (m) { x->limb[x->n++] = (uint32_t)m; m >>= 32; }
 }
 
-// ── constraints: Σ a[j]·x_j (<= | =) b, stated by the fact `ref` ──────────────────────────────
-typedef struct { LSi *a; LSi b; bool eq; JRef ref; } LCon;
-
 static JRef ls_ref(JRefKind k, int32_t a, int32_t b) { JRef r; r.k = k; r.a = a; r.b = b; return r; }
-
-static bool ls_con(LSol *S, const JCons *c, JRef ref, LCon *out) {
-    if (!(out->a = (LSi *)ls_scratch(S, sizeof(LSi), S->nv))) return false;
-    for (int32_t t = 0; t < c->nt; t++) {
-        int32_t v = c->t[t].var;
-        if (v < 0 || v >= S->nv) { S->cap = true; return false; }   // not a VC the parser accepts
-        out->a[v] = ls_add(S, out->a[v], ls_from_j(S, &c->t[t].coef));
-    }
-    out->b = ls_from_j(S, &c->rhs);
-    out->eq = c->op == J_EQ;
-    out->ref = ref;
-    return !S->cap;
-}
 
 // ── the certificate under construction: a branch's steps, in the answer's memory ──────────────
 typedef struct { JStep *s; int32_t n, cap; } LSteps;
@@ -161,21 +116,6 @@ static int32_t ls_step(LSol *S, LSteps *L) {                // the new step's in
     memset(&L->s[L->n], 0, sizeof(JStep));
     return L->n++;
 }
-// f<new> = lin Σ m[k]·ref[k] over the nonzero m, in constraint order. Returns the new f, or 0.
-static int32_t ls_emit_lin(LSol *S, LSteps *L, const JRef *ref, const LSi *m, int32_t n) {
-    int32_t nz = 0;
-    for (int32_t k = 0; k < n; k++) if (m[k]) nz++;
-    int32_t i = ls_step(S, L);
-    if (i < 0) return 0;
-    JMul *mul = (JMul *)ls_keep(S, sizeof(JMul), nz);
-    if (!mul) return 0;
-    JStep *st = &L->s[i];
-    st->k = J_LIN; st->f = ++S->nf; st->mul = mul; st->nmul = nz;
-    for (int32_t k = 0, q = 0; k < n; k++)
-        if (m[k]) { ls_to_j(m[k], &mul[q].m); mul[q].r = ref[k]; q++; }
-    return st->f;
-}
-static int32_t ls_emit_lin1(LSol *S, LSteps *L, JRef r, LSi m) { return ls_emit_lin(S, L, &r, &m, 1); }
 static int32_t ls_emit_rnd(LSol *S, LSteps *L, int32_t of) {
     int32_t i = ls_step(S, L);
     if (i < 0) return 0;
@@ -188,308 +128,85 @@ static bool ls_emit_close(LSol *S, LSteps *L, int32_t f) {
     L->s[i].k = J_CLOSE; L->s[i].f = f;
     return true;
 }
-
-// ── the gcd test, as a constraint enters ──────────────────────────────────────────────────────
-// Over the integers Σ a·x <= b, with g the gcd of the a, is Σ (a/g)·x <= floor(b/g): the `rnd`
-// cut. A constraint with no variables is decided on its constant, and an equality whose gcd does
-// not divide its constant is refuted by two cuts that meet at 0 <= -1. 0: kept (maybe tightened,
-// its ref then the cut); 1: the branch is closed; -1: capacity.
-static int ls_tighten(LSol *S, LSteps *L, LCon *c) {
-    LSu g = 0;
-    for (int32_t j = 0; j < S->nv; j++) g = ls_gcd(g, ls_abs(c->a[j]));
-    if (g == 0) {
-        if (c->eq ? c->b == 0 : c->b >= 0) return 0;
-        int32_t f = ls_emit_lin1(S, L, c->ref, c->eq && c->b > 0 ? -1 : 1);
-        return ls_emit_close(S, L, f) ? 1 : -1;
-    }
-    LSi gi = (LSi)g;
-    if (g == 1 || c->b % gi == 0) return 0;
-    if (!c->eq) {
-        int32_t f = ls_emit_lin1(S, L, c->ref, 1), r = f ? ls_emit_rnd(S, L, f) : 0;
-        if (!r) return -1;
-        for (int32_t j = 0; j < S->nv; j++) c->a[j] /= gi;
-        c->b = ls_floordiv(c->b, gi);
-        c->ref = ls_ref(J_REF_F, r, 0);
-        return 0;
-    }
-    int32_t f1 = ls_emit_lin1(S, L, c->ref, 1), f2 = f1 ? ls_emit_rnd(S, L, f1) : 0;
-    int32_t f3 = f2 ? ls_emit_lin1(S, L, c->ref, -1) : 0, f4 = f3 ? ls_emit_rnd(S, L, f3) : 0;
-    if (!f4) return -1;
-    JRef two[2] = { ls_ref(J_REF_F, f2, 0), ls_ref(J_REF_F, f4, 0) };
-    LSi one[2] = { 1, 1 };
-    return ls_emit_close(S, L, ls_emit_lin(S, L, two, one, 2)) ? 1 : -1;
-}
-
-// ── the general simplex ───────────────────────────────────────────────────────────────────────
-// Variables 0..n-1 are the VC's, n+k is constraint k's slack. Row r says its basic variable is
-// Σ_c T[r][c]·var_c over the nonbasic ones (a basic variable's own column is zero).
-typedef struct {
-    int32_t n, m, w;
-    LQ *T, *val, *lo, *hi;
-    bool *hlo, *hhi;
-    int32_t *bas, *row;
-} LTab;
-
-static bool lt_build(LSol *S, LTab *t, const LCon *cons, int32_t m) {
-    t->n = S->nv; t->m = m; t->w = t->n + m;
-    int64_t w = t->w;
-    t->T = (LQ *)ls_scratch(S, sizeof(LQ), (int64_t)m * w);
-    t->val = (LQ *)ls_scratch(S, sizeof(LQ), w);
-    t->lo = (LQ *)ls_scratch(S, sizeof(LQ), w);
-    t->hi = (LQ *)ls_scratch(S, sizeof(LQ), w);
-    t->hlo = (bool *)ls_scratch(S, sizeof(bool), w);
-    t->hhi = (bool *)ls_scratch(S, sizeof(bool), w);
-    t->bas = (int32_t *)ls_scratch(S, sizeof(int32_t), m);
-    t->row = (int32_t *)ls_scratch(S, sizeof(int32_t), w);
-    if (S->cap) return false;
-    for (int64_t i = 0; i < (int64_t)m * w; i++) t->T[i] = lq_int(0);
-    for (int32_t v = 0; v < t->w; v++) { t->val[v] = t->lo[v] = t->hi[v] = lq_int(0); t->row[v] = -1; }
-    for (int32_t r = 0; r < m; r++) {
-        int32_t s = t->n + r;
-        t->bas[r] = s; t->row[s] = r;
-        for (int32_t j = 0; j < t->n; j++) t->T[r * w + j] = lq_int(cons[r].a[j]);
-        t->hhi[s] = true; t->hi[s] = lq_int(cons[r].b);
-        if (cons[r].eq) { t->hlo[s] = true; t->lo[s] = lq_int(cons[r].b); }
-    }
-    return true;
-}
-
-// Move nonbasic j so that row r's basic variable reaches `target`, then exchange the two.
-static void lt_pivot(LSol *S, LTab *t, int32_t r, int32_t j, LQ target) {
-    int32_t w = t->w, b = t->bas[r];
-    LQ *R = &t->T[(int64_t)r * w];
-    LQ a = R[j];
-    LQ theta = lq_div(S, lq_sub(S, target, t->val[b]), a);
-    t->val[b] = target;
-    t->val[j] = lq_add(S, t->val[j], theta);
-    for (int32_t r2 = 0; r2 < t->m; r2++) {
-        LQ e = t->T[(int64_t)r2 * w + j];
-        if (r2 == r || e.n == 0) continue;
-        t->val[t->bas[r2]] = lq_add(S, t->val[t->bas[r2]], lq_mul(S, e, theta));
-    }
-    // row r now defines j:  j = (1/a)·b − Σ_{c≠j} (R[c]/a)·c
-    LQ inv = lq_div(S, lq_int(1), a);
-    for (int32_t c = 0; c < w; c++) R[c] = c == j ? lq_int(0) : lq_neg(S, lq_mul(S, R[c], inv));
-    R[b] = inv;
-    for (int32_t r2 = 0; r2 < t->m; r2++) {
-        LQ *R2 = &t->T[(int64_t)r2 * w];
-        LQ e = R2[j];
-        if (r2 == r || e.n == 0) continue;
-        for (int32_t c = 0; c < w; c++)
-            if (c != j && R[c].n) R2[c] = lq_add(S, R2[c], lq_mul(S, e, R[c]));
-        R2[j] = lq_int(0);
-    }
-    t->bas[r] = j; t->row[j] = r; t->row[b] = -1;
-}
-
-// 1: every bound holds; 0: row *cr cannot be repaired, its basic variable below its lower bound
-// (*below) or above its upper; -1: a budget or capacity stop.
-static int lt_check(LSol *S, LTab *t, int32_t *cr, bool *below) {
-    for (;;) {
-        if (S->cap) return -1;
-        int32_t bv = -1; bool lowv = false;
-        for (int32_t v = 0; v < t->w && bv < 0; v++) {
-            if (t->row[v] < 0) continue;
-            if (t->hlo[v] && lq_cmp(S, t->val[v], t->lo[v]) < 0) { bv = v; lowv = true; }
-            else if (t->hhi[v] && lq_cmp(S, t->val[v], t->hi[v]) > 0) { bv = v; lowv = false; }
-        }
-        if (bv < 0) return S->cap ? -1 : 1;
-        int32_t r = t->row[bv], j = -1;
-        LQ *R = &t->T[(int64_t)r * t->w];
-        for (int32_t c = 0; c < t->w && j < 0; c++) {
-            if (t->row[c] >= 0 || R[c].n == 0) continue;
-            bool raise = lowv == (R[c].n > 0);       // the way c must move to move bv the right way
-            if (raise ? (!t->hhi[c] || lq_cmp(S, t->val[c], t->hi[c]) < 0)
-                      : (!t->hlo[c] || lq_cmp(S, t->val[c], t->lo[c]) > 0)) j = c;
-        }
-        if (j < 0) { *cr = r; *below = lowv; return S->cap ? -1 : 0; }
-        if (S->used.pivot >= S->limit.pivot) { S->out = true; return -1; }
-        S->used.pivot++;
-        lt_pivot(S, t, r, j, lowv ? t->lo[bv] : t->hi[bv]);
-    }
-}
-
-// The row that cannot be repaired, as integer Farkas multipliers m[k] over the constraints. Its
-// basic variable is the slack of constraint i, and every nonbasic variable it mentions is a
-// slack at the bound that blocks it (an original variable has no bound, so it could have moved):
-//   below (only an equality has a lower bound):  −1·con[i] + Σ_c T[r][c]·con[c−n]
-//   above:                                       +1·con[i] − Σ_c T[r][c]·con[c−n]
-// The variables cancel, since row i IS Σ_c T[r][c]·row[c−n], and the constant is the amount by
-// which the bound is missed, negative. A multiplier on an inequality is never negative: a slack
-// below an upper bound with the wrong sign is one that could have moved.
-static bool lt_explain(LSol *S, const LTab *t, int32_t r, bool below, LSi *m) {
-    int32_t b = t->bas[r], n = t->n;
-    const LQ *R = &t->T[(int64_t)r * t->w];
-    if (b < n) { S->cap = true; return false; }
-    LQ *q = (LQ *)ls_scratch(S, sizeof(LQ), t->m);
-    if (!q) return false;
-    for (int32_t k = 0; k < t->m; k++) q[k] = lq_int(0);
-    q[b - n] = lq_int(below ? -1 : 1);
-    for (int32_t c = 0; c < t->w; c++) {
-        if (!R[c].n) continue;
-        if (c < n) { S->cap = true; return false; }   // an unbounded variable: not a conflict
-        q[c - n] = below ? R[c] : lq_neg(S, R[c]);
-    }
-    LSi l = 1;
-    for (int32_t k = 0; k < t->m; k++)
-        if (q[k].n) l = ls_mul(S, l / (LSi)ls_gcd((LSu)l, (LSu)q[k].d), q[k].d);
-    for (int32_t k = 0; k < t->m; k++) m[k] = q[k].n ? ls_mul(S, q[k].n, l / q[k].d) : 0;
-    return !S->cap;
-}
-
-// ── the search ────────────────────────────────────────────────────────────────────────────────
 typedef enum { LS_UNSAT, LS_SAT, LS_STOP } LRes;
 
-static bool ls_holds(LSol *S, const JCons *c, const LSi *x) {
-    LSi s = 0;
-    for (int32_t t = 0; t < c->nt; t++) s = ls_add(S, s, ls_mul(S, ls_from_j(S, &c->t[t].coef), x[c->t[t].var]));
-    LSi b = ls_from_j(S, &c->rhs);
-    return c->op == J_EQ ? s == b : c->op == J_LE ? s <= b : s != b;
-}
+// ── the search at 128 bits (lia_core.h): the solver ─────────────────────────────────────────────
+#define N_T LSi
+#define CN(x) x
+#define N_I(v) ((LSi)(v))
+#define N_SGN(a) (((a) > 0) - ((a) < 0))
+#define N_CMP(a, b) (((a) > (b)) - ((a) < (b)))
+#define N_ADD(S, a, b) ls_add((S), (a), (b))
+#define N_SUB(S, a, b) ls_sub((S), (a), (b))
+#define N_MUL(S, a, b) ls_mul((S), (a), (b))
+#define N_NEG(S, a) ls_sub((S), 0, (a))
+#define N_GCD(S, a, b) ls_gcdn((S), (a), (b))
+#define N_DIV(a, b) ((a) / (b))
+#define N_DIVIDES(a, b) ((a) % (b) == 0)
+#define N_FLOORDIV(S, a, b) ls_floordiv((a), (b))
+#define N_FROMJ(S, x) ls_from_j((S), (x))
+#define N_TOJ(v, x) ls_to_j((v), (x))
+#include "solver/lia_core.h"
+#undef N_T
+#undef CN
+#undef N_I
+#undef N_SGN
+#undef N_CMP
+#undef N_ADD
+#undef N_SUB
+#undef N_MUL
+#undef N_NEG
+#undef N_GCD
+#undef N_DIV
+#undef N_DIVIDES
+#undef N_FLOORDIV
+#undef N_FROMJ
+#undef N_TOJ
 
-// One node: cons[0..fresh) entered at an ancestor, cons[fresh..ncons) enter here. On LS_UNSAT the
-// node's refutation is in L; on LS_SAT the integer model is in `model`.
-static LRes ls_node(LSol *S, const JVc *vc, LCon *cons, int32_t ncons, int32_t fresh,
-                    LSteps *L, LSi *model) {
-    char *mark = S->lo;
-    for (int32_t k = fresh; k < ncons; k++) {
-        int r = ls_tighten(S, L, &cons[k]);
-        if (r < 0 || S->cap) return LS_STOP;
-        if (r == 1) { S->lo = mark; return LS_UNSAT; }
-    }
-    char *tabmark = S->lo;
-    LTab t;
-    if (!lt_build(S, &t, cons, ncons)) return LS_STOP;
-    int32_t cr = 0; bool below = false;
-    int st = lt_check(S, &t, &cr, &below);
-    if (st < 0) return LS_STOP;
-    if (st == 0) {
-        LSi *m = (LSi *)ls_scratch(S, sizeof(LSi), ncons);
-        JRef *ref = (JRef *)ls_scratch(S, sizeof(JRef), ncons);
-        if (!m || !ref || !lt_explain(S, &t, cr, below, m)) return LS_STOP;
-        for (int32_t k = 0; k < ncons; k++) ref[k] = cons[k].ref;
-        if (!ls_emit_close(S, L, ls_emit_lin(S, L, ref, m, ncons))) return LS_STOP;
-        S->lo = mark; return LS_UNSAT;
-    }
-    // The rationals agree. The first variable that is not an integer is split at its floor.
-    int32_t j = -1; LSi fl = 0;
-    for (int32_t v = 0; v < t.n && j < 0; v++)
-        if (t.val[v].d != 1) { j = v; fl = ls_floordiv(t.val[v].n, t.val[v].d); }
-    LSi *x = (LSi *)ls_scratch(S, sizeof(LSi), S->nv);
-    if (!x) return LS_STOP;
-    for (int32_t v = 0; v < t.n; v++) x[v] = t.val[v].n;
-    if (j >= 0 && S->cone) {                         // a cone's: the rational model times its denominators' lcm
-        LSi l = 1;
-        for (int32_t v = 0; v < t.n; v++) l = ls_mul(S, l / (LSi)ls_gcd((LSu)l, (LSu)t.val[v].d), t.val[v].d);
-        for (int32_t v = 0; v < t.n; v++) x[v] = ls_mul(S, t.val[v].n, l / t.val[v].d);
-        if (S->cap) return LS_STOP;
-        memcpy(model, x, sizeof(LSi) * (size_t)S->nv);
-        return LS_SAT;
-    }
-    if (j >= 0) {
-        S->lo = tabmark;
-        if (S->used.node >= S->limit.node) { S->out = true; return LS_STOP; }
-        S->used.node++;
-        int32_t sk = ++S->ns, si = ls_step(S, L);
-        JTerm *term = (JTerm *)ls_keep(S, sizeof(JTerm), 1);
-        JSteps *br = (JSteps *)ls_keep(S, sizeof(JSteps), 2);
-        LCon *c2 = (LCon *)ls_scratch(S, sizeof(LCon), (int64_t)ncons + 1);
-        if (si < 0 || !term || !br || !c2) return LS_STOP;
-        term->var = j; ls_to_j(1, &term->coef);
-        JStep *sp = &L->s[si];
-        sp->k = J_SPLIT; sp->s = sk; sp->br = br; sp->nbr = 2;
-        sp->split.t = term; sp->split.nt = 1; sp->split.op = J_LE; ls_to_j(fl, &sp->split.rhs);
-        memcpy(c2, cons, sizeof(LCon) * (size_t)ncons);
-        if (!(c2[ncons].a = (LSi *)ls_scratch(S, sizeof(LSi), S->nv))) return LS_STOP;
-        c2[ncons].ref = ls_ref(J_REF_S, sk, 0);
-        for (int side = 0; side < 2; side++) {         // le: x_j <= fl;  gt: −x_j <= −fl − 1
-            c2[ncons].a[j] = side ? -1 : 1;
-            c2[ncons].b = side ? ls_sub(S, ls_sub(S, 0, fl), 1) : fl;
-            c2[ncons].eq = false;
-            LSteps sub; memset(&sub, 0, sizeof sub);
-            LRes r = ls_node(S, vc, c2, ncons + 1, ncons, &sub, model);
-            if (r != LS_UNSAT) return r;
-            br[side].s = sub.s; br[side].n = sub.n;
-        }
-        S->lo = mark; return LS_UNSAT;
-    }
-    // An integer model of the conjunction. A disjunctive hypothesis it violates is split.
-    int32_t hd = -1;
-    for (int32_t h = 0; h < vc->nhyps && hd < 0; h++) {
-        const JHyp *H = &vc->hyps[h];
-        if (!H->disj || (S->on && !S->on[h])) continue;
-        bool any = false;
-        for (int32_t d = 0; d < H->ndis && !any; d++) {
-            bool all = true;
-            for (int32_t q = 0; q < H->dis[d].nc && all; q++) all = ls_holds(S, &H->dis[d].c[q], x);
-            any = all;
-        }
-        if (S->cap) return LS_STOP;
-        if (!any) hd = h;
-    }
-    if (hd < 0) { memcpy(model, x, sizeof(LSi) * (size_t)S->nv); return LS_SAT; }
-    S->lo = tabmark;
-    const JHyp *H = &vc->hyps[hd];
-    int32_t sk = ++S->ns, ci = ls_step(S, L);
-    JSteps *br = (JSteps *)ls_keep(S, sizeof(JSteps), H->ndis);
-    if (ci < 0 || !br) return LS_STOP;
-    L->s[ci].k = J_CASE; L->s[ci].s = sk; L->s[ci].hyp = hd + 1; L->s[ci].br = br; L->s[ci].nbr = H->ndis;
-    for (int32_t d = 0; d < H->ndis; d++) {
-        char *dmark = S->lo;
-        if (S->used.leaf >= S->limit.leaf) { S->out = true; return LS_STOP; }
-        S->used.leaf++;
-        const JConj *D = &H->dis[d];
-        LCon *c2 = (LCon *)ls_scratch(S, sizeof(LCon), (int64_t)ncons + D->nc);
-        if (!c2) return LS_STOP;
-        memcpy(c2, cons, sizeof(LCon) * (size_t)ncons);
-        for (int32_t q = 0; q < D->nc; q++)
-            if (!ls_con(S, &D->c[q], ls_ref(J_REF_SC, sk, q + 1), &c2[ncons + q])) return LS_STOP;
-        LSteps sub; memset(&sub, 0, sizeof sub);
-        LRes r = ls_node(S, vc, c2, ncons + D->nc, ncons, &sub, model);
-        if (r != LS_UNSAT) return r;
-        br[d].s = sub.s; br[d].n = sub.n;
-        S->lo = dmark;
-    }
-    S->lo = mark; return LS_UNSAT;
+// ── the search at 512 bits (lia_core.h again): the wide retry (s3, PE.13) ──────────────────────
+// LSW (lsw.h) is JInt's own form, so its bound is the kernel's, J_LIMBS: the checks below and the
+// kernel's refuse at the same place. These wrappers turn its refusals into the search's CAPACITY.
+#include "solver/lsw.h"
+static LSW lw_add(LSol *S, LSW a, LSW b) { LSW r; if (!lw_add_to(&r, a, b)) { ls_ovf(S); return lw_i(0); } return r; }
+static LSW lw_sub(LSol *S, LSW a, LSW b) { LSW r; if (!lw_add_to(&r, a, lw_neg(b))) { ls_ovf(S); return lw_i(0); } return r; }
+static LSW lw_mul(LSol *S, LSW a, LSW b) { LSW r; if (!lw_mul_to(&r, a, b)) { ls_ovf(S); return lw_i(0); } return r; }
+static LSW lw_floordiv(LSol *S, LSW a, LSW b) { LSW r; if (!lw_floordiv_to(&r, a, b)) { ls_ovf(S); return lw_i(0); } return r; }
+static LSW lw_from_j(LSol *S, const JInt *x) {
+    if (x->n > J_LIMBS || x->neg > 1) { ls_ovf(S); return lw_i(0); }
+    LSW r = *x; lw_norm(&r); return r;
 }
-
-// One search over the hypotheses `on` names (NULL: every one). A reference keeps its hypothesis's
-// index in the full list, so a certificate over a slice is the full VC's.
-static JAnswer ls_solve(const JVc *vc, const uint8_t *on, bool cone, JWork limit, void *mem, size_t size) {
-    JAnswer A; memset(&A, 0, sizeof A);
-    LSol S; memset(&S, 0, sizeof S);
-    S.lo = (char *)mem; S.hi = (char *)mem + size; S.limit = limit; S.nv = vc->nvars; S.on = on; S.cone = cone;
-    int32_t nc = 1;
-    for (int32_t h = 0; h < vc->nhyps; h++) if (!vc->hyps[h].disj && (!on || on[h])) nc++;
-    LCon *cons = (LCon *)ls_scratch(&S, sizeof(LCon), nc);
-    LSi *model = (LSi *)ls_scratch(&S, sizeof(LSi), S.nv);
-    LRes r = LS_STOP;
-    LSteps body; memset(&body, 0, sizeof body);
-    if (cons && model) {
-        int32_t k = 0;
-        for (int32_t h = 0; h < vc->nhyps && !S.cap; h++)
-            if (!vc->hyps[h].disj && (!on || on[h])) ls_con(&S, &vc->hyps[h].cons, ls_ref(J_REF_H, h + 1, 0), &cons[k++]);
-        // g, the goal's negation: `-lin <= -c - 1` for `lin <= c`, `lin = c` for `lin != c`
-        if (!S.cap && ls_con(&S, &vc->goal, ls_ref(J_REF_G, 0, 0), &cons[k])) {
-            if (vc->goal.op == J_LE) {
-                for (int32_t j = 0; j < S.nv; j++) cons[k].a[j] = ls_sub(&S, 0, cons[k].a[j]);
-                cons[k].b = ls_sub(&S, ls_sub(&S, 0, cons[k].b), 1);
-            } else cons[k].eq = true;
-        }
-        if (!S.cap) r = ls_node(&S, vc, cons, nc, 0, &body, model);
-    }
-    if (r == LS_SAT) {
-        JInt *val = (JInt *)ls_keep(&S, sizeof(JInt), S.nv);
-        if (val) for (int32_t j = 0; j < S.nv; j++) ls_to_j(model[j], &val[j]);
-        if (val) { A.k = J_ANS_MODEL; A.model.id = vc->id; A.model.val = val; A.model.n = S.nv; }
-        else r = LS_STOP;
-    } else if (r == LS_UNSAT) {
-        A.k = J_ANS_CERT; A.cert.id = vc->id; A.cert.body.s = body.s; A.cert.body.n = body.n;
-    }
-    if (r == LS_STOP) A.k = S.cap || !S.out ? J_ANS_CAPACITY : J_ANS_BUDGET;
-    A.used = S.used;
-    return A;
-}
+static void lw_to_j(LSW v, JInt *x) { *x = v; }
+#define N_T LSW
+#define CN(x) x##_w
+#define N_I(v) lw_i(v)
+#define N_SGN(a) lw_sgn(a)
+#define N_CMP(a, b) lw_cmp((a), (b))
+#define N_ADD(S, a, b) lw_add((S), (a), (b))
+#define N_SUB(S, a, b) lw_sub((S), (a), (b))
+#define N_MUL(S, a, b) lw_mul((S), (a), (b))
+#define N_NEG(S, a) ((void)(S), lw_neg(a))
+#define N_GCD(S, a, b) lw_gcd((a), (b))
+#define N_DIV(a, b) lw_div((a), (b))
+#define N_DIVIDES(a, b) lw_divides((a), (b))
+#define N_FLOORDIV(S, a, b) lw_floordiv((S), (a), (b))
+#define N_FROMJ(S, x) lw_from_j((S), (x))
+#define N_TOJ(v, x) lw_to_j((v), (x))
+#include "solver/lia_core.h"
+#undef N_T
+#undef CN
+#undef N_I
+#undef N_SGN
+#undef N_CMP
+#undef N_ADD
+#undef N_SUB
+#undef N_MUL
+#undef N_NEG
+#undef N_GCD
+#undef N_DIV
+#undef N_DIVIDES
+#undef N_FLOORDIV
+#undef N_FROMJ
+#undef N_TOJ
 
 // ── the sliced retry (PE.13) ──────────────────────────────────────────────────────────────────
 // A pivot through a fact the proof never needs can leave 128 bits where the proof's own numbers
@@ -522,11 +239,11 @@ static bool ls_in_range(const JCons *c, int32_t nv) {
 }
 static uint64_t ls_left(uint64_t limit, uint64_t used) { return used < limit ? limit - used : 0; }
 
-// Solve `vc` within `limit`, in the caller's region of `size` bytes. Every pointer in the answer
-// points into that region.
-static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
-    JAnswer A = ls_solve(vc, NULL, false, limit, mem, size);
-    if (A.k != J_ANS_CAPACITY || vc->goal.nt == 0 || vc->nhyps == 0 || vc->nvars <= 0) return A;
+// The slices S_1, S_2, ... of a VC whose full search stopped on CAPACITY: a certificate, or
+// CAPACITY. `used` carries the work spent so far and gains the slices'.
+static JAnswer ls_sliced(const JVc *vc, JWork limit, void *mem, size_t size, JWork *used) {
+    JAnswer A; memset(&A, 0, sizeof A); A.k = J_ANS_CAPACITY;
+    if (vc->goal.nt == 0 || vc->nhyps == 0 || vc->nvars <= 0) return A;
     // a VC the search refused as malformed (a variable out of range) is not sliced
     bool ok = ls_in_range(&vc->goal, vc->nvars);
     for (int32_t h = 0; h < vc->nhyps && ok; h++) {
@@ -541,7 +258,6 @@ static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
     uint8_t *on = (uint8_t *)mem, *seen = on + vc->nhyps;
     memset(mem, 0, mk);
     ls_see(&vc->goal, seen);
-    JWork used = A.used;
     for (int32_t in = 0;;) {
         int32_t added = 0;
         for (int32_t h = 0; h < vc->nhyps; h++) {      // this round: what names a variable seen before it
@@ -564,11 +280,211 @@ static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
         }
         in += added;
         if (in == vc->nhyps) break;
-        JWork left = { ls_left(limit.pivot, used.pivot), ls_left(limit.node, used.node), ls_left(limit.leaf, used.leaf) };
+        JWork left = { ls_left(limit.pivot, used->pivot), ls_left(limit.node, used->node), ls_left(limit.leaf, used->leaf) };
         if (!left.pivot || !left.node || !left.leaf) break;
-        JAnswer B = ls_solve(vc, on, false, left, (char *)mem + mk, size - mk);
-        used.pivot += B.used.pivot; used.node += B.used.node; used.leaf += B.used.leaf;
-        if (B.k == J_ANS_CERT) { B.used = used; return B; }
+        JAnswer B = ls_solve(vc, on, false, left, (char *)mem + mk, size - mk, NULL);
+        used->pivot += B.used.pivot; used->node += B.used.node; used->leaf += B.used.leaf;
+        if (B.k == J_ANS_CERT) return B;
+    }
+    return A;
+}
+
+// ── the wide retry (s3, PE.13): the same search at 512 bits ─────────────────────────────────
+// A search can overflow 128 bits in the middle while its answer is small: rec1's post VC 0x7c
+// stores nothing past 125 bits and needs its whole VC (no slice holds its proof); udiv(x u64)'s
+// bound checks store 129 bits; Gothenburg-1's sample LP 182. So a search that stopped because a
+// NUMBER left 128 bits (not the region, not the budget) is run again by lia_core.h's wide instance,
+// with the budget left. It takes the same steps, so it gives the answer an unbounded search gives.
+//
+// The kernel and the judge are 512 bits too, and that binds what the wide search may answer: the
+// kernel sums each `lin` step multiplier times fact in KInt and refuses one that leaves J_LIMBS
+// limbs, and the judge evaluates a model's sums the same way. Either refusal is a `solver-bug`
+// record. At 128 bits neither can happen; at 512 they can (a multiplier near 2^255 times a split's
+// constant near 2^255). So before a wide answer is given, the solver follows it with LSW, whose
+// add and mul refuse exactly where the kernel's do, in the order the kernel and the judge go: a
+// certificate step by step (lw_cert_fits), a model sum by sum (lw_model_fits). One that would not
+// fit is CAPACITY. This is the solver's own arithmetic; the kernel still checks every answer.
+typedef struct { LSW *a; LSW b; } LwFact;
+typedef struct {
+    const JVc *v; char *cur, *end;
+    LwFact *f; int32_t nf;                    // derived facts by number
+    LwFact *s; const JConj **sc; int32_t ns;  // split facts, or the case's chosen disjunct
+    LwFact g, tmp;
+} LwEval;
+static void *lw_bump(LwEval *E, size_t n) {
+    uintptr_t at = ((uintptr_t)E->cur + 15u) & ~(uintptr_t)15u;
+    if (at > (uintptr_t)E->end || n > (size_t)((uintptr_t)E->end - at)) return NULL;
+    E->cur = (char *)at + n; memset((void *)at, 0, n);
+    return (void *)at;
+}
+static bool lw_fact_new(LwEval *E, LwFact *x) {
+    x->a = (LSW *)lw_bump(E, sizeof(LSW) * (size_t)(E->v->nvars ? E->v->nvars : 1));
+    x->b = lw_i(0);
+    return x->a != NULL;
+}
+static bool lw_fact_of(LwEval *E, const JCons *c, LwFact *x) {   // a constraint as written, dense
+    for (int32_t v = 0; v < E->v->nvars; v++) x->a[v] = lw_i(0);
+    for (int32_t i = 0; i < c->nt; i++) {
+        if (c->t[i].var < 0 || c->t[i].var >= E->v->nvars) return false;
+        x->a[c->t[i].var] = c->t[i].coef;
+    }
+    x->b = c->rhs;
+    return true;
+}
+static const LwFact *lw_ref(LwEval *E, const JRef *r) {
+    switch (r->k) {
+        case J_REF_G: return &E->g;
+        case J_REF_H:
+            if (r->a < 1 || r->a > E->v->nhyps || E->v->hyps[r->a - 1].disj) return NULL;
+            return lw_fact_of(E, &E->v->hyps[r->a - 1].cons, &E->tmp) ? &E->tmp : NULL;
+        case J_REF_F: return r->a >= 1 && r->a < E->nf && E->f[r->a].a ? &E->f[r->a] : NULL;
+        case J_REF_S: return r->a >= 1 && r->a < E->ns && E->s[r->a].a && !E->sc[r->a] ? &E->s[r->a] : NULL;
+        case J_REF_SC: {
+            if (r->a < 1 || r->a >= E->ns || !E->sc[r->a]) return NULL;
+            const JConj *d = E->sc[r->a];
+            if (r->b < 1 || r->b > d->nc) return NULL;
+            return lw_fact_of(E, &d->c[r->b - 1], &E->tmp) ? &E->tmp : NULL;
+        }
+    }
+    return NULL;
+}
+// true: every sum of this branch fits, as the kernel will compute it
+static bool lw_steps_fit(LwEval *E, const JSteps *br) {
+    for (int32_t i = 0; br && i < br->n; i++) {
+        const JStep *st = &br->s[i];
+        if (st->k == J_LIN || st->k == J_RND) {
+            if (st->f < 1 || st->f >= E->nf) return false;
+            LwFact r;
+            if (!lw_fact_new(E, &r)) return false;
+            if (st->k == J_LIN) {
+                for (int32_t j = 0; j < st->nmul; j++) {
+                    const LwFact *x = lw_ref(E, &st->mul[j].r);
+                    if (!x) return false;
+                    const LSW mu = st->mul[j].m;
+                    for (int32_t v = 0; v < E->v->nvars; v++) {
+                        if (!x->a[v].n) continue;
+                        LSW p; if (!lw_mul_to(&p, mu, x->a[v]) || !lw_add_to(&r.a[v], r.a[v], p)) return false;
+                    }
+                    LSW p; if (!lw_mul_to(&p, mu, x->b) || !lw_add_to(&r.b, r.b, p)) return false;
+                }
+            } else {
+                if (st->of < 1 || st->of >= E->nf || !E->f[st->of].a) return false;
+                const LwFact *x = &E->f[st->of];
+                LSW d = lw_i(0);
+                for (int32_t v = 0; v < E->v->nvars; v++) if (x->a[v].n) d = lw_gcd(d, x->a[v]);
+                if (!d.n) return false;
+                for (int32_t v = 0; v < E->v->nvars; v++) r.a[v] = x->a[v].n ? lw_div(x->a[v], d) : lw_i(0);
+                if (!lw_floordiv_to(&r.b, x->b, d)) return false;
+            }
+            E->f[st->f] = r;
+        } else if (st->k == J_CLOSE) return true;
+        else if (st->k == J_SPLIT) {
+            if (st->s < 1 || st->s >= E->ns || st->nbr != 2) return false;
+            LwFact le, gt;
+            if (!lw_fact_new(E, &le) || !lw_fact_new(E, &gt) || !lw_fact_of(E, &st->split, &le)) return false;
+            for (int32_t v = 0; v < E->v->nvars; v++) gt.a[v] = lw_neg(le.a[v]);
+            if (!lw_add_to(&gt.b, lw_neg(le.b), lw_i(-1))) return false;
+            for (int b = 0; b < 2; b++) {
+                E->s[st->s] = b == 0 ? le : gt; E->sc[st->s] = NULL;
+                if (!lw_steps_fit(E, &st->br[b])) return false;
+            }
+            return true;
+        } else if (st->k == J_CASE) {
+            if (st->s < 1 || st->s >= E->ns || st->hyp < 1 || st->hyp > E->v->nhyps) return false;
+            const JHyp *H = &E->v->hyps[st->hyp - 1];
+            if (!H->disj || st->nbr != H->ndis) return false;
+            for (int32_t b = 0; b < st->nbr; b++) {
+                E->sc[st->s] = &H->dis[b];
+                if (!lw_steps_fit(E, &st->br[b])) return false;
+            }
+            return true;
+        } else return false;
+    }
+    return false;
+}
+static void lw_scan(const JSteps *br, int32_t *mf, int32_t *ms) {
+    for (int32_t i = 0; br && i < br->n; i++) {
+        const JStep *st = &br->s[i];
+        if ((st->k == J_LIN || st->k == J_RND || st->k == J_CLOSE) && st->f > *mf) *mf = st->f;
+        if ((st->k == J_SPLIT || st->k == J_CASE) && st->s > *ms) *ms = st->s;
+        for (int32_t b = 0; b < st->nbr; b++) lw_scan(&st->br[b], mf, ms);
+    }
+}
+static bool lw_cert_fits(const JVc *vc, const JCert *c, void *mem, size_t size) {
+    LwEval E; memset(&E, 0, sizeof E);
+    E.v = vc; E.cur = (char *)mem; E.end = (char *)mem + size;
+    int32_t mf = 0, ms = 0;
+    lw_scan(&c->body, &mf, &ms);
+    E.nf = mf + 1; E.ns = ms + 1;
+    E.f = (LwFact *)lw_bump(&E, sizeof(LwFact) * (size_t)E.nf);
+    E.s = (LwFact *)lw_bump(&E, sizeof(LwFact) * (size_t)E.ns);
+    E.sc = (const JConj **)lw_bump(&E, sizeof(JConj *) * (size_t)E.ns);
+    if (!E.f || !E.s || !E.sc || !lw_fact_new(&E, &E.tmp) || !lw_fact_new(&E, &E.g)) return false;
+    // g, the goal's negation, as the kernel makes it: `-sum <= -b - 1`, or `sum = b` for `!=`
+    if (!lw_fact_of(&E, &vc->goal, &E.g)) return false;
+    if (vc->goal.op == J_LE) {
+        for (int32_t v = 0; v < vc->nvars; v++) E.g.a[v] = lw_neg(E.g.a[v]);
+        if (!lw_add_to(&E.g.b, lw_neg(E.g.b), lw_i(-1))) return false;
+    }
+    return lw_steps_fit(&E, &c->body);
+}
+// as the judge evaluates a model (judge.h, jm_model_ok): 1 holds, 0 does not, -1 does not fit
+static int lw_holds_at(const JCons *c, const JInt *x, int32_t nv) {
+    LSW s = lw_i(0);
+    for (int32_t i = 0; i < c->nt; i++) {
+        if (c->t[i].var < 0 || c->t[i].var >= nv) return -1;
+        LSW p; if (!lw_mul_to(&p, c->t[i].coef, x[c->t[i].var]) || !lw_add_to(&s, s, p)) return -1;
+    }
+    int k = lw_cmp(s, c->rhs);
+    return c->op == J_LE ? k <= 0 : c->op == J_EQ ? k == 0 : k != 0;
+}
+static bool lw_model_fits(const JVc *vc, const JModel *m) {
+    if (m->n != vc->nvars) return false;
+    for (int32_t h = 0; h < vc->nhyps; h++) {
+        const JHyp *y = &vc->hyps[h];
+        int r;
+        if (!y->disj) r = lw_holds_at(&y->cons, m->val, vc->nvars);
+        else {
+            r = 0;
+            for (int32_t d = 0; d < y->ndis && r != 1; d++) {
+                int all = 1;
+                for (int32_t c = 0; c < y->dis[d].nc && all == 1; c++) all = lw_holds_at(&y->dis[d].c[c], m->val, vc->nvars);
+                if (all < 0) { r = -1; break; }
+                if (all == 1) r = 1;
+            }
+        }
+        if (r < 0) return false;
+    }
+    return lw_holds_at(&vc->goal, m->val, vc->nvars) >= 0;
+}
+// The wide search, in the first three quarters of the region (its answer at their top), its
+// answer followed at the kernel's and the judge's width in the last quarter.
+static JAnswer ls_wide(const JVc *vc, bool cone, JWork limit, void *mem, size_t size) {
+    size_t ws = size / 4 * 3;
+    JAnswer W = ls_solve_w(vc, NULL, cone, limit, mem, ws, NULL);
+    bool fits = W.k == J_ANS_CERT ? lw_cert_fits(vc, &W.cert, (char *)mem + ws, size - ws)
+              : W.k == J_ANS_MODEL ? lw_model_fits(vc, &W.model) : true;
+    if (!fits) { JWork u = W.used; memset(&W, 0, sizeof W); W.k = J_ANS_CAPACITY; W.used = u; }
+    return W;
+}
+
+// Solve `vc` within `limit`, in the caller's region of `size` bytes. Every pointer in the answer
+// points into that region. The 128-bit search; on CAPACITY its slices; and when it stopped because
+// a number left 128 bits, the wide search last.
+static JAnswer lia_solve(const JVc *vc, JWork limit, void *mem, size_t size) {
+    bool ovf = false;
+    JAnswer A = ls_solve(vc, NULL, false, limit, mem, size, &ovf);
+    if (A.k != J_ANS_CAPACITY) return A;
+    JWork used = A.used;
+    JAnswer B = ls_sliced(vc, limit, mem, size, &used);
+    if (B.k == J_ANS_CERT) { B.used = used; return B; }
+    if (ovf) {
+        JWork left = { ls_left(limit.pivot, used.pivot), ls_left(limit.node, used.node), ls_left(limit.leaf, used.leaf) };
+        if (left.pivot && left.node && left.leaf) {
+            JAnswer W = ls_wide(vc, false, left, mem, size);
+            used.pivot += W.used.pivot; used.node += W.used.node; used.leaf += W.used.leaf;
+            if (W.k == J_ANS_CERT || W.k == J_ANS_MODEL) { W.used = used; return W; }
+        }
     }
     A.used = used;
     return A;
@@ -597,7 +513,16 @@ static JAnswer lia_cone(const JVc *vc, JWork limit, void *mem, size_t size) {
         for (int32_t t = 0; cone && t < H->cons.nt; t++) cone = H->cons.t[t].var >= 0 && H->cons.t[t].var < vc->nvars;
     }
     if (!cone) return A;
-    return ls_solve(vc, NULL, true, limit, mem, size);
+    bool ovf = false;
+    A = ls_solve(vc, NULL, true, limit, mem, size, &ovf);
+    if (A.k != J_ANS_CAPACITY || !ovf) return A;
+    JWork left = { ls_left(limit.pivot, A.used.pivot), ls_left(limit.node, A.used.node), ls_left(limit.leaf, A.used.leaf) };
+    if (!left.pivot || !left.node || !left.leaf) return A;
+    JAnswer W = ls_wide(vc, true, left, mem, size);          // the wide retry, as lia_solve's
+    W.used.pivot += A.used.pivot; W.used.node += A.used.node; W.used.leaf += A.used.leaf;
+    if (W.k == J_ANS_CERT || W.k == J_ANS_MODEL) return W;
+    A.used = W.used;
+    return A;
 }
 
 // ── optimization (PE.2): the largest value of a linear objective over a VC's hypotheses ─────────
