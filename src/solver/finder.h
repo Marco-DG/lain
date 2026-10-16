@@ -261,15 +261,19 @@ static bool fd_map_cons(FdLoop *L, const JCons *c, const int32_t *map, JCons *ou
 // 2^64 - 1 or an object size's 2^61 is never what a ranking proof rests on, and the Farkas system
 // multiplies it with every other constant until 128-bit arithmetic overflows (CAPACITY after twenty
 // pivots, on two thirds of the corpus's loops). Dropping a hypothesis only weakens the path, so
-// what is found without it holds with it: candidates are lost at worst, never made wrong.
+// what is found without it holds with it: candidates are lost at worst, never made wrong. A
+// COEFFICIENT may reach 2^32: an i32 threshold return claim, (2^31 + 1)*ret - i <= 2^31, is what
+// NestedRecursion's measure rests on (the inner call's argument at most 0), while a u32 bound's
+// constant 2^32 - 1 stays out.
 #define FD_BIGC ((LSi)1 << 31)
+#define FD_BIGK ((LSi)1 << 32)
 static bool fd_small(const JCons *c) {
     LSol N; memset(&N, 0, sizeof N);
     LSi r = ls_from_j(&N, &c->rhs);
     if (N.cap || r > FD_BIGC || r < -FD_BIGC) return false;
     for (int32_t i = 0; i < c->nt; i++) {
         LSi a = ls_from_j(&N, &c->t[i].coef);
-        if (N.cap || a > FD_BIGC || a < -FD_BIGC) return false;
+        if (N.cap || a > FD_BIGK || a < -FD_BIGK) return false;
     }
     return true;
 }
@@ -1854,6 +1858,67 @@ static bool ret_candidates(JFinder *F, IrFunc *f, JCand **cd, int32_t *ncd, int3
         for (int sr = -1; sr <= 1; sr += 2)
             for (int sp = -1; sp <= 1; sp += 2)
                 if (!cand_push(cd, ncd, ccd, JCLAIM_RET, JKEY_RET, sr, p->value->id, sp, f->ret_type, p->value->type)) return false;
+    }
+    // PE.13 kind (4), nested recursion (NestedRecursion_1b/1c/1d): a function whose value stays in a
+    // small range, r0 below a guard on a parameter and one more above it (rec1 is 0 for i <= 0, else
+    // 1). A caller's measure needs both facts at once, and neither is a bound a maximization finds:
+    // each holds only given the other, at the function's own calls. So they are FIXED candidates,
+    // for Houdini to keep together or drop: ret <= r + d and ret >= r - d for each constant r the
+    // function returns (d = 0, 1, 2), and per guard `x <= t` on an integer parameter (either branch)
+    // the threshold claim K*ret - x <= K*r0 - t + K - 1, K = t - min(x) + 1, which at x <= t forces
+    // ret <= r0 and at x >= t + 1 allows ret <= r0 + 1 (the Secondary Compiler Worker's
+    // (2^31 + 1)*ret - x <= 2^31 for rec1)
+    __int128 rk[4]; int32_t nr = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        if (b->term.kind != IR_TERM_RET || !b->term.cond) continue;
+        IrInstr *d = NULL;
+        for (IrBlock *b2 = f->blocks; b2 && !d; b2 = b2->next)
+            for (IrInstr *x = b2->instrs; x && !d; x = x->next) if (x->result == b->term.cond) d = x;
+        if (!d || d->op != IR_CONST) continue;
+        __int128 v = fd_const(d); bool seen = false;
+        for (int32_t k = 0; k < nr && !seen; k++) seen = rk[k] == v;
+        if (!seen && nr < 4 && v < ((__int128)1 << 40) && v > -((__int128)1 << 40)) rk[nr++] = v;
+    }
+    struct { int32_t id; __int128 t, lo; } th[4]; int32_t nth = 0;
+    for (IrBlock *b = f->blocks; b && nr > 0; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op != IR_ICMP || i->n_operands < 2 || !i->operands[0] || !i->operands[1]) continue;
+            int pk = -1; IrParam *pp = NULL;                 // which side is a parameter, the other a constant
+            for (int s2 = 0; s2 < 2 && pk < 0; s2++)
+                for (IrParam *p = f->params; p && pk < 0; p = p->next) if (p->value == i->operands[s2]) { pk = s2; pp = p; }
+            if (pk < 0 || !fd_is_int(pp->value->type)) continue;
+            IrInstr *d = NULL;
+            for (IrBlock *b2 = f->blocks; b2 && !d; b2 = b2->next)
+                for (IrInstr *x = b2->instrs; x && !d; x = x->next) if (x->result == i->operands[1 - pk]) d = x;
+            FdRange pr;
+            if (!d || d->op != IR_CONST || !fd_range(pp->value->type, &pr)) continue;
+            __int128 c = fd_const(d), t;
+            int cmp = i->aux.cmp;                            // as `x cmp c`
+            if (pk == 1) cmp = cmp == IR_CMP_SLT ? IR_CMP_SGT : cmp == IR_CMP_SLE ? IR_CMP_SGE : cmp == IR_CMP_SGT ? IR_CMP_SLT : cmp == IR_CMP_SGE ? IR_CMP_SLE : -1;
+            if (cmp == IR_CMP_SLE || cmp == IR_CMP_SGT) t = c;
+            else if (cmp == IR_CMP_SLT || cmp == IR_CMP_SGE) t = c - 1;
+            else continue;
+            bool seen = false;
+            for (int32_t k = 0; k < nth && !seen; k++) seen = th[k].id == pp->value->id && th[k].t == t;
+            if (!seen && nth < 4) { th[nth].id = pp->value->id; th[nth].t = t; th[nth].lo = pr.lo; nth++; }
+        }
+    for (int32_t k = 0; k < nr; k++) {
+        for (int32_t dd = 0; dd <= 2; dd++)
+            for (int sd = 1; sd >= -1; sd -= 2) {            // ret <= r + d; -ret <= -(r - d)
+                if (*ncd == *ccd) { int32_t nc = *ccd ? *ccd * 2 : 32; JCand *x = realloc(*cd, sizeof *x * (size_t)nc); if (!x) return false; *cd = x; *ccd = nc; }
+                JCand *c = &(*cd)[(*ncd)++]; memset(c, 0, sizeof *c);
+                c->c.blk = JCLAIM_RET; c->c.nt = 1; c->c.key[0] = JKEY_RET; c->c.coef[0] = sd;
+                c->c.rhs = sd > 0 ? rk[k] + dd : -(rk[k] - dd); c->tb = c->c.rhs; c->fixed = true;
+            }
+        for (int32_t h = 0; h < nth; h++) {
+            __int128 K = th[h].t - th[h].lo + 1;
+            if (K < 2 || K > ((__int128)1 << 40)) continue;
+            if (*ncd == *ccd) { int32_t nc = *ccd ? *ccd * 2 : 32; JCand *x = realloc(*cd, sizeof *x * (size_t)nc); if (!x) return false; *cd = x; *ccd = nc; }
+            JCand *c = &(*cd)[(*ncd)++]; memset(c, 0, sizeof *c);
+            c->c.blk = JCLAIM_RET; c->c.nt = 2;
+            c->c.key[0] = JKEY_RET; c->c.coef[0] = K; c->c.key[1] = th[h].id; c->c.coef[1] = -1;
+            c->c.rhs = K * rk[k] - th[h].t + K - 1; c->tb = c->c.rhs; c->fixed = true;
+        }
     }
     for (int32_t c = 0; c < *ncd; c++) (*cd)[c].c.fn = f;
     return true;
