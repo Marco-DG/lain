@@ -61,14 +61,18 @@ static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
                                 "between %lld and %lld\n",
                         (long long)c->accum_s0lo, (long long)c->accum_s0hi,
                         (long long)c->accum_dlo, (long long)c->accum_dhi);
-                if (c->accum_T < 0)
-                    fprintf(stderr, "       and the loop has no bounded trip count, so the "
-                                    "total has no bound at all\n");
-                else
+                // accum_T: -1 when the range analysis found no bound on the trip count, which
+                // is its search's result, not the program's ("the loop has no bounded trip
+                // count" was false of `while i < n and i < a.len`, and of a loop the judge
+                // shows to end); -2 when another proof shows the loop ends: no count to give
+                if (c->accum_T == -1)
+                    fprintf(stderr, "       and no bound on the loop's trip count was found, so "
+                                    "none was found on the total\n");
+                else if (c->accum_T >= 0)
                     fprintf(stderr, "       over up to %lld iterations\n",
                             (long long)c->accum_T);
                 fprintf(stderr,
-                    "       bound any ONE of the three and this proves:\n"
+                    "       a tighter bound on any ONE of the three may prove this:\n"
                     "         the count    a length with a refinement, e.g. "
                     "`f(a i32[n], n usize < 4096)`\n"
                     "         the element  a narrower element type, or a refinement on it\n"

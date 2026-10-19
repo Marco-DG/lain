@@ -265,6 +265,9 @@ static int judge_authority_report(IrFunc *f, const char *file, Vra *V) {
         // I.159: a running total in a loop the judge did not show to end is a consequence of that
         // E011, not a second error (Zune's `year = year + 1`); the loop's E011 is reported
         if (c.kind == VRA_OVERFLOW && c.accum && c.accum_T < 0 && c.loop1 > 0 && c.loop1 <= nb && noterm[c.loop1]) continue;
+        // ...and in a loop the judge shows to end, VRA's "no bound on the trip count was found"
+        // is its own search's result again (field_bound_accumulator_grows: 1000 trips, a u8 total)
+        if (c.kind == VRA_OVERFLOW && c.accum && c.accum_T < 0) c.accum_T = -2;
         // one diagnostic per place and rule: bounds.lo and bounds.hi at one access are one E085
         bool dup = false;
         for (int64_t k = 0; k < n && !dup; k++)

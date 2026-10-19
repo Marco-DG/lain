@@ -5446,7 +5446,7 @@ static bool vra_accum_info(Vra *V, Octagon *W, IrValue *val, VraCheck *c,
     if (c && vra_is_running_total(V, val, H)) {
         c->accum = true; c->accum_dlo = dlo; c->accum_dhi = dhi;
         c->accum_s0lo = s0lo; c->accum_s0hi = s0hi;
-        c->accum_T = haveT ? T : -1;                 // -1 = the trip count is not bounded
+        c->accum_T = haveT ? T : -1;                 // -1 = no bound on the trip count was found
         c->loop1 = H->id + 1;
     }
     if (!haveT) return false;
