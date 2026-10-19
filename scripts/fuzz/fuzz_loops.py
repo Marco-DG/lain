@@ -23,7 +23,18 @@ GUARDS = ["x != 0", "y != 0", "x > 0", "y > 0", "x < 100", "y < 100", "x < y", "
 CONDS = ["x < y", "x > y", "x == y", "x < 50", "y > 50", "x % 2 == 0", "y % 3 == 0", "true"]
 UPD = ["x = x & (x - 1)", "y = y & (y - 1)", "x = x - 1", "x = x + 1", "y = y - 1", "y = y + 1", "x = y", "y = x", "x = x - 2", "y = y + 2", "x = y - 1"]
 
+# The WRAP mode (FUZZ_LOOPS_WRAP=1, s5): every update wraps (`+%`, `-%`), no `< 200` bound, and the
+# oracle steps modulo 256, so a loop can cycle THROUGH a wrap. A step on one arm of an `if` is where
+# the judge states a wrap's cases inside a join's disjuncts; a case it left out would let it prove a
+# loop that wraps round for ever. Off, the programs are the ones each seed always gave.
+WRAP = os.environ.get("FUZZ_LOOPS_WRAP") == "1"
+UPDW = ["x = x +% 1", "x = x -% 1", "y = y +% 1", "y = y -% 1", "x = x +% 2", "y = y -% 2", "x = y", "y = x", "x = y -% 1", "y = x +% 3"]
+
 def gen(rng):
+    if WRAP:
+        gs = rng.sample(GUARDS, rng.choice([1, 2, 3]))
+        body = [(rng.choice(CONDS), rng.choice(UPDW), rng.choice(UPDW + [None])) for _ in range(rng.choice([1, 2, 2, 3]))]
+        return gs, body
     gs = rng.sample(GUARDS, rng.choice([2, 3, 4]))
     # A lower guard on each variable, often enough for most loops to have a chance of a measure:
     # `> 0` or, read the same way on an unsigned value since H4, `!= 0`.
@@ -52,7 +63,7 @@ def can_run_forever(gs, body):
         def assign(s):
             if s is None: return None
             var, rhs = s.split(" = ")
-            f = eval("lambda x, y: " + rhs)
+            f = eval("lambda x, y: " + rhs.replace("+%", "+").replace("-%", "-"))
             return (var == "x", f)
         steps.append((cf, assign(a), assign(b)))
     def succ(x, y):
@@ -60,6 +71,7 @@ def can_run_forever(gs, body):
             s = a if cf(x, y) else b
             if s is None: continue
             v = s[1](x, y)
+            if WRAP: v %= 256                       # u8, wrapping
             if s[0]: x = v
             else: y = v
         return x, y
@@ -112,7 +124,7 @@ def main():
             other += 1
     for f in os.listdir(tmp): os.remove(os.path.join(tmp, f))
     os.rmdir(tmp)
-    print("fuzz_loops: seed=%d gens=%d accepted=%d refused-termination=%d refused-other=%d" % (seed, N, acc, ref, other))
+    print("fuzz_loops%s: seed=%d gens=%d accepted=%d refused-termination=%d refused-other=%d" % (" (wrap)" if WRAP else "", seed, N, acc, ref, other))
     print("  ground truth: %d end from every input; %d of those refused (the cost)" % (term, lost))
     print("  bugs:  UNSOUND(accepted, runs for ever)=%d INTERNAL(exit 70 or a signal)=%d" % (unsound, internal))
     if other > N // 2:

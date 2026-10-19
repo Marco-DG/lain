@@ -4650,6 +4650,69 @@ int main(void) {
               v, refused, other, sz);
     }
     printf("  a region too small at every size: refused, never a crash\n");
+    // 80. a WRAP's cases inside a join's disjuncts (s5). All u8: `s = y; if p < 10 { s = y +% c };
+    // return 100 / s`. (0) c = 1: y + 1 wraps at 255, two cases, so the arm's path is two disjuncts, its
+    // case's equation and guard in each (k = 0: s = y + 1; k = 1: s = y + 1 - 256), three in all; (1)
+    // c = 0: one case, exact, now stated inside the disjunct too (its value named twice there, by the
+    // store and by its definition); (2) six such adds on the arm, 64 paths past JJOIN_MAXP: the join's
+    // disjuncts as before s5, one per predecessor path and no case. Each after a function with no wrap.
+    for (int c = 0; c < 3; c++) {
+        // first, a function with a join and NO wrap (the generator decides once per function whether
+        // any op wraps; nothing of that may carry to the next function's generation)
+        {   IrFunc *h = ir_func_new(&A, nm("nw79"), u8t, IR_FUNC_PURE);
+            IrValue *hy = ir_add_param(h, u8t, nm("y"));
+            IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+            IrValue *hs = ir_alloca(h, h0, u8t);
+            ir_store(h, h0, hs, hy);
+            ir_set_br_cond(h0, ir_icmp(h, h0, IR_CMP_ULT, hy, ir_const_int(h, h0, 10, u8t)), h1, h2);
+            ir_store(h, h1, hs, ir_const_int(h, h1, 3, u8t)); ir_set_br(h1, h2);
+            ir_set_ret(h2, ir_binop(h, h2, IR_UDIV, ir_const_int(h, h2, 100, u8t), ir_load(h, h2, hs, u8t), u8t));
+            ir_finalize_cfg(h);
+            char *ht = gen_with(h, NULL, 0, JGEN_ALL, NULL);
+            CHECK(ht != NULL, "the function with no wrap is generated");
+            free(ht);
+        }
+        IrFunc *f = ir_func_new(&A, nm("wj79"), u8t, IR_FUNC_PURE);
+        IrValue *p = ir_add_param(f, u32t, nm("p")), *y = ir_add_param(f, u8t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, u8t);
+        ir_store(f, b0, s, y);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, p, ir_const_int(f, b0, 10, u32t)), b1, b2);
+        IrInstr *a = NULL;
+        for (int k = 0; k < (c == 2 ? 6 : 1); k++) {
+            a = ir_instr(f, IR_ADD, u8t, 2); a->operands[0] = k ? a->result : y; a->operands[1] = ir_const_int(f, b1, c == 1 ? 0 : 1, u8t);
+            a->wrap = IR_WRAP_MODULAR; ir_emit(b1, a);
+            ir_store(f, b1, s, a->result);
+        }
+        ir_set_br(b1, b3);
+        ir_set_br(b2, b3);
+        ir_set_ret(b3, ir_binop(f, b3, IR_UDIV, ir_const_int(f, b3, 100, u8t), ir_load(f, b3, s, u8t), u8t));
+        ir_finalize_cfg(f);
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        const char *dz = t ? vc_of(t, "divzero") : "";
+        char jl[48]; snprintf(jl, sizeof jl, " join bb%d : or {", b3->id);
+        const char *j = strstr(dz, jl), *eol = j ? strchr(j, '\n') : NULL;
+        char line[4096] = "";
+        if (j && eol) snprintf(line, sizeof line, "%.*s", (int)(eol - j), j);
+        int bars = count(line, " | ");
+        char av[24]; snprintf(av, sizeof av, "%%v%d ", a->result->id);
+        // the definition's equation: one conjunct naming the result and y, `= 0`
+        char yv[24]; snprintf(yv, sizeof yv, "%%v%d ", y->id);
+        bool defeq = false;
+        for (const char *q = line; q && *q && !defeq; ) {
+            const char *e = strstr(q, " , "), *e2 = strstr(q, " | "), *end = !e ? e2 : !e2 ? e : e < e2 ? e : e2;
+            char cj[512]; size_t n = end ? (size_t)(end - q) : strlen(q);
+            snprintf(cj, sizeof cj, "%.*s ", (int)(n < 500 ? n : 500), q);
+            defeq = strstr(cj, av) && strstr(cj, yv) && strstr(cj, " = 0 ");
+            q = end ? end + 3 : NULL;
+        }
+        if (c == 0) CHECK(bars == 2 && defeq && strstr(line, " = -256") && strstr(line, " = 0") && count(line, " <= 255") >= 2,
+                          "y +%% 1 on the arm: its two cases, each with its guard, three disjuncts (%d bars):\n%s", bars, dz);
+        if (c == 1) CHECK(bars == 1 && defeq, "y +%% 0: one case, its equation inside the disjunct:\n%s", dz);
+        if (c == 2) CHECK(bars == 1 && !strstr(line, " = -256"), "six adds, 64 paths: the disjuncts as before, no case:\n%s", dz);
+        free(t);
+    }
+    printf("  a wrap's cases inside a join's disjuncts, each with its guard; one case exact there; the cap\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

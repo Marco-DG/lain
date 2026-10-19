@@ -215,6 +215,7 @@ typedef struct {
     uint8_t *writes;               // by header id * ncells: the loop stores the cell
     uint32_t hash;
     const JClaim *cl; int32_t ncl; // claims (untrusted input: each is owed on every edge into its block)
+    int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases (2), none (1), not asked yet (0)
 } JG;
 
 // The value with id `id`: an instruction's result or a parameter.
@@ -910,6 +911,7 @@ typedef struct {
     int32_t *jhyp, *jblk, **jpred; int32_t njr, cjr;
     bool allrel;                   // a goal of no variable that is false: every dominating fact is about it   // R7 hypotheses: index, join, disjuncts' predecessors
     int32_t *cst;                            // per claim: -2 unstated, -1 VC-wide, else its disjunct
+    const int32_t *wid, *wk; int32_t nw;     // the current disjunct's path: each wrapping op's case k (s5)
     bool fail;
 } JB;
 
@@ -1676,31 +1678,59 @@ static int64_t jg_len_max(const IrType *st) {
 // result is s - k*2^w for the one k that puts it in the result's range. Over the operands' type
 // ranges (facts, licensed by their own obligations; a constant's range is its value) s lies in
 // [slo, shi], which leaves at most three k; with the result's own range that disjunction pins it.
-// Not inside a disjunct (a disjunct holds no disjunction), and nothing when the result is not an
-// integer of at most 64 bits.
-static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
-    JRange ra, rb, rr;
+// Inside a join's disjunct, which holds no disjunction, the one case its path took (R7 enumerates
+// a path per case, s5) or, with none, nothing; nothing when the result is not an integer of at most
+// 64 bits.
+// Is d such a wrapping ADD or SUB?
+static bool jg_wrap_op(const IrInstr *d) {
+    if ((d->op != IR_ADD && d->op != IR_SUB) || d->n_operands < 2 || !d->result || !d->result->type) return false;
+    if (!jg_is_int(d->operands[0]->type) || !jg_is_int(d->operands[1]->type)) return false;
+    return d->wrap == IR_WRAP_MODULAR || (d->unchecked && !d->result->type->is_signed && d->wrap == IR_WRAP_CHECK);
+}
+// Its cases: k from klo to khi (one to three), M = 2^w, the result's range rr. False where none is
+// stated.
+static bool jg_wrap_ks(JG *g, const IrInstr *d, __int128 *klo, __int128 *khi, __int128 *M, JRange *rr) {
+    JRange ra, rb;
     const IrType *rt = d->result ? d->result->type : NULL;
-    if (B->jS >= 0 || !rt || rt->kind != IRT_INT || rt->bits < 1 || rt->bits > 64) return;
-    if (!jg_range(d->operands[0]->type, &ra) || !jg_range(d->operands[1]->type, &rb)) return;
+    if (!rt || rt->kind != IRT_INT || rt->bits < 1 || rt->bits > 64) return false;
+    if (!jg_range(d->operands[0]->type, &ra) || !jg_range(d->operands[1]->type, &rb)) return false;
     // a constant operand's range is its value: `i +% 1` on a u8 has an i32 literal, whose type
     // range alone would leave thousands of k (Main Compiler Work)
     __int128 cv;
-    if (jg_const_of(B->g, d->operands[0], &cv)) ra.lo = ra.hi = cv;
-    if (jg_const_of(B->g, d->operands[1], &cv)) rb.lo = rb.hi = cv;
-    rr.lo = jg_width_lo(rt); rr.hi = jg_width_hi(rt);
-    __int128 M = (__int128)1 << rt->bits;
+    if (jg_const_of(g, d->operands[0], &cv)) ra.lo = ra.hi = cv;
+    if (jg_const_of(g, d->operands[1], &cv)) rb.lo = rb.hi = cv;
+    rr->lo = jg_width_lo(rt); rr->hi = jg_width_hi(rt); rr->has_ne = false;
+    *M = (__int128)1 << rt->bits;
     __int128 slo = d->op == IR_ADD ? ra.lo + rb.lo : ra.lo - rb.hi, shi = d->op == IR_ADD ? ra.hi + rb.hi : ra.hi - rb.lo;
     // r = s - k*M in [rr.lo, rr.hi]: k from ceil((slo - rr.hi) / M) to floor((shi - rr.lo) / M)
-    __int128 klo = slo - rr.hi, khi = shi - rr.lo;
-    klo = klo >= 0 ? (klo + M - 1) / M : -((-klo) / M);
-    khi = khi >= 0 ? khi / M : -((-khi + M - 1) / M);
-    if (khi < klo || khi - klo > 2) return;                    // three cases at most (a w-bit sum)
+    __int128 lo = slo - rr->hi, hi = shi - rr->lo;
+    lo = lo >= 0 ? (lo + *M - 1) / *M : -((-lo) / *M);
+    hi = hi >= 0 ? hi / *M : -((-hi + *M - 1) / *M);
+    *klo = lo; *khi = hi;
+    return hi >= lo && hi - lo <= 2;                           // three cases at most (a w-bit sum)
+}
+static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
+    JRange rr; __int128 klo, khi, M;
+    if (!jg_wrap_ks(B->g, d, &klo, &khi, &M, &rr)) return;
+    bool taken = false;                                        // a case the disjunct's path took
+    if (B->jS >= 0 && klo != khi) {
+        int32_t q = -1;
+        for (int32_t i = 0; i < B->nw; i++) if (B->wid[i] == id) q = i;
+        if (q < 0) return;
+        klo = khi = B->wk[q]; taken = true;
+    }
     int32_t xa = jb_val(B, d->operands[0]), xb = jb_val(B, d->operands[1]);
     const char *origin = jb_str(B, d->op == IR_ADD ? "def %%v%lld add.wrap" : "def %%v%lld sub.wrap", id, 0, 0);
     JLT t[3];
     t[0].var = x; t[0].c = 1; t[1].var = xa; t[1].c = -1; t[2].var = xb; t[2].c = d->op == IR_ADD ? -1 : 1;
-    if (klo == khi) { jb_atom(B, origin, t, 3, J_EQ, -klo * M); return; }   // one case: exact
+    if (klo == khi) {                                          // one case: exact
+        jb_atom(B, origin, t, 3, J_EQ, -klo * M);
+        if (taken) {                                           // with its guard: r within its range
+            JLT u[1]; u[0].var = x; u[0].c = 1; jb_atom(B, origin, u, 1, J_LE, rr.hi);
+            u[0].var = x; u[0].c = -1; jb_atom(B, origin, u, 1, J_LE, -rr.lo);
+        }
+        return;
+    }
     JHyp *h = jb_hyp(B, origin);
     if (!h) return;
     int32_t nd = (int32_t)(khi - klo + 1);
@@ -2412,6 +2442,9 @@ static void jb_join_eqs(JB *B, int32_t J, int32_t P, bool outer) {
 enum { JJOIN_MAXP = 32, JJOIN_MAXL = 64 };
 typedef struct { int32_t x, y, cas; } JJStep;
 typedef struct { JJStep *st; int32_t n; } JPathE;
+// A path's wrap cases (s5), beside the paths only where a join expands: a join with none allocates
+// nothing more (JPathE is allocated JJOIN_MAXP at a time, at every join of every VC)
+typedef struct { int32_t *wid, *wk, nw; } JPathW;
 static bool jb_join_paths(JB *B, int32_t d0, IrBlock *Y, IrBlock *X, JJStep *cur, int32_t n, JPathE *out, int32_t *nout) {
     JG *g = B->g;
     if (n >= JJOIN_MAXL) return false;
@@ -2437,6 +2470,77 @@ static bool jb_join_paths(JB *B, int32_t d0, IrBlock *Y, IrBlock *X, JJStep *cur
     }
     return true;
 }
+// s5: a path's WRAPPING ops (jg_wrap_op, two or three cases) made in its own blocks (every block of
+// it but the dominator d0, whose values are VC-wide) whose result a store on the path writes into a
+// cell: jb_wrap states none of them inside the path's disjunct unless the path says which case it
+// took. So each such path becomes one path per combination of their cases, the case kept with it:
+// `path and (case 1 or case 2)` is `(path and case 1) or (path and case 2)`, and the cases are
+// every k the operands' ranges allow. False, the paths as they were, past JJOIN_MAXP in all or past
+// JWRAP_MAXW such ops on one path; `*pw` the cases by path where it expands, else NULL.
+enum { JWRAP_MAXW = 8 };
+static bool jb_join_wraps(JB *B, int32_t d0, JPathE *paths, int32_t *npath, JPathW **pw) {
+    JG *g = B->g;
+    if (!g->wraps) {                                         // once per function: most have none
+        g->wraps = 1;
+        for (IrBlock *b = g->f->blocks; b && g->wraps == 1; b = b->next)
+            for (IrInstr *w = b->instrs; w && g->wraps == 1; w = w->next) {
+                __int128 lo, hi, M; JRange rr;
+                if (jg_wrap_op(w) && w->result->id >= 0 && jg_wrap_ks(g, w, &lo, &hi, &M, &rr) && lo != hi) g->wraps = 2;
+            }
+    }
+    if (g->wraps == 1) return true;
+    int32_t ids[JJOIN_MAXP][JWRAP_MAXW]; __int128 klo[JJOIN_MAXP][JWRAP_MAXW]; int32_t nk[JJOIN_MAXP][JWRAP_MAXW], nw[JJOIN_MAXP];
+    int64_t total = 0;
+    bool any = false;
+    for (int32_t p = 0; p < *npath; p++) {
+        const JPathE *pe = &paths[p];
+        nw[p] = 0;
+        for (int32_t i = 0; i < pe->n; i++) {
+            IrBlock *X = g->blk[pe->st[i].x];
+            if (X->id == d0) continue;
+            for (IrInstr *w = X->instrs; w; w = w->next) {
+                __int128 lo, hi, M; JRange rr;
+                if (!jg_wrap_op(w) || w->result->id < 0 || !jg_wrap_ks(g, w, &lo, &hi, &M, &rr) || lo == hi) continue;
+                bool stored = false;                         // into a cell, by a store on this path
+                for (int32_t j = 0; j < pe->n && !stored; j++) {
+                    IrBlock *Y = g->blk[pe->st[j].x];
+                    if (Y->id == d0) continue;
+                    for (IrInstr *st = Y->instrs; st && !stored; st = st->next)
+                        stored = st->op == IR_STORE && st->n_operands >= 2 && st->operands[1] == w->result && st->operands[0] &&
+                                 st->operands[0]->id >= 0 && st->operands[0]->id < g->nv && g->cell[st->operands[0]->id] >= 0;
+                }
+                if (!stored) continue;
+                if (nw[p] == JWRAP_MAXW) return false;
+                ids[p][nw[p]] = w->result->id; klo[p][nw[p]] = lo; nk[p][nw[p]] = (int32_t)(hi - lo + 1); nw[p]++;
+            }
+        }
+        int64_t prod = 1;
+        for (int32_t q = 0; q < nw[p]; q++) prod *= nk[p][q];
+        total += prod; any |= nw[p] > 0;
+        if (total > JJOIN_MAXP) return false;
+    }
+    if (!any) return true;
+    JPathE out[JJOIN_MAXP]; int32_t n = 0;
+    JPathW *w = JG_NEW(g, JPathW, total);
+    if (!w) { B->fail = true; return false; }
+    for (int32_t p = 0; p < *npath; p++) {
+        int64_t prod = 1;
+        for (int32_t q = 0; q < nw[p]; q++) prod *= nk[p][q];
+        for (int64_t c = 0; c < prod; c++) {
+            out[n] = paths[p];
+            w[n].nw = nw[p]; w[n].wid = w[n].wk = NULL;
+            if (nw[p]) {
+                w[n].wid = JG_NEW(g, int32_t, nw[p]); w[n].wk = JG_NEW(g, int32_t, nw[p]);
+                if (!w[n].wid || !w[n].wk) { B->fail = true; return false; }
+                int64_t r = c;
+                for (int32_t q = 0; q < nw[p]; q++) { w[n].wid[q] = ids[p][q]; w[n].wk[q] = (int32_t)(klo[p][q] + r % nk[p][q]); r /= nk[p][q]; }
+            }
+            n++;
+        }
+    }
+    memcpy(paths, out, sizeof *out * (size_t)n); *npath = n; *pw = w;
+    return true;
+}
 static bool jb_join(JB *B, int32_t s) {
     JG *g = B->g; IrBlock *S = g->blk[s];
     IrBlock *pr[8]; int np = 0;
@@ -2454,6 +2558,9 @@ static bool jb_join(JB *B, int32_t s) {
     int32_t npath = 0; bool all = true;
     for (int k = 0; k < np && all; k++) all = jb_join_paths(B, d0, S, pr[k], cur, 0, paths, &npath);
     if (B->fail) return false;
+    JPathW *pw = NULL;                                       // the paths' wrap cases, where it expands
+    if (all) jb_join_wraps(B, d0, paths, &npath, &pw);       // past the caps, the paths as they were
+    if (B->fail) return false;
     int32_t nd = all ? npath : np;
     JConj *dis = JG_NEW(g, JConj, nd);
     int32_t *dpred = JG_NEW(g, int32_t, nd);
@@ -2463,6 +2570,7 @@ static bool jb_join(JB *B, int32_t s) {
         if (all) {
             const JPathE *pe = &paths[k];
             dpred[k] = pe->st[0].x;
+            if (pw) { B->wid = pw[k].wid; B->wk = pw[k].wk; B->nw = pw[k].nw; }
             for (int32_t i = 0; i < pe->n && !B->fail; i++) {
                 IrBlock *X = g->blk[pe->st[i].x], *Y = g->blk[pe->st[i].y];
                 if (Y->id == s || g->npred[Y->id] >= 2) jb_join_eqs(B, Y->id, X->id, Y->id == s);
@@ -2481,7 +2589,7 @@ static bool jb_join(JB *B, int32_t s) {
             }
         }
         dis[k].c = B->sink; dis[k].nc = B->nsink;
-        B->jS = -1;
+        B->jS = -1; B->nw = 0;
         if (dis[k].nc == 0) return false;
     }
     B->jS = -1;

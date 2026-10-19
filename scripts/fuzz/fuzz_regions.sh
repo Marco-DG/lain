@@ -19,4 +19,6 @@ LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_regions.py ./lain "$N" "$
 M=$(( N / 3 > 0 ? N / 3 : 1 ))
 FUZZ_REGIONS_SPLIT=1 python3 scripts/fuzz/fuzz_regions.py ./lain "$M" "$SEED"; r3=$?
 FUZZ_REGIONS_SPLIT=1 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_regions.py ./lain "$M" "$SEED"; r4=$?
-[ $r1 -eq 0 ] && [ $r2 -eq 0 ] && [ $r3 -eq 0 ] && [ $r4 -eq 0 ]
+# and the split mode with every step wrapping (s5: a wrap's cases inside a join's disjuncts), judge leg
+FUZZ_REGIONS_SPLIT=1 FUZZ_REGIONS_WRAP=1 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_regions.py ./lain "$M" "$SEED"; r5=$?
+[ $r1 -eq 0 ] && [ $r2 -eq 0 ] && [ $r3 -eq 0 ] && [ $r4 -eq 0 ] && [ $r5 -eq 0 ]

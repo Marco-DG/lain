@@ -112,6 +112,9 @@ def src(gs, cs, bs):
     L += ["    }", "    return x", "}"]
     return "\n".join(L) + "\n"
 
+def plain(rhs): return rhs.replace("+%", "+").replace("-%", "-").replace("?", "")
+def wrap8(v): return (v + 128) % 256 - 128
+
 def can_run_forever(gs, cs, bs):
     guard = eval("lambda x, y: " + " and ".join("(%s)" % g for g in gs))
     cases = [eval("lambda x, y: " + c) for c in cs]
@@ -121,8 +124,9 @@ def can_run_forever(gs, cs, bs):
             ops = []
             for u in a:
                 var, rhs = u.split(" = ")
-                if rhs == "nondet8()": ops.append((var, None)); continue
-                ops.append((var, eval("lambda x, y: " + rhs.replace("?", ""))))
+                if rhs == "nondet8()": ops.append((var, None, False)); continue
+                w = "+%" in rhs or "-%" in rhs                  # a wrapping step lands in i8; a trapping one ends the run
+                ops.append((var, eval("lambda x, y: " + plain(rhs)), w))
             fs.append(ops)
         return fs
     BR = [run(b) for b in bs]
@@ -139,11 +143,12 @@ def can_run_forever(gs, cs, bs):
             out = []
             for ops in pick(x, y):
                 a, b, dead = x, y, False
-                for (var, f) in ops:
+                for (var, f, w) in ops:
                     if f is None:
                         out.append(AX + (b + 128) if var == "x" else AY + (a + 128)); dead = True; break
                     v = f(a, b)
-                    if not -128 <= v <= 127: dead = True; break        # the trap ends the run
+                    if w: v = wrap8(v)
+                    elif not -128 <= v <= 127: dead = True; break      # the trap ends the run
                     if var == "x": a = v
                     else: b = v
                 if not dead and guard(a, b): out.append(idx(a, b))
@@ -187,13 +192,24 @@ def gen_split(rng):
         return u
     return d0, st, gs, [a() for _ in range(rng.choice([1, 1, 2]))]
 
+# FUZZ_REGIONS_WRAP=1 with the split mode (s5): every step of d and of the loop wraps (`+%`, `-%`), the
+# oracle stepping in i8 modulo 256. d's arms and the loop's steps sit on join paths, where the judge
+# states a wrap's cases inside the join's disjuncts; a case left out would let it split on a sign
+# that a wrap can take to 0, or rank a step a wrap reverses.
+def wrapify(prog):
+    w = lambda u: u.replace("+?", "+%").replace("-?", "-%")
+    d0, st, gs, alts = prog
+    return d0, [(c, w(t), w(e)) for (c, t, e) in st], gs, [[w(u) for u in a] for a in alts]
+
 def d_values(d0, st):
     vs = set(d0)
     for (c, t, e) in st:
         nv = set()
         for d in vs:
-            v = eval((t if eval(c) else e).split(" = ")[1].replace("?", ""))
-            if -128 <= v <= 127: nv.add(v)        # a trapped step ends the run before the loop
+            rhs = (t if eval(c) else e).split(" = ")[1]
+            v = eval(plain(rhs))
+            if "%" in rhs: nv.add(wrap8(v))            # a wrapping step lands in i8
+            elif -128 <= v <= 127: nv.add(v)        # a trapped step ends the run before the loop
         vs = nv
     return sorted(vs)
 
@@ -230,16 +246,26 @@ def main():
     if can_run_forever(*as_prog(FIG3)) or not can_run_forever(*as_prog(back)) or not can_run_forever(*gap):
         print("  ★ ORACLE BROKEN: Fig3, its two-step variant or its gap variant decided wrongly"); sys.exit(1)
     split = os.environ.get("FUZZ_REGIONS_SPLIT") == "1"
+    wrap = split and os.environ.get("FUZZ_REGIONS_WRAP") == "1"
     # split mode's teeth: Toulouse's loop ends for d in {1, -1}, stepped or not; with d = 0 it does not
     tou = (["x < 100", "y < 100"], [["x = x +? d", "y = y -? d"]])
     if split and (split_forever([1, -1], [], *tou) or split_forever([1, -1], [("d > 0", "d = d +? 1", "d = d -? 1")] * 8, *tou)
                   or not split_forever([1, 0], [], *tou) or d_values([1, -1], [("d > 1", "d = d -? 1", "d = d")]) != [-1, 1]):
         print("  ★ ORACLE BROKEN: the split mode decided Toulouse or its d = 0 twin wrongly"); sys.exit(1)
+    # the wrap variant's teeth: Toulouse with wrapping steps still ends (x reaches 100, y wraps from -128
+    # to 127); `x = x +% d` alone under `x != 5` cycles for d = 2 from an even x (it wraps round); d
+    # stepped by `d +% 1` from 127 is -128
+    touw = (["x < 100", "y < 100"], [["x = x +% d", "y = y -% d"]])
+    if wrap and (split_forever([1, -1], [], *touw) or not split_forever([1, 0], [], *touw)
+                 or not split_forever([2], [], ["x != 5"], [["x = x +% d"]]) or split_forever([1], [], ["x != 5"], [["x = x +% d"]])
+                 or d_values([127], [("d > 0", "d = d +% 1", "d = d")]) != [-128]):
+        print("  ★ ORACLE BROKEN: the wrap variant decided Toulouse, a wrap-round cycle or a wrapped d wrongly"); sys.exit(1)
     tmp = tempfile.mkdtemp(prefix="fuzz_regions.")
     acc = ref = other = internal = unsound = term = lost = fig3 = 0
     for k in range(N):
         if split:
             prog = gen_split(random.Random(seed * 1000003 + k))
+            if wrap: prog = wrapify(prog)
             p = os.path.join(tmp, "t.ln"); text = src_split(*prog); open(p, "w").write(text)
         else:
             prog = gen(random.Random(seed * 1000003 + k))
@@ -268,7 +294,7 @@ def main():
             if keep: open(os.path.join(keep, "other_%d_%d.ln" % (seed, k)), "w").write(text + "\n// " + r.stderr.replace("\n", "\n// "))
     for f in os.listdir(tmp): os.remove(os.path.join(tmp, f))
     os.rmdir(tmp)
-    print(("fuzz_regions[split]" if split else "fuzz_regions") + ": seed=%d gens=%d accepted=%d refused-termination=%d refused-other=%d" % (seed, N, acc, ref, other))
+    print(("fuzz_regions[split,wrap]" if wrap else "fuzz_regions[split]" if split else "fuzz_regions") + ": seed=%d gens=%d accepted=%d refused-termination=%d refused-other=%d" % (seed, N, acc, ref, other))
     print("  ground truth: %d end from every input and choice; %d of those refused (the cost)" % (term, lost))
     print("  bugs:  UNSOUND(accepted, runs for ever)=%d INTERNAL(exit 70 or a signal)=%d" % (unsound, internal))
     if other > N // 2:
