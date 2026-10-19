@@ -3707,8 +3707,9 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
                     Expr *rng=init->as.array_comprehension_expr.range, *bod=init->as.array_comprehension_expr.body;
                     IrType *ity=ir_type_int(c->a,64,false);
                     bool isr = rng && rng->kind==EXPR_RANGE;
-                    IrValue *icell=ir_alloca(c->f,c->cur,ity);
+                    IrValue *icell=ir_alloca(c->f,c->cur,ity), *pcell=ir_alloca(c->f,c->cur,ity);
                     ir_store(c->f,c->cur,icell, (isr&&rng->as.range_expr.start)?ir_lower_expr(c,rng->as.range_expr.start):ir_const_int(c->f,c->cur,0,ity));
+                    ir_store(c->f,c->cur,pcell, ir_const_int(c->f,c->cur,0,ity));
                     ir_env_add(c, init->as.array_comprehension_expr.idx, icell, NULL);
                     IrBlock *head=ir_new_block(c->f),*bb=ir_new_block(c->f),*ex=ir_new_block(c->f);
                     ir_set_br(c->cur,head); c->cur=head;
@@ -3720,15 +3721,15 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
                     // in 1..=3]` runs x over 1..3 and fills positions 0..2. Storing at `x`
                     // left inc[0] unwritten and wrote one past the end — reading garbage from
                     // an array the comprehension claims to fill completely.
-                    IrValue *iv2=ir_load(c->f,bb,icell,ity);
-                    IrValue *pos=iv2;
-                    if (isr && rng->as.range_expr.start) {
-                        IrValue *lo0 = ir_lower_expr(c, rng->as.range_expr.start);
-                        pos = ir_binop(c->f,bb,IR_SUB,iv2,lo0,ity);
-                    }
+                    // The position is its own counter p, from 0 and stepped beside x, so p = x - lo:
+                    // the finder bounds an element filled so far by `each(a) below a counter`,
+                    // which `agg[x - lo]` never fit (inc[0] had no bound after the fill).
+                    IrValue *pos=ir_load(c->f,bb,pcell,ity);
                     ir_store(c->f,bb, ir_elem_ptr(c->f,bb,agg,pos,slot_ty->elem), ir_lower_expr(c,bod));
                     IrValue *ci=ir_load(c->f,c->cur,icell,ity);
                     ir_store(c->f,c->cur,icell, ir_binop(c->f,c->cur,IR_ADD,ci,ir_const_int(c->f,c->cur,1,ity),ity));
+                    IrValue *cp=ir_load(c->f,c->cur,pcell,ity);
+                    ir_store(c->f,c->cur,pcell, ir_binop(c->f,c->cur,IR_ADD,cp,ir_const_int(c->f,c->cur,1,ity),ity));
                     ir_set_br(c->cur,head); c->cur=ex;
                     // A comprehension fills EVERY element by definition. State it: the fill
                     // LOOP's zero-iteration path would otherwise intersect the fact away.
