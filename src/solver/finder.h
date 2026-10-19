@@ -2234,8 +2234,11 @@ static bool fd_entry_max(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, co
 }
 static bool fd_push_claim(JFinder *F, const JClaim *got, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     if (!fd_claim_shape_ok(got)) return true;
-    for (int32_t v = 0; v < *nc; v++) if (same_form(&(*cl)[v], got) && (*cl)[v].fn == got->fn && (*cl)[v].rhs <= got->rhs) return true;
-    (void)as; (void)nv;
+    // as bound_candidates: a verified claim as tight covers it, a candidate only when the same (a
+    // tighter candidate may fail: `y >= 2` from y's entry value pushed before `y >= 1` kept the one
+    // Houdini proves from ever being proposed, HeizmannHoenickeLeikePodelski-ATVA2013-Fig5)
+    for (int32_t v = 0; v < nv; v++) if (same_form(&as[v], got) && as[v].fn == got->fn && as[v].rhs <= got->rhs) return true;
+    for (int32_t v = nv; v < *nc; v++) if (same_form(&(*cl)[v], got) && (*cl)[v].fn == got->fn && (*cl)[v].rhs == got->rhs) return true;
     if (*nc == *ccl) {
         int32_t nn = *ccl ? *ccl * 2 : 64;
         JClaim *x = realloc(*cl, sizeof *x * (size_t)nn);
@@ -2557,6 +2560,36 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
     free(C); free(L.mem);
     return okall;
 }
+// A header version ONE constant c on every entry edge (`var y i32 = 2` before the loop): c - 1 <= y
+// and y <= c + 1, fixed, for Houdini to keep the inductive ones (c itself, and c +- 2, cost the
+// corpus 29% more judge time and proved nothing more). A bound the trip's
+// own step keeps (HeizmannHoenickeLeikePodelski-ATVA2013-Fig5: y = (y + 1) / 2 from 2 keeps y >= 1,
+// and x - y then falls) has no comparison in the program to start from, and fd_iter_bound's
+// iteration from no bound finds none: y' = (y + 1) / 2 is unbounded below until y is.
+static bool fd_entry_candidates(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    char err[200];
+    JSlot *s0 = NULL; int32_t ns = 0;
+    if (!F->gen->slots(F->gen->ctx, f, &s0, &ns, err, sizeof err) || ns == 0) return true;
+    JSlot *sl = malloc(sizeof *sl * (size_t)ns);
+    if (!sl) { F->oom = true; return false; }
+    memcpy(sl, s0, sizeof *sl * (size_t)ns);
+    bool okall = true;
+    for (int32_t g = 0; g < ns && okall; g++) {
+        if (!sl[g].head || !fd_is_int(sl[g].type)) continue;
+        JClaim c; memset(&c, 0, sizeof c);
+        c.blk = sl[g].blk; c.fn = f; c.nt = 1; c.key[0] = sl[g].key; c.tk[0] = JTERM_VALUE; c.coef[0] = 1;
+        JClaim neg = c; neg.coef[0] = -1;
+        __int128 hi, lo;
+        if (!fd_entry_max(F, f, as, nv, &c, &hi) || !fd_entry_max(F, f, as, nv, &neg, &lo) || hi != -lo) {
+            if (F->oom) okall = false;
+            continue;
+        }
+        c.rhs = hi + 1; neg.rhs = lo + 1;
+        okall = fd_push_claim(F, &c, as, nv, cl, nc, ccl) && fd_push_claim(F, &neg, as, nv, cl, nc, ccl);
+    }
+    free(sl);
+    return okall;
+}
 static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     char err[200];
     int32_t keys[64]; uint8_t tk[64], kind[64]; int32_t nk = 0;
@@ -2715,6 +2748,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
             if (round > 0 && !fd_nested_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (round > 0 && !fd_monotone_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
+            if (!fd_entry_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
             for (IrBlock *kb = f->blocks; kb; kb = kb->next)
                 if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, &cl, &nc, &ccl)) goto oom;
             fd_nest_free(&N);
