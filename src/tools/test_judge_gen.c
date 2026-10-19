@@ -4604,6 +4604,52 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  the paths offer no pair for a header version no trip uses\n");
+    // 79. a REGION too small, at every size: the generator refuses ("out of memory"), never reads the
+    // arrays jb_begin could not make. A join's claim, a header's, a return claim, and a ranking claim
+    // plain (lexicographic) or in regions, so each obligation that begins a VC runs out somewhere: the
+    // size grows by 64 bytes from 256 until the function is generated, and a little past it.
+    for (int v = 0; v < 2; v++) {
+        IrFunc *f = ir_func_new(&A, nm("small79"), i32t, IR_FUNC_PURE);
+        IrValue *y = ir_add_param(f, i32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f), *b5 = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, s, y);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SLT, y, ir_const_int(f, b0, 10, i32t)), b2, b1);
+        ir_store(f, b1, s, ir_const_int(f, b1, 5, i32t)); ir_set_br(b1, b2);
+        ir_set_br(b2, b3);
+        IrValue *ls = ir_load(f, b3, s, i32t);
+        ir_set_br_cond(b3, ir_icmp(f, b3, IR_CMP_SLT, ls, ir_const_int(f, b3, 100, i32t)), b4, b5);
+        ir_store(f, b4, s, ir_binop(f, b4, IR_ADD, ls, ir_const_int(f, b4, 1, i32t), i32t));
+        ir_set_br(b4, b3);
+        ir_set_ret(b5, ls);
+        ir_finalize_cfg(f);
+        JClaim cl[3];
+        cl[0] = claim1(b2, s, 1, 100); cl[0].fn = f;            // at the join
+        cl[1] = claim1(b3, s, 1, 100); cl[1].fn = f;            // at the header
+        memset(&cl[2], 0, sizeof cl[2]); cl[2].blk = JCLAIM_RET; cl[2].fn = f; cl[2].nt = 1; cl[2].key[0] = JKEY_RET; cl[2].coef[0] = 1; cl[2].rhs = 1000;
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b3->id; r.fn = f; r.nt = 1; r.key[0] = s->id; r.nedge = 1; r.from[0] = b4->id;
+        if (v == 0) { r.ncomp = 1; r.coef[0][0] = -1; r.c0[0] = 99; r.fall[0] = 0; }   // 99 - s
+        else {                                                 // s - 50 >= 0, <99 - s> | 49 - s >= 0, <99 - s>
+            r.ncomp = 4; r.fall[0] = -1;
+            r.coef[0][0] = 1; r.c0[0] = -50; r.coef[1][0] = -1; r.c0[1] = 99;
+            r.coef[2][0] = -1; r.c0[2] = 49; r.coef[3][0] = -1; r.c0[3] = 99;
+            r.nreg = 2; r.reg[0].g0 = 0; r.reg[0].ng = 1; r.reg[0].t0 = 1; r.reg[0].nt = 1;
+            r.reg[1].g0 = 2; r.reg[1].ng = 1; r.reg[1].t0 = 3; r.reg[1].nt = 1;
+        }
+        int refused = 0, after = -1, other = 0; size_t sz;
+        for (sz = 256; after < 32 && sz < sizeof region; sz += 64) {
+            JMem m = jmem_over(region, sz);
+            JObl *o; int32_t n; char err[200];
+            if (jgen_func(&m, f, f, cl, 3, &r, 1, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { if (after < 0) after = 0; after++; continue; }
+            if (after >= 0) after++;                           // a size past the first success that fails again: fine, said
+            refused++;
+            if (!strstr(err, "out of memory") && !strstr(err, "full")) { other++; if (other == 1) printf("  (%zu bytes: %s)\n", sz, err); }
+        }
+        CHECK(after > 0 && refused > 0 && other == 0, "case %d: every size too small refused for memory, then generated (%d refused, %d other, up to %zu bytes)",
+              v, refused, other, sz);
+    }
+    printf("  a region too small at every size: refused, never a crash\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

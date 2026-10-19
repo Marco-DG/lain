@@ -3318,6 +3318,7 @@ static bool jg_post_obligations(JG *g, JObls *L, int32_t ci) {
         int32_t n = 0;
         for (IrInstr *i = b->instrs; i; i = i->next) n++;
         JB B = jb_begin(g, b->id, n, -1);
+        if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
         JLT t[JCLAIM_MAXT]; JCons goal;
         for (int k = 0; k < c->nt; k++) {
             t[k].var = jb_val(&B, c->key[k] == JKEY_RET ? b->term.cond : jg_value(g, c->key[k]));
@@ -3358,6 +3359,7 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
             for (int32_t q = 0; q < (ek >= 0 ? en : 1); q++) {
                 if (ek >= 0 && ec[q] < 0) continue;
                 JB B = jb_begin(g, P->id, n, -1);
+                if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
                 B.to = H->id;
                 JLT t[JCLAIM_MAXT]; JCons goal; int nt = 0;
                 for (int k = 0; k < c->nt; k++) {
@@ -3554,6 +3556,7 @@ static bool jg_lex_vcs(JG *g, JObls *L, const JRank *r, IrBlock *P, int32_t np, 
     int32_t s0[JRANK_MAXC], sn[JRANK_MAXC], cb, n = jg_lex_comps(r, t0, nr, s0, sn, &cb);
     for (int32_t q = 0; q <= n; q++) {
         JB B = jb_begin(g, P->id, np, -1);
+        if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
         B.to = H->id;
         int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
         jb_rank_terms(&B, r, H, P, pre, post);
@@ -3630,6 +3633,7 @@ static bool jg_region_vcs(JG *g, JObls *L, const JRank *r, IrBlock *P, int32_t n
     int32_t m = r->nreg;
     for (int32_t a = 0; a < r->reg[m - 1].ng; a++) {           // (A)
         JB B = jb_begin(g, P->id, np, -1);
+        if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
         B.to = H->id;
         int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
         jb_rank_terms(&B, r, H, P, pre, post);
@@ -3642,6 +3646,7 @@ static bool jg_region_vcs(JG *g, JObls *L, const JRank *r, IrBlock *P, int32_t n
     for (int32_t k = 0; k < m; k++)                              // (B)
         for (int32_t l = k + 1; l < m; l++) {
             JB B = jb_begin(g, P->id, np, -1);
+            if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
             B.to = H->id;
             int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
             jb_rank_terms(&B, r, H, P, pre, post);
@@ -3849,6 +3854,7 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                 for (int what = j < fall ? 0 : 1; what <= (j < fall ? 0 : 2); what++)
                 for (int32_t q = 0; q < (cn[j] == 1 || (gk[j] == 1 && what == 2) ? 1 : cn[j]); q++) {
                     JB B = jb_begin(g, P->id, np, -1);
+                    if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
                     B.to = H->id;
                     int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
                     for (int32_t i = 0; i < r->nt; i++) {
