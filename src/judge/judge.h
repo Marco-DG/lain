@@ -38,7 +38,8 @@ typedef struct { JWork lim; } JudgeLimits;   // the solver's budget per VC (§3:
 typedef struct {
     void *ctx;
     bool (*solve)(void *ctx, const JVc *vc, JWork lim, JAnswer *out);
-    bool (*propose)(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk);
+    bool (*propose)(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JGuardClaim **gc, int32_t *ngc,
+                    JRank **rk, int32_t *nrk);
 } JudgeCalls;
 
 typedef enum {
@@ -158,13 +159,15 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
     char why[256];
     // 1. the claims
     JClaim *cl = NULL; int32_t ncl = 0;
+    JGuardClaim *gc = NULL; int32_t ngc = 0;              // guarded return claims: certified as claims are
     JRank *rk = NULL; int32_t nrk = 0;                    // ranking claims: owed, never facts
     if (calls && calls->propose) {
         JGenOffer offer = { gbuf, gcap, mod };
         JudgeGen gen = jgen_offer(&offer);
         JClaim *pc = NULL; int32_t pn = 0;
+        JGuardClaim *pg = NULL; int32_t pgn = 0;
         JRank *pr = NULL; int32_t prn = 0;
-        if (!calls->propose(calls->ctx, mod, &gen, &pc, &pn, &pr, &prn)) {
+        if (!calls->propose(calls->ctx, mod, &gen, &pc, &pn, &pg, &pgn, &pr, &prn)) {
             // a proposer that failed hands over nothing: neither its claims nor its ranks
             JRecord r; memset(&r, 0, sizeof r); r.k = JREC_NO_CLAIMS; r.reason = "the proposer failed: the module is judged with no claims";
             sink(sink_ctx, &r);
@@ -172,6 +175,10 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
             if (pn > 0 && pc) {
                 if (!(cl = JMEM_NEW(region, JClaim, pn))) { snprintf(err, errcap, "the judge's region is full"); return false; }
                 memcpy(cl, pc, sizeof *cl * (size_t)pn); ncl = pn;
+            }
+            if (pgn > 0 && pg) {
+                if (!(gc = JMEM_NEW(region, JGuardClaim, pgn))) { snprintf(err, errcap, "the judge's region is full"); return false; }
+                memcpy(gc, pg, sizeof *gc * (size_t)pgn); ngc = pgn;
             }
             if (prn > 0 && pr) {
                 if (!(rk = JMEM_NEW(region, JRank, prn))) { snprintf(err, errcap, "the judge's region is full"); return false; }
@@ -181,11 +188,11 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
     }
     // 2. the claims certified: each VC every claim owes, in every function
     const char *unstable = NULL; char ubuf[400];
-    for (IrFunc *f = mod; ncl && f && !unstable; f = f->next) {
+    for (IrFunc *f = mod; (ncl || ngc) && f && !unstable; f = f->next) {
         if (f->is_extern || !f->entry) continue;
         char *mark = region->cur;
         JObl *o; int32_t n;
-        if (!jgen_func(region, f, mod, cl, ncl, NULL, 0, NULL, JGEN_CLAIMS, &o, &n, why, sizeof why)) {
+        if (!jgen_func(region, f, mod, cl, ncl, gc, ngc, NULL, 0, NULL, JGEN_CLAIMS, &o, &n, why, sizeof why)) {
             snprintf(ubuf, sizeof ubuf, "the generator refuses the claims in %.*s: %s", (int)f->name->length, f->name->name, why);
             unstable = ubuf; break;
         }
@@ -210,8 +217,8 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
         if (f->is_extern || !f->entry) continue;
         char *mark = region->cur;
         JObl *o; int32_t n;
-        if (!jgen_func(region, f, mod, unstable ? NULL : cl, unstable ? 0 : ncl, rk, nrk, have_cg ? &cg : NULL, JGEN_ALL,
-                       &o, &n, why, sizeof why)) {
+        if (!jgen_func(region, f, mod, unstable ? NULL : cl, unstable ? 0 : ncl, unstable ? NULL : gc, unstable ? 0 : ngc, rk, nrk,
+                       have_cg ? &cg : NULL, JGEN_ALL, &o, &n, why, sizeof why)) {
             JRecord r; memset(&r, 0, sizeof r); r.k = JREC_REFUSED; r.fn = f;
             char *rs = JMEM_NEW(region, char, strlen(why) + 1);
             if (!rs) { ir_cg_free(&cg); snprintf(err, errcap, "the judge's region is full"); return false; }

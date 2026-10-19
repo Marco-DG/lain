@@ -38,7 +38,7 @@ static const JRank *gen_rk = NULL; static int32_t gen_nrk = 0;   // the ranking 
 static char *gen_ids(IrFunc *f, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, gen_mod, NULL, 0, gen_rk, gen_nrk, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { strcpy(why, err); return NULL; }
+    if (!jgen_func(&m, f, gen_mod, NULL, 0, NULL, 0, gen_rk, gen_nrk, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { strcpy(why, err); return NULL; }
     size_t cap = 64 * (size_t)(n + 1), len = 0; char *t = malloc(cap); t[0] = 0;
     for (int32_t i = 0; i < n; i++)
         len += (size_t)snprintf(t + len, cap - len, "%s %s %s%s\n", o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal, o[i].outside ? " outside" : "");
@@ -49,7 +49,7 @@ static char *gen_ids(IrFunc *f, char *why) {
 static char *gen_recipes(IrFunc *f, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, gen_mod, NULL, 0, gen_rk, gen_nrk, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { strcpy(why, err); return NULL; }
+    if (!jgen_func(&m, f, gen_mod, NULL, 0, NULL, 0, gen_rk, gen_nrk, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { strcpy(why, err); return NULL; }
     size_t cap = 1 << 16, len = 0; char *t = malloc(cap); t[0] = 0;
     for (int32_t i = 0; i < n; i++)
         for (int32_t x = 0; !o[i].outside && x < o[i].vc.nvars; x++) {
@@ -69,7 +69,7 @@ static char *gen_recipes(IrFunc *f, char *why) {
 static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, gen_mod, cl, ncl, gen_rk, gen_nrk, NULL, only, &o, &n, err, sizeof err)) {
+    if (!jgen_func(&m, f, gen_mod, cl, ncl, NULL, 0, gen_rk, gen_nrk, NULL, only, &o, &n, err, sizeof err)) {
         if (why) strcpy(why, err); else printf("  generator refused: %s\n", err);
         return NULL;
     }
@@ -1918,7 +1918,7 @@ int main(void) {
             ir_set_ret(b2, ir_binop(f, b2, T[ti][0]->is_signed ? IR_SDIV : IR_UDIV, ir_const_int(f, b2, 100, T[ti][0]), x, T[ti][0]));
             ir_finalize_cfg(f);
             JMem m = jmem_over(region, sizeof region); JObl *o; int32_t n; char err[200];
-            if (!jgen_func(&m, f, f, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { bad++; continue; }
+            if (!jgen_func(&m, f, f, NULL, 0, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { bad++; continue; }
             for (int e = 0; e < 2; e++) {                                  // the true edge, the false one
                 char org[32], xn[16], yn[16]; snprintf(org, sizeof org, "guard bb0->bb%d", e ? b2->id : b1->id);
                 snprintf(xn, sizeof xn, "%%v%d", x->id); snprintf(yn, sizeof yn, "%%v%d", y->id);
@@ -3338,7 +3338,7 @@ int main(void) {
             JMem m = jmem_over(region, sizeof region);
             JObl *o; int32_t n; char err[200];
             int guarded = 0, right = 0;
-            if (jgen_func(&m, f, gen_mod, cl, 2, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err))
+            if (jgen_func(&m, f, gen_mod, cl, 2, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err))
                 for (int32_t q = 0; q < n; q++) {
                     if (o[q].claim < 0) { CHECK(!o[q].guarded, "an obligation that is no claim's is not guarded"); continue; }
                     guarded += o[q].guarded;
@@ -3424,7 +3424,7 @@ int main(void) {
             CHECK(ok, "case 0: a[j] is one of the four cells' header versions:\n%s", vz);
             JMem m = jmem_over(region, sizeof region);
             JObl *o; int32_t n; char err[200]; int seen = 0, right = 0;
-            if (jgen_func(&m, f, gen_mod, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err))
+            if (jgen_func(&m, f, gen_mod, NULL, 0, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &n, err, sizeof err))
                 for (int32_t q = 0; q < n; q++)
                     for (int32_t x = 0; x < o[q].vc.nvars; x++) {
                         char nm2[32]; snprintf(nm2, sizeof nm2, "%%s%d[2]@", a->id);
@@ -4641,7 +4641,7 @@ int main(void) {
         for (sz = 256; after < 32 && sz < sizeof region; sz += 64) {
             JMem m = jmem_over(region, sz);
             JObl *o; int32_t n; char err[200];
-            if (jgen_func(&m, f, f, cl, 3, &r, 1, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { if (after < 0) after = 0; after++; continue; }
+            if (jgen_func(&m, f, f, cl, 3, NULL, 0, &r, 1, NULL, JGEN_ALL, &o, &n, err, sizeof err)) { if (after < 0) after = 0; after++; continue; }
             if (after >= 0) after++;                           // a size past the first success that fails again: fine, said
             refused++;
             if (!strstr(err, "out of memory") && !strstr(err, "full")) { other++; if (other == 1) printf("  (%zu bytes: %s)\n", sz, err); }
@@ -4749,6 +4749,69 @@ int main(void) {
         free(t);
     }
     printf("  sign facts: an exact product's, a signed quotient's, and none where neither applies\n");
+    // 82. GUARDED return claims (s7), all i32: dbl(a) = a +% a, the claim `ret <= 6 where a = 3`. Its post
+    // VC at dbl's return holds the guard; at a call dbl(3) the bound is a conjunct, at dbl(4) nothing,
+    // at dbl(k) the disjunction `k <= 2 | -k <= -4 | ret <= 6`; and each shape it may not have refused
+    {   IrFunc *df = ir_func_new(&A, nm("dbl82"), i32t, IR_FUNC_PURE);
+        IrValue *da = ir_add_param(df, i32t, nm("a"));
+        IrInstr *ad = ir_instr(df, IR_ADD, i32t, 2); ad->operands[0] = da; ad->operands[1] = da; ad->wrap = IR_WRAP_MODULAR; ir_emit(df->entry, ad);
+        ir_set_ret(df->entry, ad->result);
+        ir_finalize_cfg(df);
+        IrFunc *mf = ir_func_new(&A, nm("main82"), i32t, IR_FUNC_PURE);
+        IrValue *k = ir_add_param(mf, i32t, nm("k"));
+        IrValue *r[3];
+        for (int c = 0; c < 3; c++) {                         // dbl(3), dbl(4), dbl(k), each divided by
+            IrInstr *call = ir_instr(mf, IR_CALL, i32t, 1); call->aux.callee = nm("dbl82");
+            call->operands[0] = c == 2 ? k : ir_const_int(mf, mf->entry, c ? 4 : 3, i32t); ir_emit(mf->entry, call);
+            r[c] = ir_binop(mf, mf->entry, IR_SDIV, ir_const_int(mf, mf->entry, 100, i32t), call->result, i32t);
+        }
+        ir_set_ret(mf->entry, ir_binop(mf, mf->entry, IR_ADD, r[0], ir_binop(mf, mf->entry, IR_ADD, r[1], r[2], i32t), i32t));
+        ir_finalize_cfg(mf);
+        df->next = mf;
+        JGuardClaim gcl; memset(&gcl, 0, sizeof gcl);
+        gcl.fn = df; gcl.nt = 1; gcl.key[0] = JKEY_RET; gcl.coef[0] = 1; gcl.rhs = 6; gcl.ng = 1; gcl.gkey[0] = da->id; gcl.gval[0] = 3;
+        JMem m = jmem_over(region, sizeof region); JObl *o; int32_t n; char err[200];
+        bool ok = jgen_func(&m, df, df, NULL, 0, &gcl, 1, NULL, 0, NULL, JGEN_CLAIMS, &o, &n, err, sizeof err);
+        char want[160]; snprintf(want, sizeof want, "guard %%v%d : 1*%%v%d = 3", da->id, da->id);
+        char *pv = NULL;
+        if (ok && n == 1) { FILE *t = tmpfile(); jvc_print(&o[0].vc, t); long l = ftell(t); rewind(t); pv = malloc((size_t)l + 1); pv[fread(pv, 1, (size_t)l, t)] = 0; fclose(t); }
+        CHECK(ok && n == 1 && o[0].claim == 0 && pv && strstr(pv, want) && strstr(pv, " post 0"), "dbl's post VC, ordinal 0 (ncl 0), index 0, under the guard:\n%s", pv ? pv : err);
+        free(pv);
+        gen_mod = df;
+        char *t = NULL;
+        {   JMem m2 = jmem_over(region, sizeof region); JObl *o2; int32_t n2;
+            ok = jgen_func(&m2, mf, df, NULL, 0, &gcl, 1, NULL, 0, NULL, JGEN_ALL, &o2, &n2, err, sizeof err);
+            FILE *tf = tmpfile();
+            for (int32_t i = 0; ok && i < n2; i++) if (!o2[i].outside && !strcmp(o2[i].vc.id.kind, "divzero")) jvc_print(&o2[i].vc, tf);
+            long l = ftell(tf); rewind(tf); t = malloc((size_t)l + 1); t[fread(t, 1, (size_t)l, tf)] = 0; fclose(tf);
+        }
+        gen_mod = NULL;
+        int lit = 0, dis = 0;
+        for (const char *q = t; q && (q = strstr(q, "guarded #0 : ")); q++) { if (!strncmp(q + 13, "or {", 4)) dis++; else lit++; }
+        snprintf(want, sizeof want, "or { 1*%%v%d <= 2 | -1*%%v%d <= -4 | ", k->id, k->id);
+        CHECK(ok && lit == 1 && dis == 1 && strstr(t, want), "main: the bound at dbl(3), the disjunction at dbl(k), nothing at dbl(4) (%d literal, %d disjunctive):\n%s", lit, dis, t ? t : err);
+        free(t);
+        struct { JGuardClaim c; const char *why; } bad[5];
+        for (int q = 0; q < 5; q++) bad[q].c = gcl;
+        bad[0].c.ng = 0; bad[0].why = "of no guard";
+        bad[1].c.ng = 3; bad[1].why = "of more than it may have";
+        bad[2].c.gkey[0] = ad->result->id; bad[2].why = "not an integer parameter";
+        bad[3].c.gval[0] = (__int128)1 << 40; bad[3].why = "outside its parameter's type";
+        bad[4].c.ng = 2; bad[4].c.gkey[1] = da->id; bad[4].c.gval[1] = 3; bad[4].why = "naming one parameter twice";
+        for (int q = 0; q < 5; q++) {
+            JMem m3 = jmem_over(region, sizeof region); JObl *o3; int32_t n3; char e3[200] = "";
+            bool r3 = jgen_func(&m3, df, df, NULL, 0, &bad[q].c, 1, NULL, 0, NULL, JGEN_ALL, &o3, &n3, e3, sizeof e3);
+            CHECK(!r3 && strstr(e3, bad[q].why), "guarded claim %d refused (%s): got \"%s\"", q, bad[q].why, e3);
+        }
+        // with no guarded claims, no index past the claims
+        {   JMem m4 = jmem_over(region, sizeof region); JObl *o4; int32_t n4; int past = 0;
+            JClaim rc = claim1(df->entry, ad->result, 1, 0); rc.blk = JCLAIM_RET; rc.fn = df; rc.key[0] = JKEY_RET; rc.rhs = 1000;
+            ok = jgen_func(&m4, df, df, &rc, 1, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o4, &n4, err, sizeof err);
+            for (int32_t i = 0; ok && i < n4; i++) if (o4[i].claim >= 1) past++;
+            CHECK(ok && past == 0, "one claim, no guarded one: no claim index past 0 (%s, %d past)", ok ? "ok" : err, past);
+        }
+        printf("  guarded return claims: owed under the guard, a conjunct, a disjunction or nothing at a call, the shapes\n");
+    }
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

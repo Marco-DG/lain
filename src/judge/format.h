@@ -102,6 +102,15 @@ enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
 enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
                  struct IrFunc *fn; } JClaim;
+// A GUARDED return claim (s7): a return claim of `fn`, as a JClaim at JCLAIM_RET (the value returned,
+// JKEY_RET, and integer parameters), that holds where each guard parameter gkey[i] is gval[i] at
+// entry: `ret <= 84 where a0 = 48 and b0 = 36`. A list of its own beside the claims, so that no reader
+// of a claim can take one for unguarded. gen.h owes it at fn's returns under its guard, and states it
+// at every call: the bound where the arguments are those constants, else (not the guard) or the
+// bound. The VCs it owes name it ncl + its index.
+enum { JGUARD_MAXP = 2 };
+typedef struct { int32_t nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
+                 int32_t ng; int32_t gkey[JGUARD_MAXP]; __int128 gval[JGUARD_MAXP]; struct IrFunc *fn; } JGuardClaim;
 // A RANKING claim at a loop header: a tuple of components f_j = sum coef[j][i] * term_i + c0[j]
 // over terms by value id (a cell is its version at the header; any other value dominates it, so
 // its value before and after a trip is one). On each back edge, named by its predecessor `from`,
@@ -137,7 +146,8 @@ typedef struct {
 } JRank;
 // A version a claim can be about: a join's or a loop header's (`head`) fresh version of a cell.
 typedef struct { int32_t blk, key; const struct IrType *type; bool head; } JSlot;
-// A VC a claim owes, and which claim (an index into the set it was generated with).
+// A VC a claim owes, and which claim (an index into the set it was generated with; a guarded one's,
+// ncl + its index into its own list, which only a caller that passes guarded claims can receive).
 typedef struct { JVc vc; int32_t claim; } JClaimVc;
 // One edge into a loop header as the generator states it (its VC's hypotheses; the goal means
 // nothing), and the header's versions, of the cells the loop writes and of those it only reads:
@@ -163,8 +173,8 @@ enum { JGEN_ALL = -1, JGEN_CLAIMS = -2, JGEN_POST = -3 };
 // in the judge's region until the next call. False with `err` when the generator refuses.
 typedef struct {
     void *ctx;
-    bool (*claim_vcs)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
-                      JClaimVc **out, int32_t *nout, char *err, uint32_t errcap);
+    bool (*claim_vcs)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
+                      int32_t only, JClaimVc **out, int32_t *nout, char *err, uint32_t errcap);
     bool (*slots)(void *ctx, struct IrFunc *f, JSlot **out, int32_t *nout, char *err, uint32_t errcap);
     bool (*terms)(void *ctx, struct IrFunc *f, int32_t blk, JSlot **out, int32_t *nout, char *err, uint32_t errcap);
     // tk: each key's kind (JTERM_VALUE, JTERM_LEN), or NULL when every key is a value

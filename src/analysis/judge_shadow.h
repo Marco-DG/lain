@@ -84,11 +84,13 @@ static bool jsh_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     *out = lia_solve(vc, lim, c->work, c->wcap);
     return true;
 }
-static bool jsh_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk) {
+static bool jsh_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JGuardClaim **gc, int32_t *ngc,
+                        JRank **rk, int32_t *nrk) {
     JshCtx *c = ctx;
     c->F->gen = gen; c->F->mod = mod;
     free(c->last); free(c->last_rk);
     c->last = *out = finder_propose(c->F, nout);
+    *gc = NULL; *ngc = 0;                           // the finder proposes no guarded claim yet
     c->last_rk = *rk = c->F->rk; *nrk = c->F->nrk;      // ranking claims (PE.5): owed, never facts
     return !c->F->oom;                              // the judge reports a failed proposer
 }

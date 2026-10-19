@@ -163,7 +163,7 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) 
         for (IrFunc *f = F->mod; f; f = f->next) {
             if (f->is_extern || !f->entry) continue;
             JClaimVc *o; int32_t n;
-            if (!F->gen->claim_vcs(F->gen->ctx, f, cl, nc, JGEN_CLAIMS, &o, &n, err, sizeof err)) {
+            if (!F->gen->claim_vcs(F->gen->ctx, f, cl, nc, NULL, 0, JGEN_CLAIMS, &o, &n, err, sizeof err)) {
                 bool fresh = false;                          // this round's: drop those, then retry
                 for (int32_t ci = nold; ci < nc; ci++) if (cl[ci].fn == f) { bad[ci] = 1; fresh = true; }
                 if (!fresh) for (int32_t ci = 0; ci < nc; ci++) if (cl[ci].fn == f) bad[ci] = 1;
@@ -2216,7 +2216,7 @@ static bool fd_entry_max(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, co
     if (nv) memcpy(q, as, sizeof *q * (size_t)nv);
     q[nv] = *cand;
     JClaimVc *o; int32_t n;
-    bool ok = F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, cand->blk, &o, &n, err, sizeof err);
+    bool ok = F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, NULL, 0, cand->blk, &o, &n, err, sizeof err);
     free(q);
     if (!ok) return false;
     bool any = false; __int128 best = 0;
@@ -2325,7 +2325,7 @@ static bool fd_iter_bound(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, J
     for (int it = 0; it < 6 && !ok; it++) {
         cand->rhs = have ? B : -big; q[nv] = *cand;
         JClaimVc *o; int32_t n;
-        if (!F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, cand->blk, &o, &n, err, sizeof err)) break;
+        if (!F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, NULL, 0, cand->blk, &o, &n, err, sizeof err)) break;
         __int128 M = 0; bool any = false, unb = false;
         for (int32_t k = 0; k < n && !unb; k++) {
             if (o[k].claim != nv || !o[k].vc.id.kind) continue;
@@ -2724,7 +2724,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
                 if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
                 for (int32_t c = 0; c < ncd; c++) q2[nv + c] = cd[c].c;
                 JClaimVc *o; int32_t n;
-                bool gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + ncd, only, &o, &n, err, sizeof err);
+                bool gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + ncd, NULL, 0, only, &o, &n, err, sizeof err);
                 free(q2);
                 if (gok && !bound_candidates(F, cd, ncd, o, n, nv, as, nv, &cl, &nc, &ccl)) { free(sl); goto oom; }
                 // a header's back edge from ANY previous trip: each side of each header version
@@ -2738,7 +2738,7 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
                         if (!(q2 = malloc(sizeof *q2 * (size_t)(nv + n1)))) { free(sl); goto oom; }
                         if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
                         for (int32_t c = 0; c < n1; c++) { q2[nv + c] = cd[c].c; q2[nv + c].rhs = cd[c].tb; }
-                        gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + n1, only, &o, &n, err, sizeof err);
+                        gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + n1, NULL, 0, only, &o, &n, err, sizeof err);
                         free(q2);
                         if (gok && !bound_candidates(F, cd, n1, o, n, nv, as, nv, &cl, &nc, &ccl)) { free(sl); goto oom; }
                     }

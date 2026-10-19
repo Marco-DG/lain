@@ -215,6 +215,7 @@ typedef struct {
     uint8_t *writes;               // by header id * ncells: the loop stores the cell
     uint32_t hash;
     const JClaim *cl; int32_t ncl; // claims (untrusted input: each is owed on every edge into its block)
+    const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases (2), none (1), not asked yet (0)
 } JG;
 
@@ -2181,7 +2182,7 @@ static void jb_state(JB *B, int32_t x) {
             for (int32_t ci = 0; ci < g->ncl && !B->fail; ci++) {
                 const JClaim *c = &g->cl[ci];
                 if (c->blk != JCLAIM_RET || c->fn != h) continue;
-                JLT u[2]; bool ok = true;
+                JLT u[JCLAIM_MAXT]; bool ok = true;                // a return claim has up to JCLAIM_MAXT terms
                 for (int k = 0; k < c->nt && ok; k++) {
                     u[k].c = c->coef[k];
                     if (c->key[k] == JKEY_RET) { u[k].var = x; continue; }
@@ -2198,6 +2199,42 @@ static void jb_state(JB *B, int32_t x) {
                 if (!os) { B->fail = true; return; }
                 strcpy(os, o);
                 jb_atom(B, os, u, c->nt, J_LE, c->rhs);
+            }
+            // its GUARDED return claims (s7): where each guard argument is a literal equal to its
+            // constant, the bound; a literal of another value, nothing; otherwise, VC-wide only,
+            // `a1 <= c1 - 1 | a1 >= c1 + 1 | ... | sum <= rhs`, which the solver uses where it
+            // shows the arguments are the constants
+            for (int32_t gi = 0; gi < g->ngc && !B->fail; gi++) {
+                const JGuardClaim *c = &g->gc[gi];
+                if (c->fn != h) continue;
+                JLT u[JCLAIM_MAXT]; int32_t ga[JGUARD_MAXP]; bool ok = true, lit = true, eq = true;
+                for (int k = 0; k < c->nt + c->ng && ok; k++) {
+                    int32_t key = k < c->nt ? c->key[k] : c->gkey[k - c->nt];
+                    if (k < c->nt) u[k].c = c->coef[k];
+                    if (k < c->nt && key == JKEY_RET) { u[k].var = x; continue; }
+                    int pk = jg_param_at(h, key);
+                    IrParam *pp = h->params;
+                    for (int q = 0; q < pk && pp; q++) pp = pp->next;
+                    if (pk < 0 || pk >= d->n_operands || !pp || !pp->value ||
+                        !jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
+                    if (k < c->nt) { u[k].var = jb_val(B, d->operands[pk]); continue; }
+                    __int128 cv;
+                    if (jg_const_of(g, d->operands[pk], &cv)) { if (cv != c->gval[k - c->nt]) eq = false; }
+                    else lit = false;
+                    ga[k - c->nt] = jb_val(B, d->operands[pk]);
+                }
+                if (!ok || (lit && !eq)) continue;
+                const char *os = jb_str(B, "contract %%v%lld guarded #%lld", x, gi, 0);
+                if (lit) { jb_atom(B, os, u, c->nt, J_LE, c->rhs); continue; }
+                if (B->jS >= 0) continue;                          // a disjunct holds no disjunction
+                JCons cs[2 * JGUARD_MAXP + 1]; int n = 0;
+                for (int k = 0; k < c->ng && !B->fail; k++) {
+                    JLT w[1];
+                    w[0].var = ga[k]; w[0].c = 1;  if (!jb_cons(B, w, 1, J_LE, c->gval[k] - 1, &cs[n++])) B->fail = true;
+                    w[0].var = ga[k]; w[0].c = -1; if (!jb_cons(B, w, 1, J_LE, -c->gval[k] - 1, &cs[n++])) B->fail = true;
+                }
+                if (B->fail || !jb_cons(B, u, c->nt, J_LE, c->rhs, &cs[n++])) { B->fail = true; break; }
+                jb_orn(B, os, cs, n);
             }
             break;
         }
@@ -3405,8 +3442,38 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
             return jg_fail(g, "a return claim on a function whose return wraps");
     return true;
 }
+// A guarded return claim as the return claim it guards, for the checks they share
+static JClaim jg_guard_as_claim(const JGuardClaim *c) {
+    JClaim r; memset(&r, 0, sizeof r);
+    r.blk = JCLAIM_RET; r.nt = c->nt; r.rhs = c->rhs; r.fn = c->fn;
+    for (int k = 0; k < JCLAIM_MAXT; k++) { r.key[k] = c->key[k]; r.tk[k] = c->tk[k]; r.coef[k] = c->coef[k]; }
+    return r;
+}
+// A guarded return claim's own rules: a return claim's, and one or two guard parameters, each an
+// integer parameter of h named once, its constant in the parameter's type.
+static bool jg_guard_claim_ok(JG *g, const JGuardClaim *c, const IrFunc *h) {
+    JClaim r = jg_guard_as_claim(c);
+    if (!jg_ret_claim_ok(g, &r, h)) return false;
+    if (c->ng < 1 || c->ng > JGUARD_MAXP) return jg_fail(g, "a guarded claim of no guard, or of more than it may have");
+    for (int k = 0; k < c->ng; k++) {
+        for (int j = 0; j < k; j++) if (c->gkey[j] == c->gkey[k]) return jg_fail(g, "a guarded claim naming one parameter twice in its guard");
+        int pk = jg_param_at(h, c->gkey[k]);
+        const IrParam *pp = h->params;
+        for (int q = 0; q < pk && pp; q++) pp = pp->next;
+        JRange tr;
+        if (pk < 0 || !pp || !pp->value || !jg_is_int(pp->value->type) || !jg_range(pp->value->type, &tr))
+            return jg_fail(g, "a guarded claim's guard is not an integer parameter");
+        if (c->gval[k] < tr.lo || c->gval[k] > tr.hi) return jg_fail(g, "a guarded claim's constant outside its parameter's type");
+    }
+    return true;
+}
 static bool jg_claims_ok(JG *g) {
     const __int128 big = (__int128)1 << 66;
+    for (int32_t i = 0; i < g->ngc; i++) {                   // owed here, or a callee's contract
+        const JGuardClaim *c = &g->gc[i];
+        if (!c->fn) return jg_fail(g, "a guarded claim with no function");
+        if ((c->fn == g->f || jg_same_module(c->fn, g->f)) && !jg_guard_claim_ok(g, c, c->fn)) return false;
+    }
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
         if (c->blk == JCLAIM_RET) {                          // owed here, or a callee's contract
@@ -3461,14 +3528,20 @@ static bool jg_claims_ok(JG *g) {
 // of its branch owes it once, with no edge condition.
 // A return claim's obligation, `post`: at every return, the claim about the value returned (its
 // landing in the return type exact: jg_ret_claim_ok) and the parameters' values (their entry ones).
-static bool jg_post_obligations(JG *g, JObls *L, int32_t ci) {
-    const JClaim *c = &g->cl[ci];
+// A GUARDED one's (gd, s7) as its return claim's, its guard a hypothesis (each guard parameter at
+// entry is its constant); nothing about any other state at entry (a module variable, what an
+// argument points to) is assumed: the generator states the body's facts as for any return claim.
+static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardClaim *gd, int ordinal, int32_t claim) {
     for (IrBlock *b = g->f->blocks; b; b = b->next) {
         if (g->rpoix[b->id] < 0 || b->term.kind != IR_TERM_RET || !b->term.cond) continue;
         int32_t n = 0;
         for (IrInstr *i = b->instrs; i; i = i->next) n++;
         JB B = jb_begin(g, b->id, n, -1);
         if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
+        for (int k = 0; gd && k < gd->ng; k++) {
+            JLT w[1]; w[0].var = jb_val(&B, jg_value(g, gd->gkey[k])); w[0].c = 1;
+            jb_atom(&B, jb_str(&B, "guard %%v%lld", gd->gkey[k], 0, 0), w, 1, J_EQ, gd->gval[k]);
+        }
         JLT t[JCLAIM_MAXT]; JCons goal;
         for (int k = 0; k < c->nt; k++) {
             t[k].var = jb_val(&B, c->key[k] == JKEY_RET ? b->term.cond : jg_value(g, c->key[k]));
@@ -3476,16 +3549,22 @@ static bool jg_post_obligations(JG *g, JObls *L, int32_t ci) {
         }
         if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
         JObl *o = jg_push(g, L);
-        if (!o || !jb_finish(&B, NULL, "post", ci, &goal, o)) return jg_fail(g, "out of memory building a VC");
-        o->claim = ci;                                       // no instruction, no edge: as b returns
+        if (!o || !jb_finish(&B, NULL, "post", ordinal, &goal, o)) return jg_fail(g, "out of memory building a VC");
+        o->claim = claim;                                    // no instruction, no edge: as b returns
     }
     return true;
 }
 static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
+    // a guarded return claim's `post`, ordinal (ncl + i) * 1000 (past every claim's), index ncl + i
+    for (int32_t i = 0; i < g->ngc && only < 0; i++) {
+        if (g->gc[i].fn != g->f) continue;
+        JClaim r = jg_guard_as_claim(&g->gc[i]);
+        if (!jg_post_obligations(g, L, &r, &g->gc[i], (g->ncl + i) * 1000, g->ncl + i)) return false;
+    }
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
         if (c->blk == JCLAIM_RET) {
-            if (c->fn == g->f && only < 0 && !jg_post_obligations(g, L, ci)) return false;
+            if (c->fn == g->f && only < 0 && !jg_post_obligations(g, L, c, NULL, ci, ci)) return false;
             continue;
         }
         if (!jg_mine(g, c) || only == JGEN_POST || (only >= 0 && c->blk != only)) continue;
@@ -4476,13 +4555,15 @@ static bool jg_ids_unique(JG *g, const JObls *L) {
 // by the caller (NULL: the generator builds its own, a cost per function). `cl` are the module's claims (untrusted: see the header): f's cut points and
 // returns, and its same-module callees' returns. False with `err` on an IR the generator does not
 // read (a phi), a claim it cannot state and owe, or a region that is full.
-static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JRank *rk, int32_t nrk,
-                      const IrCallGraph *cg, int32_t only, JObl **out, int32_t *nout, char *err, size_t errcap) {
+static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
+                      const JRank *rk, int32_t nrk, const IrCallGraph *cg, int32_t only, JObl **out, int32_t *nout,
+                      char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
+    g.gc = gc; g.ngc = gc ? ngc : 0;
     *out = NULL; *nout = 0;
-    if (!f || !f->entry || f->is_extern) return g.ncl == 0 || jg_fail(&g, "a claim on a function without a body");
+    if (!f || !f->entry || f->is_extern) return g.ncl + g.ngc == 0 || jg_fail(&g, "a claim on a function without a body");
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
     JObls L; memset(&L, 0, sizeof L);
     if (only == JGEN_ALL && !jg_obligations(&g, &L)) return false;
@@ -4496,6 +4577,10 @@ static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t
         if (!ok) return false;
     }
     if (!jg_ids_unique(&g, &L)) return false;
+    // a claim's VC names it by its index, a guarded one's by ncl + its own: a reader that indexes the
+    // claims by it receives no index past them unless it passed guarded claims
+    for (int32_t q = 0; q < L.n; q++)
+        if (L.o[q].claim >= g.ncl + g.ngc) return jg_fail(&g, "an obligation naming a claim past the claims given");
     *out = L.o; *nout = L.n;
     return true;
 }
@@ -4784,11 +4869,11 @@ static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, i
 // ── the generator offered to an UNTRUSTED proposer (format.h's JudgeGen) ─────────────────────
 // Each call works in the caller's region from its start, so an answer lives until the next call.
 typedef struct { char *buf; size_t cap; IrFunc *mod; } JGenOffer;
-static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only,
-                          JClaimVc **out, int32_t *nout, char *err, uint32_t errcap) {
+static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
+                          int32_t only, JClaimVc **out, int32_t *nout, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     JObl *o; int32_t n;
-    if (!jgen_func(&m, f, x->mod, cl, ncl, NULL, 0, NULL, only, &o, &n, err, errcap)) return false;
+    if (!jgen_func(&m, f, x->mod, cl, ncl, gc, ngc, NULL, 0, NULL, only, &o, &n, err, errcap)) return false;
     JClaimVc *v = JMEM_NEW(&m, JClaimVc, n ? n : 1);
     if (!v) { snprintf(err, errcap, "out of memory"); return false; }
     for (int32_t i = 0; i < n; i++) { v[i].vc = o[i].vc; v[i].claim = o[i].claim; }

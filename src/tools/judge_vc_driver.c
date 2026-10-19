@@ -493,10 +493,12 @@ static bool jj_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     if (c->corrupt && out->k == J_ANS_CERT) { bool done = false; jj_corrupt(&out->cert.body, &done); }
     return true;
 }
-static bool jj_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JRank **rk, int32_t *nrk) {
+static bool jj_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *nout, JGuardClaim **gc, int32_t *ngc,
+                       JRank **rk, int32_t *nrk) {
     JjCtx *c = ctx;
     c->F->gen = gen; c->F->mod = mod;
     *out = finder_propose(c->F, nout);
+    *gc = NULL; *ngc = 0;                // the finder proposes no guarded claim yet
     *rk = c->F->rk; *nrk = c->F->nrk;    // ranking claims (PE.5): owed, never facts
     return !c->F->oom;                   // a NULL for want of memory is not "no claims"
 }
@@ -682,11 +684,11 @@ int main(int argc, char **argv) {
             // with --ranks, the finder's rankings: a VC owed on a back edge is checked like any other.
             // One the generator refuses is a finder bug (a compile refuses the function over it):
             // reported and counted, then the function's other hypotheses are checked without them
-            bool gen_ok = ranks && jgen_func(&m, f, irmod, cl, ncl, F.rk, F.nrk, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err);
+            bool gen_ok = ranks && jgen_func(&m, f, irmod, cl, ncl, NULL, 0, F.rk, F.nrk, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err);
             if (ranks && !gen_ok) {
                 fprintf(stderr, "REFUSED-RANKING %.*s: %s\n", (int)f->name->length, f->name->name, err); refusedrk++; rc = 1;
             }
-            if (!gen_ok && !jgen_func(&m, f, irmod, cl, ncl, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
+            if (!gen_ok && !jgen_func(&m, f, irmod, cl, ncl, NULL, 0, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
                 fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; continue;
             }
             HK *nh = realloc(hk, sizeof *hk * (size_t)(nhk + n + 1));
@@ -710,7 +712,7 @@ int main(int argc, char **argv) {
         Vra *V = vra_analyze(f);
         m = jmem_over(buf, cap);
         JObl *o; int32_t n;
-        if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
+        if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
             printf("%s %.*s: %s\n", stats ? "ERROR\t" : "# generator refused", (int)f->name->length, f->name->name, err);
             rc = 1; vra_free(V); continue;
         }

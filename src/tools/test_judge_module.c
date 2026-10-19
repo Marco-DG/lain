@@ -35,7 +35,7 @@ static IrType *u32t;
 
 // ── the stub callbacks ──────────────────────────────────────────────────────────────────────
 enum { S_HONEST, S_CORRUPT, S_GOAL_MODEL, S_HYP_MODEL, S_BUDGET };
-typedef struct { int mode; int propose; JClaim claim; JRank rank[3]; int32_t nrank; JClaim claims[4]; int32_t nclaims; } Stub;
+typedef struct { int mode; int propose; JClaim claim; JRank rank[3]; int32_t nrank; JClaim claims[4]; int32_t nclaims; JGuardClaim gc[2]; int32_t ngc; } Stub;
 enum { P_NONE, P_CLAIM, P_FAIL, P_RANK };
 static int nins_m(IrBlock *b) { int n = 0; for (IrInstr *i = b->instrs; i; i = i->next) n++; return n; }
 static JInt jv(int64_t v) { JInt x; memset(&x, 0, sizeof x); uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v; x.neg = v < 0; while (u) { x.limb[x.n++] = (uint32_t)u; u >>= 32; } return x; }
@@ -64,8 +64,10 @@ static bool stub_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     }
     return true;
 }
-static bool stub_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *n, JRank **rk, int32_t *nrk) {
+static bool stub_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out, int32_t *n, JGuardClaim **gc, int32_t *ngc,
+                         JRank **rk, int32_t *nrk) {
     Stub *s = ctx; (void)mod; (void)gen;
+    *gc = s->ngc ? s->gc : NULL; *ngc = s->ngc;
     *rk = s->nrank ? s->rank : NULL; *nrk = s->nrank;
     if (s->propose == P_FAIL) return false;
     if (s->propose == P_CLAIM) { *out = &s->claim; *n = 1; } else { *out = NULL; *n = 0; }      // P_RANK: ranks only
@@ -1125,6 +1127,86 @@ int main(void) {
                           "Fig. 3: its eight rank VCs proved:\n%s", recs);
         else if (c == 4) CHECK(nn == 1 && nkind == 1 && count_in(recs, "not-implied") == 1, "overlap: rank.region alone not implied:\n%s", recs);
         else CHECK(nkind >= 1, "case %d: %s not implied:\n%s", c, kind, recs);
+    }
+
+    // GUARDED return claims (s7), all i32. dbl(a) = a +% a has no bound for every a (it wraps), but under
+    // a = 3 it is 6. The caller divides by 7 - dbl(3). (0) dbl(3) <= 6 and >= 6, guarded: certified, the
+    // division proved; (1) no claim: not implied; (2) a false one, dbl(3) <= 5: uncertified; (3) dbl(3)'s
+    // claims at a call dbl(4), dividing by 8 - dbl(4), which is 0: not applied, not implied; (4) a
+    // computed argument, `if k == 3 { 100 / (7 - dbl(k)) }`: the disjunction applies it, proved; (5) a
+    // callee that reads a pointer argument, h(x, p) = x + *p, guarded x = 1 -> ret <= 3: nothing about *p
+    // is assumed at entry, so it is not implied (uncertified); (6) a return claim of THREE terms, add(a, b)
+    // = a + b, ret - a - b <= 0, used at the call `10 / (6 - add(2, 3))`: proved (the call site's term
+    // array holds JCLAIM_MAXT terms; it held 2)
+    for (int c = 0; c < 7; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true);
+        IrFunc *df = ir_func_new(&A, nm(c == 6 ? "add" : c == 5 ? "h" : "dbl"), mi32, IR_FUNC_PURE);
+        IrValue *da = ir_add_param(df, mi32, nm("a")), *db = NULL;
+        if (c == 6) db = ir_add_param(df, mi32, nm("b"));
+        if (c == 5) { IrType *pt = ir_type_new(&A, IRT_PTR); pt->elem = mi32; db = ir_add_param(df, pt, nm("p")); }
+        IrInstr *ad = ir_instr(df, IR_ADD, mi32, 2); ad->operands[0] = da;
+        ad->operands[1] = c == 6 ? db : c == 5 ? ir_load(df, df->entry, db, mi32) : da;
+        ad->wrap = c >= 5 ? IR_WRAP_CHECK : IR_WRAP_MODULAR; ir_emit(df->entry, ad);
+        ir_set_ret(df->entry, ad->result);
+        ir_finalize_cfg(df);
+        IrFunc *mf = NULL;
+        if (c != 5) {
+            mf = ir_func_new(&A, nm("main"), mi32, IR_FUNC_PURE);
+            IrValue *k = ir_add_param(mf, mi32, nm("k"));
+            IrBlock *m0 = mf->entry, *m1 = c == 4 ? ir_new_block(mf) : m0, *m2 = c == 4 ? ir_new_block(mf) : NULL;
+            if (c == 4) ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_EQ, k, ir_const_int(mf, m0, 3, mi32)), m1, m2);
+            IrInstr *call = ir_instr(mf, IR_CALL, mi32, c == 6 ? 2 : 1); call->aux.callee = nm(c == 6 ? "add" : "dbl");
+            call->operands[0] = c == 4 ? k : ir_const_int(mf, m1, c == 3 ? 4 : c == 6 ? 2 : 3, mi32);
+            if (c == 6) call->operands[1] = ir_const_int(mf, m1, 3, mi32);
+            ir_emit(m1, call);
+            IrValue *den = ir_binop(mf, m1, IR_SUB, ir_const_int(mf, m1, c == 3 ? 8 : c == 6 ? 6 : 7, mi32), call->result, mi32);
+            ir_set_ret(m1, ir_binop(mf, m1, IR_SDIV, ir_const_int(mf, m1, c == 6 ? 10 : 100, mi32), den, mi32));
+            if (c == 4) ir_set_ret(m2, ir_const_int(mf, m2, 0, mi32));
+            ir_finalize_cfg(mf);
+            df->next = mf;
+        }
+        Stub sg; memset(&sg, 0, sizeof sg);
+        if (c != 1) sg.propose = P_RANK;                       // claims only (no rank, no plain claim)
+        if (c == 6) {                                          // an ordinary return claim of three terms
+            sg.nclaims = 1; JClaim *rc = &sg.claims[0];
+            rc->blk = JCLAIM_RET; rc->fn = df; rc->nt = 3; rc->key[0] = JKEY_RET; rc->coef[0] = 1;
+            rc->key[1] = da->id; rc->coef[1] = -1; rc->key[2] = db->id; rc->coef[2] = -1; rc->rhs = 0;
+        } else if (c != 1) {
+            sg.ngc = c == 5 ? 1 : 2;
+            for (int q = 0; q < sg.ngc; q++) {
+                JGuardClaim *g = &sg.gc[q];
+                g->fn = df; g->nt = 1; g->key[0] = JKEY_RET; g->coef[0] = q ? -1 : 1;
+                g->rhs = c == 5 ? 3 : q ? -6 : (c == 2 ? 5 : 6);
+                g->ng = 1; g->gkey[0] = da->id; g->gval[0] = c == 5 ? 1 : 3;
+            }
+        }
+        CHECK(run(df, &sg, true, sizeof region, err), "judges: %s", err);
+        int dz_p = 0, dz_n = 0, unc = count_in(recs, "uncertified"), post_n = 0;
+        for (const char *l = recs; *l; ) {
+            const char *e = strchr(l, '\n'); size_t n = e ? (size_t)(e - l) : strlen(l);
+            char v[24] = "", pt[64] = "", kd[64] = "", line[600]; snprintf(line, sizeof line, "%.*s", (int)(n < 599 ? n : 599), l);
+            if (sscanf(line, "%23s %63s %63s", v, pt, kd) == 3) {
+                if (!strcmp(kd, "divzero")) { if (!strcmp(v, "proved")) dz_p++; else if (!strcmp(v, "not-implied")) dz_n++; }
+                if (!strcmp(kd, "post") && !strcmp(v, "not-implied")) post_n++;
+            }
+            l = e ? e + 1 : l + n;
+        }
+        if (c == 0 || c == 4 || c == 6) CHECK(dz_p == 1 && dz_n == 0 && unc == 0, "case %d: certified, the division proved:\n%s", c, recs);
+        else if (c == 1 || c == 3) CHECK(dz_p == 0 && dz_n == 1 && unc == 0, "case %d: the division not implied:\n%s", c, recs);
+        else CHECK(unc > 0 && post_n == 1, "case %d: the guarded claim not implied, the module uncertified:\n%s", c, recs);
+        if (c == 5) {                                          // the post VC assumes the guard and nothing of *p
+            JMem m = jmem_over(region, sizeof region); JObl *o; int32_t n; char e2[200];
+            bool ok = jgen_func(&m, df, df, NULL, 0, sg.gc, 1, NULL, 0, NULL, JGEN_CLAIMS, &o, &n, e2, sizeof e2);
+            int guards = 0, about_p = 0;
+            for (int32_t i = 0; ok && i < n; i++)
+                for (int32_t h = 0; h < o[i].vc.nhyps; h++) {
+                    const char *og = o[i].vc.hyps[h].origin;
+                    if (og && !strncmp(og, "guard", 5)) guards++;
+                    if (og && strstr(og, "contract")) about_p++;
+                }
+            CHECK(ok && n == 1 && guards == 1 && about_p == 0, "case 5: one post VC, one guard hypothesis, no other assumption (%s, %d VCs, %d guards)",
+                  ok ? "ok" : e2, ok ? n : -1, guards);
+        }
     }
 
     // an ENTRY term (c40). (A) LarrazOliveras' Fig. 1, all i32: `while y >= 1 { x = x - 1; while y < z
