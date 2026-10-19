@@ -580,6 +580,7 @@ int main(int argc, char **argv) {
     // with a fixed falling component, a MAX or MIN of rows among them (its definitions, c41). A
     // ranking whose fixed edges hold owes nothing more there: its hypotheses are facts all the same
     bool ranks = false, ranks_free = false;
+    unsigned long long meter_cap = 0;                       // --finder-work=N: the finder's work cap (tests)
     for (int k = 2; k < argc; k++) {
         if (!strcmp(argv[k], "--no-claims")) claims = false;
         if (!strcmp(argv[k], "--claims")) show = true;
@@ -593,6 +594,7 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--judge")) judge = true;
         if (!strcmp(argv[k], "--judge-corrupt")) judge = corrupt = true;
         if (!strcmp(argv[k], "--cover")) cover = true;
+        if (!strncmp(argv[k], "--finder-work=", 14)) meter_cap = strtoull(argv[k] + 14, NULL, 10);   // tests: the meter's cap
     }
     Arena aa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -625,6 +627,7 @@ int main(int argc, char **argv) {
     JGenOffer offer = { hbuf, hcap, irmod };
     JudgeGen gen = jgen_offer(&offer);
     JFinder F; memset(&F, 0, sizeof F);
+    F.meter_cap = meter_cap;
     F.gen = &gen; F.mod = irmod; F.work = work; F.worksz = wcap;
     F.lim.pivot = 100000; F.lim.node = 4096; F.lim.leaf = 4096;   // solve_vc's
     int rc = 0;
@@ -659,6 +662,7 @@ int main(int argc, char **argv) {
         if (!judge_module(irmod, &lim, &calls, jrec_print, NULL, &jm, err, sizeof err)) { fprintf(stderr, "judge_module: %s\n", err); return 1; }
         printf("# judge proved=%lld not-implied=%lld outside=%lld budget=%lld capacity=%lld solver-bug=%lld uncertified=%lld refused=%lld no-claims=%lld\n",
                jrec_n[0], jrec_n[1], jrec_n[2], jrec_n[3], jrec_n[4], jrec_n[5], jrec_n[6], jrec_n[7], jrec_n[8]);
+        printf("# finder work=%llu out=%d\n", (unsigned long long)F.meter, (int)F.meter_out);
         free(buf); free(hbuf); free(work);
         return jrec_n[JREC_SOLVER_BUG] || jrec_n[JREC_UNCERTIFIED] || jrec_n[JREC_REFUSED] || jrec_n[JREC_NO_CLAIMS] ? 1 : 0;
     }

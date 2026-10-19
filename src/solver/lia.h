@@ -130,6 +130,16 @@ static bool ls_emit_close(LSol *S, LSteps *L, int32_t f) {
 }
 typedef enum { LS_UNSAT, LS_SAT, LS_STOP } LRes;
 
+// The finder's WORK METER: while ls_meter_on (finder_propose sets it, and only the finder: the
+// judge's own queries are never metered), every pivot spends the rational operations it does
+// (lt_pivot's count) from ls_meter_left, and once nothing is left every query stops as a budget stop
+// (S->out), which every caller already reads as "no answer". Operations, not pivots or a tableau's
+// cells: one pivot on a 2,500-column Farkas tableau costs what thousands on a small one do, and a
+// sparse row costs what it holds. Deterministic: a count, never a clock. The solver is untrusted; a
+// stopped query only proposes less.
+static bool ls_meter_on;
+static uint64_t ls_meter_left, ls_meter_spent;
+
 // ── the search at 128 bits (lia_core.h): the solver ─────────────────────────────────────────────
 #define N_T LSi
 #define CN(x) x

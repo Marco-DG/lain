@@ -31,6 +31,8 @@ typedef struct {
     bool use_vra;                        // VRA's header states and return intervals as candidates
     const FdHdr *hdr; int nhdr;
     long long proposed, kept, dropped;   // counted across calls
+    uint64_t meter; bool meter_out;      // the last call's metered work (lia.h), and whether it ran out
+    uint64_t meter_cap;                  // the work allowed a call; 0: FD_WORK (a test sets it smaller)
     bool oom;                            // the last call returned no claims because memory ran out
     JRank *rk; int32_t nrk;              // the last call's ranking claims (malloc'd; the caller frees)
 } JFinder;
@@ -2682,7 +2684,21 @@ static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const
     }
     return true;
 }
+static JClaim *finder_propose_run(JFinder *F, int32_t *ncl);
+// The finder's work, metered (lia.h): FD_WORK rational operations for a module's whole proposal,
+// then every query answers budget and what was found so far is proposed. Set from the corpus and
+// the PE.11 ports' three legs at 8405d47: the most any of them spends is 3.8e8 (tests/trust/
+// judge_signed_division_pass.ln, 16 s); a u8 loop with two `if`s of wrapping steps (fuzz_loops'
+// wrap mode, seed 2490187, k 216) spent 2.1e9, 146 s, and still had no ranking.
+#define FD_WORK 500000000ull
 static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
+    ls_meter_on = true; ls_meter_left = F->meter_cap ? F->meter_cap : FD_WORK; ls_meter_spent = 0;
+    JClaim *r = finder_propose_run(F, ncl);
+    ls_meter_on = false;
+    F->meter = ls_meter_spent; F->meter_out = ls_meter_left == 0;
+    return r;
+}
+static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
     IrFunc *mod = F->mod;
     char err[200];
     JClaim *cl = NULL, *as = NULL;

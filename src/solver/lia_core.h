@@ -151,8 +151,11 @@ static bool CN(lt_build)(LSol *S, CN(LTab) *t, const CN(LCon) *cons, int32_t m) 
 }
 
 // Move nonbasic j so that row r's basic variable reaches `target`, then exchange the two.
-static void CN(lt_pivot)(LSol *S, CN(LTab) *t, int32_t r, int32_t j, CN(LQ) target) {
+// Returns the rational operations it did (the finder's meter, lia.h): one per row it moves and one
+// per entry it updates, so a sparse row costs what it holds, not the tableau's width.
+static uint64_t CN(lt_pivot)(LSol *S, CN(LTab) *t, int32_t r, int32_t j, CN(LQ) target) {
     int32_t w = t->w, b = t->bas[r];
+    uint64_t ops = (uint64_t)w;
     CN(LQ) *R = &t->T[(int64_t)r * w];
     CN(LQ) a = R[j];
     CN(LQ) theta = CN(lq_div)(S, CN(lq_sub)(S, target, t->val[b]), a);
@@ -162,6 +165,7 @@ static void CN(lt_pivot)(LSol *S, CN(LTab) *t, int32_t r, int32_t j, CN(LQ) targ
         CN(LQ) e = t->T[(int64_t)r2 * w + j];
         if (r2 == r || N_SGN(e.n) == 0) continue;
         t->val[t->bas[r2]] = CN(lq_add)(S, t->val[t->bas[r2]], CN(lq_mul)(S, e, theta));
+        ops++;
     }
     // row r now defines j:  j = (1/a)·b − Σ_{c≠j} (R[c]/a)·c
     CN(LQ) inv = CN(lq_div)(S, CN(lq_int)(N_I(1)), a);
@@ -172,10 +176,11 @@ static void CN(lt_pivot)(LSol *S, CN(LTab) *t, int32_t r, int32_t j, CN(LQ) targ
         CN(LQ) e = R2[j];
         if (r2 == r || N_SGN(e.n) == 0) continue;
         for (int32_t c = 0; c < w; c++)
-            if (c != j && N_SGN(R[c].n) != 0) R2[c] = CN(lq_add)(S, R2[c], CN(lq_mul)(S, e, R[c]));
+            if (c != j && N_SGN(R[c].n) != 0) { R2[c] = CN(lq_add)(S, R2[c], CN(lq_mul)(S, e, R[c])); ops++; }
         R2[j] = CN(lq_int)(N_I(0));
     }
     t->bas[r] = j; t->row[j] = r; t->row[b] = -1;
+    return ops;
 }
 
 // 1: every bound holds; 0: row *cr cannot be repaired, its basic variable below its lower bound
@@ -200,8 +205,12 @@ static int CN(lt_check)(LSol *S, CN(LTab) *t, int32_t *cr, bool *below) {
         }
         if (j < 0) { *cr = r; *below = lowv; return S->cap ? -1 : 0; }
         if (S->used.pivot >= S->limit.pivot) { S->out = true; return -1; }
+        if (ls_meter_on && ls_meter_left == 0) { S->out = true; return -1; }   // the finder's run (lia.h)
         S->used.pivot++;
-        CN(lt_pivot)(S, t, r, j, lowv ? t->lo[bv] : t->hi[bv]);
+        uint64_t ops = CN(lt_pivot)(S, t, r, j, lowv ? t->lo[bv] : t->hi[bv]);
+        if (ls_meter_on) {
+            ls_meter_left = ops >= ls_meter_left ? 0 : ls_meter_left - ops; ls_meter_spent += ops;
+        }
     }
 }
 
