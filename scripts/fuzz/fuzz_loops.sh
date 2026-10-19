@@ -21,6 +21,8 @@ echo "fuzz_loops: RANDOM_SEED=$SEED"
 # first ran, so the judge's ranking rules (c35..c37) had no ground-truth oracle at all.
 python3 scripts/fuzz/fuzz_loops.py ./lain "$N" "$SEED"; r1=$?
 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_loops.py ./lain "$N" "$SEED"; r2=$?
-# and every update wrapping (`+%`, `-%`) on if arms, the oracle modulo 256 (s5), judge leg
-FUZZ_LOOPS_WRAP=1 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_loops.py ./lain "$N" "$SEED"; r3=$?
+# and every update wrapping (`+%`, `-%`) on if arms, the oracle modulo 256 (s5), judge leg, on N/3
+# programs: with all N the three legs ran past the full suite's 1500 s per fuzzer (seed 2490187)
+M=$(( N / 3 > 0 ? N / 3 : 1 ))
+FUZZ_LOOPS_WRAP=1 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_loops.py ./lain "$M" "$SEED"; r3=$?
 [ $r1 -eq 0 ] && [ $r2 -eq 0 ] && [ $r3 -eq 0 ]
