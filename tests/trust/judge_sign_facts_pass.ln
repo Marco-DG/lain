@@ -1,0 +1,31 @@
+// s6: the judge's SIGN facts, run over every sign of their operands, zero included. A product of two
+// variables, where both are >= 1, is at least each (mul.sign); a signed quotient by a variable y is
+// between 0 and x on x's side where y >= 1 (div.sign), and at most half of x where y >= 2 and x >= 0
+// (div.half). Each is a disjunction guarded by its operands' signs, stated wherever the product or
+// quotient is named: here by the checked `+ 1` after it. judge_gate runs main and checks every
+// hypothesis at the values the program has, so a guard left out, or a side flipped, is a false
+// hypothesis at some (a, b) or (x, y) below: mixed signs, a zero factor, a negative dividend.
+func prod(a i32 >= -12 and <= 12, b i32 >= -12 and <= 12) i32 {
+    p = a * b
+    return p + 1
+}
+func quot(x i32 >= -1000 and <= 1000, y i32 >= -12 and <= 12) i32 {
+    if y == 0 { return 0 }
+    q = x / y
+    return q + 1
+}
+func main() i32 {
+    var s i32 = 0
+    var a i32 = -12
+    while a <= 12 {
+        var b i32 = -12
+        while b <= 12 {
+            s = s +% prod(a, b)
+            s = s +% quot(a * 83, b)
+            b = b + 1
+        }
+        a = a + 1
+    }
+    if s == 123456789 { return 1 }
+    return 0
+}

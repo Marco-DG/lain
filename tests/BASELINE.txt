@@ -1943,6 +1943,10 @@ ty=Slice_i32 scalar
 rc=0
 out=
 at=const 2
+### tests/trust/judge_sign_facts_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/trust/judge_static_eval_pass.ln
 rc=0
 out=

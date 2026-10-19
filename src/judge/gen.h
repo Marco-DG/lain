@@ -1982,6 +1982,21 @@ static void jb_state(JB *B, int32_t x) {
             JRange h;                                          // two variables: between the corners
             if (!lin && jg_mul_hull(g, d, &h)) jb_range(B, x, &h, jb_str(B, "def %%v%lld mul.hull", id, 0, 0));
             if (!lin) jb_mul_mono(B, x, d, id);
+            // two variables of an exact product: where both are >= 1, it is at least each (p - b =
+            // b(a - 1) >= 0), so `fact(n) = n *? fact(n - 1)` keeps fact >= 1 (s6). Two disjunctions of
+            // three, VC-wide only: a disjunct holds no disjunction
+            if (!lin && B->jS < 0 && jg_is_int(d->operands[0]->type) && jg_is_int(d->operands[1]->type)) {
+                int32_t av = jb_val(B, d->operands[0]), bv = jb_val(B, d->operands[1]);
+                const char *o = jb_str(B, "def %%v%lld mul.sign", id, 0, 0);
+                for (int w = 0; w < 2; w++) {
+                    JCons cs[3]; JLT tt[2];
+                    tt[0].var = av; tt[0].c = 1; if (!jb_cons(B, tt, 1, J_LE, 0, &cs[0])) break;
+                    tt[0].var = bv; tt[0].c = 1; if (!jb_cons(B, tt, 1, J_LE, 0, &cs[1])) break;
+                    tt[0].var = w ? av : bv; tt[0].c = 1; tt[1].var = x; tt[1].c = -1;
+                    if (!jb_cons(B, tt, 2, J_LE, 0, &cs[2])) break;
+                    jb_orn(B, o, cs, 3);
+                }
+            }
             break;
         }
         case IR_CAST:
@@ -2023,6 +2038,33 @@ static void jb_state(JB *B, int32_t x) {
                 bool dv = d->op == IR_SDIV || d->op == IR_UDIV;
                 const char *o = jb_str(B, dv ? "def %%v%lld div.hull" : "def %%v%lld rem.hull", id, 0, 0);
                 if (jg_divrem_hull(g, d, &h)) jb_range(B, x, &h, o);
+                // a signed quotient by a variable y: where y >= 1 it is between 0 and x, on x's side (`/`
+                // truncates toward zero, interp.h, and y >= 1 leaves no /0 and no MIN / -1), and where
+                // y >= 2 and x >= 0, at most half of x (div.half). Disjunctions of three, VC-wide only (s6)
+                if (dv && !uns && B->jS < 0 && jg_is_int(d->operands[1]->type)) {
+                    int32_t xv0 = jb_val(B, d->operands[0]), yv0 = jb_val(B, d->operands[1]);
+                    const char *os = jb_str(B, "def %%v%lld div.sign", id, 0, 0);
+                    for (int w = 0; w < 4; w++) {
+                        JCons cs[3]; JLT tt[2];
+                        tt[0].var = yv0; tt[0].c = 1; if (!jb_cons(B, tt, 1, J_LE, 0, &cs[0])) break;            // y <= 0
+                        int pos = w < 2;                                                                       // the x >= 0 side
+                        tt[0].var = xv0; tt[0].c = pos ? 1 : -1; if (!jb_cons(B, tt, 1, J_LE, -1, &cs[1])) break;  // x <= -1 | -x <= -1
+                        if (w % 2 == 0) { tt[0].var = x; tt[0].c = pos ? -1 : 1; if (!jb_cons(B, tt, 1, J_LE, 0, &cs[2])) break; }   // q >= 0 | q <= 0
+                        else { tt[0].var = x; tt[0].c = pos ? 1 : -1; tt[1].var = xv0; tt[1].c = pos ? -1 : 1; if (!jb_cons(B, tt, 2, J_LE, 0, &cs[2])) break; }   // q <= x | x <= q
+                        jb_orn(B, os, cs, 3);
+                    }
+                    {   // y >= 2 and x >= 0: 2q <= x
+                        JCons cs[3]; JLT tt[2];
+                        tt[0].var = yv0; tt[0].c = 1;
+                        if (jb_cons(B, tt, 1, J_LE, 1, &cs[0])) {                                          // y <= 1
+                            tt[0].var = xv0; tt[0].c = 1;
+                            if (jb_cons(B, tt, 1, J_LE, -1, &cs[1])) {                                     // x <= -1
+                                tt[0].var = x; tt[0].c = 2; tt[1].var = xv0; tt[1].c = -1;
+                                if (jb_cons(B, tt, 2, J_LE, 0, &cs[2])) jb_orn(B, jb_str(B, "def %%v%lld div.half", id, 0, 0), cs, 3);   // 2q - x <= 0
+                            }
+                        }
+                    }
+                }
                 // a remainder below its divisor itself (`i % s.len < s.len`): an unsigned one always
                 // (its divisor is nonzero where it completes), a signed one where x >= 0 and y >= 1
                 JRange ra, rb;

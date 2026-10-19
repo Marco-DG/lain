@@ -4713,6 +4713,42 @@ int main(void) {
         free(t);
     }
     printf("  a wrap's cases inside a join's disjuncts, each with its guard; one case exact there; the cap\n");
+    // 81. SIGN facts (s6), all i32: `100 / (a op b)`, whose divzero VC names the product or quotient.
+    // (0) a *? b: mul.sign, p >= b and p >= a where a, b >= 1; (1) a / b: div.sign's four (y >= 1: 0 <= q
+    // <= x for x >= 0, x <= q <= 0 for x <= 0) and div.half (y >= 2, x >= 0: 2q <= x); and none where
+    // the operation is not exact or the fact is not this rule's: (2) a *% b, wrapping; (3) a *? 3, linear
+    // (exact already); (4) an unsigned a / b (u32)
+    for (int c = 0; c < 5; c++) {
+        IrType *ty = c == 4 ? u32t : i32t;
+        IrFunc *f = ir_func_new(&A, nm("sign81"), ty, IR_FUNC_PURE);
+        IrValue *a = ir_add_param(f, ty, nm("a")), *b = ir_add_param(f, ty, nm("b"));
+        IrBlock *b0 = f->entry;
+        IrValue *rhs = c == 3 ? ir_const_int(f, b0, 3, ty) : b;
+        IrInstr *op = ir_instr(f, c == 1 ? IR_SDIV : c == 4 ? IR_UDIV : IR_MUL, ty, 2);
+        op->operands[0] = a; op->operands[1] = rhs; op->wrap = c == 2 ? IR_WRAP_MODULAR : IR_WRAP_CHECK; ir_emit(b0, op);
+        ir_set_ret(b0, ir_binop(f, b0, c == 4 ? IR_UDIV : IR_SDIV, ir_const_int(f, b0, 100, ty), op->result, ty));
+        ir_finalize_cfg(f);
+        char *t = gen_text(f);
+        char key[48]; snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, op->result) + 2);
+        const char *dz = t ? vc_of(t, key) : "";
+        int A0 = a->id, B0 = b->id, P = op->result->id;
+        char w[7][160];
+        snprintf(w[0], 160, "def %%v%d mul.sign : or { 1*%%v%d <= 0 | 1*%%v%d <= 0 | -1*%%v%d + 1*%%v%d <= 0 }", P, A0, B0, P, B0);
+        snprintf(w[1], 160, "def %%v%d mul.sign : or { 1*%%v%d <= 0 | 1*%%v%d <= 0 | -1*%%v%d + 1*%%v%d <= 0 }", P, A0, B0, P, A0);
+        snprintf(w[2], 160, "def %%v%d div.sign : or { 1*%%v%d <= 0 | 1*%%v%d <= -1 | -1*%%v%d <= 0 }", P, B0, A0, P);
+        snprintf(w[3], 160, "def %%v%d div.sign : or { 1*%%v%d <= 0 | 1*%%v%d <= -1 | 1*%%v%d + -1*%%v%d <= 0 }", P, B0, A0, P, A0);
+        snprintf(w[4], 160, "def %%v%d div.sign : or { 1*%%v%d <= 0 | -1*%%v%d <= -1 | 1*%%v%d <= 0 }", P, B0, A0, P);
+        snprintf(w[5], 160, "def %%v%d div.sign : or { 1*%%v%d <= 0 | -1*%%v%d <= -1 | -1*%%v%d + 1*%%v%d <= 0 }", P, B0, A0, P, A0);
+        snprintf(w[6], 160, "def %%v%d div.half : or { 1*%%v%d <= 1 | 1*%%v%d <= -1 | 2*%%v%d + -1*%%v%d <= 0 }", P, B0, A0, P, A0);
+        if (c == 0) CHECK(strstr(dz, w[0]) && strstr(dz, w[1]) && count(dz, "mul.sign") == 2, "a *? b: mul.sign's two:\n%s", dz);
+        else if (c == 1) {
+            bool all = true;
+            for (int k = 2; k < 7; k++) all = all && strstr(dz, w[k]);
+            CHECK(all && count(dz, "div.sign") == 4 && count(dz, "div.half") == 1, "a / b: div.sign's four and div.half:\n%s", dz);
+        } else CHECK(t && strstr(dz, "divzero") && !strstr(dz, ".sign") && !strstr(dz, "div.half"), "case %d: no sign fact:\n%s", c, dz);
+        free(t);
+    }
+    printf("  sign facts: an exact product's, a signed quotient's, and none where neither applies\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
