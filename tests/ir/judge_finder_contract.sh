@@ -19,7 +19,8 @@
 # - multr, twowayr, ex5r: recursions from judge_finder_recursion, each passing on what should fall
 #   (the regions, the parameter split and the max of affine rows at a call); swapr, 4Nested's swap as
 #   a recursion (a recursion of several rows reaches every template; the recursive 4Nested itself is
-#   ranked by one row, so it does not reach |v| + |w| growing).
+#   ranked by one row, so it does not reach |v| + |w| growing); splitr, Toulouse's loop with x set to 0
+#   on one arm (the sign split on a loop, whose z = 0 region must not be taken as empty).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
@@ -198,8 +199,25 @@ func f(q i32, a i32, b i32) i32 effects raises {
     return f((q +? a else panic("overflow")) -? 1 else panic("overflow"), b, a)
 }
 LN
+cat > "$T/splitr.ln" <<'LN'
+extern func nondet() i32 effects io
+func task(nd0 i32, nd1 i32) effects io, raises {
+    var x i32 = 0
+    var y i32 = nd0
+    var z i32 = nd1
+    if nondet() != 0 {
+        x = 1
+    } else {
+        x = 0
+    }
+    while (y < 100) and (z < 100) {
+        y = y +? x else panic("overflow")
+        z = z -? x else panic("overflow")
+    }
+}
+LN
 bad=0
-for p in negkeep shrink gap over larraz swap multr twowayr ex5r swapr; do
+for p in negkeep shrink gap over larraz swap multr twowayr ex5r swapr splitr; do
     out=$("$T/jvc" "$T/$p.ln" --judge 2>&1)
     echo "$out" | grep -q '^# judge proved=' || { echo "$p: the driver gave no summary:"; echo "$out" | tail -3; bad=1; continue; }
     recs=$(echo "$out" | awk '$1 == "v1" && $5 ~ /^(rank|rec)\./')

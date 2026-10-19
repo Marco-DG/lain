@@ -206,6 +206,8 @@ typedef struct {
     JVc **full;                             // each path before slicing, for a retry on fewer pairs
     int32_t nedges, edges[FD_MAXEDGES];     // a loop's back edges (at most JRANK_MAXE), a cycle's calls
     int32_t npk;                            // the first npk pairs are the header's versions (cells)
+    FdRaw *raw; int32_t nraw;               // the back edges as the generator gave them, disjunctions
+                                            // whole (the flattening above drops some); NULL on subsets
     uint8_t *moves;                         // per version: some path gives it a new value (its pre and
                                             // post differ there); NULL on fd_rank's subset loops, whose
                                             // pairs are renumbered
@@ -611,6 +613,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
         }
     }
     L->dead = L->npaths == 0 && ndead > 0;
+    L->raw = raw; L->nraw = nraw;
     return L->npaths > 0;
 }
 static bool fd_i128(const JInt *x, __int128 *out) {
@@ -1125,14 +1128,61 @@ static bool fd_rank_absgrow(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *
 // each its own tuple from the finder's own search over the calls its guard leaves (templates off),
 // a region no call meets its first guard row. No call moves between them (z is passed on, the same
 // variable on both sides), they cover the integers, and each tuple ranks exactly the calls in its
-// region: what c43 owes. Recursion only, in this version: a loop's read-only cells would each cost
-// three more searches on every loop the finder cannot rank.
+// region: what c43 owes. On a LOOP (c38's regions), a read-only version is split only where every
+// back edge, as the generator gives it, already rules out z = 0 (one question per edge): the
+// Toulouse ports' x is 1 or -1, set before the loop, and the join's facts say so per path; a loop
+// whose cell may be 0 would pay three searches for a region that cannot rank, on every loop the
+// finder cannot rank.
+// Raw path k with lo <= z <= hi added (z a version, on its pre variable) is infeasible: asked of the path
+// as the generator gave it, every disjunction whole, as the judge's own VCs hold it. The flattened
+// paths drop disjunctions past FD_MAXFLAT, and a sign carried through a chain of joins went with them
+// (Toulouse-MultiBranchesToLoop-2: nine joins, x's sign only through all of them).
+static bool fd_raw_refutes(JFinder *F, const FdLoop *L, int32_t k, int32_t z, int64_t lo, int64_t hi) {
+    const FdRaw *w = &L->raw[k];
+    int32_t nconj = 0;                                       // a decided disjunction's conjuncts, one hypothesis each
+    for (int32_t i = 0; i < w->nh; i++) if (w->h[i].disj && w->h[i].nd == 1) nconj += w->h[i].dn[0];
+    JHyp *h = calloc((size_t)(w->nh + nconj + 2), sizeof *h);
+    JConj *cj = NULL; JCons *cc = NULL; int32_t ncj = 0, ncc = 0;
+    for (int32_t i = 0; i < w->nh; i++) if (w->h[i].disj) { ncj += w->h[i].nd; for (int32_t d = 0; d < w->h[i].nd; d++) ncc += w->h[i].dn[d]; }
+    cj = calloc((size_t)(ncj ? ncj : 1), sizeof *cj); cc = calloc((size_t)(ncc ? ncc : 1), sizeof *cc);
+    if (!h || !cj || !cc) { free(h); free(cj); free(cc); F->oom = true; return false; }
+    int32_t uj = 0, uc = 0, m = 0;
+    for (int32_t i = 0; i < w->nh; i++) {
+        const FdHyp *o = &w->h[i];
+        if (!o->disj) { h[m].cons = o->c.c; h[m].origin = "path"; m++; continue; }
+        if (o->nd == 1) {                                    // a case decided in fd_loop_from: its conjuncts
+            for (int32_t c = 0; c < o->dn[0]; c++) { h[m].cons = o->dc[c].c; h[m].origin = "path case"; m++; }
+            continue;
+        }
+        h[m].disj = true; h[m].dis = cj + uj; h[m].ndis = o->nd; h[m].origin = "path case";
+        for (int32_t d = 0, z0 = 0; d < o->nd; d++) {
+            cj[uj].c = cc + uc; cj[uj].nc = o->dn[d];
+            for (int32_t c = 0; c < o->dn[d]; c++) cc[uc++] = o->dc[z0++].c;
+            uj++;
+        }
+        m++;
+    }
+    JTerm tz[2]; tz[0].var = tz[1].var = w->pre[z]; fd_jint(&tz[0].coef, 1); fd_jint(&tz[1].coef, -1);
+    memset(&h[m], 0, sizeof h[m]); h[m].origin = "case"; h[m].cons = fd_cons_of(&tz[0], 1, hi); m++;     // z <= hi
+    memset(&h[m], 0, sizeof h[m]); h[m].origin = "case"; h[m].cons = fd_cons_of(&tz[1], 1, -lo); m++;    // -z <= -lo
+    JVc q; memset(&q, 0, sizeof q); q.vars = NULL; q.nvars = w->nv; q.hyps = h; q.nhyps = m;
+    q.goal.op = J_LE; fd_jint(&q.goal.rhs, -1);
+    bool r = lia_solve(&q, F->lim, F->work, F->worksz).k == J_ANS_CERT;
+    free(h); free(cj); free(cc);
+    return r;
+}
 static bool fd_rank_split(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
-    if (H != JRANK_ENTRY || !L->moves || L->npaths == 0) return false;
+    if (!L->moves || L->npaths == 0) return false;
     char *mark = L->cur;
     for (int32_t z = 0; z < L->npk; z++) {
         L->cur = mark;
         if (L->ptk[z] != JTERM_VALUE || L->moves[z]) continue;
+        if (H != JRANK_ENTRY) {                              // a loop: z = 0 refuted on every raw path
+            bool nz = L->raw && L->nraw > 0;
+            for (int32_t k = 0; k < L->nraw && nz; k++) nz = fd_raw_refutes(F, L, k, z, 0, 0);
+            if (F->oom) return false;
+            if (!nz) continue;
+        }
         // the three guards, each row s*z - t >= 0: z - 1, -z - 1; z and -z
         static const int8_t gs[4] = { 1, -1, 1, -1 }; static const int8_t gt[4] = { 1, 1, 0, 0 };
         static const int8_t g0[3] = { 0, 1, 2 }, gn[3] = { 1, 1, 2 };
@@ -1143,7 +1193,9 @@ static bool fd_rank_split(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *ou
             int32_t *re = fd_bump(L, sizeof(int32_t) * (size_t)L->npaths);
             if (!rp || !rf || !re) return false;
             int32_t nr = 0;
-            for (int32_t p = 0; p < L->npaths; p++) {
+            // a loop's z = 0 region was refuted on every raw path above; the flattened ones may have
+            // lost why (a dropped join), so it is taken as empty rather than searched
+            for (int32_t p = 0; p < L->npaths && !(H != JRANK_ENTRY && k == 2); p++) {
                 JTerm tt[4]; JCons ex[4]; int32_t ne = 0;
                 memset(tt, 0, sizeof tt);
                 for (int32_t a = 0; a < gn[k]; a++) {       // the guard before and after (z the same)
@@ -1359,7 +1411,7 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         }
         if (!ok) break;
         FdLoop V = *L; int32_t nn = 0;                       // only the pairs `on` names
-        V.moves = NULL;
+        V.moves = NULL; V.raw = NULL; V.nraw = 0;
         V.paths = sl; V.npaths = ns; V.edge = sedge;
         V.pkey = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.ptk = fd_bump(L, (size_t)L->npairs);
         V.pre = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.post = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs);

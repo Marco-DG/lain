@@ -22,13 +22,23 @@ A "set anew" goes through an auxiliary node joined to every value of that variab
 stays linear in the edges. That is decided here exactly. The compiler accepting such a loop
 (exit 0: its termination obligation discharged) is UNSOUND.
 
+FUZZ_REGIONS_SPLIT=1 makes the other loops a region ranking is for: split by the SIGN OF A VALUE
+THE LOOP ONLY READS (Toulouse-BranchesToLoop-2, MultiBranchesToLoop-2). A direction d is set before
+the loop, to one of two constants through a choice, then stepped by up to eight more joins
+(`if d > 0 { d = d +? 1 } else { d = d -? 1 }` and its variants); the loop over x and y adds or
+subtracts d and never writes it. d's values after the joins are a small set, computed exactly, and
+the program can run for ever iff, for some d in it, the graph above has a cycle. A d that may be 0
+is the near miss: there the loop does not move. A first constant 0 then stepped by Toulouse's join
+(0 -> -1 -> -2 ...) is the case whose set excludes 0 only through the joins. Unset, the programs are
+byte-identical to before.
+
 LAIN_FLAGS adds compiler flags (`--judge=authority` runs the judge's verdict, not the range
 analysis's). Not a program generator for fuzz_interp: its programs call externs, so they do not
 link; fuzz_interp skips this file by name.
 
     fuzz_regions.py LAIN N SEED [KEEPDIR]
 """
-import random, subprocess, sys, os, tempfile
+import random, re, subprocess, sys, os, tempfile
 
 GUARDS = ["x != 0", "y > 0", "x > 0", "x < 0", "y != 0", "x > y", "y < 100", "x > -100", "x < 100"]
 CASES = ["x > 0", "x < 0", "x >= 0", "y > 0", "x > y", "x < y"]
@@ -156,6 +166,59 @@ def can_run_forever(gs, cs, bs):
                 color[n] = 2; stack.pop()
     return False
 
+# FUZZ_REGIONS_SPLIT: (d0 choices, d steps, guards, body alternatives); a d step is (cond, then, else)
+DCONST = [1, -1, 2, -2, 1, -1, 0]
+DCONDS = ["d > 0", "d < 0", "d >= 0", "d > 1"]
+DARMS = ["d = d +? 1", "d = d -? 1", "d = 0 -? d", "d = d"]
+DSTEPS = ["x = x +? d", "x = x -? d", "y = y +? d", "y = y -? d"]
+SGUARDS = ["x < 100", "y < 100", "x > -100", "y > -100"]
+
+def gen_split(rng):
+    d0 = rng.sample(DCONST, 2)
+    n = rng.choice([0, 0, 1, 2, 4, 8])
+    if rng.random() < 0.7:     # the Toulouse step, which keeps d away from 0 once it is
+        st = [("d > 0", "d = d +? 1", "d = d -? 1")] * n
+    else:
+        st = [(rng.choice(DCONDS), rng.choice(DARMS), rng.choice(DARMS)) for _ in range(n)]
+    gs = rng.sample(SGUARDS, 2) if rng.random() < 0.6 else rng.sample(SGUARDS + GUARDS, rng.choice([1, 2]))
+    def a():
+        u = rng.sample(DSTEPS, rng.choice([1, 2, 2]))
+        if rng.random() < 0.2: u.append(rng.choice(STEPS))
+        return u
+    return d0, st, gs, [a() for _ in range(rng.choice([1, 1, 2]))]
+
+def d_values(d0, st):
+    vs = set(d0)
+    for (c, t, e) in st:
+        nv = set()
+        for d in vs:
+            v = eval((t if eval(c) else e).split(" = ")[1].replace("?", ""))
+            if -128 <= v <= 127: nv.add(v)        # a trapped step ends the run before the loop
+        vs = nv
+    return sorted(vs)
+
+def bind_d(u, d):
+    var, rhs = u.split(" = ")
+    return var + " = " + re.sub(r"\bd\b", "(%d)" % d, rhs)
+
+def split_forever(d0, st, gs, alts):
+    return any(can_run_forever(gs, [], [[[bind_d(u, d) for u in a] for a in alts]]) for d in d_values(d0, st))
+
+def src_split(d0, st, gs, alts):
+    L = ["extern func nondet() i32 effects io", "extern func nondet8() i8 effects io", "",
+         "func task(x0 i8, y0 i8) i8 effects io, raises {", "    var x = x0", "    var y = y0",
+         "    var d i8 = 0",
+         "    if nondet() != 0 {", "        d = %d" % d0[0], "    } else {", "        d = %d" % d0[1], "    }"]
+    for (c, t, e) in st:
+        L += ["    if %s {" % c, "        " + line(t), "    } else {", "        " + line(e), "    }"]
+    L += ["    while " + " and ".join("(%s)" % g for g in gs) + " {"]
+    if len(alts) == 1: L += ["        " + line(u) for u in alts[0]]
+    else:
+        L += ["        if nondet() != 0 {"] + ["            " + line(u) for u in alts[0]]
+        L += ["        } else {"] + ["            " + line(u) for u in alts[1]] + ["        }"]
+    L += ["    }", "    return x", "}"]
+    return "\n".join(L) + "\n"
+
 def main():
     lain, N, seed = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
     keep = sys.argv[4] if len(sys.argv) > 4 else None
@@ -166,14 +229,24 @@ def main():
     gap = (FIG3[0], ["x > 1", "x < 0"], [FIG3[2], FIG3[3], [["y = y"]]])
     if can_run_forever(*as_prog(FIG3)) or not can_run_forever(*as_prog(back)) or not can_run_forever(*gap):
         print("  ★ ORACLE BROKEN: Fig3, its two-step variant or its gap variant decided wrongly"); sys.exit(1)
+    split = os.environ.get("FUZZ_REGIONS_SPLIT") == "1"
+    # split mode's teeth: Toulouse's loop ends for d in {1, -1}, stepped or not; with d = 0 it does not
+    tou = (["x < 100", "y < 100"], [["x = x +? d", "y = y -? d"]])
+    if split and (split_forever([1, -1], [], *tou) or split_forever([1, -1], [("d > 0", "d = d +? 1", "d = d -? 1")] * 8, *tou)
+                  or not split_forever([1, 0], [], *tou) or d_values([1, -1], [("d > 1", "d = d -? 1", "d = d")]) != [-1, 1]):
+        print("  ★ ORACLE BROKEN: the split mode decided Toulouse or its d = 0 twin wrongly"); sys.exit(1)
     tmp = tempfile.mkdtemp(prefix="fuzz_regions.")
     acc = ref = other = internal = unsound = term = lost = fig3 = 0
     for k in range(N):
-        prog = gen(random.Random(seed * 1000003 + k))
-        p = os.path.join(tmp, "t.ln"); text = src(*prog); open(p, "w").write(text)
+        if split:
+            prog = gen_split(random.Random(seed * 1000003 + k))
+            p = os.path.join(tmp, "t.ln"); text = src_split(*prog); open(p, "w").write(text)
+        else:
+            prog = gen(random.Random(seed * 1000003 + k))
+            p = os.path.join(tmp, "t.ln"); text = src(*prog); open(p, "w").write(text)
         r = subprocess.run([lain, p, "-o", os.path.join(tmp, "t.c")] + os.environ.get("LAIN_FLAGS", "").split(),
                            capture_output=True, text=True)
-        forever = can_run_forever(*prog)
+        forever = split_forever(*prog) if split else can_run_forever(*prog)
         if not forever: term += 1
         if r.returncode == 0:
             acc += 1
@@ -195,7 +268,7 @@ def main():
             if keep: open(os.path.join(keep, "other_%d_%d.ln" % (seed, k)), "w").write(text + "\n// " + r.stderr.replace("\n", "\n// "))
     for f in os.listdir(tmp): os.remove(os.path.join(tmp, f))
     os.rmdir(tmp)
-    print("fuzz_regions: seed=%d gens=%d accepted=%d refused-termination=%d refused-other=%d" % (seed, N, acc, ref, other))
+    print(("fuzz_regions[split]" if split else "fuzz_regions") + ": seed=%d gens=%d accepted=%d refused-termination=%d refused-other=%d" % (seed, N, acc, ref, other))
     print("  ground truth: %d end from every input and choice; %d of those refused (the cost)" % (term, lost))
     print("  bugs:  UNSOUND(accepted, runs for ever)=%d INTERNAL(exit 70 or a signal)=%d" % (unsound, internal))
     if other > N // 2:
