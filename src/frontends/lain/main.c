@@ -205,7 +205,8 @@ int main(int argc, char **argv) {
     // has been deleted must be deleted with it.
 
     vra_dump_enabled = args.dump_octagon;
-    vra_dump_measures_enabled = args.dump_measures;
+    vra_dump_measures_enabled = args.dump_measures && !args.judge_authority;   // VRA decides nothing then
+    jau_dump_measures = args.dump_measures && args.judge_authority;           // the judge's rankings
 
 
     // sema = resolve identifiers → you’d call:

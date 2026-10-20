@@ -11,8 +11,9 @@
 //
 // AN ADAPTER, NOT A SECOND REPORTER. Each unproved obligation becomes the check record report.h
 // already prints (ir_report_check), placed where VRA files it, so a code and its text are one thing
-// in both modes. What a record cannot supply yet: E011's path excerpt (I.200, VRA's witness) and the
-// I.159 suppression (an accumulator's E086 under an unproved loop), both listed in the design.
+// in both modes. A record has no words of its own for E011's path excerpt (I.200): VRA's witness
+// gives them (jau_vra_twin, for the words only); and an accumulator's E086 in a loop the judge did
+// not show to end is dropped as that E011's consequence (I.159, judge_authority_report).
 //
 // Opt-in. VRA still runs for the finder's candidates (untrusted) and, in report.h, for the borrow
 // pass's disjointness queries (phase D) until those are owed as asserts. The effect row's DIVERGE is
@@ -59,6 +60,94 @@ static void jau_sink(void *ctx, const JRecord *r) {
     if (r->reason) snprintf(q->reason, sizeof q->reason, "%s", r->reason);
 }
 
+// --dump-measures under --judge=authority: each ranking the judge CERTIFIED (the finder proposed it,
+// and no rank.*, measure.* or rec.* record of its loop or function is unproved), in the source's
+// names. VRA's own measure is not printed in this mode: it decides nothing here (Documentation found
+// "no measure found" printed for loops the judge had proved, 2026-10-20). A ranking is the finder's,
+// untrusted and not unique: what is printed is the one this build proved, not THE measure.
+static bool jau_dump_measures;
+static IrInstr *jau_def(IrFunc *f, IrValue *v);
+static IrBlock *jau_header(const JauRec *q);
+static void jau_name(IrFunc *f, int32_t key, char *b, size_t n) {
+    const IrName *nm = NULL;
+    for (IrParam *p = f->params; p && !nm; p = p->next) if (p->value && p->value->id == key) nm = p->value->src_name;
+    for (IrBlock *bb = f->blocks; bb && !nm; bb = bb->next)
+        for (IrInstr *i = bb->instrs; i && !nm; i = i->next) if (i->result && i->result->id == key) nm = i->result->src_name;
+    if (nm && nm->length > 0) snprintf(b, n, "%.*s", (int)nm->length, nm->name);
+    else snprintf(b, n, "%%%d", (int)key);
+}
+static void jau_row(IrFunc *f, const JRank *r, int32_t j, char *b, size_t n) {
+    size_t at = 0; b[0] = 0;
+    long long k = (long long)r->c0[j];
+    bool pos = false;
+    for (int32_t t = 0; t < r->nt; t++) pos |= r->coef[j][t] > 0;
+    if (!pos && k > 0) { at += (size_t)snprintf(b, n, "%lld", k); k = 0; }   // `2147483647 - q`
+    for (int32_t pass = 0; pass < 2; pass++)                 // the positive terms first: `n - i`
+    for (int32_t t = 0; t < r->nt; t++) {
+        __int128 c = r->coef[j][t];
+        if (c == 0 || (pass == 0) != (c > 0)) continue;
+        char nm[80], term[120];
+        jau_name(f, r->key[t], nm, sizeof nm);
+        const char *fmt = r->tk[t] == JTERM_LEN ? "len(%s)" : r->tk[t] == JTERM_ENTRY ? "entry(%s)" : "%s";
+        char tn[100]; snprintf(tn, sizeof tn, fmt, nm);
+        long long a = (long long)(c < 0 ? -c : c);
+        if (a == 1) snprintf(term, sizeof term, "%s%s", at ? (c < 0 ? " - " : " + ") : (c < 0 ? "-" : ""), tn);
+        else snprintf(term, sizeof term, "%s%lld*%s", at ? (c < 0 ? " - " : " + ") : (c < 0 ? "-" : ""), a, tn);
+        at += (size_t)snprintf(b + at, at < n ? n - at : 0, "%s", term);
+    }
+    if (k || !at) at += (size_t)snprintf(b + at, at < n ? n - at : 0, at ? (k < 0 ? " - %lld" : " + %lld") : "%lld", at ? (k < 0 ? -k : k) : k);
+}
+static void jau_print_measures(const JRank *rk, int32_t nrk) {
+    for (int32_t i = 0; i < nrk; i++) {
+        const JRank *r = &rk[i];
+        IrFunc *f = r->fn;
+        if (!f) continue;
+        bool rec = r->blk == JRANK_ENTRY, ok = true;
+        for (int64_t q = 0; q < jau_n && ok; q++) {
+            const JauRec *x = &jau_r[q];
+            if (x->fn != f || x->k == JREC_PROVED) continue;
+            if (rec ? !strncmp(x->kind, "rec.", 4)
+                    : (!strncmp(x->kind, "rank.", 5) || !strncmp(x->kind, "measure.", 8)) && jau_header(x) && jau_header(x)->id == r->blk) ok = false;
+        }
+        if (!ok) continue;
+        isize line = 0;
+        if (!rec) {
+            IrBlock *H = NULL;
+            for (IrBlock *b = f->blocks; b && !H; b = b->next) if (b->id == r->blk) H = b;
+            IrInstr *hc = H && H->term.cond ? jau_def(f, H->term.cond) : NULL;
+            line = hc && hc->line ? hc->line : H ? H->term.line : 0;
+        }
+        char row[600], all[2000]; size_t at = 0; all[0] = 0;
+        const IrName *fn = f->src_name ? f->src_name : f->name;
+        if (r->nreg == 0) {
+            for (int32_t j = 0; j < r->ncomp; j++) {
+                jau_row(f, r, j, row, sizeof row);
+                at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%s%s", j ? ", " : "", row);
+            }
+            if (rec) fprintf(stderr, "[measure] %.*s: recursion: `%s%s%s` decreases at every call that may close the cycle (the judge's)\n",
+                             fn ? (int)fn->length : 1, fn ? fn->name : "?", r->ncomp > 1 ? "<" : "", all, r->ncomp > 1 ? ">" : "");
+            else fprintf(stderr, "[measure] %.*s: loop at line %lld: `%s%s%s` decreases%s (the judge's)\n",
+                         fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all,
+                         r->ncomp > 1 ? ">" : "", r->ncomp > 1 ? " lexicographically" : "");
+            continue;
+        }
+        for (int32_t k = 0; k < r->nreg; k++) {                // piecewise: each region's guard and tuple
+            at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%swhere ", k ? "; " : "");
+            for (int32_t g = r->reg[k].g0; g < r->reg[k].g0 + r->reg[k].ng; g++) {
+                jau_row(f, r, g, row, sizeof row);
+                at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%s%s >= 0", g > r->reg[k].g0 ? " and " : "", row);
+            }
+            at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, ": <");
+            for (int32_t t = r->reg[k].t0; t < r->reg[k].t0 + r->reg[k].nt; t++) {
+                jau_row(f, r, t, row, sizeof row);
+                at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%s%s", t > r->reg[k].t0 ? ", " : "", row);
+            }
+            at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, ">");
+        }
+        fprintf(stderr, "[measure] %.*s: loop at line %lld: piecewise, %s (the judge's)\n",
+                fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, all);
+    }
+}
 // Run the judge on `mod`. False with jau_internal set when it could not run, or reported a compiler
 // bug: the caller refuses the program with exit 70, never emits it.
 static bool judge_authority_run(IrFunc *mod) {
@@ -87,6 +176,7 @@ static bool judge_authority_run(IrFunc *mod) {
     } else snprintf(err, sizeof err, "no memory for the judge's region");
     if (!ran && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "the judge could not run: %s", err);
     if (jau_oom && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "out of memory keeping the judge's records");
+    if (ran && jau_dump_measures && jc.last_rk) jau_print_measures(jc.last_rk, F.nrk);
     free(buf); free(work); free(jc.last); free(jc.last_rk); free(jc.last_gc);
     for (int i = 0; i < jsh_nhdr; i++) free((void *)jsh_hdr[i].r);
     free(jsh_hdr); jsh_hdr = NULL; jsh_nhdr = jsh_chdr = 0;
