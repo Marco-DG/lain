@@ -33,6 +33,7 @@ typedef struct {
     long long proposed, kept, dropped;   // counted across calls
     uint64_t meter; bool meter_out;      // the last call's metered work (lia.h), and whether it ran out
     uint64_t meter_cap;                  // the work allowed a call; 0: FD_WORK (a test sets it smaller)
+    JGuardClaim *gc; int32_t ngc;        // the last call's guarded return claims (malloc'd; the caller frees)
     bool oom;                            // the last call returned no claims because memory ran out
     JRank *rk; int32_t nrk;              // the last call's ranking claims (malloc'd; the caller frees)
 } JFinder;
@@ -2684,6 +2685,121 @@ static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const
     }
     return true;
 }
+// A call argument that is a constant where the call is made: a CONST, or a cast of one into an
+// integer type that holds it (`f(3)` passes 3 as cast(i32 3)), as the generator reads a literal
+// (jg_const_of): a guarded claim is stated as a bound only where the generator sees the constant.
+static bool fd_arg_const(IrFunc *f, IrValue *v, __int128 *c, int depth) {
+    if (!v || depth > 4) return false;
+    IrInstr *d = NULL;
+    for (IrBlock *b = f->blocks; b && !d; b = b->next)
+        for (IrInstr *i = b->instrs; i && !d; i = i->next) if (i->result == v) d = i;
+    if (!d) return false;
+    if (d->op == IR_CONST) { if (!fd_is_int(d->result->type)) return false; *c = fd_const(d); return true; }
+    if (d->op == IR_CAST && d->n_operands >= 1 && fd_is_int(d->result->type) && fd_arg_const(f, d->operands[0], c, depth + 1)) {
+        FdRange r;
+        return fd_range(d->result->type, &r) && r.lo <= *c && *c <= r.hi;
+    }
+    return false;
+}
+static bool fd_calls_itself(const JFinder *F, IrFunc *h) {
+    for (IrBlock *b = h->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) if (fd_callee(F, i) == h) return true;
+    return false;
+}
+// s7: GUARDED return claims, one pair per call with constant integer arguments to a function of the
+// module that is on no recursion cycle (its inner calls would need the call tree's tuples): ret's
+// greatest and least value at the callee's returns under its parameters at those constants
+// (`t[dbl(3)]`: ret = 6 where a = 3, though no bound holds for every a, since a +% a wraps). Each
+// bound is the maximum of the claim's own `post` VCs, so it is implied there; the set is asked again
+// whole and a claim any of whose VCs is not implied is dropped. At most two guard parameters
+// (JGUARD_MAXP), the first constant ones; at most FD_MAXGUARD claims a module. Untrusted: the judge
+// owes each at the callee's returns under its guard, and uses it where the arguments are those
+// constants.
+#define FD_MAXGUARD 64
+static bool fd_guarded_claims(JFinder *F, const JClaim *as, int32_t nv) {
+    char err[200];
+    IrCallGraph G; memset(&G, 0, sizeof G);
+    if (!ir_cg_build(&G, F->mod)) { F->oom = true; return false; }
+    JGuardClaim *gc = NULL; int32_t ngc = 0;
+    bool ok = true;
+    for (IrFunc *f = F->mod; f && ok; f = f->next) {
+        if (f->is_extern || !f->entry) continue;
+        for (IrBlock *b = f->blocks; b && ok; b = b->next)
+            for (IrInstr *i = b->instrs; i && ok && ngc + 2 <= FD_MAXGUARD; i = i->next) {
+                IrFunc *h = fd_callee(F, i);
+                if (!h || h->is_extern || !h->entry || !fd_same_module(h, f) || !h->ret_type || !fd_is_int(h->ret_type)) continue;
+                int k = ir_cg_index(&G, h);
+                if (k < 0 || ir_cg_members(&G, k, NULL, 0) != 1 || fd_calls_itself(F, h)) continue;
+                JGuardClaim c; memset(&c, 0, sizeof c);
+                c.fn = h; c.nt = 1; c.key[0] = JKEY_RET; c.tk[0] = JTERM_VALUE; c.coef[0] = 1;
+                int pk = 0;
+                for (IrParam *p = h->params; p && c.ng < JGUARD_MAXP; p = p->next, pk++) {
+                    __int128 v;
+                    if (!p->value || !fd_is_int(p->value->type) || pk >= i->n_operands) continue;
+                    if (!fd_arg_const(f, i->operands[pk], &v, 0)) continue;
+                    FdRange tr;
+                    if (!fd_range(p->value->type, &tr) || v < tr.lo || v > tr.hi) continue;
+                    c.gkey[c.ng] = p->value->id; c.gval[c.ng] = v; c.ng++;
+                }
+                if (c.ng == 0) continue;
+                bool dup = false;                            // one pair per guard
+                for (int32_t q = 0; q < ngc && !dup; q += 2) {
+                    dup = gc[q].fn == h && gc[q].ng == c.ng;
+                    for (int g2 = 0; g2 < c.ng && dup; g2++) dup = gc[q].gkey[g2] == c.gkey[g2] && gc[q].gval[g2] == c.gval[g2];
+                }
+                if (dup) continue;
+                JGuardClaim pair[2] = { c, c };
+                pair[1].coef[0] = -1;
+                JClaimVc *o; int32_t n;
+                if (!F->gen->claim_vcs(F->gen->ctx, h, as, nv, pair, 2, JGEN_POST, &o, &n, err, sizeof err)) continue;
+                __int128 best[2]; bool any[2] = { false, false }, bounded = true;
+                for (int32_t q = 0; q < n && bounded; q++) {
+                    int32_t s = o[q].claim - nv;
+                    if (s < 0 || s > 1) continue;
+                    LMax x = lia_maximize(&o[q].vc, o[q].vc.goal.t, o[q].vc.goal.nt, F->lim, F->work, F->worksz);
+                    if (x.k == LIA_MAX_EMPTY) continue;
+                    if (x.k != LIA_MAX_BOUND) { bounded = false; break; }
+                    __int128 v = fd_int128(&x.b);
+                    if (!any[s] || v > best[s]) best[s] = v;
+                    any[s] = true;
+                }
+                if (!bounded || !any[0] || !any[1]) continue;
+                JGuardClaim *x2 = realloc(gc, sizeof *x2 * (size_t)(ngc + 2));
+                if (!x2) { ok = false; break; }
+                gc = x2;
+                pair[0].rhs = best[0]; pair[1].rhs = best[1];
+                gc[ngc++] = pair[0]; gc[ngc++] = pair[1];
+            }
+    }
+    // the set whole, once: a claim one of whose VCs is not implied goes (no claim uses another)
+    if (ok && ngc > 0) {
+        uint8_t *bad = calloc((size_t)ngc, 1);
+        if (!bad) ok = false;
+        for (IrFunc *h = F->mod; ok && h; h = h->next) {
+            if (h->is_extern || !h->entry) continue;
+            bool mine = false;
+            for (int32_t q = 0; q < ngc && !mine; q++) mine = gc[q].fn == h;
+            if (!mine) continue;
+            JClaimVc *o; int32_t n;
+            if (!F->gen->claim_vcs(F->gen->ctx, h, as, nv, gc, ngc, JGEN_POST, &o, &n, err, sizeof err)) {
+                for (int32_t q = 0; q < ngc; q++) if (gc[q].fn == h) bad[q] = 1;
+                continue;
+            }
+            for (int32_t q = 0; q < n; q++) {
+                int32_t s = o[q].claim - nv;
+                if (s >= 0 && s < ngc && !bad[s] && lia_solve(&o[q].vc, F->lim, F->work, F->worksz).k != J_ANS_CERT) bad[s] = 1;
+            }
+        }
+        int32_t w = 0;
+        for (int32_t q = 0; ok && q < ngc; q++) if (!bad[q]) gc[w++] = gc[q];
+        if (ok) ngc = w;
+        free(bad);
+    }
+    ir_cg_free(&G);
+    if (!ok) { free(gc); F->oom = true; return false; }
+    F->gc = gc; F->ngc = ngc;
+    return true;
+}
 static JClaim *finder_propose_run(JFinder *F, int32_t *ncl);
 // The finder's work, metered (lia.h): FD_WORK rational operations for a module's whole proposal,
 // then every query answers budget and what was found so far is proposed. Set from the corpus and
@@ -2708,6 +2824,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
     *ncl = 0;
     F->oom = false;
     F->rk = NULL; F->nrk = 0;                                // the caller frees the last call's
+    F->gc = NULL; F->ngc = 0;
     for (int round = 0; round < 3; round++) {
         if (nv > ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)nv); if (!x) goto oom; cl = x; ccl = nv; }
         if (nv) memcpy(cl, as, sizeof *cl * (size_t)nv);
@@ -2780,6 +2897,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         if (!grew) break;
     }
     free(cd); free(cl);
+    if (!fd_guarded_claims(F, as, nv)) goto oom;
     // PE.5: a ranking claim per loop header, under the claims Houdini kept (owed, never believed)
     IrCallGraph CG0; memset(&CG0, 0, sizeof CG0);
     bool cg0 = ir_cg_build(&CG0, mod);
@@ -2856,7 +2974,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
     return as;
 oom:
     fd_nest_free(&N);
-    free(cd); free(cl); free(as); free(F->rk); F->rk = NULL; F->nrk = 0;
+    free(cd); free(cl); free(as); free(F->rk); F->rk = NULL; F->nrk = 0; free(F->gc); F->gc = NULL; F->ngc = 0;
     F->oom = true;
     return NULL;
 }

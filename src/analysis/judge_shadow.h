@@ -78,7 +78,7 @@ static void jsh_sink(void *ctx, const JRecord *r) {
 }
 
 // ── the untrusted callbacks ──────────────────────────────────────────────────────────────────
-typedef struct { char *work; size_t wcap; JFinder *F; JClaim *last; JRank *last_rk; } JshCtx;
+typedef struct { char *work; size_t wcap; JFinder *F; JClaim *last; JRank *last_rk; JGuardClaim *last_gc; } JshCtx;
 static bool jsh_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     JshCtx *c = ctx;
     *out = lia_solve(vc, lim, c->work, c->wcap);
@@ -90,7 +90,7 @@ static bool jsh_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **ou
     c->F->gen = gen; c->F->mod = mod;
     free(c->last); free(c->last_rk);
     c->last = *out = finder_propose(c->F, nout);
-    *gc = NULL; *ngc = 0;                           // the finder proposes no guarded claim yet
+    free(c->last_gc); c->last_gc = *gc = c->F->gc; *ngc = c->F->ngc;   // guarded return claims (s7)
     c->last_rk = *rk = c->F->rk; *nrk = c->F->nrk;      // ranking claims (PE.5): owed, never facts
     return !c->F->oom;                              // the judge reports a failed proposer
 }
@@ -163,7 +163,7 @@ static void judge_shadow_module(IrFunc *mod) {
     JFinder F; memset(&F, 0, sizeof F);
     F.work = work; F.worksz = wcap; F.use_vra = true; F.hdr = jsh_hdr; F.nhdr = jsh_nhdr;
     F.lim.pivot = 100000; F.lim.node = 4096; F.lim.leaf = 4096;
-    JshCtx jc = { work, wcap, &F, NULL, NULL };
+    JshCtx jc = { work, wcap, &F, NULL, NULL, NULL };
     JudgeCalls calls = { &jc, jsh_solve, jsh_propose };
     JudgeLimits lim; lim.lim = F.lim;
     char err[200] = "";
@@ -304,7 +304,7 @@ static void judge_shadow_module(IrFunc *mod) {
                 n_chk, agree_p + agree_r, agree_p, agree_r, vra_only, judge_only, judge_only_c, unowed, outside, extra, extra_p, nterm, term_p, term_j, nrec, rec_p, rec_j, term,
                 R.kinds[JREC_PROVED], R.kinds[JREC_NOT_IMPLIED], R.kinds[JREC_OUTSIDE], R.kinds[JREC_BUDGET],
                 R.kinds[JREC_CAPACITY], R.kinds[JREC_SOLVER_BUG], R.kinds[JREC_UNCERTIFIED]);
-    free(R.r); free(jc.last); free(jc.last_rk); free(buf); free(work);
+    free(R.r); free(jc.last); free(jc.last_rk); free(jc.last_gc); free(buf); free(work);
     for (int i = 0; i < jsh_nhdr; i++) free((void *)jsh_hdr[i].r);
     free(jsh_hdr); jsh_hdr = NULL; jsh_nhdr = jsh_chdr = 0;
 }

@@ -498,7 +498,7 @@ static bool jj_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **out
     JjCtx *c = ctx;
     c->F->gen = gen; c->F->mod = mod;
     *out = finder_propose(c->F, nout);
-    *gc = NULL; *ngc = 0;                // the finder proposes no guarded claim yet
+    *gc = c->F->gc; *ngc = c->F->ngc;    // guarded return claims (s7): owed under their guards
     *rk = c->F->rk; *nrk = c->F->nrk;    // ranking claims (PE.5): owed, never facts
     return !c->F->oom;                   // a NULL for want of memory is not "no claims"
 }

@@ -76,7 +76,7 @@ static bool judge_authority_run(IrFunc *mod) {
     JFinder F; memset(&F, 0, sizeof F);
     F.work = work; F.worksz = wcap; F.use_vra = true; F.hdr = jsh_hdr; F.nhdr = jsh_nhdr;
     F.lim.pivot = 100000; F.lim.node = 4096; F.lim.leaf = 4096;
-    JshCtx jc = { work, wcap, &F, NULL, NULL };
+    JshCtx jc = { work, wcap, &F, NULL, NULL, NULL };
     JudgeCalls calls = { &jc, jsh_solve, jsh_propose };
     JudgeLimits lim; lim.lim = F.lim;
     char err[200] = "";
@@ -87,7 +87,7 @@ static bool judge_authority_run(IrFunc *mod) {
     } else snprintf(err, sizeof err, "no memory for the judge's region");
     if (!ran && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "the judge could not run: %s", err);
     if (jau_oom && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "out of memory keeping the judge's records");
-    free(buf); free(work); free(jc.last); free(jc.last_rk);
+    free(buf); free(work); free(jc.last); free(jc.last_rk); free(jc.last_gc);
     for (int i = 0; i < jsh_nhdr; i++) free((void *)jsh_hdr[i].r);
     free(jsh_hdr); jsh_hdr = NULL; jsh_nhdr = jsh_chdr = 0;
     return !jau_internal[0];
