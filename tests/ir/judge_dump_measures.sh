@@ -3,7 +3,8 @@
 # certified, in the source's names, not the range analysis' search (which decides nothing in that
 # mode, and printed "no measure found" for loops the judge had proved: Documentation, 2026-10-20).
 # Dijkstra's gcd falls in x + y; the default mode still prints VRA's own line. A loop neither proves
-# gets the same "no measure found" line in both modes, under the function's name as VRA gives it.
+# gets the same "no measure found" line in both modes, under the function's name as VRA gives it, and
+# a term is named as the default mode names it (`l.src.len - l.pos`, `a.len`).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
@@ -55,4 +56,29 @@ for m in "" "--judge=authority"; do
     echo "$out" | grep -qxF '[measure] n_f: loop at line 3: no measure found' \
         || { echo "${m:-default}: no 'no measure found' line:"; echo "$out" | head -4; exit 1; }
 done
+# a field and a slice's length by their names, never an IR number (%N), and a length as `.len`
+cat > "$T/s.ln" <<'LN'
+type Lx { src u8[], pos usize }
+func scan(l var Lx) {
+    while l.pos < l.src.len {
+        l.pos = l.pos + 1
+    }
+}
+func pairs(a u8[]) usize {
+    var i usize = 0
+    while i + 1 < a.len {
+        i = i + 1
+    }
+    return i
+}
+func main() i32 {
+    return 0
+}
+LN
+out=$(cd "$T" && "$ROOT/lain" --judge=authority --dump-measures s.ln -o s.c 2>&1)
+lines=$(echo "$out" | grep '^\[measure\]')
+[ "$(echo "$lines" | grep -c "(the judge's)")" -eq 2 ] || { echo "not a judge's measure for each of the two loops:"; echo "$out" | head -6; exit 1; }
+echo "$lines" | grep -q '%[0-9]' && { echo "an IR number in a measure:"; echo "$lines"; exit 1; }
+echo "$lines" | grep -q 'len(' && { echo "a length spelled len(...):"; echo "$lines"; exit 1; }
+echo "$lines" | grep -q 'l\.src\.len' || { echo "the field path is not named:"; echo "$lines"; exit 1; }
 exit 0

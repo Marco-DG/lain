@@ -69,13 +69,48 @@ static bool jau_dump_measures;
 static IrInstr *jau_def(IrFunc *f, IrValue *v);
 static IrBlock *jau_header(const JauRec *q);
 static void jau_site(IrFunc *f, const JauRec *q, bool loop, isize *line, isize *col);
+// A term in the program's names, as VRA's --dump-measures spells them (vra_src_expr): a cell by its
+// variable, a field by its path (`l.pos`), a slice's length as `s.len`, through loads and casts;
+// an IR number (%N) only where no name exists.
+static void jau_src(IrFunc *f, IrValue *v, char *b, size_t n, int depth) {
+    if (!v || n < 2) { snprintf(b, n, "?"); return; }
+    if (depth > 8) { snprintf(b, n, "%%%d", v->id); return; }
+    IrInstr *d = jau_def(f, v);
+    if (!d || d->op == IR_ALLOCA) {                          // a parameter or a local
+        if (v->src_name && v->src_name->length > 0) snprintf(b, n, "%.*s", (int)v->src_name->length, v->src_name->name);
+        else snprintf(b, n, "%%%d", v->id);
+        return;
+    }
+    char x[200], y[200];
+    switch (d->op) {
+        case IR_CONST: snprintf(b, n, "%lld", (long long)d->aux.imm); return;
+        case IR_LOAD: case IR_CAST: jau_src(f, d->n_operands >= 1 ? d->operands[0] : NULL, b, n, depth + 1); return;
+        case IR_SLICE_LEN: jau_src(f, d->operands[0], x, sizeof x, depth + 1); snprintf(b, n, "%s.len", x); return;
+        case IR_FIELD_PTR: {
+            jau_src(f, d->n_operands >= 1 ? d->operands[0] : NULL, x, sizeof x, depth + 1);
+            IrType *bt = d->n_operands >= 1 ? d->operands[0]->type : NULL;
+            if (bt && bt->kind == IRT_PTR && bt->elem) bt = bt->elem;
+            int k = (int)d->aux.field_idx;
+            IrName *fn = (bt && bt->kind == IRT_STRUCT && k >= 0 && k < bt->n_fields && bt->field_names) ? bt->field_names[k] : NULL;
+            if (fn) snprintf(b, n, "%s.%.*s", x, (int)fn->length, fn->name); else snprintf(b, n, "%s.%d", x, k);
+            return;
+        }
+        case IR_ADD: case IR_SUB:
+            jau_src(f, d->operands[0], x, sizeof x, depth + 1); jau_src(f, d->operands[1], y, sizeof y, depth + 1);
+            snprintf(b, n, "(%s %c %s)", x, d->op == IR_ADD ? '+' : '-', y);
+            return;
+        default:
+            if (v->src_name && v->src_name->length > 0) snprintf(b, n, "%.*s", (int)v->src_name->length, v->src_name->name);
+            else snprintf(b, n, "%%%d", v->id);
+            return;
+    }
+}
 static void jau_name(IrFunc *f, int32_t key, char *b, size_t n) {
-    const IrName *nm = NULL;
-    for (IrParam *p = f->params; p && !nm; p = p->next) if (p->value && p->value->id == key) nm = p->value->src_name;
-    for (IrBlock *bb = f->blocks; bb && !nm; bb = bb->next)
-        for (IrInstr *i = bb->instrs; i && !nm; i = i->next) if (i->result && i->result->id == key) nm = i->result->src_name;
-    if (nm && nm->length > 0) snprintf(b, n, "%.*s", (int)nm->length, nm->name);
-    else snprintf(b, n, "%%%d", (int)key);
+    IrValue *v = NULL;
+    for (IrParam *p = f->params; p && !v; p = p->next) if (p->value && p->value->id == key) v = p->value;
+    for (IrBlock *bb = f->blocks; bb && !v; bb = bb->next)
+        for (IrInstr *i = bb->instrs; i && !v; i = i->next) if (i->result && i->result->id == key) v = i->result;
+    if (v) jau_src(f, v, b, n, 0); else snprintf(b, n, "%%%d", (int)key);
 }
 static void jau_row(IrFunc *f, const JRank *r, int32_t j, char *b, size_t n) {
     size_t at = 0; b[0] = 0;
@@ -89,7 +124,7 @@ static void jau_row(IrFunc *f, const JRank *r, int32_t j, char *b, size_t n) {
         if (c == 0 || (pass == 0) != (c > 0)) continue;
         char nm[80], term[120];
         jau_name(f, r->key[t], nm, sizeof nm);
-        const char *fmt = r->tk[t] == JTERM_LEN ? "len(%s)" : r->tk[t] == JTERM_ENTRY ? "entry(%s)" : "%s";
+        const char *fmt = r->tk[t] == JTERM_LEN ? "%s.len" : r->tk[t] == JTERM_ENTRY ? "entry(%s)" : "%s";
         char tn[100]; snprintf(tn, sizeof tn, fmt, nm);
         long long a = (long long)(c < 0 ? -c : c);
         if (a == 1) snprintf(term, sizeof term, "%s%s", at ? (c < 0 ? " - " : " + ") : (c < 0 ? "-" : ""), tn);
@@ -133,7 +168,10 @@ static void jau_print_measures(const JRank *rk, int32_t nrk) {
         }
         if (!ok) continue;
         isize line = 0;
-        if (!rec) {
+        if (rec) {                                           // the first call that may close the cycle
+            for (int64_t q = 0; q < jau_n && !line; q++)
+                if (jau_r[q].fn == f && !strncmp(jau_r[q].kind, "rec.", 4)) { isize col = 0; jau_site(f, &jau_r[q], false, &line, &col); }
+        } else {
             IrBlock *H = NULL;
             for (IrBlock *b = f->blocks; b && !H; b = b->next) if (b->id == r->blk) H = b;
             IrInstr *hc = H && H->term.cond ? jau_def(f, H->term.cond) : NULL;
@@ -146,8 +184,8 @@ static void jau_print_measures(const JRank *rk, int32_t nrk) {
                 jau_row(f, r, j, row, sizeof row);
                 at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%s%s", j ? ", " : "", row);
             }
-            if (rec) fprintf(stderr, "[measure] %.*s: recursion: `%s%s%s` decreases at every call that may close the cycle (the judge's)\n",
-                             fn ? (int)fn->length : 1, fn ? fn->name : "?", r->ncomp > 1 ? "<" : "", all, r->ncomp > 1 ? ">" : "");
+            if (rec) fprintf(stderr, "[measure] %.*s: recursion at line %lld: `%s%s%s` decreases at every call that may close the cycle (the judge's)\n",
+                             fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all, r->ncomp > 1 ? ">" : "");
             else fprintf(stderr, "[measure] %.*s: loop at line %lld: `%s%s%s` decreases%s (the judge's)\n",
                          fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all,
                          r->ncomp > 1 ? ">" : "", r->ncomp > 1 ? " lexicographically" : "");
