@@ -4398,6 +4398,13 @@ static bool jg_ghost_form(const IrFunc *h, IrValue *v, JGhost *G, JGForm *out, i
         default: return false;
     }
 }
+// A written measure's one row (jg_ghost_form's root) as h's entry rank: the measure the calls owe,
+// and the one the finder fixes a written member of a cycle to (jgo_measure), read once, here.
+static void jg_written_rank(const IrFunc *h, const JGhost *gh, JRank *r) {
+    memset(r, 0, sizeof *r);
+    r->blk = JRANK_ENTRY; r->fn = (IrFunc *)h; r->ncomp = 1; r->nt = gh->root.nt; r->c0[0] = gh->root.c0;
+    for (int32_t i = 0; i < r->nt; i++) { r->key[i] = gh->root.key[i]; r->tk[i] = gh->root.tk[i]; r->coef[0][i] = gh->root.coef[i]; }
+}
 // h's measure for its recursion: its WRITTEN one where it has one (a proposal's `le` list is read,
 // its measure not: the finder fixes a written member's coefficients to it), else the proposed one.
 // NULL with `why` where none can be stated (`outside` at the calls); false refuses the function.
@@ -4425,9 +4432,7 @@ static bool jg_rec_measure(JG *g, const JRank *rk, int32_t nrk, const IrFunc *h,
         *why = "a written measure the generator cannot read as a sum";
         return true;
     }
-    memset(r, 0, sizeof *r);
-    r->blk = JRANK_ENTRY; r->fn = (IrFunc *)h; r->ncomp = 1; r->nt = gh->root.nt; r->c0[0] = gh->root.c0;
-    for (int32_t i = 0; i < r->nt; i++) { r->key[i] = gh->root.key[i]; r->tk[i] = gh->root.tk[i]; r->coef[0][i] = gh->root.coef[i]; }
+    jg_written_rank(h, gh, r);
     // the list's count is jg_rec_cut's to refuse, over every entry rank of the module; copied bounded
     for (int32_t m = 0; pr && m < pr->nle && m < JRANK_MAXL; m++) { r->le_blk[m] = pr->le_blk[m]; r->le_idx[m] = pr->le_idx[m]; r->nle = m + 1; }
     *out = r; *G = gh;
@@ -4916,9 +4921,21 @@ static bool jgo_call_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_call_paths(&m, f, x->mod, cl, ncl, out, err, errcap);
 }
+static bool jgo_measure(void *ctx, struct IrFunc *f, JRank *out, char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    JGhost *gh = JMEM_NEW(&m, JGhost, 1);
+    if (!gh) { snprintf(err, errcap, "out of memory"); return false; }
+    gh->nn = 0;
+    if (!f->has_decreasing || !f->measure_val || !jg_ghost_form(f, f->measure_val, gh, &gh->root, 0)) {
+        snprintf(err, errcap, "no written measure the generator reads as a sum");
+        return false;
+    }
+    jg_written_rank(f, gh, out);
+    return true;
+}
 static JudgeGen jgen_offer(JGenOffer *x) {
     JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
-    g.paths = jgo_paths; g.call_paths = jgo_call_paths;
+    g.paths = jgo_paths; g.call_paths = jgo_call_paths; g.measure = jgo_measure;
     return g;
 }
 

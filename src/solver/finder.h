@@ -2123,25 +2123,107 @@ static bool fd_rank_cycle(JFinder *F, IrFunc **mem, int32_t m, const JClaim *cl,
         }
     }
     if (nc == 0) goto out;
+    // a WRITTEN member's coefficients are its measure's, as the generator reads it (JudgeGen.measure):
+    // fixed below, so the search chooses only which calls fall. The generator owes the calls against
+    // the written measure and reads only this proposal's `le` list; without one it owes rec.fall at
+    // every call, and `a -> b(n) -> c(n) -> a(n - 1)`, each `decreasing n`, was refused at a -> b
+    // where spec 12 asks only that n not rise.
+    bool wr[FD_CYC_MAXM]; __int128 wc[FD_CYC_MAXS], w0[FD_CYC_MAXM]; int32_t nw = 0;
+    for (int32_t i = 0; i < m; i++) {
+        JRank W;
+        wr[i] = F->gen->measure && F->gen->measure(F->gen->ctx, mem[i], &W, err, sizeof err);
+        if (!wr[i]) continue;
+        int32_t used = 0;
+        for (int32_t q = sbase[i]; q < sbase[i] + ns[i]; q++) {
+            wc[q] = 0;
+            for (int32_t t = 0; t < W.nt; t++) if (W.key[t] == skey[q] && W.tk[t] == stk[q]) { wc[q] = W.coef[0][t]; used++; }
+        }
+        if (used != W.nt) goto out;                           // a term no slot holds: nothing to fix it to
+        w0[i] = W.c0[0]; nw++;
+    }
     {   JPaths SP = { sp, nc, NULL };
         if (!fd_loop_from(F, mem[0], JRANK_ENTRY, &SP, L, FD_MAXEDGES)) goto out; }
-    // the first round of the lexicographic search: rises on no call, >= 0 before each, falls on most
     {   char *cur = (char *)F->work, *end = (char *)F->work + F->worksz / 4;
-        bool on[FD_MAXFLAT];
-        for (int32_t k = 0; k < L->npaths; k++) on[k] = true;
-        int32_t *dl = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)L->npaths);
-        JVc lp;
-        if (!dl || !rk_build(L->paths, L->npaths, on, L->pre, L->post, L->npairs, true, 0, &cur, end, &lp, dl)) goto out;
-        JTerm *obj = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)L->npaths);
-        if (!obj) goto out;
-        int32_t nt = 0;
-        for (int32_t k = 0; k < L->npaths; k++) if (dl[k] >= 0) { obj[nt].var = dl[k]; fd_jint(&obj[nt].coef, 1); nt++; }
-        LMax X = lia_maximize(&lp, obj, nt, F->lim, cur, (size_t)((char *)F->work + F->worksz - cur));
-        if (X.k != LIA_MAX_BOUND || X.b.n == 0) goto out;
-        // a call is strict when every flattened path of it falls
+        if (L->npairs != NP) goto out;
+        // per slot and indicator its coefficient, cf[NP] the constant; and which calls fall
+        __int128 cf[FD_CYC_MAXS + FD_CYC_MAXM + 1];
         bool strict[FD_MAXEDGES];
         for (int32_t c = 0; c < nc; c++) strict[c] = true;
-        for (int32_t k = 0; k < L->npaths; k++) if (X.model.val[dl[k]].n == 0) strict[L->edge[k]] = false;
+        if (nw == m) {
+            // every member WRITTEN: nothing to search. A call falls when each flattened path of it
+            // does under the written measures, the generator's rec.fall: sum W_q (post_q - pre_q) <= -1,
+            // an indicator's W its member's constant. One small VC per path, so the cycle's length
+            // costs no LP (a search over 17 members stops on its capacity)
+            for (int32_t q = 0; q < nslot; q++) cf[q] = wc[q];
+            for (int32_t i = 0; i < m; i++) cf[nslot + i] = w0[i];
+            cf[NP] = 0;
+            JTerm *gt = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)(2 * NP));
+            int32_t *gv = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)(2 * NP));
+            __int128 *gc = (__int128 *)rk_bump(&cur, end, sizeof(__int128) * (size_t)(2 * NP));
+            if (!gt || !gv || !gc) goto out;
+            // off the module's meter (FD_WORK): the cycles come last, and a meter spent on other
+            // functions would make every call here "not falling" and refuse a written measure the
+            // rule accepts, with no word of a budget. One query per call, each under F->lim as the
+            // judge's own are: what this costs is bounded by the calls written
+            bool mon = ls_meter_on;
+            ls_meter_on = false;
+            for (int32_t k = 0; k < L->npaths; k++) {
+                int32_t n = 0;
+                for (int32_t q = 0; q < NP; q++) {          // merged by variable, ascending, zeros dropped
+                    if (cf[q] == 0) continue;
+                    for (int s2 = 0; s2 < 2; s2++) {
+                        int32_t v = s2 ? L->pre[q] : L->post[q]; __int128 c = s2 ? -cf[q] : cf[q];
+                        int32_t z = 0;
+                        while (z < n && gv[z] < v) z++;
+                        if (z < n && gv[z] == v) { gc[z] += c; continue; }
+                        for (int32_t y = n; y > z; y--) { gv[y] = gv[y - 1]; gc[y] = gc[y - 1]; }
+                        gv[z] = v; gc[z] = c; n++;
+                    }
+                }
+                int32_t nt = 0;
+                for (int32_t z = 0; z < n; z++) if (gc[z]) { gt[nt].var = gv[z]; fd_jint(&gt[nt].coef, gc[z]); nt++; }
+                JVc q = *L->paths[k];
+                q.goal.t = gt; q.goal.nt = nt; q.goal.op = J_LE; fd_jint(&q.goal.rhs, -1);
+                if (lia_solve(&q, F->lim, cur, (size_t)((char *)F->work + F->worksz - cur)).k != J_ANS_CERT) strict[L->edge[k]] = false;
+            }
+            ls_meter_on = mon;
+        } else {
+            // the first round of the lexicographic search: rises on no call, >= 0 before each, falls
+            // on most
+            bool on[FD_MAXFLAT];
+            for (int32_t k = 0; k < L->npaths; k++) on[k] = true;
+            int32_t *dl = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)L->npaths);
+            JVc lp;
+            if (!dl || !rk_build(L->paths, L->npaths, on, L->pre, L->post, L->npairs, true, 0, &cur, end, &lp, dl)) goto out;
+            if (nw) {                                        // the written members' rows, fixed: c_q = w_q,
+                JHyp *hx = (JHyp *)rk_bump(&cur, end, sizeof(JHyp) * (size_t)(lp.nhyps + NP));   // and
+                JTerm *tx = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)(2 * NP));     // indicator
+                if (!hx || !tx) goto out;                                                      // + c0 = w0
+                memcpy(hx, lp.hyps, sizeof(JHyp) * (size_t)lp.nhyps);
+                int32_t nh = lp.nhyps, ntx = 0;
+                for (int32_t i = 0; i < m; i++) {
+                    if (!wr[i]) continue;
+                    for (int32_t q = sbase[i]; q <= sbase[i] + ns[i]; q++) {
+                        bool ind = q == sbase[i] + ns[i];      // past the slots: the indicator's row
+                        JHyp *h = &hx[nh++]; memset(h, 0, sizeof *h);
+                        h->origin = "written measure"; h->cons.op = J_EQ; h->cons.t = &tx[ntx];
+                        tx[ntx].var = ind ? nslot + i : q; fd_jint(&tx[ntx].coef, 1); ntx++; h->cons.nt = 1;
+                        if (ind) { tx[ntx].var = L->npairs; fd_jint(&tx[ntx].coef, 1); ntx++; h->cons.nt = 2; }
+                        fd_jint(&h->cons.rhs, ind ? w0[i] : wc[q]);
+                    }
+                }
+                lp.hyps = hx; lp.nhyps = nh;
+            }
+            JTerm *obj = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)L->npaths);
+            if (!obj) goto out;
+            int32_t nt = 0;
+            for (int32_t k = 0; k < L->npaths; k++) if (dl[k] >= 0) { obj[nt].var = dl[k]; fd_jint(&obj[nt].coef, 1); nt++; }
+            LMax X = lia_maximize(&lp, obj, nt, F->lim, cur, (size_t)((char *)F->work + F->worksz - cur));
+            if (X.k != LIA_MAX_BOUND || X.b.n == 0) goto out;
+            // a call is strict when every flattened path of it falls
+            for (int32_t k = 0; k < L->npaths; k++) if (X.model.val[dl[k]].n == 0) strict[L->edge[k]] = false;
+            for (int32_t q = 0; q <= NP; q++) if (!fd_i128(&X.model.val[q], &cf[q])) goto out;
+        }
         // the calls left unlowered must close no cycle among the members (a self-call is one)
         int32_t indeg[FD_CYC_MAXM]; bool gone[FD_CYC_MAXM];
         for (int32_t i = 0; i < m; i++) { indeg[i] = 0; gone[i] = false; }
@@ -2155,20 +2237,14 @@ static bool fd_rank_cycle(JFinder *F, IrFunc **mem, int32_t m, const JClaim *cl,
         }
         for (int32_t i = 0; i < m; i++) if (!gone[i]) goto out;      // the listed calls close a cycle
         // per member: its slots' coefficients, its indicator's plus the constant, its listed calls
-        __int128 c0g;
-        if (!fd_i128(&X.model.val[L->npairs], &c0g)) goto out;
         for (int32_t i = 0; i < m; i++) {
             JRank *r = &out[i]; memset(r, 0, sizeof *r);
             r->blk = JRANK_ENTRY; r->fn = mem[i]; r->ncomp = 1;
-            __int128 ci;
-            if (!fd_i128(&X.model.val[nslot + i], &ci)) goto out;
-            r->c0[0] = ci + c0g;
+            r->c0[0] = cf[nslot + i] + cf[NP];
             for (int32_t q = sbase[i]; q < sbase[i] + ns[i]; q++) {
-                __int128 cq;
-                if (!fd_i128(&X.model.val[q], &cq)) goto out;
-                if (cq == 0) continue;
+                if (cf[q] == 0) continue;
                 if (r->nt == JRANK_MAXT) goto out;
-                r->key[r->nt] = skey[q]; r->tk[r->nt] = stk[q]; r->coef[0][r->nt] = cq; r->nt++;
+                r->key[r->nt] = skey[q]; r->tk[r->nt] = stk[q]; r->coef[0][r->nt] = cf[q]; r->nt++;
             }
             for (int32_t c = 0; c < nc; c++) if (!strict[c] && calls[c].mem == i) {
                 if (r->nle == JRANK_MAXL) goto out;

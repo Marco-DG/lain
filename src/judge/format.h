@@ -187,6 +187,9 @@ typedef struct {
     // and per parameter of the callee its variable at f's entry (when f is the callee) and the
     // argument's at the call
     bool (*call_paths)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, JPaths *out, char *err, uint32_t errcap);
+    // f's WRITTEN measure (`decreasing`) as the generator reads it, one row at f's entry; false when
+    // f writes none or the generator cannot read it as a sum
+    bool (*measure)(void *ctx, struct IrFunc *f, JRank *out, char *err, uint32_t errcap);
 } JudgeGen;
 
 #endif // LAIN_JUDGE_FORMAT_H

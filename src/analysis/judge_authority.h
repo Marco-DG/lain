@@ -184,8 +184,12 @@ static void jau_print_measures(const JRank *rk, int32_t nrk) {
                 jau_row(f, r, j, row, sizeof row);
                 at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%s%s", j ? ", " : "", row);
             }
-            if (rec) fprintf(stderr, "[measure] %.*s: recursion at line %lld: `%s%s%s` decreases at every call that may close the cycle (the judge's)\n",
-                             fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all, r->ncomp > 1 ? ">" : "");
+            // a function whose calls are listed (rec.le, spec 12's cut) only keeps its measure from
+            // rising at them: what falls is every cycle, not every call
+            if (rec) fprintf(stderr, "[measure] %.*s: recursion at line %lld: `%s%s%s` %s (the judge's)\n",
+                             fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all, r->ncomp > 1 ? ">" : "",
+                             r->nle ? "does not rise at any call that may close the cycle, and every cycle of calls lowers it"
+                                    : "decreases at every call that may close the cycle");
             else fprintf(stderr, "[measure] %.*s: loop at line %lld: `%s%s%s` decreases%s (the judge's)\n",
                          fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all,
                          r->ncomp > 1 ? ">" : "", r->ncomp > 1 ? " lexicographically" : "");
