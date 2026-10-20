@@ -1350,7 +1350,7 @@ typedef enum { VRA_MEAS_NONE, VRA_MEAS_RISES, VRA_MEAS_FALLS, VRA_MEAS_PAIR,
 // RISES: the counter `a` rises toward the bound `b`, measure b - a. FALLS: it falls toward `b`,
 // measure a - b. PAIR: `a < b` with each moving toward the other, measure b - a. PARAM: the
 // parameter `a` descends at every self-call. PARAM_DIFF: `a - b` over two parameters does.
-typedef struct { VraMeasKind kind; IrValue *a, *b; } VraMeasure;
+typedef struct { VraMeasKind kind; IrValue *a, *b; bool incl; } VraMeasure;   // incl: the guard is <= or >=
 static VraMeasure vra_last_measure;
 // C.3a: when a certificate is checked, a rule may accept ONLY the measure the certificate states;
 // any other candidate counts as failing, so the rule verifies a claim instead of searching.
@@ -4824,7 +4824,8 @@ static bool vra_loop_terminates_at(Vra *V, IrBlock *H, IrBlock *E) {
         }
         free(body); free(prog);
         if (ok && vra_meas_accept(lt ? VRA_MEAS_RISES : VRA_MEAS_FALLS, ivv, bnd)) {
-            vra_last_measure = (VraMeasure){ lt ? VRA_MEAS_RISES : VRA_MEAS_FALLS, ivv, bnd };
+            vra_last_measure = (VraMeasure){ lt ? VRA_MEAS_RISES : VRA_MEAS_FALLS, ivv, bnd,
+                                             p==IR_CMP_SLE||p==IR_CMP_ULE||p==IR_CMP_SGE||p==IR_CMP_UGE };
             result_loop = true; break;
         }
     }
@@ -7003,8 +7004,9 @@ static void vra_print_measure(Vra *V, IrFunc *f, isize line, bool rec, bool ok) 
     snprintf(pa, sizeof pa, strchr(a, ' ') ? "(%s)" : "%s", a);
     snprintf(pb, sizeof pb, strchr(b, ' ') ? "(%s)" : "%s", b);
     switch (m.kind) {
-        case VRA_MEAS_RISES: fprintf(stderr, "`%s - %s` decreases: %s rises by at least 1 each iteration and stays below %s\n", b, pa, a, b); break;
-        case VRA_MEAS_FALLS: fprintf(stderr, "`%s - %s` decreases: %s falls by at least 1 each iteration and stays above %s\n", a, pb, a, b); break;
+        // `while s <= r`: s may equal r, so it stays AT MOST r, not below it (Documentation, turing1949_factorial)
+        case VRA_MEAS_RISES: fprintf(stderr, "`%s - %s` decreases: %s rises by at least 1 each iteration and stays %s %s\n", b, pa, a, m.incl ? "at most" : "below", b); break;
+        case VRA_MEAS_FALLS: fprintf(stderr, "`%s - %s` decreases: %s falls by at least 1 each iteration and stays %s %s\n", a, pb, a, m.incl ? "at least" : "above", b); break;
         case VRA_MEAS_PAIR:  fprintf(stderr, "`%s - %s` decreases: each iteration raises %s or lowers %s, and the loop runs while %s < %s\n", b, a, a, b, a, b); break;
         case VRA_MEAS_PARAM: fprintf(stderr, "`%s` decreases at every self-call and stays at least 0\n", a); break;
         case VRA_MEAS_PARAM_DIFF: fprintf(stderr, "`%s - %s` decreases at every self-call and stays at least 0\n", a, b); break;
