@@ -18,15 +18,37 @@ import random, sys
 def gen(rng):
     shape = rng.choice(["whole_init", "no_init", "elem_then_same", "elem_then_other",
                         "comprehension", "loop_fill_all", "loop_fill_half",
-                        "branch_one", "branch_both", "struct_partial", "struct_full"])
+                        "branch_one", "branch_both", "struct_partial", "struct_full",
+                        "index_store_other", "elem_then_index", "fill_then_index"])
     n = rng.choice([2, 4, 8])
     L = ["extern func libc_printf(fmt *u8, ...) i32 effects io"]
 
     if shape in ("struct_partial", "struct_full"):
         L += ["type P {", "    x i32", "    y i32", "}"]
 
+    # The index shapes need an index the analysis cannot name: a refined parameter, so the
+    # store or read sits in a helper that main calls with a constant. Every other shape is
+    # straight-line code in main, where every index is a constant, and a straight-line store
+    # at an unknown index was where the hole was: it credited the WHOLE array.
+    if shape in ("index_store_other", "elem_then_index", "fill_then_index"):
+        L.append(f"func f(j usize < {n}) i32 {{")
+        L.append(f"    var a i32[{n}]")
+        if shape == "index_store_other":
+            L.append("    a[j] = 5")                              # writes a[j] only
+            L.append(f"    if a[{n-1}] == 5 {{ return 1 }}")      # main passes j = 0: unwritten
+        elif shape == "elem_then_index":
+            L.append("    a[0] = 5")
+            L.append("    if a[j] == 5 { return 1 }")             # main passes j = n-1: unwritten
+        else:  # fill_then_index
+            for i in range(n): L.append(f"    a[{i}] = {i+1}")    # every element, so any j is
+            L.append("    if a[j] == 5 { return 1 }")             # initialised
+        L.append("    return 0")
+        L.append("}")
     L.append("func main() i32 effects io, raises, alloc {")
-    if shape == "whole_init":
+    if shape in ("index_store_other", "elem_then_index", "fill_then_index"):
+        j = 0 if shape == "index_store_other" else n - 1
+        L.append(f"    libc_printf(\"%d\\n\", f({j}))")
+    elif shape == "whole_init":
         L.append(f"    var a i32[{n}] = [{', '.join(str(i+1) for i in range(n))}]")
         L.append("    libc_printf(\"%d\\n\", a[0])")
     elif shape == "no_init":

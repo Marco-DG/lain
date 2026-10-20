@@ -882,6 +882,10 @@ out=
 rc=0
 out=sq[7]=49 inc[0]=2
 ty=Slice_u8 scalar
+### tests/memory/array_full_fill_index_read_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/memory/array_literal_pass.ln
 rc=0
 out=

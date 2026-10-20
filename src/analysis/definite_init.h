@@ -169,12 +169,10 @@ static void di_mark_init(Di *D, uint64_t *st, const IrPlace *p) {
             }
             return;
         }
-        // An UNKNOWN index could be any element, so we cannot say WHICH became initialised.
-        // Treating it as initialising the whole aggregate is deliberately FAIL-OPEN: it is
-        // what lets a fill loop (`while i<n { a[i]=… }`) be followed by a read without 8
-        // false positives, and proving such a loop TOTAL needs the numeric domain to show it
-        // covers 0..len — a genuine gap, recorded rather than papered over.
-        st[b*DI_W] |= (1ull<<DI_WHOLE_BIT);
+        // An UNKNOWN index could be any element, so no element is known initialised: nothing
+        // is credited. (It used to credit the WHOLE array, so `c[n] = 7; return c[3]` was
+        // accepted and read storage nothing wrote. A fill loop over 0..len is credited by the
+        // IR_INIT its lowering emits, not by its store.)
         return;
     }
     st[b*DI_W] |= (1ull<<DI_WHOLE_BIT);
@@ -189,7 +187,7 @@ static int di_check_read(Di *D, const uint64_t *st, const IrPlace *p) {
     if (p->nproj>0 && p->proj[0].kind==IRPJ_INDEX) {
         int64_t k = di_const_index(D, p->proj[0].index);
         if (k >= 0 && k < 63) return (m & (1ull<<k)) ? 0 : ((m != 0) ? 19 : 5);
-        return (m != 0) ? 0 : 5;      // unknown index: any initialisation makes it plausible
+        return (m != 0) ? 19 : 5;     // unknown index: any element may be one not written
     }
     if (p->nproj>0 && p->proj[0].kind==IRPJ_FIELD) {
         int fi = p->proj[0].field;

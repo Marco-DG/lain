@@ -1,0 +1,15 @@
+// EXPECT: [E005]
+// EXPECT-TEXT: Error Ln 10,
+// A store at an index the analysis cannot name writes ONE element, not the array. `c[n] = 7`
+// wrote c[0] here, and `c[3]` reads storage nothing wrote. Until this was fixed the store
+// marked the whole array initialised and this program compiled; the interpreter reported
+// PROOF FAILED and MemorySanitizer flagged the read. Pair: array_full_fill_index_read_pass.ln.
+func first(n usize < 4) i32 {
+    var c i32[4]
+    c[n] = 7
+    return c[3]
+}
+
+func main() i32 {
+    return first(0)
+}

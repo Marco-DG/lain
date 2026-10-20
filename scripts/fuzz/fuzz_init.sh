@@ -43,7 +43,7 @@ command -v "$CLANG" >/dev/null 2>&1 || { echo "fuzz_init: needs clang for MSan â
 accepted=0; rejected=0; ran=0; unsound=0; brokenc=0; overstrict=0; refused_unsafe=0
 # SAFE by construction: every byte the program reads was written first.
 declare -A safe=([whole_init]=1 [elem_then_same]=1 [comprehension]=1 [loop_fill_all]=1
-                 [branch_both]=1 [struct_full]=1)
+                 [branch_both]=1 [struct_full]=1 [fill_then_index]=1)
 for ((k=0; k<N; k++)); do
     prog="$SC/i.ln"
     python3 scripts/fuzz/fuzz_init.py $((SEED + k)) > "$prog" || continue
