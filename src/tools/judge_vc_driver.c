@@ -263,7 +263,13 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
             if (__builtin_mul_overflow(r->coef[i], y, &p) || __builtin_add_overflow(s, p, &s)) return false;
         }
         if (s % r->den) return false;                  // not exact: the recipe does not apply
-        *out = s / r->den; return true;
+        s /= r->den;
+        if (r->wbits > 0) {                            // wrapped into wbits bits, as it_wrap narrows (s8)
+            __int128 M = (__int128)1 << r->wbits;
+            s %= M; if (s < 0) s += M;
+            if (r->wsgn && s >= M / 2) s -= M;
+        }
+        *out = s; return true;
     }
     if (c->k != IV_INT) return false;
     const IrType *t = o->vtype[x];
@@ -286,6 +292,8 @@ static const char *hk_recipe_bad(const JObl *o, int32_t x) {
     if (o->vkind[x] != 3) return "a recipe on a variable that is not fresh";
     if (r->mm < -1 || r->mm > 1) return "mm is not -1, 0 or 1";
     if ((r->mm != 0) != (r->mmf != NULL)) return "mm and its forms disagree";
+    if (r->wbits < 0 || r->wbits > 64) return "a wrap of a width outside 0..64";
+    if (r->wbits && (r->mm || r->fval >= 0)) return "a wrap beside a max, a min or a float part";
     if (!r->mm) return NULL;
     const JMinMax *mf = r->mmf;
     if (r->fval >= 0) return "a max or min with a float part";

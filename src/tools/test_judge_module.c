@@ -1209,6 +1209,47 @@ int main(void) {
         }
     }
 
+    // a return that WRAPS (s8): g(p, q) returns the i32 sum p + q into an i8, waived (`unsafe { return
+    // p + q }`), so g(100, 100) is -56. The caller divides by g(100, 100) + 57. (A) the guarded claim ret
+    // in [-56, -56]: certified (its post is owed about the landed value), the division proved; (B) ret in
+    // [200, 200], true of the sum before it lands and of nothing a caller receives: uncertified
+    for (int c = 0; c < 2; c++) {
+        IrType *mi32 = ir_type_int(&A, 32, true), *mi8 = ir_type_int(&A, 8, true);
+        IrFunc *gf = ir_func_new(&A, nm("g"), mi8, IR_FUNC_PURE);
+        IrValue *gp = ir_add_param(gf, mi32, nm("p")), *gq = ir_add_param(gf, mi32, nm("q"));
+        IrValue *sum = ir_binop(gf, gf->entry, IR_ADD, gp, gq, mi32);
+        ir_set_ret(gf->entry, sum);
+        gf->entry->term.unchecked = true;                      // the landing i32 -> i8 is waived: it wraps
+        ir_finalize_cfg(gf);
+        IrFunc *mf = ir_func_new(&A, nm("main"), mi32, IR_FUNC_PURE);
+        IrInstr *call = ir_instr(mf, IR_CALL, mi8, 2); call->aux.callee = nm("g");
+        call->operands[0] = ir_const_int(mf, mf->entry, 100, mi32); call->operands[1] = ir_const_int(mf, mf->entry, 100, mi32);
+        ir_emit(mf->entry, call);
+        IrInstr *wd = ir_instr(mf, IR_CAST, mi32, 1); wd->operands[0] = call->result; ir_emit(mf->entry, wd);
+        IrValue *den = ir_binop(mf, mf->entry, IR_ADD, wd->result, ir_const_int(mf, mf->entry, 57, mi32), mi32);
+        ir_set_ret(mf->entry, ir_binop(mf, mf->entry, IR_SDIV, ir_const_int(mf, mf->entry, 1000, mi32), den, mi32));
+        ir_finalize_cfg(mf);
+        gf->next = mf;
+        Stub sw; memset(&sw, 0, sizeof sw);
+        sw.propose = P_RANK; sw.ngc = 2;
+        for (int q = 0; q < 2; q++) {
+            JGuardClaim *g = &sw.gc[q];
+            g->fn = gf; g->nt = 1; g->key[0] = JKEY_RET; g->coef[0] = q ? -1 : 1;
+            g->rhs = c == 0 ? (q ? 56 : -56) : (q ? -200 : 200);
+            g->ng = 2; g->gkey[0] = gp->id; g->gval[0] = 100; g->gkey[1] = gq->id; g->gval[1] = 100;
+        }
+        CHECK(run(gf, &sw, true, sizeof region, err), "judges: %s", err);
+        int dz_p = count_in(recs, "proved bb") ? 0 : 0, unc = count_in(recs, "uncertified");
+        for (const char *l = recs; *l; ) {
+            const char *e = strchr(l, '\n'); size_t n = e ? (size_t)(e - l) : strlen(l);
+            char v[24] = "", pt[64] = "", kd[64] = "", line[600]; snprintf(line, sizeof line, "%.*s", (int)(n < 599 ? n : 599), l);
+            if (sscanf(line, "%23s %63s %63s", v, pt, kd) == 3 && !strcmp(kd, "divzero") && !strcmp(v, "proved")) dz_p++;
+            l = e ? e + 1 : l + n;
+        }
+        if (c == 0) CHECK(dz_p == 1 && unc == 0, "g(100, 100) = -56: certified, the division proved:\n%s", recs);
+        else CHECK(unc > 0, "g(100, 100) = 200 (the sum before it lands): uncertified:\n%s", recs);
+    }
+
     // an ENTRY term (c40). (A) LarrazOliveras' Fig. 1, all i32: `while y >= 1 { x = x - 1; while y < z
     // { x++; z-- }; y = x + y }`. At the inner header x + z - entry(x) - entry(z) <= 0 and its mirror
     // (entry(x) the store x - 1, entry(z) z's outer-header version), rankings z - y (inner) and

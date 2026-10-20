@@ -650,14 +650,15 @@ int main(void) {
             dz = t ? vc_of(t, key) : "";
             CHECK(strstr(dz, "contract n8 #0"), "a checked landing states it:\n%s", dz);
             free(t);
-            // refused: no function, not about the returned value, a term no parameter, a return
-            // that wraps, a function returning no integer, one lowered with a construct dropped
+            // refused: no function, not about the returned value, a term no parameter, a function
+            // returning no integer, one lowered with a construct dropped. A return that WRAPS is not
+            // refused (s8): its post is owed about the landed value, a fresh x = w - k*256 in u8
             struct { JClaim c; IrFunc *at; const char *why; } bad[6];
             for (int k = 0; k < 6; k++) { bad[k].c = c; bad[k].at = mn; }
             bad[0].c.fn = NULL; bad[0].why = "with no function";
             bad[1].c.key[0] = pb->id; bad[1].why = "not about the returned value";
             bad[2].c.key[1] = r->id; bad[2].why = "neither the returned value nor an integer parameter";
-            bad[3].c = c8; bad[3].at = n8; bad[3].why = "whose return wraps";
+            bad[3].c = c8; bad[3].at = n8; bad[3].why = NULL;        // accepted, about the landed value
             bad[4].c = c8; bad[4].at = n8; bad[4].why = "returning no integer";
             bad[5].why = "lowered incompletely";
             n8->entry->term.unchecked = true; n8->ret_type = u8t;
@@ -669,7 +670,12 @@ int main(void) {
                 mn->incomplete = k == 5;
                 char why[200] = "";
                 char *tb = gen_with(bad[k].at, &bad[k].c, 1, JGEN_ALL, why);
-                CHECK(!tb && strstr(why, bad[k].why), "return claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
+                if (!bad[k].why) {
+                    char lw[64], wk[64]; snprintf(lw, sizeof lw, "ret.landed.%%v%d", wide->id); snprintf(wk, sizeof wk, "return bb%d wrap :", n8->entry->id);
+                    const char *pv = tb ? vc_of(tb, " post 0") : "";
+                    const char *gl = strstr(pv, "\n  goal "), *ge = gl ? strchr(gl + 1, '\n') : NULL, *gx = gl ? strstr(gl, lw) : NULL;
+                    CHECK(strstr(pv, wk) && strstr(pv, "ret.k.") && gx && (!ge || gx < ge), "a wrapping return's post is about its landed value, in its goal:\n%s", tb ? tb : why);
+                } else CHECK(!tb && strstr(why, bad[k].why), "return claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
                 free(tb);
             }
             mn->incomplete = false;

@@ -72,14 +72,17 @@
 // A FRESH variable's value, for a harness that evaluates a VC at run time: (sum of coef * var) / den,
 // an exact division; or, with fval >= 0, the integral part of that FLOAT value (a conversion's,
 // P3.3); or, with mm +1 (-1), the MAX (MIN) of the forms mmf holds (a ranking component's rows on
-// one side of a trip, c41), mmf NULL where mm is 0. The generator states its facts; the recipe only
-// says which value they are about (the remainder of x / c is x - c*q).
+// one side of a trip, c41), mmf NULL where mm is 0; or, with wbits 1..64, the linear value WRAPPED
+// into wbits bits, signed where wsgn, as it_wrap narrows it (a return's landed value, s8). The
+// generator states its facts; the recipe only says which value they are about (the remainder of
+// x / c is x - c*q).
 // A form k: sum over i < fn[k] of fcoef[k][i] * fvar[k][i], plus fc0[k]; nf forms, 1 .. JRANK_MAXC.
 typedef struct {
     int32_t nf; uint8_t fn[JRANK_MAXC]; int32_t fvar[JRANK_MAXC][JRANK_MAXT];
     __int128 fcoef[JRANK_MAXC][JRANK_MAXT], fc0[JRANK_MAXC];
 } JMinMax;
-typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int32_t fval; int8_t mm; const JMinMax *mmf; } JRecipe;
+typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int32_t fval; int8_t mm; const JMinMax *mmf;
+                 int8_t wbits; bool wsgn; } JRecipe;
 
 // A claim at a cut point, `sum(coef * term) <= rhs`, over one to four terms by value id: a cell's
 // ALLOCA id is the version the cell has as block `blk` is entered, any other id that integer value.
@@ -1142,7 +1145,7 @@ static int32_t jb_fresh(JB *B, const char *what, int32_t id, const JLT *t, int n
     JRecipe *r = JG_NEW(B->g, JRecipe, 1);
     if (!s || !r) { B->fail = true; return 0; }
     strcpy(s, nm);
-    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL;
+    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL; r->wbits = 0; r->wsgn = false;
     for (int i = 0; i < n; i++) { r->var[i] = t[i].var; r->coef[i] = t[i].c; }
     int32_t x = jb_newvar(B, s, 3, id, NULL);
     B->qt--;                                                   // nothing to state for it
@@ -3416,8 +3419,8 @@ static bool jg_claim_shape(JG *g, const int32_t *key, const uint8_t *tk, int32_t
     return true;
 }
 // A return claim of h: its terms, the returned value among them and any other an integer
-// parameter of h; h returns an integer, and every return lands exactly (a wrapping return would
-// make the value a caller sees another than the one the claim is owed about).
+// parameter of h; h returns an integer. A return whose landing wraps is owed about the value the
+// caller receives, the landed one (jg_post_obligations, s8), as the caller's contract states it.
 static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
     const __int128 big = (__int128)1 << 66;
     if (!h || h->is_extern || !jg_is_int(h->ret_type)) return jg_fail(g, "a return claim on a function returning no integer");
@@ -3437,9 +3440,6 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
             return jg_fail(g, "a return claim's term is neither the returned value nor an integer parameter");
     }
     if (!ret) return jg_fail(g, "a return claim not about the returned value");
-    for (const IrBlock *b = h->blocks; b; b = b->next)
-        if (b->term.kind == IR_TERM_RET && b->term.cond && !jg_lands_exact(b->term.cond->type, h->ret_type, b->term.unchecked))
-            return jg_fail(g, "a return claim on a function whose return wraps");
     return true;
 }
 // A guarded return claim as the return claim it guards, for the checks they share
@@ -3542,9 +3542,23 @@ static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardCl
             JLT w[1]; w[0].var = jb_val(&B, jg_value(g, gd->gkey[k])); w[0].c = 1;
             jb_atom(&B, jb_str(&B, "guard %%v%lld", gd->gkey[k], 0, 0), w, 1, J_EQ, gd->gval[k]);
         }
+        // the value the caller receives: the returned one where its landing in the return type keeps
+        // it, else that value WRAPPED into the type (a waived narrowing, as it_wrap makes it): a fresh
+        // x = v - k*2^w within the type, its recipe the wrap for a run-time check
+        int32_t rv = jb_val(&B, b->term.cond);
+        const IrType *rt = g->f->ret_type;
+        if (!jg_lands_exact(b->term.cond->type, rt, b->term.unchecked) && rt && rt->kind == IRT_INT && rt->bits >= 1 && rt->bits <= 64) {
+            JLT w[1]; w[0].var = rv; w[0].c = 1;
+            int32_t x = jb_fresh(&B, "ret.landed", b->term.cond->id, w, 1, 1);
+            if (!B.fail) {
+                JRecipe *r = (JRecipe *)B.vrec[x]; r->wbits = (int8_t)rt->bits; r->wsgn = rt->is_signed;
+                jb_wrapto(&B, x, rv, rt, "ret.k", b->term.cond->id, jb_str(&B, "return bb%lld wrap", b->id, 0, 0));
+                rv = x;
+            }
+        }
         JLT t[JCLAIM_MAXT]; JCons goal;
         for (int k = 0; k < c->nt; k++) {
-            t[k].var = jb_val(&B, c->key[k] == JKEY_RET ? b->term.cond : jg_value(g, c->key[k]));
+            t[k].var = c->key[k] == JKEY_RET ? rv : jb_val(&B, jg_value(g, c->key[k]));
             t[k].c = c->coef[k];
         }
         if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");

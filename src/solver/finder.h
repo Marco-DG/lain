@@ -56,13 +56,6 @@ static bool fd_range(const IrType *t, FdRange *r) {
     return true;
 }
 static bool fd_is_int(const IrType *t) { return t && (t->kind == IRT_INT || t->kind == IRT_BOOL); }
-static bool fd_lands_exact(const IrType *from, const IrType *to, bool waived) {
-    if (!fd_is_int(from) || !fd_is_int(to)) return false;
-    if (from->kind == to->kind && (from->kind == IRT_BOOL || (from->bits == to->bits && from->is_signed == to->is_signed))) return true;
-    if (!waived || (to->kind == IRT_INT && (to->has_refine || to->has_ne))) return true;
-    FdRange a, b;
-    return fd_range(from, &a) && fd_range(to, &b) && b.lo <= a.lo && a.hi <= b.hi;
-}
 static __int128 fd_const(const IrInstr *ins) {
     const IrType *t = ins->result ? ins->result->type : NULL;
     if (t && t->kind == IRT_INT && !t->is_signed && t->bits == 64) return (__int128)(uint64_t)ins->aux.imm;
@@ -1890,12 +1883,10 @@ static bool called_here(JFinder *F, IrFunc *f) {
 // A function's return candidates: VRA's interval (its summary, after the analysis: ir.h's
 // ret_range_state), each side of the returned value, and of its difference and sum with each
 // integer parameter (`min(a, b) <= a`; `clamp(x, lo, hi) >= lo`). None for a function no caller
-// here can use them in, or whose return may wrap, whose claims the generator would refuse.
+// here can use them in. A return that may wrap is owed about the value it lands as (gen.h, s8).
 static bool ret_candidates(JFinder *F, IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
     *ncd = 0;
     if (!fd_is_int(f->ret_type) || f->incomplete || !called_here(F, f)) return true;
-    for (IrBlock *b = f->blocks; b; b = b->next)
-        if (b->term.kind == IR_TERM_RET && b->term.cond && !fd_lands_exact(b->term.cond->type, f->ret_type, b->term.unchecked)) return true;
     FdRange tr;
     // a side tighter than the type's
     if (F->use_vra && f->ret_range_state == 2 && fd_range(f->ret_type, &tr))
