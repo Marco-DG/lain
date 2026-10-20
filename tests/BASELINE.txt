@@ -1944,6 +1944,10 @@ at=access 4
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/trust/judge_load_twin_pass.ln
+rc=0
+out=
+at=nonnull 8
 ### tests/trust/judge_signed_division_pass.ln
 rc=0
 out=

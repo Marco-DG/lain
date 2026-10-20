@@ -218,6 +218,7 @@ typedef struct {
     uint8_t *writes;               // by header id * ncells: the loop stores the cell
     uint32_t hash;
     const JClaim *cl; int32_t ncl; // claims (untrusted input: each is owed on every edge into its block)
+    int32_t *ltwin;                // by LOAD value id: its twin load's id (jg_load_twin), -1 none, -2 not asked
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases (2), none (1), not asked yet (0)
 } JG;
@@ -1462,6 +1463,103 @@ static bool jg_same_value(JG *g, IrValue *a, IrValue *b) {
     if (!a || !b || a->id < 0 || a->id >= g->nv || b->id < 0 || b->id >= g->nv || !g->loadver) return false;
     return g->loadver[a->id] >= 0 && g->loadver[a->id] == g->loadver[b->id];
 }
+// May instruction i write memory? Every op NOT known to leave memory as it was: a STORE, a CALL,
+// an INIT, an OPAQUE, a CONSUME, and any op added later (the safe side). An ALLOCA makes fresh
+// storage and changes no existing cell.
+static bool jg_may_write(const IrInstr *i) {
+    switch (i->op) {
+        case IR_CONST: case IR_CAST: case IR_ADD: case IR_SUB: case IR_MUL: case IR_SDIV: case IR_UDIV:
+        case IR_SREM: case IR_UREM: case IR_NEG: case IR_AND: case IR_OR: case IR_XOR: case IR_SHL:
+        case IR_LSHR: case IR_ASHR: case IR_BNOT: case IR_CTZ: case IR_CLZ: case IR_POPCOUNT:
+        case IR_SIZEOF: case IR_ALIGNOF: case IR_ICMP: case IR_ALLOCA: case IR_SHAPE: case IR_LOAD:
+        case IR_VEC_MOVEMASK: case IR_VEC_SHUFFLE: case IR_FIELD_PTR: case IR_ELEM_PTR:
+        case IR_SLICE_LEN: case IR_SLICE_DATA: case IR_MAKE_SLICE: case IR_SEQ_EQ: case IR_SUBSLICE:
+        case IR_ARRAY_NEW: case IR_STR_CONST: case IR_STRUCT_NEW: case IR_SUM_NEW: case IR_SUM_TAG:
+        case IR_SUM_PAYLOAD: case IR_FUNC_REF: case IR_ASSUME: case IR_ASSERT: case IR_BORROW:
+        case IR_BORROW_END:
+            return false;
+        default: return true;
+    }
+}
+// Are two addresses one: jg_same_value, or the same ELEM_PTR or FIELD_PTR (one aux), or SLICE_DATA
+// (a slice is a value: its data pointer is one), of operands that are pairwise one, to a small depth?
+static bool jg_same_addr(JG *g, IrValue *a, IrValue *b, int depth) {
+    if (jg_same_value(g, a, b)) return true;
+    if (depth > 4 || !a || !b || a->id < 0 || a->id >= g->nv || b->id < 0 || b->id >= g->nv) return false;
+    IrInstr *x = g->def[a->id], *y = g->def[b->id];
+    if (!x || !y || x->op != y->op || (x->op != IR_ELEM_PTR && x->op != IR_FIELD_PTR && x->op != IR_SLICE_DATA) || x->n_operands != y->n_operands) return false;
+    if (x->op == IR_FIELD_PTR && x->aux.field_idx != y->aux.field_idx) return false;
+    for (int k = 0; k < x->n_operands; k++) {
+        __int128 cx, cy;
+        if (jg_const_of(g, x->operands[k], &cx) && jg_const_of(g, y->operands[k], &cy)) { if (cx != cy) return false; continue; }
+        if (!jg_same_addr(g, x->operands[k], y->operands[k], depth + 1)) return false;
+    }
+    return true;
+}
+// A LOAD's TWIN (s9): an earlier load of the same address that dominates it, with no instruction
+// that may write memory (jg_may_write) on any path from the twin to it, so the two read one value.
+// L' in block D, L in block E: in one block, nothing between them writes; else no write in D after
+// L', in E before L (or in all of E, where E reaches itself without passing D), nor in any block
+// reachable from D without re-entering it that reaches E without passing D (a path back through D
+// runs L' again, and the latest L' is the one compared). Only the nearest same-address load is
+// tried: a farther one's paths pass the nearer one's block. The value id of the twin, or -1.
+static bool jg_same_int_type(const IrType *a, const IrType *b) {   // one integer type, by value
+    return a && b && a->kind == IRT_INT && b->kind == IRT_INT && a->bits == b->bits && a->is_signed == b->is_signed;
+}
+static bool jg_block_writes(JG *g, IrBlock *b, int32_t from, int32_t to) {   // instructions [from, to)
+    int32_t k = 0;
+    for (IrInstr *i = b->instrs; i; i = i->next, k++) if (k >= from && (to < 0 || k < to) && jg_may_write(i)) return true;
+    (void)g; return false;
+}
+static int32_t jg_load_twin(JG *g, IrInstr *ld) {
+    int32_t id = ld->result ? ld->result->id : -1;
+    if (id < 0 || id >= g->nv || ld->n_operands < 1) return -1;
+    if (!g->ltwin) {
+        if (!(g->ltwin = JG_NEW(g, int32_t, g->nv))) return -1;
+        for (int32_t i = 0; i < g->nv; i++) g->ltwin[i] = -2;
+    }
+    if (g->ltwin[id] != -2) return g->ltwin[id];
+    g->ltwin[id] = -1;
+    int32_t E = g->defblk[id], at = g->defidx[id];
+    IrInstr *tw = NULL; int32_t D = -1, tat = -1;
+    for (int32_t b = E; b >= 0 && !tw; ) {                   // up the dominator chain, nearest first
+        int32_t k = 0, lim = b == E ? at : -1;
+        for (IrInstr *i = g->blk[b]->instrs; i && (lim < 0 || k < lim); i = i->next, k++)
+            if (i->op == IR_LOAD && i != ld && i->result && jg_same_int_type(i->result->type, ld->result->type) && i->n_operands >= 1 &&
+                jg_same_addr(g, i->operands[0], ld->operands[0], 0)) { tw = i; D = b; tat = k; }
+        if (tw) break;
+        int32_t p = g->idom[b];
+        if (p == b) break;
+        b = p;
+    }
+    if (!tw) return -1;
+    if (D == E) { if (jg_block_writes(g, g->blk[E], tat + 1, at)) return -1; }
+    else {
+        if (jg_block_writes(g, g->blk[D], tat + 1, -1) || jg_block_writes(g, g->blk[E], 0, at)) return -1;
+        // fwd: reachable from D's successors without entering D; bwd: reach E without passing D
+        uint8_t *fwd = JG_NEW(g, uint8_t, g->nb), *bwd = JG_NEW(g, uint8_t, g->nb), *cyc = JG_NEW(g, uint8_t, g->nb);
+        int32_t *st = JG_NEW(g, int32_t, g->nb + 1);
+        if (!fwd || !bwd || !cyc || !st) return -1;
+        memset(fwd, 0, (size_t)g->nb); memset(bwd, 0, (size_t)g->nb); memset(cyc, 0, (size_t)g->nb);
+        int32_t sp = 0; IrBlock *s[66];
+        int ns = jg_succ(g->blk[D], s);
+        for (int q = 0; q < ns; q++) if (s[q]->id != D && !fwd[s[q]->id]) { fwd[s[q]->id] = 1; st[sp++] = s[q]->id; }
+        while (sp) { int32_t b = st[--sp]; ns = jg_succ(g->blk[b], s);
+            for (int q = 0; q < ns; q++) if (s[q]->id != D && !fwd[s[q]->id]) { fwd[s[q]->id] = 1; st[sp++] = s[q]->id; } }
+        bwd[E] = 1; st[sp++] = E;
+        while (sp) { int32_t b = st[--sp];
+            for (IrEdge *e = g->blk[b]->preds; e; e = e->next) { int32_t p = e->block->id;
+                if (p != D && !bwd[p]) { bwd[p] = 1; st[sp++] = p; } } }
+        ns = jg_succ(g->blk[E], s);                           // E reaches itself without D?
+        for (int q = 0; q < ns; q++) if (s[q]->id != D && !cyc[s[q]->id]) { cyc[s[q]->id] = 1; st[sp++] = s[q]->id; }
+        while (sp) { int32_t b = st[--sp]; ns = jg_succ(g->blk[b], s);
+            for (int q = 0; q < ns; q++) if (s[q]->id != D && !cyc[s[q]->id]) { cyc[s[q]->id] = 1; st[sp++] = s[q]->id; } }
+        if (cyc[E] && jg_block_writes(g, g->blk[E], 0, -1)) return -1;
+        for (int32_t b = 0; b < g->nb; b++)
+            if (b != E && b != D && fwd[b] && bwd[b] && g->blk[b] && jg_block_writes(g, g->blk[b], 0, -1)) return -1;
+    }
+    return g->ltwin[id] = tw->result->id;
+}
 // An integer condition known at a point (`truth` its value there) narrowing v: a comparison of v
 // (jg_same_value) with a value of known static range, either way round, or an `and` that holds.
 // An unsigned predicate (the interpreter compares as uint64) only against a y >= 0: v <u y and
@@ -1934,7 +2032,16 @@ static void jb_state(JB *B, int32_t x) {
             break;
         case IR_LOAD: {                                        // a[i]: the element the index names (R7)
             JELoad *el = g->eload ? g->eload[id] : NULL;
-            if (!el) { jb_table_load(B, x, d, id); break; }
+            if (!el) {
+                jb_table_load(B, x, d, id);
+                // the value an earlier load of the same address read, no write between (s9)
+                int32_t tw = g->loadver && g->loadver[id] < 0 ? jg_load_twin(g, d) : -1;
+                if (tw >= 0 && jg_is_int(v->type)) {
+                    t[0].var = jb_val(B, jg_value(g, tw)); t[0].c = 1;
+                    jb_def(B, x, t, 1, jb_str(B, "def %%v%lld load.same", id, 0, 0));
+                }
+                break;
+            }
             if (B->jS >= 0) break;                             // a disjunct holds no disjunction
             int32_t xi = jb_val(B, el->ix);
             JHyp *h = jb_hyp(B, jb_str(B, "def %%v%lld element", id, 0, 0));

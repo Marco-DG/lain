@@ -4818,6 +4818,33 @@ int main(void) {
         }
         printf("  guarded return claims: owed under the guard, a conjunct, a disjunction or nothing at a call, the shapes\n");
     }
+    // 83. two LOADS of one address, no write between, are one value (s9). a: a slice of u8, i, j: u64.
+    // b0: x = a[i]; w < 10 ? b1 : b2; b1: (case); b2: y = a[k], 100 / y. (0) nothing in b1, k = i:
+    // y is x (`load.same`); (1) a store a[i] = 7 in b1; (2) a call in b1; (3) k = j; (4) a store after
+    // x in b0: none of them
+    for (int c = 0; c < 5; c++) {
+        IrFunc *f = ir_func_new(&A, nm("twin83"), u8t, IR_FUNC_PURE);
+        IrValue *a = ir_add_param(f, slice_of(u8t), nm("a")), *i = ir_add_param(f, u64t, nm("i")), *j = ir_add_param(f, u64t, nm("j"));
+        IrValue *w = ir_add_param(f, u32t, nm("w"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+        IrValue *x = ir_load(f, b0, ir_elem_ptr(f, b0, ir_slice_data(f, b0, a, u8t), i, u8t), u8t);
+        if (c == 4) ir_store(f, b0, ir_elem_ptr(f, b0, ir_slice_data(f, b0, a, u8t), i, u8t), ir_const_int(f, b0, 7, u8t));
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_ULT, w, ir_const_int(f, b0, 10, u32t)), b1, b2);
+        if (c == 1) ir_store(f, b1, ir_elem_ptr(f, b1, ir_slice_data(f, b1, a, u8t), i, u8t), ir_const_int(f, b1, 7, u8t));
+        if (c == 2) mk_call(f, b1, "touch83", w, u32t);
+        ir_set_br(b1, b2);
+        IrValue *y = ir_load(f, b2, ir_elem_ptr(f, b2, ir_slice_data(f, b2, a, u8t), c == 3 ? j : i, u8t), u8t);
+        ir_set_ret(b2, ir_binop(f, b2, IR_UDIV, ir_const_int(f, b2, 100, u8t), y, u8t));
+        ir_finalize_cfg(f);
+        char *t = gen_text(f);
+        const char *dz = t ? vc_of(t, "divzero") : "";
+        char want[96]; snprintf(want, sizeof want, "def %%v%d load.same : ", y->id);
+        const char *ls = strstr(dz, want); char xv[24]; snprintf(xv, sizeof xv, "%%v%d", x->id);
+        if (c == 0) CHECK(ls && strstr(ls, xv) && strstr(ls, " = 0"), "y = a[i] after x = a[i], nothing written between: y is x:\n%s", dz);
+        else CHECK(dz[0] && !strstr(dz, "load.same"), "case %d: a write between, or another index: no twin:\n%s", c, dz);
+        free(t);
+    }
+    printf("  two loads of one address, nothing written between, are one value; a store, a call, another index\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

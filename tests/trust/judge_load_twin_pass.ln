@@ -1,0 +1,39 @@
+// s9: two loads of one element, no write between, are one value (the judge's `load.same`). The
+// arrays have 32 elements, past the judge's element cells, so each load is otherwise a fresh value.
+// upper: `buf[i] - 32` is proven from the condition's loads of buf[i] (ascii.ln's case, R4).
+// after_store and after_call: a write on one path between two loads of a[i]; the second load is NOT
+// the first (a[i] is 7 or 9 there), and judge_gate runs main, so a generator that ignored the STORE or
+// the CALL would state x = y (named by the checked `y as u16 + 1`) and its run-time check would
+// find it false.
+func upper(var buf u8[32], n usize <= 32) {
+    for i in 0..n {
+        if buf[i] >= 97 and buf[i] <= 122 { buf[i] = buf[i] - 32 }
+    }
+}
+func set9(var a u8[32], i usize <= 31) {
+    a[i] = 9
+}
+func after_store(var a u8[32], i usize <= 31, w bool) u16 {
+    x = a[i]
+    if w { a[i] = 7 }
+    y = a[i]
+    return (y as u16 + 1) +% (x as u16)
+}
+func after_call(var a u8[32], i usize <= 31, w bool) u16 {
+    x = a[i]
+    if w { set9(var a, i) }
+    y = a[i]
+    return (y as u16 + 1) +% (x as u16)
+}
+func main() i32 {
+    var buf u8[32] = [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    upper(var buf, 12)
+    var a u8[32] = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+    var s u16 = 0
+    s = s +% after_store(var a, 0, true)
+    s = s +% after_store(var a, 1, false)
+    s = s +% after_call(var a, 2, true)
+    s = s +% after_call(var a, 3, false)
+    if s == 0 { return 1 }
+    return 0
+}
