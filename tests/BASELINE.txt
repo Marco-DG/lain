@@ -490,6 +490,11 @@ rc=0
 out=1 5 0
 at=const 6
 ty=Slice_u8 scalar
+### tests/functions/return_refinement_two_loops_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
 ### tests/functions/string_return_pass.ln
 rc=0
 out=[hi there]

@@ -2724,17 +2724,26 @@ static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JCl
 // it, one side. A candidate only: Houdini keeps it if its keep holds (its entry always does). The
 // first round has no claims for the loops inside (k >= i), so this runs from the second, as
 // fd_nested_candidates does.
+// A SINGLE loop too, for a cell the function returns (bench/simd_lexer's `scan_to`, `u32 >= start`:
+// `i` only grows from `start` through two loops one after the other, TCW's real programs): there,
+// besides its entry, the version against each integer parameter the generator can name at the
+// header, `p - v <= 0` (never falls); the second loop's entry is the first's exit, so only the
+// parameter carries `i >= start` across both. Only returned cells: every version of every loop
+// against every parameter is a search per header the corpus would pay for nothing.
+static bool fd_returns_cell(IrFunc *f, int32_t key);
 static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
+    char err[200];
     for (IrBlock *h2 = f->blocks; h2; h2 = h2->next) {
-        if (!h2->is_loop_header || fd_nest_around(N, h2->id, h2->id) < 0) continue;
+        bool nested = h2->is_loop_header && fd_nest_around(N, h2->id, h2->id) >= 0;
+        if (!h2->is_loop_header || (!nested && !fd_returns_cell(f, -1))) continue;
         FdLoop L;
         if (!fd_loop_build(F, f, h2->id, as, nv, &L)) { free(L.mem); if (F->oom) return false; continue; }
         for (int32_t v = 0; v < L.npk; v++) {
             if (L.ptk[v] != JTERM_VALUE) continue;
             int32_t e = -1;
             for (int32_t z = 0; z < L.npk && e < 0; z++) if (L.ptk[z] == JTERM_ENTRY && L.pkey[z] == L.pkey[v]) e = z;
-            if (e < 0 || !L.moves || !L.moves[v]) continue;
+            if (e < 0 || !L.moves || !L.moves[v] || (!nested && !fd_returns_cell(f, L.pkey[v]))) continue;
             int dir = 0;                                     // +1: never falls, -1: never rises
             for (int sg = 1; sg >= -1 && !dir; sg -= 2) {
                 bool all = L.npaths > 0;
@@ -2754,6 +2763,20 @@ static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const
             c.key[0] = L.pkey[v]; c.tk[0] = JTERM_VALUE; c.coef[0] = -dir;
             c.key[1] = L.pkey[v]; c.tk[1] = JTERM_ENTRY; c.coef[1] = dir;
             if (!fd_push_claim(F, &c, as, nv, cl, nc, ccl)) { free(L.mem); return false; }
+            if (nested) continue;
+            int32_t pk[16]; uint8_t kind[16]; int32_t np = 0;     // ...and against each parameter
+            for (IrParam *p = f->params; p && np < 16; p = p->next)
+                if (p->value && fd_is_int(p->value->type)) pk[np++] = p->value->id;
+            if (np == 0 || !F->gen->term_kinds(F->gen->ctx, f, h2->id, pk, NULL, np, kind, err, sizeof err)) continue;
+            for (int32_t q = 0; q < np; q++) {
+                if (kind[q] != 1 || pk[q] == L.pkey[v]) continue;      // a value fixed at the header
+                JClaim d; memset(&d, 0, sizeof d);
+                d.blk = h2->id; d.fn = f; d.nt = 2; d.rhs = 0;
+                int32_t lo = pk[q] < L.pkey[v] ? pk[q] : L.pkey[v], hi = pk[q] < L.pkey[v] ? L.pkey[v] : pk[q];
+                d.key[0] = lo; d.tk[0] = JTERM_VALUE; d.coef[0] = lo == L.pkey[v] ? -dir : dir;
+                d.key[1] = hi; d.tk[1] = JTERM_VALUE; d.coef[1] = hi == L.pkey[v] ? -dir : dir;
+                if (!fd_push_claim(F, &d, as, nv, cl, nc, ccl)) { free(L.mem); return false; }
+            }
         }
         free(L.mem);
     }

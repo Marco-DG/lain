@@ -1,0 +1,26 @@
+// LAINFLAGS: --judge=authority
+// A return refinement over a parameter, `u32 >= start`, of a function whose returned cell only
+// grows from `start` through two loops one after the other (bench/simd_lexer's `scan_to`). The
+// second loop's entry is the first's exit, so `i >= start` must hold at both headers: the finder
+// proposes the returned cell against each parameter where a single loop never lowers it, and the
+// judge keeps it at both (TCW's real programs, 2026-10-20).
+func skip_to(src u8[64], n u32 < 65, start u32 < 65, term u8) u32 >= start {
+    var i u32 = start
+    while i + 4 <= n {
+        if src[i] == term { return i }
+        i = i + 4
+    }
+    while i < n and src[i] != term { i = i + 1 }
+    return i
+}
+
+func main() i32 {
+    var s u8[64]
+    for k in 0..64 { s[k] = 32 }
+    s[40] = 10
+    s[62] = 9
+    if skip_to(s, 64, 0, 10) != 40 { return 1 }    // found by the stride loop
+    if skip_to(s, 64, 1, 9) != 62 { return 2 }     // 1, 5, .., 61, then the tail finds 62
+    if skip_to(s, 64, 3, 7) != 64 { return 3 }     // not there: n
+    return 0
+}
