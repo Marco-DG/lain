@@ -44,6 +44,7 @@ static IrFunc *vra_find_func(const IrName *n) {
 
 // One discharged (or not) proof obligation.
 #define VRA_MAX_RANK 4
+#define VRA_MAX_DIM 2048     // values in one function's octagon (vra_analyze)
 
 typedef enum { VRA_BOUNDS, VRA_OVERFLOW, VRA_DIVZERO, VRA_TERMINATION, VRA_PRECOND } VraCheckKind;
 
@@ -5938,6 +5939,17 @@ static Vra *vra_analyze(IrFunc *f) {
             if (keep) V->odim[rv->id] = V->noct++;
         }
     if (V->noct == 0) V->noct = 1;                 // never size the matrix to zero
+    // The octagon is dense, (2n)^2 entries for n tracked values, and every integer value of the
+    // function has one: a function of 4,096 calls had about 28,000, 25 GB a matrix, and took the
+    // machine's memory. VRA_MAX_DIM bounds it (the corpus' largest function has 212; 2,048 cost
+    // 270 MB and 5 s); past it the function is refused as too large for this analysis, a limit of
+    // the implementation, before any matrix is made.
+    if (V->noct > VRA_MAX_DIM) {
+        fprintf(stderr, "lain: function '%.*s' is too large for the range analysis: %d values in one function, "
+                "at most %d (a limit of this implementation, not of the program)\n",
+                f->name ? (int)f->name->length : 1, f->name ? f->name->name : "?", V->noct, VRA_MAX_DIM);
+        exit(70);
+    }
     int dim=2*V->noct; V->dsz=dim*dim;
     // The map is a global the octagon accessors consult, and vra_analyze RECURSES (a call's
     // return range is read by analysing the callee), so the caller's map must be restored on

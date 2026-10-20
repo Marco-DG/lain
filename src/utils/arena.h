@@ -28,6 +28,8 @@ typedef struct {
     char    *beg;
     char    *cur;
     char    *end;
+    void    *(*alloc)(usize);   // where a new block comes from when this one is full (NULL: none)
+    usize   total;              // every block's bytes, the first included
 } Arena;
 
 static inline Arena arena_new(void* (*allocator)(usize), usize size) {
@@ -43,8 +45,37 @@ static inline Arena arena_new(void* (*allocator)(usize), usize size) {
     arena.beg = ptr;
     arena.cur = ptr;
     arena.end = ptr + size;
+    arena.alloc = allocator;
+    arena.total = size;
 
     return arena;
+}
+
+// A push that does not fit starts a NEW block, twice the last or the push itself, whichever is
+// larger, and carries on there; the full block is kept, so everything already pushed stays where
+// it is (a pointer into the arena is never moved). A fixed block made a large legal program, 4,096
+// calls in one function, panic in lowering (exit 134) instead of compiling. A pop or a clear sees
+// only the current block, which no caller crosses (a pop undoes the last push). ARENA_MAX_TOTAL
+// bounds an arena's blocks together: past it the compiler stops with a message and exit 70, as
+// for any out of memory, not with a panic, and never by taking the machine's memory.
+#ifndef ARENA_MAX_TOTAL
+#define ARENA_MAX_TOTAL ((usize)1 << 30)
+#endif
+static inline void arena_grow(Arena *arena, isize need) {
+    isize cap = arena->end - arena->beg;
+    cap = cap > 0 ? 2 * cap : 4096;
+    if (cap < need + 4096) cap = need + 4096;
+    if (arena->total + (usize)cap > ARENA_MAX_TOTAL) {
+        fprintf(stderr, "lain: out of memory: an arena would pass %llu MB (the program is too large for this compiler)\n",
+                (unsigned long long)(ARENA_MAX_TOTAL >> 20));
+        exit(70);
+    }
+    arena->total += (usize)cap;
+    char *ptr = arena->alloc((usize)cap);
+    panic_if_msg(ptr == NULL, "Arena growth failed: the allocator returned a null pointer (%ld bytes).", cap);
+    arena->beg = ptr;
+    arena->cur = ptr;
+    arena->end = ptr + cap;
 }
 
 static inline void arena_align(Arena *arena, isize alignment) {
@@ -62,6 +93,7 @@ static inline void arena_align(Arena *arena, isize alignment) {
 }
 
 static inline void *_arena_push(Arena *arena, isize size, isize count) {
+    if (arena->alloc && size > 0 && count > 0 && count > (arena->end - arena->cur) / size) arena_grow(arena, size * count);
 #if ARENA_DEBUG
     //fprintf(stderr, "  pushing %zu bytes; %zu bytes remain\n", size*count, (size_t)(arena->end - arena->cur));
     
@@ -84,6 +116,11 @@ static inline void *_arena_push(Arena *arena, isize size, isize count) {
 
 static inline void *_arena_push_aligned(Arena *arena, isize size, isize count, isize alignment) {
     isize padding = -(uptr)arena->cur & (alignment - 1);
+    if (arena->alloc && size > 0 && count > 0 && alignment > 0 &&
+        (arena->end - arena->cur - padding <= 0 || count > (arena->end - arena->cur - padding) / size)) {
+        arena_grow(arena, size * count + alignment);
+        padding = -(uptr)arena->cur & (alignment - 1);
+    }
 
 #if ARENA_DEBUG
     //fprintf(stderr, "  pushing %zu bytes; %zu bytes remain\n",size*count, (size_t)(arena->end - arena->cur));
