@@ -241,6 +241,18 @@ static void judge_shadow_module(IrFunc *mod) {
             }
             char cc = jsh_vra_class(c);
             if (!cc) continue;
+            // VRA may file two checks of one class at one instruction, the judge one record there
+            // under another rule (`return n + 1`: VRA's add proved and the return's landing refused,
+            // the judge's narrowing at the add not implied): one comparison per instruction and
+            // class, VRA proving it when it proves every check there (ackermann_checked's "vra-only"
+            // where the default mode itself reports E086, Documentation 2026-10-20)
+            bool vok = c->ok, dup = false;
+            for (int i2 = 0; c->at && i2 < V->nchecks && !dup; i2++) {
+                VraCheck *c2 = &V->checks[i2];
+                if (c2 == c || c2->at != c->at || jsh_vra_class(c2) != cc) continue;
+                if (i2 < i) dup = true; else vok = vok && c2->ok;
+            }
+            if (dup) continue;
             n_chk++;
             int seen = 0, proved = 0, out = 0; JRecordKind worst = JREC_PROVED;
             for (int64_t j = 0; j < R.n; j++) {
@@ -265,20 +277,20 @@ static void judge_shadow_module(IrFunc *mod) {
                 outside++;
                 fprintf(stderr, "judge-shadow: outside %.*s Ln %lld, Col %lld: %s %s check (VRA %s) is beyond what the judge states\n",
                         (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, art, cls,
-                        c->ok ? "proves it" : "refuses it");
+                        vok ? "proves it" : "refuses it");
                 continue;
             }
             if (!seen) {
                 unowed++;
                 fprintf(stderr, "judge-shadow: unowed %.*s Ln %lld, Col %lld: %s %s check (VRA %s) has no obligation\n",
                         (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, art, cls,
-                        c->ok ? "proves it" : "refuses it");
+                        vok ? "proves it" : "refuses it");
                 continue;
             }
             bool jok = proved == seen;
-            if (c->ok && jok) agree_p++;
-            else if (!c->ok && !jok) agree_r++;
-            else if (c->ok) {
+            if (vok && jok) agree_p++;
+            else if (!vok && !jok) agree_r++;
+            else if (vok) {
                 vra_only++;
                 fprintf(stderr, "judge-shadow: vra-only %.*s Ln %lld, Col %lld: VRA proves this %s check, the judge: %s\n",
                         (int)f->name->length, f->name->name, (long long)c->line, (long long)c->col, cls, jsh_kind_name(worst));
