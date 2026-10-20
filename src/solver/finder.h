@@ -2685,6 +2685,107 @@ static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const
     }
     return true;
 }
+// The same for a SUM of two versions (Euclid's `t = b; b = a % b; a = t`: neither a nor b is
+// monotone, a + b never rises, since a % b <= a): per header with at most FD_SUMV moving versions
+// that have their ENTRY pairs, each pair whose sum never rises (or never falls) on any back-edge
+// path, against the sum of their entry values, one side; only for a pair one of which the function
+// returns as it is (the bound is for its return; every pair at every header cost Gothenburg_v2-1 a
+// second search), and not for two versions monotone alone the same way (their own claims say as
+// much). With it gcd(a0, b0)'s return is at most
+// a0 + b0 (and a guarded claim of gcd(48, 36) at most 84). A candidate only, from the second round
+// as fd_monotone_candidates.
+#define FD_SUMV 8
+// Whether f returns cell `key` as it is (`return a`: a LOAD of it, or a cast of one, at a return);
+// key -1: any cell
+static bool fd_returns_cell(IrFunc *f, int32_t key) {
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        if (b->term.kind != IR_TERM_RET || !b->term.cond) continue;
+        IrValue *v = b->term.cond;
+        for (int hop = 0; hop < 2 && v; hop++) {
+            IrInstr *d = NULL;
+            for (IrBlock *c = f->blocks; c && !d; c = c->next)
+                for (IrInstr *i = c->instrs; i && !d; i = i->next) if (i->result == v) d = i;
+            if (!d) break;
+            if (d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0] && (key < 0 || d->operands[0]->id == key)) return true;
+            v = d->op == IR_CAST && d->n_operands >= 1 ? d->operands[0] : NULL;
+        }
+    }
+    return false;
+}
+static bool fd_sum_monotone_candidates(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
+    if (!fd_returns_cell(f, -1)) return true;                // no cell returned: nothing to bound
+    for (IrBlock *h = f->blocks; h; h = h->next) {
+        if (!h->is_loop_header) continue;
+        FdLoop L;
+        if (!fd_loop_build(F, f, h->id, as, nv, &L)) { free(L.mem); if (F->oom) return false; continue; }
+        int32_t mv[FD_SUMV], me[FD_SUMV], md[FD_SUMV], nm = 0;
+        bool many = false, ret = false;                      // only where the function returns one of them
+        for (int32_t v = 0; v < L.npk && !ret; v++)
+            ret = L.ptk[v] == JTERM_VALUE && L.moves && L.moves[v] && fd_returns_cell(f, L.pkey[v]);
+        if (!ret) { free(L.mem); continue; }
+        for (int32_t v = 0; v < L.npk && !many; v++) {
+            if (L.ptk[v] != JTERM_VALUE || !L.moves || !L.moves[v]) continue;
+            int32_t e = -1;
+            for (int32_t z = 0; z < L.npk && e < 0; z++) if (L.ptk[z] == JTERM_ENTRY && L.pkey[z] == L.pkey[v]) e = z;
+            if (e < 0) continue;
+            // its own direction, if it is monotone alone: two versions monotone the same way need no
+            // sum (their own claims say as much), and every such pair cost Gothenburg_v2-1 6 s
+            int mono = 0;
+            for (int sg = 1; sg >= -1 && !mono; sg -= 2) {
+                bool all = L.npaths > 0;
+                for (int32_t k = 0; k < L.npaths && all; k++) {
+                    JTerm t[2]; JVc q = *L.paths[k];
+                    int32_t a = L.pre[v], b = L.post[v];
+                    t[0].var = a < b ? a : b; t[1].var = a < b ? b : a;
+                    fd_jint(&t[0].coef, a < b ? sg : -sg); fd_jint(&t[1].coef, a < b ? -sg : sg);
+                    memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; q.goal.t = t; q.goal.nt = 2; fd_jint(&q.goal.rhs, 0);
+                    all = lia_solve(&q, slim, F->work, F->worksz).k == J_ANS_CERT;
+                }
+                if (all) mono = sg;
+            }
+            if (nm == FD_SUMV) { many = true; break; }
+            mv[nm] = v; me[nm] = e; md[nm] = mono; nm++;
+        }
+        for (int32_t i = 0; i < nm && !many; i++)
+            for (int32_t j = i + 1; j < nm; j++) {
+                int32_t u = mv[i], w = mv[j];
+                if (md[i] && md[i] == md[j]) continue;
+                if (!fd_returns_cell(f, L.pkey[u]) && !fd_returns_cell(f, L.pkey[w])) continue;
+                int dir = 0;                                 // +1: never falls, -1: never rises
+                for (int sg = 1; sg >= -1 && !dir; sg -= 2) {
+                    bool all = L.npaths > 0;
+                    for (int32_t k = 0; k < L.npaths && all; k++) {
+                        int32_t vs[4] = { L.pre[u], L.pre[w], L.post[u], L.post[w] };   // sg*(pre - post) <= 0
+                        int cs[4] = { sg, sg, -sg, -sg };
+                        JTerm t[4]; int32_t nt = 0;
+                        for (int32_t a = 0; a < 4; a++) {    // ascending by variable, a variable once
+                            int32_t p = nt;
+                            while (p > 0 && t[p - 1].var > vs[a]) p--;
+                            if (p > 0 && t[p - 1].var == vs[a]) { all = false; break; }
+                            for (int32_t q = nt; q > p; q--) t[q] = t[q - 1];
+                            t[p].var = vs[a]; fd_jint(&t[p].coef, cs[a]); nt++;
+                        }
+                        if (!all) break;
+                        JVc q = *L.paths[k];
+                        memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; q.goal.t = t; q.goal.nt = nt; fd_jint(&q.goal.rhs, 0);
+                        all = lia_solve(&q, slim, F->work, F->worksz).k == J_ANS_CERT;
+                    }
+                    if (all) dir = sg;
+                }
+                if (!dir) continue;
+                JClaim c; memset(&c, 0, sizeof c);           // +1: entries - sum <= 0; -1: sum - entries <= 0
+                c.blk = h->id; c.fn = f; c.nt = 4; c.rhs = 0;
+                c.key[0] = L.pkey[u]; c.tk[0] = JTERM_VALUE; c.coef[0] = -dir;
+                c.key[1] = L.pkey[w]; c.tk[1] = JTERM_VALUE; c.coef[1] = -dir;
+                c.key[2] = L.pkey[me[i]]; c.tk[2] = JTERM_ENTRY; c.coef[2] = dir;
+                c.key[3] = L.pkey[me[j]]; c.tk[3] = JTERM_ENTRY; c.coef[3] = dir;
+                if (!fd_push_claim(F, &c, as, nv, cl, nc, ccl)) { free(L.mem); return false; }
+            }
+        free(L.mem);
+    }
+    return true;
+}
 // A call argument that is a constant where the call is made: a CONST, or a cast of one into an
 // integer type that holds it (`f(3)` passes 3 as cast(i32 3)), as the generator reads a literal
 // (jg_const_of): a guarded claim is stated as a bound only where the generator sees the constant.
@@ -2880,6 +2981,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             free(sl);
             if (round > 0 && !fd_nested_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (round > 0 && !fd_monotone_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
+            if (round > 0 && !fd_sum_monotone_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_entry_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
             for (IrBlock *kb = f->blocks; kb; kb = kb->next)
