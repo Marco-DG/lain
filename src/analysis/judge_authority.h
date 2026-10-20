@@ -68,6 +68,7 @@ static void jau_sink(void *ctx, const JRecord *r) {
 static bool jau_dump_measures;
 static IrInstr *jau_def(IrFunc *f, IrValue *v);
 static IrBlock *jau_header(const JauRec *q);
+static void jau_site(IrFunc *f, const JauRec *q, bool loop, isize *line, isize *col);
 static void jau_name(IrFunc *f, int32_t key, char *b, size_t n) {
     const IrName *nm = NULL;
     for (IrParam *p = f->params; p && !nm; p = p->next) if (p->value && p->value->id == key) nm = p->value->src_name;
@@ -98,6 +99,27 @@ static void jau_row(IrFunc *f, const JRank *r, int32_t j, char *b, size_t n) {
     if (k || !at) at += (size_t)snprintf(b + at, at < n ? n - at : 0, at ? (k < 0 ? " - %lld" : " + %lld") : "%lld", at ? (k < 0 ? -k : k) : k);
 }
 static void jau_print_measures(const JRank *rk, int32_t nrk) {
+    // a loop or recursion the judge did not show to end: "no measure found", as the default mode
+    // says it, once per header and per function's recursion
+    for (int64_t q = 0; q < jau_n; q++) {
+        const JauRec *x = &jau_r[q];
+        if (x->k == JREC_PROVED || !x->fn) continue;
+        bool rec = !strcmp(x->kind, "rec.fall"), loop = !strcmp(x->kind, "rank.fall") || !strcmp(x->kind, "measure.fall");
+        if (!rec && !loop) continue;
+        IrBlock *H = loop ? jau_header(x) : NULL;
+        if (loop && !H) continue;
+        bool seen = false;
+        for (int64_t p2 = 0; p2 < q && !seen; p2++) {
+            const JauRec *y = &jau_r[p2];
+            if (y->fn != x->fn || y->k == JREC_PROVED || strcmp(y->kind, x->kind)) continue;
+            seen = rec || (jau_header(y) == H);
+        }
+        if (seen) continue;
+        isize line = 0, col = 0;
+        jau_site(x->fn, x, loop, &line, &col);
+        fprintf(stderr, "[measure] %.*s: %s at line %lld: no measure found\n", (int)x->fn->name->length, x->fn->name->name,
+                rec ? "recursion" : "loop", (long long)line);
+    }
     for (int32_t i = 0; i < nrk; i++) {
         const JRank *r = &rk[i];
         IrFunc *f = r->fn;
@@ -118,7 +140,7 @@ static void jau_print_measures(const JRank *rk, int32_t nrk) {
             line = hc && hc->line ? hc->line : H ? H->term.line : 0;
         }
         char row[600], all[2000]; size_t at = 0; all[0] = 0;
-        const IrName *fn = f->src_name ? f->src_name : f->name;
+        const IrName *fn = f->name;                          // as VRA's line names it, in both modes
         if (r->nreg == 0) {
             for (int32_t j = 0; j < r->ncomp; j++) {
                 jau_row(f, r, j, row, sizeof row);
@@ -176,7 +198,7 @@ static bool judge_authority_run(IrFunc *mod) {
     } else snprintf(err, sizeof err, "no memory for the judge's region");
     if (!ran && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "the judge could not run: %s", err);
     if (jau_oom && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "out of memory keeping the judge's records");
-    if (ran && jau_dump_measures && jc.last_rk) jau_print_measures(jc.last_rk, F.nrk);
+    if (ran && jau_dump_measures) jau_print_measures(jc.last_rk, jc.last_rk ? F.nrk : 0);
     free(buf); free(work); free(jc.last); free(jc.last_rk); free(jc.last_gc);
     for (int i = 0; i < jsh_nhdr; i++) free((void *)jsh_hdr[i].r);
     free(jsh_hdr); jsh_hdr = NULL; jsh_nhdr = jsh_chdr = 0;
