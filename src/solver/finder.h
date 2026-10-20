@@ -31,8 +31,11 @@ typedef struct {
     bool use_vra;                        // VRA's header states and return intervals as candidates
     const FdHdr *hdr; int nhdr;
     long long proposed, kept, dropped;   // counted across calls
-    uint64_t meter; bool meter_out;      // the last call's metered work (lia.h), and whether it ran out
-    uint64_t meter_cap;                  // the work allowed a call; 0: FD_WORK (a test sets it smaller)
+    uint64_t meter; bool meter_out;      // the last call's metered work (lia.h), and whether any account ran out
+    uint64_t meter_cap;                  // the work allowed each account; 0: FD_WORK (a test sets it smaller)
+    // the last call's accounts that ran out (finder_propose): the functions whose own search did, at
+    // most 16 of them (out_more: others too), and the module's (Houdini, guarded claims, the cycles)
+    IrFunc *out_fn[16]; int32_t nout_fn; bool out_more, out_module;
     JGuardClaim *gc; int32_t ngc;        // the last call's guarded return claims (malloc'd; the caller frees)
     bool oom;                            // the last call returned no claims because memory ran out
     JRank *rk; int32_t nrk;              // the last call's ranking claims (malloc'd; the caller frees)
@@ -595,7 +598,11 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             // asked on the WHOLE path, before slicing: a wrap case's 2^w is a large constant, and
             // without it the case would look feasible and say nothing
             vc->goal.op = J_LE; vc->goal.nt = 0; fd_jint(&vc->goal.rhs, -1);
-            if (lia_solve(vc, F->lim, F->work, F->worksz).k == J_ANS_CERT) { ndead++; continue; }
+            // under a sixteenth of the per-query budget, as the finder's other side questions: a stop
+            // keeps the path, which is what the full budget's stop did, at 65e6 operations each on
+            // isqrt.ln's `main` (`% 100000` and a wrap's case on six of its paths: 393e6 of 5e8)
+            JWork dlim = F->lim; dlim.pivot /= 16; dlim.node /= 16; dlim.leaf /= 16;
+            if (lia_solve(vc, dlim, F->work, F->worksz).k == J_ANS_CERT) { ndead++; continue; }
             fd_jint(&vc->goal.rhs, 0);                       // 0 <= 0: nothing is asked of it
             JVc *fv = fd_bump(L, sizeof *fv); JHyp *fh = fd_bump(L, sizeof(JHyp) * (size_t)(m ? m : 1));
             if (!fv || !fh) return false;
@@ -2975,11 +2982,49 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl);
 // judge_signed_division_pass.ln, 16 s); a u8 loop with two `if`s of wrapping steps (fuzz_loops'
 // wrap mode, seed 2490187, k 216) spent 2.1e9, 146 s, and still had no ranking.
 #define FD_WORK 500000000ull
+// ...in ACCOUNTS: two per function, one for the facts proposed for it (its candidates) and one for
+// its termination (its rankings), and one for the module's work (Houdini over every function's
+// candidates, the guarded claims, the cycles): one function's search must not cost another its
+// basic facts, nor a function's hard facts its loops' rankings (a `for` over a range is ranked as
+// soon as its bounds are kept, which the first round does cheaply). With one meter for the module, isqrt's
+// Newton loop spent all of it and `main`'s `for k in 0..2000` lost the claims that rank it (E011,
+// TCW's real programs, 2026-10-20). A program's cost is then bounded by its size, as a per-function
+// limit is; a verdict no longer depends on the code around it.
+static IrFunc **fd_acct_fn; static uint64_t *fd_acct_left; static int32_t fd_acct_n, fd_acct_cur;
+// Charge f's account from here on: its facts' (rank false) or its termination's (rank true); NULL:
+// the module's. Account i >= 1 is fd_acct_fn[i]'s facts; i + fd_acct_n - 1 its termination.
+static void fd_meter_to(const IrFunc *f, bool rank) {
+    int32_t k = 0;
+    for (int32_t i = 1; f && i < fd_acct_n; i++) if (fd_acct_fn[i] == f) { k = rank ? i + fd_acct_n - 1 : i; break; }
+    if (!fd_acct_n || k == fd_acct_cur) return;
+    fd_acct_left[fd_acct_cur] = ls_meter_left;
+    ls_meter_left = fd_acct_left[k]; fd_acct_cur = k;
+}
 static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
-    ls_meter_on = true; ls_meter_left = F->meter_cap ? F->meter_cap : FD_WORK; ls_meter_spent = 0;
+    uint64_t cap = F->meter_cap ? F->meter_cap : FD_WORK;
+    int32_t n = 1;
+    for (IrFunc *f = F->mod; f; f = f->next) n++;
+    fd_acct_fn = malloc(sizeof *fd_acct_fn * (size_t)n); fd_acct_left = malloc(sizeof *fd_acct_left * (size_t)(2 * n));
+    if (!fd_acct_fn || !fd_acct_left) { free(fd_acct_fn); free(fd_acct_left); fd_acct_fn = NULL; fd_acct_left = NULL; F->oom = true; *ncl = 0; return NULL; }
+    fd_acct_n = n; fd_acct_cur = 0; fd_acct_fn[0] = NULL;
+    n = 1;
+    for (IrFunc *f = F->mod; f; f = f->next) fd_acct_fn[n++] = f;
+    for (int32_t i = 0; i < 2 * fd_acct_n - 1; i++) fd_acct_left[i] = cap;
+    ls_meter_on = true; ls_meter_left = cap; ls_meter_spent = 0;
     JClaim *r = finder_propose_run(F, ncl);
     ls_meter_on = false;
-    F->meter = ls_meter_spent; F->meter_out = ls_meter_left == 0;
+    fd_acct_left[fd_acct_cur] = ls_meter_left;
+    F->meter = ls_meter_spent; F->meter_out = false;
+    F->nout_fn = 0; F->out_more = false; F->out_module = fd_acct_left[0] == 0;
+    for (int32_t i = 0; i < fd_acct_n; i++) {
+        bool out = fd_acct_left[i] == 0 || (i > 0 && fd_acct_left[i + fd_acct_n - 1] == 0);
+        if (!out) continue;
+        F->meter_out = true;
+        if (i == 0) continue;
+        if (F->nout_fn < (int32_t)(sizeof F->out_fn / sizeof F->out_fn[0])) F->out_fn[F->nout_fn++] = fd_acct_fn[i];
+        else F->out_more = true;
+    }
+    free(fd_acct_fn); free(fd_acct_left); fd_acct_fn = NULL; fd_acct_left = NULL; fd_acct_n = fd_acct_cur = 0;
     return r;
 }
 static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
@@ -2999,6 +3044,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         nc = nv;
         for (IrFunc *f = mod; f; f = f->next) {
             if (f->is_extern || !f->entry) continue;
+            fd_meter_to(f, false);                           // f's candidates: its facts' account
             JSlot *s0; int32_t ns = 0;
             JSlot *sl = NULL;
             if (!fd_nest_build(f, &N)) goto oom;
@@ -3056,6 +3102,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             fd_nest_free(&N);
         }
         if (nc == nv) break;                                 // nothing new to verify
+        fd_meter_to(NULL, false);                                  // Houdini, over every function's: the module's
         int32_t kept = houdini_module(F, cl, nc, nv);
         if (kept < 0) goto oom;
         bool grew = kept > nv;
@@ -3066,12 +3113,14 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         if (!grew) break;
     }
     free(cd); free(cl);
+    fd_meter_to(NULL, false);
     if (!fd_guarded_claims(F, as, nv)) goto oom;
     // PE.5: a ranking claim per loop header, under the claims Houdini kept (owed, never believed)
     IrCallGraph CG0; memset(&CG0, 0, sizeof CG0);
     bool cg0 = ir_cg_build(&CG0, mod);
     for (IrFunc *f = mod; f; f = f->next) {
         if (f->is_extern || !f->entry) continue;
+        fd_meter_to(f, true);                                // f's rankings: its termination's
         for (IrBlock *b = f->blocks; b; b = b->next) {
             if (!b->is_loop_header) continue;
             FdLoop L; JRank r;
@@ -3106,6 +3155,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
     }
     ir_cg_free(&CG0);
     // ...and a cycle of several functions, jointly (fd_rank_cycle), over the module's components
+    fd_meter_to(NULL, false);
     {   IrCallGraph G; memset(&G, 0, sizeof G);
         if (ir_cg_build(&G, mod)) {
             bool *done = calloc((size_t)G.n + 1, 1);

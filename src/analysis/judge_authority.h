@@ -212,10 +212,20 @@ static void jau_print_measures(const JRank *rk, int32_t nrk) {
                 fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, all);
     }
 }
+// The finder's accounts that ran out in the last run (finder.h's FD_WORK, one per function and one
+// for the module): a refusal there may be the search's limit, and says so (spec 13: a refusal a
+// budget caused names the budget, Documentation 2026-10-20)
+static IrFunc *jau_out_fn[16]; static int32_t jau_nout_fn; static bool jau_out_more, jau_out_module;
+static const char *jau_out_where(const IrFunc *f) {
+    if (jau_out_module || jau_out_more) return "in this module";
+    for (int32_t i = 0; i < jau_nout_fn; i++) if (jau_out_fn[i] == f) return "in this function";
+    return NULL;
+}
 // Run the judge on `mod`. False with jau_internal set when it could not run, or reported a compiler
 // bug: the caller refuses the program with exit 70, never emits it.
 static bool judge_authority_run(IrFunc *mod) {
     free(jau_r); jau_r = NULL; jau_n = jau_cap = 0; jau_oom = false; jau_internal[0] = 0;
+    jau_nout_fn = 0; jau_out_more = jau_out_module = false;
     jsh_nhdr = 0;                                     // VRA's header states: the finder's candidates
     for (IrFunc *f = mod; f; f = f->next) {
         if (f->is_extern || !f->entry) continue;
@@ -241,6 +251,8 @@ static bool judge_authority_run(IrFunc *mod) {
     if (!ran && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "the judge could not run: %s", err);
     if (jau_oom && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "out of memory keeping the judge's records");
     if (ran && jau_dump_measures) jau_print_measures(jc.last_rk, jc.last_rk ? F.nrk : 0);
+    jau_nout_fn = F.nout_fn; jau_out_more = F.out_more; jau_out_module = F.out_module;
+    for (int32_t i = 0; i < F.nout_fn; i++) jau_out_fn[i] = F.out_fn[i];
     free(buf); free(work); free(jc.last); free(jc.last_rk); free(jc.last_gc);
     for (int i = 0; i < jsh_nhdr; i++) free((void *)jsh_hdr[i].r);
     free(jsh_hdr); jsh_hdr = NULL; jsh_nhdr = jsh_chdr = 0;
@@ -445,6 +457,9 @@ static int judge_authority_report(IrFunc *f, const char *file, Vra *V) {
         if (why) fprintf(stderr, "       %s\n", why);
         else if (q->k == JREC_BUDGET || q->k == JREC_CAPACITY)
             fprintf(stderr, "       the proof ran out of its %s here\n", q->k == JREC_BUDGET ? "budget" : "room");
+        else if (jau_out_where(f))
+            fprintf(stderr, "       the prover's search for facts %s ran out of its budget, so this may be a limit "
+                            "of the search, not of the program\n", jau_out_where(f));
     }
     free(it);
     return printed;
