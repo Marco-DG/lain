@@ -31,12 +31,36 @@ gcc -std=c99 -o "$VRADRV"   src/tools/vra_driver.c -I src 2>/dev/null || { echo 
 gcc -std=c99 -o "$LOWERDRV" src/tools/lower_driver.c     -I src 2>/dev/null || { echo "build lowerdrv failed"; exit 2; }
 
 proven=0; unproven=0; skipped=0; falseproof=0; brokenc=0; miscompile=0
+. "$HERE/judge_leg.sh"
+jfalse=0; jmis=0
+# The judge leg's oracle is the VRA leg's: an out-of-bounds read in a program the judge accepted is a
+# FALSE PROOF, any other sanitizer fault a MISCOMPILE; then the interpreter, under the judge's proofs.
+judge_leg() {   # PROG VRA ID
+  jl_compile "$1" "$2" "$3" "$TMP/w/$3.j.c" || return 0
+  if ! $CC -std=c99 -w -fsanitize=address,undefined -fno-sanitize-recover=all \
+        -o "$TMP/w/$3.j" "$TMP/w/$3.j.c" $DEFS 2>/dev/null; then
+    jl_brokenc=$((jl_brokenc+1)); echo "  BROKEN-C (judge leg): $3"; return 0
+  fi
+  jl_ran=$((jl_ran+1))
+  if ! ASAN_OPTIONS=detect_leaks=0 "$TMP/w/$3.j" >/dev/null 2>"$TMP/w/$3.j.err"; then
+    if grep -qE "out-of-bounds|buffer-overflow|stack-overflow|SEGV" "$TMP/w/$3.j.err"; then
+      jfalse=$((jfalse+1))
+      echo "  ★ JUDGE FALSE PROOF: $3 — accepted by lain, reads out of bounds"
+      sed -n '1,12p' "$1" | sed 's/^/      /'; head -3 "$TMP/w/$3.j.err" | sed 's/^/      /'
+    elif grep -qE "AddressSanitizer|runtime error" "$TMP/w/$3.j.err"; then
+      jmis=$((jmis+1))
+      echo "  ✗ JUDGE MISCOMPILE: $3 — $(grep -oE "runtime error: [^,]*" "$TMP/w/$3.j.err" | head -1)"
+    fi
+  fi
+  jl_interpret "$1" "$3" "$TMP/w/$3.j.out"
+  return 0
+}
 mkdir -p "$TMP/w"
 for i in $(seq 1 "$N"); do
   f="$TMP/w/p$i.ln"
   python3 "$HERE/fuzz_vra.py" "$i" > "$f" 2>/dev/null || { skipped=$((skipped+1)); continue; }
 
-  out=$("$VRADRV" "$f" --suppress 2>/dev/null) || { skipped=$((skipped+1)); continue; }
+  out=$("$VRADRV" "$f" --suppress 2>/dev/null); vrc=$?
   # Judge ONLY `probe`, the function under test. `main`'s array literal contributes one
   # trivially-proven constant-index obligation PER ELEMENT, and letting those into the verdict
   # meant a 100-element literal drowned the single access that matters — a program whose real
@@ -47,6 +71,9 @@ for i in $(seq 1 "$N"); do
   # "300 programs, proven=0, bugs: FALSE-PROOF=0" for a full day. Zero bugs out of zero
   # judgements. The skip count was the whole report and nothing read it.
   probe_out=$(echo "$out" | awk '$1 ~ /(^|_)probe$/ && $2=="index" && $3=="bounds"')
+  vp=-; [ $vrc -eq 0 ] && [ -n "$probe_out" ] && { echo "$probe_out" | grep -q "NOT proven" && vp=0 || vp=1; }
+  judge_leg "$f" "$vp" "p$i"                     # every program, whatever the VRA leg concludes
+  [ $vrc -eq 0 ] || { skipped=$((skipped+1)); continue; }
   [ -n "$probe_out" ] || { skipped=$((skipped+1)); continue; }
   if echo "$probe_out" | grep -q "NOT proven"; then
     unproven=$((unproven+1)); continue
@@ -86,5 +113,6 @@ if [ "$skipped" -gt $(( N / 2 )) ]; then
   exit 1
 fi
 echo "  bugs:  FALSE-PROOF=$falseproof  MISCOMPILE=$miscompile  broken-C=$brokenc"
+jl_report "FALSE-PROOF=$jfalse  MISCOMPILE=$jmis"
 echo "=================================================================="
-[ "$falseproof" -eq 0 ] && [ "$brokenc" -eq 0 ] && [ "$miscompile" -eq 0 ]
+[ "$falseproof" -eq 0 ] && [ "$brokenc" -eq 0 ] && [ "$miscompile" -eq 0 ] && [ "$jfalse" -eq 0 ] && [ "$jmis" -eq 0 ] && jl_bugs

@@ -37,6 +37,8 @@
 # src/tools/*.c in the tree this script runs in, so the `proven` verdict and the emitted C always
 # come from THIS tree's source. To test another build's analysis, run the script from inside that
 # tree; LAIN= alone will leave the analysis unchanged and the oracles inert.
+# The JUDGE leg (judge_leg.sh) is the exception: it compiles with $LAIN itself, so LAIN= selects
+# the judge build it tests.
 #
 #   bash fuzz_overflow.sh [N]
 set -u
@@ -45,18 +47,44 @@ SC="${TMPDIR:-/tmp}/fuzz_ovf.$$"; mkdir -p "$SC"; trap 'rm -rf "$SC"' EXIT
 N="${1:-200}"
 SEED=${RANDOM_SEED:-$$}
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts"
-LAIN="${LAIN:-./lain}"      # the interpreter leg; skipped with a warning if absent
+LAIN="${LAIN:-./lain}"      # the interpreter leg, and the judge leg (judge_leg.sh), which needs it
 
 gcc -std=c99 -O2 -o "$SC/vradrv"   src/tools/vra_driver.c -I src 2>/dev/null || { echo "vradrv build failed"; exit 2; }
 gcc -std=c99 -O2 -o "$SC/lowerdrv" src/tools/lower_driver.c     -I src 2>/dev/null || { echo "lowerdrv build failed"; exit 2; }
 
 proven=0; notproven=0; ran=0; unsound=0; skipped=0; brokenc=0; interp_bug=0; differ=0; nointerp=0
+. scripts/fuzz/judge_leg.sh
+junsound=0; jdiffer=0
+# The judge leg's oracles are the VRA leg's three: UBSan on lain's C, the interpreter under the
+# judge's proofs, and the two printed values.
+judge_leg() {   # PROG VRA ID
+  jl_compile "$1" "$2" "$3" "$SC/j.c" || return 0
+  gcc -std=c99 -w -fsanitize=undefined -fno-sanitize-recover=undefined \
+      -o "$SC/j" "$SC/j.c" $DEFS 2>/dev/null || { jl_brokenc=$((jl_brokenc+1)); cp "$1" "$SC/jbrokenc.$3.ln"; return 0; }
+  jl_ran=$((jl_ran+1))
+  timeout 10 "$SC/j" >"$SC/j.out" 2>"$SC/j.err"; local rc=$?
+  if [ $rc -ne 0 ] || grep -q 'runtime error' "$SC/j.err"; then
+    junsound=$((junsound+1))
+    echo "  ★ JUDGE UNSOUND (UBSan): $3 — accepted by lain, OVERFLOWS at runtime"
+    grep -m1 'runtime error' "$SC/j.err" | sed 's/^/      /'; sed 's/^/      /' "$1"
+    return 0
+  fi
+  jl_interpret "$1" "$3" "$SC/ji.out"; local ir=$?
+  if [ $ir -eq 0 ] && ! cmp -s "$SC/j.out" "$SC/ji.out"; then
+    jdiffer=$((jdiffer+1))
+    echo "  ★ JUDGE UNSOUND (differential): $3 — C printed '$(head -c 48 "$SC/j.out" | tr '\n' ' ')' but the interpreter printed '$(head -c 48 "$SC/ji.out" | tr '\n' ' ')'"
+  fi
+  return 0
+}
 for ((k=0; k<N; k++)); do
     prog="$SC/o.ln"
     python3 scripts/fuzz/fuzz_overflow.py $((SEED + k)) > "$prog" || { skipped=$((skipped+1)); continue; }
 
-    out=$("$SC/vradrv" "$prog" --suppress 2>/dev/null) || { skipped=$((skipped+1)); continue; }
+    out=$("$SC/vradrv" "$prog" --suppress 2>/dev/null); vrc=$?
     ovf=$(echo "$out" | grep -c 'arith overflow')
+    vp=-; [ $vrc -eq 0 ] && [ "$ovf" -gt 0 ] && { echo "$out" | grep 'arith overflow' | grep -q 'NOT proven' && vp=0 || vp=1; }
+    judge_leg "$prog" "$vp" "k$k"                # every program, whatever the VRA leg concludes
+    [ $vrc -eq 0 ] || { skipped=$((skipped+1)); continue; }
     [ "$ovf" -eq 0 ] && { skipped=$((skipped+1)); continue; }
     # Only a program whose EVERY overflow obligation is discharged makes a promise to check.
     if echo "$out" | grep 'arith overflow' | grep -q 'NOT proven'; then
@@ -103,5 +131,7 @@ echo "  bugs:  UNSOUND via UBSan=$unsound (i64 only — see the oracle note)"
 echo "         UNSOUND via interpreter=$interp_bug   UNSOUND via differential=$differ"
 echo "         broken-C=$brokenc"
 [ $nointerp -gt 0 ] && echo "  NO INTERPRETER=$nointerp  (build lain, or set LAIN=; i8/i16/i32 went UNORACLED)"
+jl_report "UNSOUND via UBSan=$junsound  differential=$jdiffer"
 echo "=============================================================="
-[ $unsound -eq 0 ] && [ $brokenc -eq 0 ] && [ $interp_bug -eq 0 ] && [ $differ -eq 0 ] && exit 0 || exit 1
+[ $unsound -eq 0 ] && [ $brokenc -eq 0 ] && [ $interp_bug -eq 0 ] && [ $differ -eq 0 ] && \
+  [ $junsound -eq 0 ] && [ $jdiffer -eq 0 ] && jl_bugs && exit 0 || exit 1

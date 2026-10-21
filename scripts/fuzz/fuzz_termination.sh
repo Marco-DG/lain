@@ -37,6 +37,21 @@ gcc -std=c99 -O2 -o "$SC/vradrv"  src/tools/vra_driver.c -I src 2>/dev/null || {
 gcc -std=c99 -O2 -o "$SC/lowerdrv" src/tools/lower_driver.c    -I src 2>/dev/null || { echo "lowerdrv build failed"; exit 2; }
 
 proven=0; notproven=0; unsound=0; skipped=0; brokenc=0; ran=0
+. scripts/fuzz/judge_leg.sh
+junsound=0
+# The judge leg's oracle is the VRA leg's: a program lain accepted ends, under the same 5 s.
+judge_leg() {   # PROG VRA ID
+  jl_compile "$1" "$2" "$3" "$SC/j.c" || return 0
+  gcc -std=c99 -w -o "$SC/j" "$SC/j.c" $DEFS 2>/dev/null || { jl_brokenc=$((jl_brokenc+1)); cp "$1" "$SC/jbrokenc.$3.ln"; return 0; }
+  jl_ran=$((jl_ran+1))
+  timeout 5 "$SC/j" >/dev/null 2>&1; local rc=$?
+  if [ $rc -eq 124 ]; then
+    junsound=$((junsound+1))
+    echo "  ★ JUDGE UNSOUND: $3 — accepted by lain, HANGS"
+    cp "$1" "$SC/junsound.$3.ln"; sed 's/^/      /' "$1"
+  fi
+  return 0
+}
 for ((k=0; k<N; k++)); do
     prog="$SC/t.ln"
     python3 scripts/fuzz/fuzz_termination.py $((SEED + k)) > "$prog" || { skipped=$((skipped+1)); continue; }
@@ -50,6 +65,8 @@ for ((k=0; k<N; k++)); do
     # skipped every such program — 43 of 200 the day the family was added, reported beside
     # "UNSOUND=0". Every termination verdict of the two must be PROVEN for the program to be.
     v=$("$SC/vradrv" "$prog" --suppress 2>/dev/null | awk '$1 ~ /(^|_)(run|spin)$/ && $2=="termination"')
+    vp=-; [ -n "$v" ] && { echo "$v" | grep -qv "PROVEN check-free" && vp=0 || vp=1; }
+    judge_leg "$prog" "$vp" "k$k"                # every program, whatever the VRA leg concludes
     [ -z "$v" ] && { skipped=$((skipped+1)); continue; }
     if echo "$v" | grep -qv "PROVEN check-free"; then notproven=$((notproven+1)); continue; fi
     proven=$((proven+1))
@@ -82,5 +99,6 @@ fi
 # nothing checked. A run where proven is high and ran is low has no oracle at all.
 echo "  proven AND EXECUTED : $ran   <- the ones actually held to account"
 echo "  bugs:  UNSOUND(hang on a proven loop)=$unsound  broken-C=$brokenc"
+jl_report "UNSOUND(hang)=$junsound"
 echo "=============================================================="
-[ $unsound -eq 0 ] && [ $brokenc -eq 0 ] && exit 0 || exit 1
+[ $unsound -eq 0 ] && [ $brokenc -eq 0 ] && [ $junsound -eq 0 ] && jl_bugs && exit 0 || exit 1
