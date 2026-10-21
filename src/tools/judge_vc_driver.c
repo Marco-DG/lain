@@ -182,30 +182,35 @@ static int hk_cmp(const void *a, const void *b) {
 // E -1: a header's own version, taken as H is entered by any edge (a trip's start), kept apart
 // from the entry edge's under the key -2 - H. Block ids are per function, and a frame's address is
 // reused by later calls of any function: each is keyed by its function too, and a snapshot that
-// cannot be read is marked so, never left holding an earlier frame's value.
-typedef struct { const IrFunc *fn; int32_t H, E, cell, off; } HkEnt;
+// cannot be read is marked so, never left holding an earlier frame's value. E -3: a parameter's
+// pointee as a call's frame enters the entry block H (a frame summary's PRE, s15), key -(1 << 24) - H.
+// fld: a field appended to the cell's address (vfld), -1 none.
+typedef struct { const IrFunc *fn; int32_t H, E, cell, off, fld; } HkEnt;
 static HkEnt *hk_ent; static int64_t nhk_ent, chk_ent;
-typedef struct { const IVal *v; const IrFunc *fn; int32_t H, cell, off; bool ok; IVal iv; } HkSnap;
+typedef struct { const IVal *v; const IrFunc *fn; int32_t H, cell, off, fld; bool ok; IVal iv; } HkSnap;
 static const IrFunc *hk_curf;                            // the function whose frame the hook runs in
 #define HK_SNAP (1 << 14)
 static HkSnap hk_snap[HK_SNAP];
 static long long snaps;
-static uint32_t hk_snap_slot(const IVal *v, const IrFunc *fn, int32_t H, int32_t cell, int32_t off) {
+static uint32_t hk_snap_slot(const IVal *v, const IrFunc *fn, int32_t H, int32_t cell, int32_t off, int32_t fld) {
     uint64_t x = (uint64_t)(uintptr_t)v * 0x9E3779B97F4A7C15ull ^ (uint64_t)(uintptr_t)fn * 0x94D049BB133111EBull ^
-                 (uint64_t)(uint32_t)H * 0xC2B2AE3D27D4EB4Full ^
+                 (uint64_t)(uint32_t)(fld + 1) * 0xD6E8FEB86659FD93ull ^ (uint64_t)(uint32_t)H * 0xC2B2AE3D27D4EB4Full ^
                  (uint64_t)(uint32_t)cell * 0x165667B19E3779F9ull ^ (uint64_t)(uint32_t)(off + 1) * 0x27D4EB2F165667C5ull;
     return (uint32_t)(x >> 32) & (HK_SNAP - 1);
 }
-static void hk_ent_add(const IrFunc *fn, int32_t H, int32_t E, int32_t cell, int32_t off) {
+// The key a snapshot is filed under (hk_snap_take and hk_var alike).
+static int32_t hk_snap_key(int32_t H, int32_t E) { return E >= 0 ? H : E == -1 ? -2 - H : -(1 << 24) - H; }
+static void hk_ent_add(const IrFunc *fn, int32_t H, int32_t E, int32_t cell, int32_t off, int32_t fld) {
     for (int64_t i = 0; i < nhk_ent; i++)
-        if (hk_ent[i].fn == fn && hk_ent[i].H == H && hk_ent[i].E == E && hk_ent[i].cell == cell && hk_ent[i].off == off) return;
+        if (hk_ent[i].fn == fn && hk_ent[i].H == H && hk_ent[i].E == E && hk_ent[i].cell == cell && hk_ent[i].off == off &&
+            hk_ent[i].fld == fld) return;
     if (nhk_ent == chk_ent) {
         int64_t nc = chk_ent ? 2 * chk_ent : 16;
         HkEnt *x = realloc(hk_ent, sizeof *x * (size_t)nc);
         if (!x) return;                                  // a missing snapshot reads as unknown
         hk_ent = x; chk_ent = nc;
     }
-    hk_ent[nhk_ent++] = (HkEnt){ fn, H, E, cell, off };
+    hk_ent[nhk_ent++] = (HkEnt){ fn, H, E, cell, off, fld };
 }
 // A variable's value at the instruction, or false when it cannot be read (not an integer yet).
 static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
@@ -231,8 +236,13 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
     if (key < 0 || key >= nv) return false;
     // the obligation's own result does not exist yet: the hook runs before the instruction, and
     // the VC's variable for it is the exact value the instruction is about to settle
-    if (k == 0 && o->at && o->at->result && key == o->at->result->id) return false;
+    if ((k == 0 || k == 5) && o->at && o->at->result && key == o->at->result->id) return false;
     IVal *c = &v[key];
+    if (k == 5) {                                      // a struct value's field (s15): field voff of it
+        int32_t fi = o->voff ? o->voff[x] : -1;
+        if (c->k != IV_AGG || fi < 0 || fi >= c->n) return false;
+        c = &c->e[fi];
+    }
     if (k == 1 || k == 4) {
         // the version current at the point is the cell's content; an older one is the value its
         // store wrote, which the frame still holds (the store and that value dominate the point);
@@ -241,6 +251,10 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
             if (c->k != IV_PTR || !c->p.o || !c->p.o->live) return false;
             IPtr p = c->p;                             // an element no address names: its root's + k
             if (o->voff && o->voff[x] >= 0) p.p[p.d - 1] += o->voff[x];
+            if (o->vfld && o->vfld[x] >= 0) {          // a field below its root: appended (s15)
+                if (p.d + 1 > IP_MAX || !ip_cell(&p, NULL)) return false;
+                p.p[p.d++] = o->vfld[x]; p.lo = 0; p.hi = -1;
+            }
             c = ip_cell(&p, NULL);
         } else if (o->vaux[x] >= 0) {
             if (o->vaux[x] >= nv) return false;
@@ -248,9 +262,9 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
         } else {                                       // a loop's ENTRY (or a header's) version: its snapshot, if taken
             if (!o->vent || o->vent[x] < 0 || k != 1) return false;
             int32_t off = o->voff ? o->voff[x] : -1;
-            int32_t hk = o->vente && o->vente[x] < 0 ? -2 - o->vent[x] : o->vent[x];
-            const HkSnap *s = &hk_snap[hk_snap_slot(v, hk_curf, hk, key, off)];
-            if (!s->ok || s->v != v || s->fn != hk_curf || s->H != hk || s->cell != key || s->off != off) return false;
+            int32_t hk = hk_snap_key(o->vent[x], o->vente ? o->vente[x] : 0), fl = o->vfld ? o->vfld[x] : -1;
+            const HkSnap *s = &hk_snap[hk_snap_slot(v, hk_curf, hk, key, off, fl)];
+            if (!s->ok || s->v != v || s->fn != hk_curf || s->H != hk || s->cell != key || s->off != off || s->fld != fl) return false;
             c = (IVal *)&s->iv;                        // read as any version, by its type below
         }
     }
@@ -427,14 +441,15 @@ static HE *hk_from(const IrBlock *b) {
 }
 // Take one registered snapshot: the cell's content now, per frame.
 static void hk_snap_take(const HkEnt *en, IVal *v, int nv) {
-    int32_t hk = en->E >= 0 ? en->H : -2 - en->H;
-    HkSnap *s = &hk_snap[hk_snap_slot(v, en->fn, hk, en->cell, en->off)];
-    s->v = v; s->fn = en->fn; s->H = hk; s->cell = en->cell; s->off = en->off; s->ok = false;
+    int32_t hk = hk_snap_key(en->H, en->E);
+    HkSnap *s = &hk_snap[hk_snap_slot(v, en->fn, hk, en->cell, en->off, en->fld)];
+    s->v = v; s->fn = en->fn; s->H = hk; s->cell = en->cell; s->off = en->off; s->fld = en->fld; s->ok = false;
     if (en->cell < 0 || en->cell >= nv) return;
     IVal *c = &v[en->cell];
     if (c->k != IV_PTR || !c->p.o || !c->p.o->live) return;
     IPtr p = c->p;
     if (en->off >= 0) p.p[p.d - 1] += en->off;
+    if (en->fld >= 0) { if (p.d + 1 > IP_MAX || !ip_cell(&p, NULL)) return; p.p[p.d++] = en->fld; p.lo = 0; p.hi = -1; }
     IVal *cv = ip_cell(&p, NULL);
     s->ok = cv && cv->k == IV_INT;
     if (s->ok) { s->iv = *cv; snaps++; }
@@ -444,7 +459,12 @@ static void hk_on_block(IrFunc *f, IrBlock *to, IVal *v, int nv) {
     IrBlock *b = hk_last; IVal *bv = hk_lastv;
     hk_last = NULL;
     if (b && bv == v) { HkLast *e = &hk_lastpred[hk_lp_slot(v, to->id)]; e->v = v; e->blk = to->id; e->pred = b->id; }
-    if (!b || bv != v) return;
+    if (!b || bv != v) {                                 // a frame begins: its parameters' pointees as the call began
+        if (to == f->entry)
+            for (int64_t i = 0; i < nhk_ent; i++)
+                if (hk_ent[i].fn == f && hk_ent[i].H == to->id && hk_ent[i].E == -3) hk_snap_take(&hk_ent[i], v, nv);
+        return;
+    }
     for (int64_t i = 0; i < nhk_ent; i++)                // entering a loop: its cells' ENTRY values
         if (hk_ent[i].fn == f && hk_ent[i].H == to->id && hk_ent[i].E == b->id) hk_snap_take(&hk_ent[i], v, nv);
     char where[64]; snprintf(where, sizeof where, "on the edge bb%d->bb%d", b->id, to->id);
@@ -728,7 +748,7 @@ int main(int argc, char **argv) {
                 if (o[i].to || !o[i].at) { he[nhe].from = o[i].blk; he[nhe].o = &o[i]; nhe++; }
                 else { hk[nhk].at = o[i].at; hk[nhk].o = &o[i]; nhk++; }
                 for (int32_t x = 0; o[i].vent && x < o[i].vc.nvars; x++)
-                    if (o[i].vent[x] >= 0) hk_ent_add(f, o[i].vent[x], o[i].vente[x], o[i].vkey[x], o[i].voff ? o[i].voff[x] : -1);
+                    if (o[i].vent[x] >= 0) hk_ent_add(f, o[i].vent[x], o[i].vente[x], o[i].vkey[x], o[i].voff ? o[i].voff[x] : -1, o[i].vfld ? o[i].vfld[x] : -1);
                 for (int32_t x = 0; x < o[i].vc.nvars; x++) {   // a recipe the generator stored malformed
                     const char *bad = hk_recipe_bad(&o[i], x);
                     if (bad) { fprintf(stderr, "ERROR %.*s: %s %s %s, variable %s: %s\n", (int)f->name->length, f->name->name,

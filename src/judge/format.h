@@ -102,9 +102,13 @@ enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
 // JTERM_HEAD: an integer cell's version at the header of the innermost loop around the claim's
 // block, the block's own loop excluded: what the cell held as the current trip of that loop began
 // (fixed in the trip; `head(i)` beside `i` at a join or an inner loop's header).
-enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4, JTERM_HEAD = 5 };
+// JTERM_POST, JTERM_PRE: in a RETURN claim only, a FRAME SUMMARY's terms (s15): the integer that a
+// `var` parameter `key` points to, or its integer field fld[k] (one level; fld -1: the pointee
+// itself), as the function returns (POST) and as it was entered (PRE): `post(q.count) -
+// pre(q.count) + ret = 0`. fld is read for these two kinds only; a producer sets it for them.
+enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4, JTERM_HEAD = 5, JTERM_POST = 6, JTERM_PRE = 7 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
-                 struct IrFunc *fn; } JClaim;
+                 struct IrFunc *fn; int16_t fld[JCLAIM_MAXT]; } JClaim;
 // A GUARDED return claim (s7): a return claim of `fn`, as a JClaim at JCLAIM_RET (the value returned,
 // JKEY_RET, and integer parameters), that holds where each guard parameter gkey[i] is gval[i] at
 // entry: `ret <= 84 where a0 = 48 and b0 = 36`. A list of its own beside the claims, so that no reader

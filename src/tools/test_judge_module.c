@@ -1209,6 +1209,141 @@ int main(void) {
         }
     }
 
+    // FRAME SUMMARIES (s15; TCW's repro_ring_counter.ln), all u64 but the bool: `take(var q Q) bool`
+    // returns false where q.count is 0, else decrements it and returns true; main reads q.count once,
+    // then `while true { if !take(var q) { break }; n = n + 1 }`. (0) take's summary
+    // post(q.count) - pre(q.count) + ret = 0 (two claims) and n + q.count = 16 at the header (two),
+    // ranked by q.count: every claim and VC proved, n + 1 among them; (1) no summary: n + 1 and the
+    // ranking's fall not implied; (2) a false one (- 2*ret): uncertified
+    for (int c = 0; c < 3; c++) {
+        IrType *mu64 = ir_type_int(&A, 64, false), *mb = ir_type_bool(&A);
+        IrType *Q = ir_type_new(&A, IRT_STRUCT); Q->n_fields = 1; Q->fields = arena_push_many_aligned(&A, IrType*, 1); Q->fields[0] = mu64;
+        IrType *pq = ir_type_new(&A, IRT_PTR); pq->elem = Q; pq->ptr_mut = true;
+        IrFunc *tf = ir_func_new(&A, nm("take"), mb, IR_FUNC_PURE);
+        IrValue *qp = ir_add_param(tf, pq, nm("q"));
+        IrBlock *t0 = tf->entry, *t1 = ir_new_block(tf), *t2 = ir_new_block(tf);
+        IrValue *cp = ir_field_ptr(tf, t0, qp, 0, mu64), *cv = ir_load(tf, t0, cp, mu64);
+        ir_set_br_cond(t0, ir_icmp(tf, t0, IR_CMP_EQ, cv, ir_const_int(tf, t0, 0, mu64)), t1, t2);
+        ir_set_ret(t1, ir_const_int(tf, t1, 0, mb));
+        ir_store(tf, t2, cp, ir_binop(tf, t2, IR_SUB, cv, ir_const_int(tf, t2, 1, mu64), mu64));
+        ir_set_ret(t2, ir_const_int(tf, t2, 1, mb));
+        ir_finalize_cfg(tf);
+        IrFunc *mf = ir_func_new(&A, nm("main"), mu64, IR_FUNC_PURE);
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *m3 = ir_new_block(mf), *m4 = ir_new_block(mf), *m5 = ir_new_block(mf);
+        IrValue *q = ir_alloca(mf, m0, Q), *n = ir_alloca(mf, m0, mu64);
+        IrValue *iv[1] = { ir_const_int(mf, m0, 16, mu64) };
+        ir_store(mf, m0, q, ir_struct_new(mf, m0, Q, iv, 1));
+        ir_store(mf, m0, n, ir_const_int(mf, m0, 0, mu64));
+        IrValue *qc = ir_field_ptr(mf, m0, q, 0, mu64);                    // main reads q.count once
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_NE, ir_load(mf, m0, qc, mu64), ir_const_int(mf, m0, 16, mu64)), m5, m1);
+        ir_set_br(m1, m2);                                                 // the loop's header
+        IrInstr *call = ir_instr(mf, IR_CALL, mb, 1); call->aux.callee = nm("take"); call->operands[0] = q; ir_emit(m2, call);
+        ir_set_br_cond(m2, call->result, m3, m4);
+        ir_store(mf, m3, n, ir_binop(mf, m3, IR_ADD, ir_load(mf, m3, n, mu64), ir_const_int(mf, m3, 1, mu64), mu64));
+        ir_set_br(m3, m1);
+        ir_set_ret(m4, ir_load(mf, m4, n, mu64));
+        ir_set_ret(m5, ir_const_int(mf, m5, 0, mu64));
+        ir_finalize_cfg(mf);
+        tf->next = mf;
+        Stub sf; memset(&sf, 0, sizeof sf);
+        sf.propose = P_RANK;
+        int nc = 0;
+        if (c != 1)
+            for (int sg = -1; sg <= 1; sg += 2) {                          // post - pre + ret, both ways
+                JClaim *r = &sf.claims[nc++]; r->blk = JCLAIM_RET; r->fn = tf; r->nt = 3;
+                r->key[0] = qp->id; r->tk[0] = JTERM_POST; r->fld[0] = 0; r->coef[0] = sg;
+                r->key[1] = qp->id; r->tk[1] = JTERM_PRE; r->fld[1] = 0; r->coef[1] = -sg;
+                r->key[2] = JKEY_RET; r->coef[2] = sg * (c == 2 ? 2 : 1);
+            }
+        for (int sg = -1; sg <= 1; sg += 2) {                              // n + q.count = 16 at the header
+            JClaim *r = &sf.claims[nc++]; r->blk = m1->id; r->fn = mf; r->nt = 2;
+            r->key[0] = n->id; r->coef[0] = sg; r->key[1] = qc->id; r->coef[1] = sg; r->rhs = sg * 16;
+        }
+        sf.nclaims = nc;
+        JRank *rk = &sf.rank[0];
+        rk->blk = m1->id; rk->fn = mf; rk->ncomp = 1; rk->nt = 1; rk->key[0] = qc->id; rk->coef[0][0] = 1; rk->nedge = 1; rk->from[0] = m3->id;
+        sf.nrank = 1;
+        CHECK(run(tf, &sf, true, sizeof region, err), "judges: %s", err);
+        int nhi = 0, phi = 0;
+        for (const char *l = recs; *l; ) {
+            const char *e = strchr(l, '\n'); size_t len = e ? (size_t)(e - l) : strlen(l);
+            char v[24] = "", pt[64] = "", kd[64] = "", line[600]; snprintf(line, sizeof line, "%.*s", (int)(len < 599 ? len : 599), l);
+            if (sscanf(line, "%23s %63s %63s", v, pt, kd) == 3 && !strcmp(kd, "narrow.hi")) { nhi++; phi += !strcmp(v, "proved"); }
+            l = e ? e + 1 : l + len;
+        }
+        char fall[64]; snprintf(fall, sizeof fall, "proved bb%d.%d rank.fall", m3->id, nins_m(m3));
+        if (c == 0) CHECK(!strstr(recs, "not-implied") && !strstr(recs, "uncertified") && !strstr(recs, "refused") && nhi >= 1 && phi == nhi &&
+                          strstr(recs, fall) && count_in(recs, " post") == 4, "the summary: n + 1 and the fall proved:\n%s", recs);
+        else if (c == 1) CHECK(phi < nhi && !strstr(recs, fall), "no summary: n + 1 and the fall not implied:\n%s", recs);
+        else CHECK(strstr(recs, "uncertified") != NULL && phi < nhi, "a false summary: uncertified:\n%s", recs);
+    }
+    printf("  frame summaries: what take(var q) does to q.count, owed at its returns, stated at the call\n");
+
+    // ...and ring_buffer's own shape: `pop(var q Q) P` returns P(v, ok), ok a bool field; the caller
+    // stores the result, `var p = pop(var q)`, and tests p.ok. The summary post(q.count) -
+    // pre(q.count) + ret.ok = 0 (ret.1, a struct's field, s15) reaches p.ok through the store of the
+    // call's result (a part variable). (0) proved as take's; (1) ret.0 for ret.1 (the value, not ok):
+    // uncertified, the post VC at pop's returns not implied
+    for (int c = 0; c < 2; c++) {
+        IrType *mu64 = ir_type_int(&A, 64, false), *mb = ir_type_bool(&A);
+        IrType *Q = ir_type_new(&A, IRT_STRUCT); Q->n_fields = 1; Q->fields = arena_push_many_aligned(&A, IrType*, 1); Q->fields[0] = mu64;
+        IrType *P = ir_type_new(&A, IRT_STRUCT); P->n_fields = 2; P->fields = arena_push_many_aligned(&A, IrType*, 2); P->fields[0] = mu64; P->fields[1] = mb;
+        IrType *pq = ir_type_new(&A, IRT_PTR); pq->elem = Q; pq->ptr_mut = true;
+        IrFunc *tf = ir_func_new(&A, nm("pop"), P, IR_FUNC_PURE);
+        IrValue *qp = ir_add_param(tf, pq, nm("q"));
+        IrBlock *t0 = tf->entry, *t1 = ir_new_block(tf), *t2 = ir_new_block(tf);
+        IrValue *cp = ir_field_ptr(tf, t0, qp, 0, mu64), *cv = ir_load(tf, t0, cp, mu64);
+        ir_set_br_cond(t0, ir_icmp(tf, t0, IR_CMP_EQ, cv, ir_const_int(tf, t0, 0, mu64)), t1, t2);
+        IrValue *f0[2] = { ir_const_int(tf, t1, 0, mu64), ir_const_int(tf, t1, 0, mb) };
+        ir_set_ret(t1, ir_struct_new(tf, t1, P, f0, 2));
+        ir_store(tf, t2, cp, ir_binop(tf, t2, IR_SUB, cv, ir_const_int(tf, t2, 1, mu64), mu64));
+        IrValue *f1[2] = { ir_const_int(tf, t2, 7, mu64), ir_const_int(tf, t2, 1, mb) };
+        ir_set_ret(t2, ir_struct_new(tf, t2, P, f1, 2));
+        ir_finalize_cfg(tf);
+        IrFunc *mf = ir_func_new(&A, nm("main"), mu64, IR_FUNC_PURE);
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *m3 = ir_new_block(mf), *m4 = ir_new_block(mf), *m5 = ir_new_block(mf);
+        IrValue *q = ir_alloca(mf, m0, Q), *n = ir_alloca(mf, m0, mu64), *p = ir_alloca(mf, m0, P);
+        IrValue *iv[1] = { ir_const_int(mf, m0, 16, mu64) };
+        ir_store(mf, m0, q, ir_struct_new(mf, m0, Q, iv, 1));
+        ir_store(mf, m0, n, ir_const_int(mf, m0, 0, mu64));
+        IrValue *qc = ir_field_ptr(mf, m0, q, 0, mu64);
+        ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_NE, ir_load(mf, m0, qc, mu64), ir_const_int(mf, m0, 16, mu64)), m5, m1);
+        ir_set_br(m1, m2);
+        IrInstr *call = ir_instr(mf, IR_CALL, P, 1); call->aux.callee = nm("pop"); call->operands[0] = q; ir_emit(m2, call);
+        ir_store(mf, m2, p, call->result);                                 // var p = pop(var q)
+        IrValue *ok = ir_load(mf, m2, ir_field_ptr(mf, m2, p, 1, mb), mb);
+        ir_set_br_cond(m2, ok, m3, m4);
+        ir_store(mf, m3, n, ir_binop(mf, m3, IR_ADD, ir_load(mf, m3, n, mu64), ir_const_int(mf, m3, 1, mu64), mu64));
+        ir_set_br(m3, m1);
+        ir_set_ret(m4, ir_load(mf, m4, n, mu64));
+        ir_set_ret(m5, ir_const_int(mf, m5, 0, mu64));
+        ir_finalize_cfg(mf);
+        tf->next = mf;
+        Stub sf; memset(&sf, 0, sizeof sf);
+        sf.propose = P_RANK;
+        int nc = 0;
+        for (int sg = -1; sg <= 1; sg += 2) {
+            JClaim *r = &sf.claims[nc++]; r->blk = JCLAIM_RET; r->fn = tf; r->nt = 3;
+            r->key[0] = qp->id; r->tk[0] = JTERM_POST; r->fld[0] = 0; r->coef[0] = sg;
+            r->key[1] = qp->id; r->tk[1] = JTERM_PRE; r->fld[1] = 0; r->coef[1] = -sg;
+            r->key[2] = JKEY_RET; r->fld[2] = c == 0 ? 1 : 0; r->coef[2] = sg;
+        }
+        for (int sg = -1; sg <= 1; sg += 2) {
+            JClaim *r = &sf.claims[nc++]; r->blk = m1->id; r->fn = mf; r->nt = 2;
+            r->key[0] = n->id; r->coef[0] = sg; r->key[1] = qc->id; r->coef[1] = sg; r->rhs = sg * 16;
+        }
+        sf.nclaims = nc;
+        JRank *rk = &sf.rank[0];
+        rk->blk = m1->id; rk->fn = mf; rk->ncomp = 1; rk->nt = 1; rk->key[0] = qc->id; rk->coef[0][0] = 1; rk->nedge = 1; rk->from[0] = m3->id;
+        sf.nrank = 1;
+        CHECK(run(tf, &sf, true, sizeof region, err), "judges: %s", err);
+        char fall[64]; snprintf(fall, sizeof fall, "proved bb%d.%d rank.fall", m3->id, nins_m(m3));
+        if (c == 0) CHECK(!strstr(recs, "not-implied") && !strstr(recs, "uncertified") && !strstr(recs, "refused") && strstr(recs, fall),
+                          "pop's summary over ret.ok: proved:\n%s", recs);
+        else CHECK(strstr(recs, "uncertified") != NULL && !strstr(recs, fall), "ret.0 for ret.ok: uncertified:\n%s", recs);
+    }
+    printf("  frame summaries over a returned struct's field: pop's ret.ok, through var p = pop(var q)\n");
+
     // a RETURNED SLICE's length (s14; census_gate's `func go() u8[] { return "xyz" }`): go returns a
     // slice of length 3, the caller narrows len(go()) to an i8. (A) the return claim len(ret) <= 3:
     // certified, the narrowing proved; (B) len(ret) <= 2, false at the return: uncertified; (C) no

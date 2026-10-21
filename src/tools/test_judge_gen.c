@@ -5004,6 +5004,82 @@ int main(void) {
         free(t); gen_mod = NULL;
     }
     printf("  bitwise NOT: -x - 1 signed, 2^w - 1 - x unsigned\n");
+    // 88. frame summaries (s15), take(var q Q) bool and its caller's loop (test_judge_module's shape):
+    // in the caller, take's summary post(q.count) - pre(q.count) + ret <= 0 names the version the call
+    // made for main's q.count (`@havoc` at the call) and, for pre, the one it replaced (the loop
+    // header's); at take's returns, the post VC names q.count there and its ENTRY version. Refused: a
+    // POST term on a parameter that is no var one, on a field that is no integer, and in a guarded
+    // claim; a summary with neither ret nor a POST term
+    {   IrType *mu64 = ir_type_int(&A, 64, false), *mb = ir_type_bool(&A);
+        IrType *Q = ir_type_new(&A, IRT_STRUCT); Q->n_fields = 1; Q->fields = arena_push_many_aligned(&A, IrType*, 1); Q->fields[0] = mu64;
+        IrType *pq = ir_type_new(&A, IRT_PTR); pq->elem = Q; pq->ptr_mut = true;
+        IrFunc *tf = ir_func_new(&A, nm("take88"), mb, IR_FUNC_PURE);
+        IrValue *qp = ir_add_param(tf, pq, nm("q")), *xp = ir_add_param(tf, mu64, nm("x"));
+        IrBlock *t0 = tf->entry, *t1 = ir_new_block(tf), *t2 = ir_new_block(tf);
+        IrValue *cp = ir_field_ptr(tf, t0, qp, 0, mu64), *cv = ir_load(tf, t0, cp, mu64);
+        ir_set_br_cond(t0, ir_icmp(tf, t0, IR_CMP_EQ, cv, ir_const_int(tf, t0, 0, mu64)), t1, t2);
+        ir_set_ret(t1, ir_const_int(tf, t1, 0, mb));
+        ir_store(tf, t2, cp, ir_binop(tf, t2, IR_SUB, cv, ir_const_int(tf, t2, 1, mu64), mu64));
+        ir_set_ret(t2, ir_const_int(tf, t2, 1, mb));
+        ir_finalize_cfg(tf);
+        IrFunc *mf = ir_func_new(&A, nm("main88"), mu64, IR_FUNC_PURE);
+        IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *m3 = ir_new_block(mf);
+        IrValue *q = ir_alloca(mf, m0, Q);
+        IrValue *iv[1] = { ir_const_int(mf, m0, 16, mu64) };
+        ir_store(mf, m0, q, ir_struct_new(mf, m0, Q, iv, 1));
+        IrValue *qc = ir_field_ptr(mf, m0, q, 0, mu64);
+        ir_set_br(m0, m1);
+        IrInstr *call = ir_instr(mf, IR_CALL, mb, 2); call->aux.callee = nm("take88"); call->operands[0] = q;
+        call->operands[1] = ir_const_int(mf, m1, 3, mu64); ir_emit(m1, call);
+        ir_set_br_cond(m1, call->result, m2, m3);
+        ir_set_br(m2, m1);
+        IrValue *qd = ir_binop(mf, m3, IR_UDIV, ir_const_int(mf, m3, 100, mu64), ir_load(mf, m3, qc, mu64), mu64);
+        ir_set_ret(m3, qd);
+        ir_finalize_cfg(mf);
+        tf->next = mf;
+        gen_mod = tf;
+        JClaim cl[1]; memset(cl, 0, sizeof cl);
+        cl[0].blk = JCLAIM_RET; cl[0].fn = tf; cl[0].nt = 3;
+        cl[0].key[0] = qp->id; cl[0].tk[0] = JTERM_POST; cl[0].fld[0] = 0; cl[0].coef[0] = 1;
+        cl[0].key[1] = qp->id; cl[0].tk[1] = JTERM_PRE; cl[0].fld[1] = 0; cl[0].coef[1] = -1;
+        cl[0].key[2] = JKEY_RET; cl[0].coef[2] = 1;
+        char *t = gen_with(mf, cl, 1, JGEN_ALL, NULL);
+        char key[48]; snprintf(key, sizeof key, "bb%d.%d divzero", m3->id, idx_of(m3, qd));
+        const char *vd = t ? vc_of(t, key) : "";
+        char post[64], pre[64]; snprintf(post, sizeof post, "%%s%d.0@havoc.bb%d.%d", q->id, m1->id, idx_of(m1, call->result)); snprintf(pre, sizeof pre, "%%s%d.0@head.bb%d", q->id, m1->id);
+        const char *ct = strstr(vd, "contract take88 #0 :"), *ce = ct ? strchr(ct, '\n') : NULL;
+        char line[512] = ""; if (ct && ce) snprintf(line, sizeof line, "%.*s", (int)(ce - ct), ct);
+        CHECK(strstr(line, post) && strstr(line, pre), "88: the caller's summary names %s and %s:\n%s", post, pre, vd);
+        free(t);
+        char *tt = gen_with(tf, cl, 1, JGEN_ALL, NULL);
+        const char *pv = tt ? vc_of(tt, " post 0") : "";
+        char pe[64]; snprintf(pe, sizeof pe, "%%s%d.0@entry", qp->id);
+        CHECK(strstr(pv, pe) && strstr(pv, "goal "), "88: take's post VC names q.count's ENTRY version:\n%s", pv);
+        free(tt);
+        struct { int what; const char *why; } bad[4] = { { 0, "no var parameter's integer part" }, { 1, "no var parameter's integer part" },
+                                                          { 2, "not about the returned value" }, { 3, "guarded return claim" } };
+        for (int k = 0; k < 4; k++) {
+            char why[200] = "";
+            JClaim b = cl[0]; JGuardClaim gc; memset(&gc, 0, sizeof gc);
+            if (bad[k].what == 0) b.key[0] = xp->id;                   // x is no var parameter
+            if (bad[k].what == 1) b.fld[0] = 1;                         // Q has no field 1
+            if (bad[k].what == 2) { b.nt = 2; b.tk[0] = JTERM_PRE; b.key[1] = xp->id; b.tk[1] = JTERM_VALUE; }   // pre(q) and x: no ret, no POST
+            char *tb = NULL;
+            if (bad[k].what == 3) {
+                JMem m = jmem_over(region, sizeof region); JObl *o; int32_t no; char err[200] = "";
+                gc.fn = tf; gc.nt = 3; for (int z = 0; z < 3; z++) { gc.key[z] = cl[0].key[z]; gc.tk[z] = cl[0].tk[z]; gc.coef[z] = cl[0].coef[z]; }
+                gc.ng = 1; gc.gkey[0] = xp->id; gc.gval[0] = 3;
+                bool ok = jgen_func(&m, tf, gen_mod, NULL, 0, &gc, 1, NULL, 0, NULL, JGEN_ALL, &o, &no, err, sizeof err);
+                CHECK(!ok && strstr(err, bad[k].why), "88 bad %d: refused (%s): got \"%s\"", k, bad[k].why, err);
+                continue;
+            }
+            tb = gen_with(tf, &b, 1, JGEN_ALL, why);
+            CHECK(!tb && strstr(why, bad[k].why), "88 bad %d: refused (%s): got \"%s\"", k, bad[k].why, why);
+            free(tb);
+        }
+        gen_mod = NULL;
+    }
+    printf("  frame summaries: post and pre of a var parameter's field, owed at the returns, stated at the call\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
