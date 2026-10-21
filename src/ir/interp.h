@@ -710,6 +710,7 @@ static int64_t ii_c_align(IrType *t) {
     }
 }
 
+static void ii_var_alias(IrFunc *g, IVal *args, int na, IrInstr *ins);   // a call's aliased var arguments (below)
 static void ii_exec(IrInstr *ins) {
     IVal r; memset(&r, 0, sizeof r);
     IrType *rt = ii_ty(ins->result);
@@ -1054,6 +1055,7 @@ static void ii_exec(IrInstr *ins) {
                 }
                 II_UNSUP(ins, "a call to %.*s, which the module does not define", ins->aux.callee ? (int)ins->aux.callee->length : 1, ins->aux.callee ? ins->aux.callee->name : "?");
             }
+            if (!g->is_extern) ii_var_alias(g, args, na, ins);
             IVal ret; memset(&ret, 0, sizeof ret); ret.k = IV_UNIT;
             int32_t open_saved = ii_open_seal;
             if (ins->seal) ii_open_seal = ins->seal;              // part of a binding's initialiser
@@ -1085,6 +1087,28 @@ static void ii_exec(IrInstr *ins) {
 }
 
 // ── a call ──────────────────────────────────────────────────────────────────────────────
+// Two `var` arguments of one call (checked mutable pointers) that name the same storage, one's
+// path a prefix of the other's in one object: the exclusive borrow the analysis discharged (E087
+// refuses it) does not hold, and the callee's facts, which model the two as distinct, are false by
+// construction. The emitted C passes them as two restrict pointers (undefined behaviour), so the
+// run stops here, as at a failed assert. A miss (a whole array decayed to its element 0 against
+// another element) runs on, as before; no two arguments that do not overlap ever stop it.
+static void ii_var_alias(IrFunc *g, IVal *args, int na, IrInstr *ins) {
+    const IrParam *pi = g->params;
+    for (int i = 0; i < na && pi; i++, pi = pi->next) {
+        const IrType *ti = pi->value ? pi->value->type : NULL;
+        if (!ti || ti->kind != IRT_PTR || ti->is_raw || !ti->ptr_mut || args[i].k != IV_PTR || !args[i].p.o) continue;
+        const IrParam *pj = pi->next;
+        for (int j = i + 1; j < na && pj; j++, pj = pj->next) {
+            const IrType *tj = pj->value ? pj->value->type : NULL;
+            if (!tj || tj->kind != IRT_PTR || tj->is_raw || !tj->ptr_mut || args[j].k != IV_PTR || args[j].p.o != args[i].p.o) continue;
+            int m = args[i].p.d < args[j].p.d ? args[i].p.d : args[j].p.d;
+            bool same = true;
+            for (int q = 0; q < m && same; q++) same = args[i].p.p[q] == args[j].p.p[q];
+            if (same) II_PROOF(ins, "two var arguments of one call name the same storage (%d and %d): the exclusive borrow the analysis discharged does not hold", i + 1, j + 1);
+        }
+    }
+}
 // Called at every block entry with the frame's values, when set: the analysis's invariant at
 // that block must contain them (src/analysis/containment.h, `lain --interpret --check-invariants`).
 // A hook rather than a call, so the semantics does not depend on the analysis it checks.
