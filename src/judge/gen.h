@@ -219,6 +219,7 @@ typedef struct {
     uint32_t hash;
     const JClaim *cl; int32_t ncl; // claims (untrusted input: each is owed on every edge into its block)
     int32_t *ltwin;                // by LOAD value id: its twin load's id (jg_load_twin), -1 none, -2 not asked
+    uint8_t *wneed;                // by value id: a path's stored values and what they are made of (jb_join_wraps)
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases (2), none (1), not asked yet (0)
 } JG;
@@ -1785,8 +1786,9 @@ static int64_t jg_len_max(const IrType *st) {
 // 64 bits.
 // Is d such a wrapping ADD or SUB?
 static bool jg_wrap_op(const IrInstr *d) {
-    if ((d->op != IR_ADD && d->op != IR_SUB) || d->n_operands < 2 || !d->result || !d->result->type) return false;
+    if ((d->op != IR_ADD && d->op != IR_SUB && d->op != IR_MUL) || d->n_operands < 2 || !d->result || !d->result->type) return false;
     if (!jg_is_int(d->operands[0]->type) || !jg_is_int(d->operands[1]->type)) return false;
+    if (d->op == IR_MUL) return d->wrap == IR_WRAP_MODULAR;  // `*%` (jg_wrap_ks: by one constant, |c| <= 3)
     return d->wrap == IR_WRAP_MODULAR || (d->unchecked && !d->result->type->is_signed && d->wrap == IR_WRAP_CHECK);
 }
 // Its cases: k from klo to khi (one to three), M = 2^w, the result's range rr. False where none is
@@ -1804,12 +1806,27 @@ static bool jg_wrap_ks(JG *g, const IrInstr *d, __int128 *klo, __int128 *khi, __
     rr->lo = jg_width_lo(rt); rr->hi = jg_width_hi(rt); rr->has_ne = false;
     *M = (__int128)1 << rt->bits;
     __int128 slo = d->op == IR_ADD ? ra.lo + rb.lo : ra.lo - rb.hi, shi = d->op == IR_ADD ? ra.hi + rb.hi : ra.hi - rb.lo;
+    if (d->op == IR_MUL) {                                     // `c *% y`: s = c*y over y's range, one constant
+        __int128 c; JRange o;                                  // factor c, |c| <= 3 (three cases at most), as
+        bool k0 = jg_const_of(g, d->operands[0], &c);          // interp.h wraps the exact product into the type
+        if (k0) o = rb; else if (jg_const_of(g, d->operands[1], &c)) o = ra; else return false;
+        if (k0 && jg_const_of(g, d->operands[1], &cv)) return false;   // both constant: folded, not stated here
+        if (c > 3 || c < -3) return false;
+        slo = c >= 0 ? c * o.lo : c * o.hi; shi = c >= 0 ? c * o.hi : c * o.lo;
+    }
     // r = s - k*M in [rr.lo, rr.hi]: k from ceil((slo - rr.hi) / M) to floor((shi - rr.lo) / M)
     __int128 lo = slo - rr->hi, hi = shi - rr->lo;
     lo = lo >= 0 ? (lo + *M - 1) / *M : -((-lo) / *M);
     hi = hi >= 0 ? hi / *M : -((-hi + *M - 1) / *M);
     *klo = lo; *khi = hi;
     return hi >= lo && hi - lo <= 2;                           // three cases at most (a w-bit sum)
+}
+// jb_wrap's terms, r - x -+ y or r - c*y: built afresh for every jb_cons, which sorts and merges
+// the array in place
+static void jb_wrap_terms(JLT *t, int32_t x, int32_t xa, int32_t xb, IrOp op, int32_t my, __int128 mc) {
+    t[0].var = x; t[0].c = 1;
+    if (op == IR_MUL) { t[1].var = my; t[1].c = -mc; return; }
+    t[1].var = xa; t[1].c = -1; t[2].var = xb; t[2].c = op == IR_ADD ? -1 : 1;
 }
 static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
     JRange rr; __int128 klo, khi, M;
@@ -1822,11 +1839,18 @@ static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
         klo = khi = B->wk[q]; taken = true;
     }
     int32_t xa = jb_val(B, d->operands[0]), xb = jb_val(B, d->operands[1]);
-    const char *origin = jb_str(B, d->op == IR_ADD ? "def %%v%lld add.wrap" : "def %%v%lld sub.wrap", id, 0, 0);
-    JLT t[3];
-    t[0].var = x; t[0].c = 1; t[1].var = xa; t[1].c = -1; t[2].var = xb; t[2].c = d->op == IR_ADD ? -1 : 1;
+    const char *origin = jb_str(B, d->op == IR_ADD ? "def %%v%lld add.wrap" : d->op == IR_SUB ? "def %%v%lld sub.wrap" : "def %%v%lld mul.wrap", id, 0, 0);
+    // r - x -+ y, or r - c*y for `c *% y` (c the constant operand); REBUILT before each jb_cons, which
+    // sorts and merges the array in place (`y +% y` leaves one term: a reused array is stale)
+    JLT t[3]; int nt = 3; __int128 mc = 0; int32_t my = -1;
+    if (d->op == IR_MUL) {
+        bool k0 = jg_const_of(B->g, d->operands[0], &mc);
+        if (!k0 && !jg_const_of(B->g, d->operands[1], &mc)) return;
+        my = k0 ? xb : xa; nt = 2;
+    }
+    jb_wrap_terms(t, x, xa, xb, d->op, my, mc);
     if (klo == khi) {                                          // one case: exact
-        jb_atom(B, origin, t, 3, J_EQ, -klo * M);
+        jb_atom(B, origin, t, nt, J_EQ, -klo * M);
         if (taken) {                                           // with its guard: r within its range
             JLT u[1]; u[0].var = x; u[0].c = 1; jb_atom(B, origin, u, 1, J_LE, rr.hi);
             u[0].var = x; u[0].c = -1; jb_atom(B, origin, u, 1, J_LE, -rr.lo);
@@ -1841,8 +1865,8 @@ static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
     for (int32_t k = 0; k < nd; k++) {                         // r - x -+ y = -k*M
         if (!(h->dis[k].c = JG_NEW(B->g, JCons, 1))) { B->fail = true; return; }
         h->dis[k].nc = 1;
-        t[0].var = x; t[0].c = 1; t[1].var = xa; t[1].c = -1; t[2].var = xb; t[2].c = d->op == IR_ADD ? -1 : 1;
-        jb_cons(B, t, 3, J_EQ, -(klo + k) * M, &h->dis[k].c[0]);
+        jb_wrap_terms(t, x, xa, xb, d->op, my, mc);
+        jb_cons(B, t, nt, J_EQ, -(klo + k) * M, &h->dis[k].c[0]);
     }
 }
 // A load from a module constant TABLE (an ALLOCA with data: the static read-only object whose
@@ -2081,6 +2105,7 @@ static void jb_state(JB *B, int32_t x) {
             jb_def(B, x, t, 1, jb_str(B, "def %%v%lld neg", id, 0, 0));
             break;
         case IR_MUL: {
+            if (d->wrap == IR_WRAP_MODULAR && jg_wrap_op(d)) { jb_wrap(B, x, d, id); break; }   // `c *% y`, its cases
             if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) break;
             bool lin = false;
             for (int k = 0; k < 2 && !lin; k++) {
@@ -2143,7 +2168,12 @@ static void jb_state(JB *B, int32_t x) {
             __int128 c;
             if (d->n_operands < 2 || !jg_is_int(d->operands[0]->type)) break;
             bool uns = jg_uns(d->operands[0]->type);
-            if (!uns && (d->wrap != IR_WRAP_CHECK || d->unchecked)) break;
+            if (!uns && d->unchecked) break;
+            // a MODULAR signed quotient or remainder by a constant other than 0 and -1: only MIN / -1
+            // wraps (interp.h), so it is the checked one's value (LeikeHeizmann-WST2014-Ex9's wrap port,
+            // `x = x /% 2`, had nothing stated for x and no ranking); `/|` and a variable divisor as before
+            if (!uns && d->wrap != IR_WRAP_CHECK &&
+                (d->wrap != IR_WRAP_MODULAR || !jg_const_of(g, d->operands[1], &c) || c == 0 || c == -1)) break;
             if (!jg_const_of(g, d->operands[1], &c)) {           // a variable divisor: between bounds
                 JRange h;
                 bool dv = d->op == IR_SDIV || d->op == IR_UDIV;
@@ -2681,24 +2711,46 @@ static bool jb_join_wraps(JB *B, int32_t d0, JPathE *paths, int32_t *npath, JPat
     int32_t ids[JJOIN_MAXP][JWRAP_MAXW]; __int128 klo[JJOIN_MAXP][JWRAP_MAXW]; int32_t nk[JJOIN_MAXP][JWRAP_MAXW], nw[JJOIN_MAXP];
     int64_t total = 0;
     bool any = false;
+    // the values a path's stores into cells are computed from, on the path: a wrapping op whose
+    // result only FEEDS a stored one (`q = (q -% y) -% 1`: the inner op) is as unstated inside the
+    // disjunct as a stored one, and the stored value is then free (LeikeHeizmann-TACAS2014-Ex1's
+    // wrap port had no ranking: `q -% y` said nothing on either path)
+    // one scratch per function, not per join and VC (a per-call allocation fills the region, s5)
+    if (!g->wneed && !(g->wneed = JG_NEW(g, uint8_t, g->nv > 0 ? g->nv : 1))) { B->fail = true; return false; }
+    uint8_t *need = g->wneed;
     for (int32_t p = 0; p < *npath; p++) {
         const JPathE *pe = &paths[p];
         nw[p] = 0;
+        memset(need, 0, (size_t)(g->nv > 0 ? g->nv : 1));
+        for (int32_t j = 0; j < pe->n; j++) {
+            IrBlock *Y = g->blk[pe->st[j].x];
+            if (Y->id == d0) continue;
+            for (IrInstr *st = Y->instrs; st; st = st->next)
+                if (st->op == IR_STORE && st->n_operands >= 2 && st->operands[1] && st->operands[0] &&
+                    st->operands[0]->id >= 0 && st->operands[0]->id < g->nv && g->cell[st->operands[0]->id] >= 0 &&
+                    st->operands[1]->id >= 0 && st->operands[1]->id < g->nv) need[st->operands[1]->id] = 1;
+        }
+        for (bool grew = true; grew; ) {
+            grew = false;
+            for (int32_t j = 0; j < pe->n; j++) {
+                IrBlock *Y = g->blk[pe->st[j].x];
+                if (Y->id == d0) continue;
+                for (IrInstr *u = Y->instrs; u; u = u->next) {
+                    if (!u->result || u->result->id < 0 || u->result->id >= g->nv || !need[u->result->id]) continue;
+                    for (int32_t o = 0; o < u->n_operands; o++) {
+                        IrValue *ov = u->operands[o];
+                        if (ov && ov->id >= 0 && ov->id < g->nv && !need[ov->id]) { need[ov->id] = 1; grew = true; }
+                    }
+                }
+            }
+        }
         for (int32_t i = 0; i < pe->n; i++) {
             IrBlock *X = g->blk[pe->st[i].x];
             if (X->id == d0) continue;
             for (IrInstr *w = X->instrs; w; w = w->next) {
                 __int128 lo, hi, M; JRange rr;
                 if (!jg_wrap_op(w) || w->result->id < 0 || !jg_wrap_ks(g, w, &lo, &hi, &M, &rr) || lo == hi) continue;
-                bool stored = false;                         // into a cell, by a store on this path
-                for (int32_t j = 0; j < pe->n && !stored; j++) {
-                    IrBlock *Y = g->blk[pe->st[j].x];
-                    if (Y->id == d0) continue;
-                    for (IrInstr *st = Y->instrs; st && !stored; st = st->next)
-                        stored = st->op == IR_STORE && st->n_operands >= 2 && st->operands[1] == w->result && st->operands[0] &&
-                                 st->operands[0]->id >= 0 && st->operands[0]->id < g->nv && g->cell[st->operands[0]->id] >= 0;
-                }
-                if (!stored) continue;
+                if (w->result->id >= g->nv || !need[w->result->id]) continue;   // stored, or what a stored value is made of
                 if (nw[p] == JWRAP_MAXW) return false;
                 ids[p][nw[p]] = w->result->id; klo[p][nw[p]] = lo; nk[p][nw[p]] = (int32_t)(hi - lo + 1); nw[p]++;
             }

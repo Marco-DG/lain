@@ -1,0 +1,64 @@
+// s10 (TCW's probe, 2026-10-20): every fact the wrap fixes add, run at the type's edges; judge_gate
+// runs main under --check-hyps. Each value is USED by a checked i64 add that every run reaches, so
+// its definition is a hypothesis of an obligation's VC and is checked where the program runs: a
+// value no obligation reads is never checked, and one read only under a guard is not checked where
+// the guard fails (two versions of this probe let planted mutants through). Each function returns
+// s, never t: a returned value made of several quotients sends the finder's return-claim search
+// past its work meter (35 s a call, each division's sign cases multiplying), which the gate's
+// timeouts cannot afford.
+// (1) a wrapping op feeding a stored one; (2) modular quotient by constants other than 0 and -1;
+// (3) `c *% y` and `y *% c` with |c| <= 3, and `y +% y` (one term after merging).
+func nested(q i32, y i32) i32 {
+    var r i32 = q
+    var s i32 = 0
+    var t i64 = 0
+    if y > 0 {
+        r = (r -% y) -% 1
+    } else {
+        r = (r +% y) -% 1
+    }
+    t = t + (r as i64)
+    return s
+}
+func divs(x i32) i32 {
+    var s i32 = 0
+    var t i64 = 0
+    var a i32 = x /% 2
+    t = t + (a as i64)
+    var b i32 = x /% -2
+    t = t + (b as i64)
+    var c i32 = x /% 3
+    t = t + (c as i64)
+    var d i32 = x /% -3
+    t = t + (d as i64)
+    var e i32 = x /% 7
+    t = t + (e as i64)
+    var f i32 = x /% -1                       // MIN /% -1 wraps to MIN: nothing is stated for it
+    t = t + (f as i64)
+    return s
+}
+func muls(y i32) i32 {
+    var s i32 = 0
+    var t i64 = 0
+    var a i32 = 2 *% y
+    t = t + (a as i64)
+    var b i32 = y *% 3
+    t = t + (b as i64)
+    var c i32 = -3 *% y
+    t = t + (c as i64)
+    var d i32 = y *% -2
+    t = t + (d as i64)
+    var e i32 = y +% y
+    t = t + (e as i64)
+    var g i32 = -1 *% y
+    t = t + (g as i64)
+    return s
+}
+func main() i32 {
+    var acc i32 = 0
+    acc = acc +% nested(2147483647, 1) +% nested(-2147483648, -1) +% nested(5, 7) +% nested(0, 0) +% nested(1, -2147483648) +% nested(-2147483647, 5) +% nested(3, -4)
+    acc = acc +% divs(2147483647) +% divs(-2147483648) +% divs(-2147483647) +% divs(0) +% divs(-1) +% divs(1) +% divs(-7) +% divs(1999) +% divs(-1999) +% divs(20)
+    acc = acc +% muls(2147483647) +% muls(-2147483648) +% muls(1073741824) +% muls(-1073741824) +% muls(715827883) +% muls(-715827883) +% muls(0) +% muls(-1) +% muls(7) +% muls(-300) +% muls(2147483500)
+    if acc == 123456789 { return 1 }
+    return 0
+}

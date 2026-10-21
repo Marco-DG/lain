@@ -4845,6 +4845,51 @@ int main(void) {
         free(t);
     }
     printf("  two loads of one address, nothing written between, are one value; a store, a call, another index\n");
+    // 84. the wrap fixes (s10), all i32. (1) a wrapping op that only FEEDS a stored one on a join's path,
+    // `r = (q -% y) -% 1` on one arm: both ops' cases in the arm's disjunct; (2) a MODULAR quotient by a
+    // constant other than 0 and -1, `x /% 2`: the checked one's definition; by -1, nothing; (3) `3 *% y`:
+    // its cases `r - 3*y = -k*2^32`
+    {   IrFunc *f = ir_func_new(&A, nm("nest84"), i32t, IR_FUNC_PURE);
+        IrValue *q = ir_add_param(f, i32t, nm("q")), *y = ir_add_param(f, i32t, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *r = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, r, q);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SGT, y, ir_const_int(f, b0, 0, i32t)), b1, b2);
+        IrInstr *in = ir_instr(f, IR_SUB, i32t, 2); in->operands[0] = q; in->operands[1] = y; in->wrap = IR_WRAP_MODULAR; ir_emit(b1, in);
+        IrInstr *out = ir_instr(f, IR_SUB, i32t, 2); out->operands[0] = in->result; out->operands[1] = ir_const_int(f, b1, 1, i32t);
+        out->wrap = IR_WRAP_MODULAR; ir_emit(b1, out);
+        ir_store(f, b1, r, out->result); ir_set_br(b1, b3);
+        ir_set_br(b2, b3);
+        ir_set_ret(b3, ir_binop(f, b3, IR_SDIV, ir_const_int(f, b3, 100, i32t), ir_load(f, b3, r, i32t), i32t));
+        ir_finalize_cfg(f);
+        char *t = gen_text(f);
+        const char *dz = t ? vc_of(t, "divzero") : "";
+        char iv[24], ov[24]; snprintf(iv, sizeof iv, "%%v%d ", in->result->id); snprintf(ov, sizeof ov, "%%v%d ", out->result->id);
+        const char *jl = strstr(dz, " join bb"), *je = jl ? strchr(jl, '\n') : NULL;
+        char line[4096] = ""; if (jl && je) snprintf(line, sizeof line, "%.*s", (int)(je - jl), jl);
+        CHECK(strstr(line, iv) && strstr(line, ov) && count(line, " = -4294967296") >= 2, "(1) both ops' cases in the arm's disjunct:\n%s", dz);
+        free(t);
+    }
+    for (int c = 0; c < 3; c++) {
+        IrFunc *f = ir_func_new(&A, nm("op84"), i32t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, i32t, nm("x"));
+        IrInstr *op = ir_instr(f, c == 2 ? IR_MUL : IR_SDIV, i32t, 2);
+        op->operands[0] = c == 2 ? ir_const_int(f, f->entry, 3, i32t) : x;
+        op->operands[1] = c == 2 ? x : ir_const_int(f, f->entry, c == 0 ? 2 : -1, i32t);
+        op->wrap = IR_WRAP_MODULAR; ir_emit(f->entry, op);
+        IrValue *outer = ir_binop(f, f->entry, IR_SDIV, ir_const_int(f, f->entry, 100, i32t), op->result, i32t);
+        ir_set_ret(f->entry, outer);
+        ir_finalize_cfg(f);
+        char *t = gen_text(f);
+        char key[48]; snprintf(key, sizeof key, "bb%d.%d divzero", f->entry->id, idx_of(f->entry, outer));
+        const char *dz = t ? vc_of(t, key) : "";
+        char w[48]; snprintf(w, sizeof w, "def %%v%d ", op->result->id);
+        if (c == 0) CHECK(strstr(dz, w) && !strstr(dz, "mul.wrap"), "(2) x /%% 2: its definition stated:\n%s", dz);
+        else if (c == 1) CHECK(dz[0] && !strstr(dz, w), "(2) x /%% -1: nothing stated (MIN / -1 wraps):\n%s", dz);
+        else CHECK(strstr(dz, "mul.wrap") && strstr(dz, "-3*%v"), "(3) 3 *%% y: its cases r - 3*y:\n%s", dz);
+        free(t);
+    }
+    printf("  the wrap fixes: a feeding op's cases on a join's path, a modular quotient by a constant, c *%% y\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

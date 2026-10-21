@@ -1964,6 +1964,10 @@ at=const 4
 rc=0
 out=
 at=const 2
+### tests/trust/judge_wrap_facts_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/trust/known_type_names_pass.ln
 rc=0
 out=
