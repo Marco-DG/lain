@@ -3281,6 +3281,10 @@ at=const 4
 rc=0
 out=
 at=const 4
+### tests/vra/constant_table_read_in_loop_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
 ### tests/vra/correlated_div_range_pass.ln
 rc=0
 out=

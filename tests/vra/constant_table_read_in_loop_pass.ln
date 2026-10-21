@@ -1,0 +1,22 @@
+// LAINFLAGS: --judge=authority
+// A 32-byte string literal read in a loop, and two more loops indexing other arrays by a plain
+// counter. Each byte of the literal is a cell holding one constant; the finder paired every loop
+// counter with every such cell (8 candidates a byte), the function's claims overflowed the
+// generator's region in Houdini's first round, and every claim was dropped: `hist[k]` under
+// `for k in 0..256` was E085 (TCW's real programs, R2; 31 bytes passed). A pair with a cell that
+// only constant stores ever write says what the counter's own bound says, and is not proposed.
+func main() i32 {
+    var data = "abcdefghijklmnopqrstuvwxyzabcdef"
+    var hist u32[256]
+    for k in 0..256 { hist[k] = 0 }
+    for i in 0..data.len { hist[data[i]] = hist[data[i]] +% 1 }
+    var cum u32[256]
+    var run u32 = 0
+    for k in 0..256 {
+        run = run +% hist[k]
+        cum[k] = run
+    }
+    if hist[97] != 2 { return 1 }
+    if cum[255] != 32 { return 2 }
+    return 0
+}

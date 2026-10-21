@@ -1636,11 +1636,108 @@ static bool fd_loop_body(IrFunc *f, int32_t H, uint8_t *in, int32_t nb) {
     return ok;
 }
 // One block's candidates (the slots sl[i..j), all at one block), into `cd`.
+// Whether cell `key` of f holds one CONSTANT wherever it is read: the element (or field) of local
+// storage that only constant stores at constant positions ever write, each position once, and
+// whose address reaches nothing but loads, stores, element or field addresses, slices of it, a
+// local slot holding only such views, and direct calls whose callee neither writes nor retains
+// that parameter (its C5 footprints; `matmul(a, b, var c)` reads a and b). A header version paired with such a cell (`x - c <= k`) says
+// what the version's own bound says with the constant folded in, so the pair is not proposed:
+// a 32-byte string literal read in a loop was 32 such terms at every header, 8 candidates a
+// byte, and the function's claims overflowed the generator's region and were all dropped (TCW's
+// real programs, R2: 132 of the 181 claims kept at 1 GB were these). A candidate filter only: a
+// cell wrongly taken as constant costs a candidate, never a fact.
+static IrInstr *fd_def_in(IrFunc *f, const IrValue *v) {
+    for (IrBlock *b = f->blocks; v && b; b = b->next)
+        for (IrInstr *x = b->instrs; x; x = x->next) if (x->result == v) return x;
+    return NULL;
+}
+static const IrValue *fd_storage_root_d(IrFunc *f, const IrValue *v, int depth);
+// A local slot that only ever holds views of ONE storage (`var data = "..."` keeps a slice of the
+// literal's copy): every store to it stores a value of that storage, and its own address reaches
+// nothing but those stores and loads. That storage, or NULL.
+static const IrValue *fd_slot_root(IrFunc *f, const IrValue *slot, int depth) {
+    IrInstr *sd = fd_def_in(f, slot);
+    if (!sd || sd->op != IR_ALLOCA || depth > 4) return NULL;
+    const IrValue *r = NULL;
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *x = b->instrs; x; x = x->next)
+            for (int o = 0; o < x->n_operands; o++) {
+                if (x->operands[o] != slot) continue;
+                if (x->op == IR_LOAD && o == 0) continue;
+                if (x->op != IR_STORE || o != 0 || x->n_operands < 2) return NULL;
+                const IrValue *r2 = fd_storage_root_d(f, x->operands[1], depth + 1);
+                if (!r2 || (r && r2 != r)) return NULL;
+                r = r2;
+            }
+    return r;
+}
+static const IrValue *fd_storage_root(IrFunc *f, const IrValue *v) { return fd_storage_root_d(f, v, 0); }
+static const IrValue *fd_storage_root_d(IrFunc *f, const IrValue *v, int depth) {
+    for (int hop = 0; v && hop < 8; hop++) {
+        IrInstr *d = fd_def_in(f, v);
+        if (!d) return NULL;
+        if (d->op == IR_ALLOCA) return v;
+        if (d->op == IR_LOAD && d->n_operands >= 1) return fd_slot_root(f, d->operands[0], depth);
+        if ((d->op != IR_ELEM_PTR && d->op != IR_FIELD_PTR && d->op != IR_MAKE_SLICE && d->op != IR_SLICE_DATA) ||
+            d->n_operands < 1) return NULL;                     // a slice of it is still it (`data[i]`, `data.len`)
+        v = d->operands[0];
+    }
+    return NULL;
+}
+static bool fd_const_cell(const JFinder *F, IrFunc *f, int32_t key) {
+    const IrValue *kv = NULL;
+    for (IrBlock *b = f->blocks; b && !kv; b = b->next)
+        for (IrInstr *x = b->instrs; x && !kv; x = x->next) if (x->result && x->result->id == key) kv = x->result;
+    IrInstr *kd = kv ? fd_def_in(f, kv) : NULL;
+    if (!kd || (kd->op != IR_ELEM_PTR && kd->op != IR_FIELD_PTR)) return false;
+    const IrValue *root = fd_storage_root(f, kv);
+    if (!root) return false;
+    __int128 seen[64]; int nseen = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *x = b->instrs; x; x = x->next)
+            for (int o = 0; o < x->n_operands; o++) {
+                const IrValue *ov = x->operands[o];
+                if (!ov || fd_storage_root(f, ov) != root) continue;
+                if ((x->op == IR_LOAD || x->op == IR_SLICE_LEN || x->op == IR_MAKE_SLICE || x->op == IR_SLICE_DATA) && o == 0) continue;
+                if ((x->op == IR_ELEM_PTR || x->op == IR_FIELD_PTR) && o == 0) {
+                    if (x->op == IR_ELEM_PTR) {                 // a position known, or no promise
+                        IrInstr *ix = x->n_operands >= 2 ? fd_def_in(f, x->operands[1]) : NULL;
+                        bool stored = false;                    // ...needed only where it is stored to
+                        for (IrBlock *b2 = f->blocks; b2 && !stored; b2 = b2->next)
+                            for (IrInstr *y = b2->instrs; y && !stored; y = y->next)
+                                stored = y->op == IR_STORE && y->n_operands >= 1 && y->operands[0] == x->result;
+                        if (stored && (!ix || ix->op != IR_CONST)) return false;
+                    }
+                    continue;
+                }
+                if (x->op == IR_STORE && o == 1 && fd_slot_root(f, x->operands[0], 0) == root) continue;
+                if (x->op == IR_CALL) {                         // a direct call that neither writes nor
+                    const IrFunc *c = fd_callee(F, x);          // keeps that parameter (C5's footprints,
+                    if (c && o < 64 && c->param_writes_done && c->param_retains_done &&   // where the
+                        !((c->param_writes >> o) & 1) && !((c->param_retains >> o) & 1)) continue;   // analyses
+                }                                                // computed them; else it may write)
+                if (x->op == IR_STORE && o == 0 && x->n_operands >= 2) {
+                    IrInstr *vd = fd_def_in(f, x->operands[1]);
+                    IrInstr *ad = fd_def_in(f, ov);
+                    if (!vd || vd->op != IR_CONST || !ad || ad->op != IR_ELEM_PTR || ad->n_operands < 2) return false;
+                    IrInstr *ix = fd_def_in(f, ad->operands[1]);
+                    if (!ix || ix->op != IR_CONST) return false;
+                    __int128 at = fd_const(ix);
+                    for (int q = 0; q < nseen; q++) if (seen[q] == at) return false;   // stored twice
+                    if (nseen == 64) return false;
+                    seen[nseen++] = at;
+                    continue;
+                }
+                return false;                                   // a call, the address stored, a cast
+            }
+    return true;
+}
 static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, const JSlot *sl, int32_t i, int32_t j,
                              JCand **cd, int32_t *ncd, int32_t *ccd, char *err, size_t errcap) {
     int32_t H = sl[i].blk, nt = 0;
     bool head = sl[i].head;
     JSlot *tm = NULL;
+    uint8_t *cst = NULL;                                     // terms that are one constant (fd_const_cell)
     uint8_t *inl = NULL;                                     // the header's loop, by block id
     int32_t nbk = 0;
     *ncd = 0;
@@ -1650,12 +1747,14 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
         if (!(tm = malloc(sizeof *tm * (size_t)(nt ? nt : 1)))) goto oom;
         memcpy(tm, t0, sizeof *tm * (size_t)nt);
     }
+    if (!(cst = calloc((size_t)(nt ? nt : 1), 1))) goto oom;
+    for (int32_t t = 0; head && t < nt; t++) cst[t] = fd_const_cell(F, f, tm[t].key);
     for (int32_t k = i; k < j; k++) {
         if (fd_elem_covered(N, f, H, sl[k].key, as, nv)) continue;
         if (!cand_push(cd, ncd, ccd, H, sl[k].key, 1, -1, 0, sl[k].type, NULL) ||
             !cand_push(cd, ncd, ccd, H, sl[k].key, -1, -1, 0, sl[k].type, NULL)) goto oom;
         for (int32_t t = 0; head && t < nt; t++) {
-            if (tm[t].key == sl[k].key) continue;
+            if (tm[t].key == sl[k].key || cst[t]) continue;
             bool own = false;                                // two of the header's versions: one pair
             for (int32_t k2 = i; k2 < j; k2++) if (sl[k2].key == tm[t].key) own = true;
             if (own && tm[t].key < sl[k].key) continue;
@@ -1759,7 +1858,7 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
                 if (sv >= 0) { keys[2 * r + q] = sv; ktk[2 * r + q] = JTERM_LEN; lty[2 * r + q] = lt; }
             }
         }
-        if (!F->gen->term_kinds(F->gen->ctx, f, H, keys, ktk, n2, kind, err, (uint32_t)errcap)) { free(keys); free(kind); free(ktk); free(lty); free(tm); return false; }
+        if (!F->gen->term_kinds(F->gen->ctx, f, H, keys, ktk, n2, kind, err, (uint32_t)errcap)) { free(keys); free(kind); free(ktk); free(lty); free(tm); free(cst); return false; }
         for (int r = 0; r < F->hdr[h].n; r++) {
             const FdRel *v = &F->hdr[h].r[r];
             if (!kind[2 * r] || !kind[2 * r + 1] || (kind[2 * r] != 2 && kind[2 * r + 1] != 2)) continue;
@@ -1806,10 +1905,10 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
         free(L.mem);
         if (!ok) goto oom;
     }
-    free(tm);
+    free(tm); free(cst);
     return true;
 oom:
-    free(tm); free(inl); snprintf(err, errcap, "out of memory");
+    free(tm); free(inl); free(cst); snprintf(err, errcap, "out of memory");
     return false;
 }
 // A claim the generator refuses is refused with every claim of its function (houdini_module marks
