@@ -14,10 +14,10 @@ cd "$(dirname "$0")/../.."
 N="${1:-150}"
 SEED=${RANDOM_SEED:-$$}
 echo "fuzz_regions: RANDOM_SEED=$SEED"
-python3 scripts/fuzz/fuzz_regions.py ./lain "$N" "$SEED"; r1=$?
+LAIN_FLAGS=--judge=vra python3 scripts/fuzz/fuzz_regions.py ./lain "$N" "$SEED"; r1=$?
 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_regions.py ./lain "$N" "$SEED"; r2=$?
 M=$(( N / 3 > 0 ? N / 3 : 1 ))
-FUZZ_REGIONS_SPLIT=1 python3 scripts/fuzz/fuzz_regions.py ./lain "$M" "$SEED"; r3=$?
+FUZZ_REGIONS_SPLIT=1 LAIN_FLAGS=--judge=vra python3 scripts/fuzz/fuzz_regions.py ./lain "$M" "$SEED"; r3=$?
 FUZZ_REGIONS_SPLIT=1 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_regions.py ./lain "$M" "$SEED"; r4=$?
 # and the split mode with every step wrapping (s5: a wrap's cases inside a join's disjuncts), judge leg
 FUZZ_REGIONS_SPLIT=1 FUZZ_REGIONS_WRAP=1 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_regions.py ./lain "$M" "$SEED"; r5=$?

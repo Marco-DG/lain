@@ -16,10 +16,10 @@ cd "$(dirname "$0")/../.."
 N="${1:-300}"
 SEED=${RANDOM_SEED:-$$}
 echo "fuzz_loops: RANDOM_SEED=$SEED"
-# Two legs over the same programs and the same ground truth: the verdict as compiled by default (the
-# range analysis decides), and under --judge=authority (the judge decides). Until 2026-10-14 only the
+# Two legs over the same programs and the same ground truth: the verdict under --judge=vra (the
+# range analysis decides; the default until PE.9's flip), and under --judge=authority (the judge decides). Until 2026-10-14 only the
 # first ran, so the judge's ranking rules (c35..c37) had no ground-truth oracle at all.
-python3 scripts/fuzz/fuzz_loops.py ./lain "$N" "$SEED"; r1=$?
+LAIN_FLAGS=--judge=vra python3 scripts/fuzz/fuzz_loops.py ./lain "$N" "$SEED"; r1=$?
 LAIN_FLAGS=--judge=authority python3 scripts/fuzz/fuzz_loops.py ./lain "$N" "$SEED"; r2=$?
 # and every update wrapping (`+%`, `-%`) on if arms, the oracle modulo 256 (s5), judge leg, on N/3
 # programs: with all N the three legs ran past the full suite's 1500 s per fuzzer (seed 2490187)

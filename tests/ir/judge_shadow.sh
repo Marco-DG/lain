@@ -28,13 +28,13 @@ func main() i32 {
 }
 LN
 cd "$D" || exit 1
-plain=$("$ROOT/lain" sum3.ln -o a.c 2>&1); rp=$?
+plain=$("$ROOT/lain" sum3.ln --judge=vra -o a.c 2>&1); rp=$?
 shadow=$("$ROOT/lain" sum3.ln --judge=shadow -o b.c 2>&1); rs=$?
 [ $rp -eq $rs ] || { echo "1: the exit status changed under shadow ($rp, $rs)"; exit 1; }
 echo "$shadow" | grep -q '\[E085\]' || { echo "1: E085 lost under shadow: $shadow"; exit 1; }
 echo "$shadow" | grep -q '^judge-shadow: judge-only .* Ln 3, Col 16: the judge proves this bounds check, VRA refuses it' \
     || { echo "1: no judge-only line: $shadow"; exit 1; }
-"$ROOT/lain" ok.ln -o a.c > /dev/null 2>&1; rp=$?
+"$ROOT/lain" ok.ln --judge=vra -o a.c > /dev/null 2>&1; rp=$?
 shadow=$("$ROOT/lain" ok.ln --judge=shadow -o b.c 2>&1); rs=$?
 [ $rp -eq 0 ] && [ $rs -eq 0 ] || { echo "2: exit $rp / $rs"; exit 1; }
 cmp -s a.c b.c || { echo "2: the emitted C differs under shadow"; exit 1; }

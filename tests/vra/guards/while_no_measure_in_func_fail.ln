@@ -1,14 +1,15 @@
 // EXPECT: [E011]
-// A `while` in a `func` needs a termination measure. The measure is inferred from a
-// relational condition (`i < n` → `n - i`), but a NON-relational condition like a
-// bare boolean flag gives the inference nothing to work with, so it must still be
-// rejected (add an explicit `decreasing` measure or use `proc`).
+// A loop on a flag ends only if something clears the flag. Here it is cleared once `i` reaches n,
+// but `i` stops at 100, so for n > 100 the loop never ends. A loop that may run forever is
+// declared with `effects diverge`.
 
 func bad_loop(n i32) i32 {
     var i i32 = 0
     var go bool = true
     while go {
-        i = i + 1
+        if i < 100 {
+            i = i + 1
+        }
         if i >= n {
             go = false
         }

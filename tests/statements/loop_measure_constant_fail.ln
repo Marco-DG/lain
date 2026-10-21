@@ -1,5 +1,5 @@
 // EXPECT: [E082]
-// EXPECT-TEXT: Error Ln 7, Col 11: this loop ends, but not by the `decreasing` measure written
+// EXPECT-TEXT: Error Ln 7, Col 11: the `decreasing` measure written does not provably fall on every iteration
 // A constant never falls, so it measures nothing: accepted until I.74 because the loop ends by a
 // measure the engine found itself.
 func f(n u32) u32 {

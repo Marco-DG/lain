@@ -54,9 +54,10 @@ Lain is built on five foundational pillars:
     dereference, and buffer overflow at runtime.
 
   \item[P3 --- Static Verification]
-    The verification properties required by this specification are decidable
-    and polynomial in program size.  No SMT solver or unbounded fixpoint
-    iteration is required.
+    The verification properties required by this specification are decided at
+    compile time by a deterministic procedure whose budgets count steps, so
+    every program receives a verdict, and the same verdict on every machine.
+    Every guaranteed obligation (\S\,\ref{sec:vra.fragment}) is discharged.
 
   \item[P4 --- Determinism]
     Pure functions (\lain{func}) are referentially transparent and

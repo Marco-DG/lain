@@ -1,5 +1,5 @@
 // EXPECT: [E082]
-// EXPECT-TEXT: Error Ln 9, Col 11: this loop ends, but not by the `decreasing` measure written
+// EXPECT-TEXT: Error Ln 9, Col 11: the `decreasing` measure written does not provably fall on every iteration
 // A written `decreasing` is a claim the compiler defends (D-44). This loop ends (`n - i` falls),
 // so the engine proved it by its own measure and never read the one written, which RISES with
 // `i`: accepted until I.74 (Documentation). The written measure must be a positive multiple of

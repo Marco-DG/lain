@@ -14,7 +14,7 @@ Lain is a statically typed, compiled programming language designed for embedded 
 
 | Safety Concern | Guarantee | Mechanism |
 |:---------------|:----------|:----------|
-| **Buffer Overflows** | Impossible | Value Range Analysis (§8) verifies every array access at compile time |
+| **Buffer Overflows** | Impossible | Static verification (§8.6) proves every array access at compile time |
 | **Use-After-Free** | Impossible | Linear types (`mov`) ensure resources are consumed exactly once |
 | **Double Free** | Impossible | Ownership is linear; a resource is consumed exactly once |
 | **Data Races** | Structurally impossible | Lain programs are single-threaded pre-1.0; no concurrency model exists. Interrupt-aware model (M2) is roadmapped. |
@@ -341,7 +341,7 @@ var y int = x           // OK: implicit widening u8 -> int
 var z = x + 1000        // result type: int (1000 is int, wider than u8)
 
 var n i32 = 200
-var b = n as u8         // proven: VRA shows 200 fits u8
+var b = n as u8         // proven: 200 fits u8
 var f = n as f64        // widening, always fits
 // `n as u8` at n = 1000 is [E086]. `as` is the PROVEN tier; `as?` `as%` `as|` are the
 // checked, wrapping and saturating ones.
@@ -1750,7 +1750,7 @@ func f(n Small, m Small) i32 decreasing m {
 ```
 
 ```
-[E082] Error Ln 5, Col 12: the `decreasing` measure is not provably well-founded here
+[E082] Error Ln 5, Col 12: the `decreasing` measure written is not provably smaller at this call than at the caller's entry
 ```
 
 > [!NOTE]
@@ -1769,12 +1769,12 @@ func f(n i32) i32 {
 ```
 
 ```
-[E082] Error Ln 3, Col 11: this loop ends, but not by the `decreasing` measure written: it does not fall on every iteration
+[E082] Error Ln 3, Col 11: the `decreasing` measure written does not provably fall on every iteration
 ```
 
-The message says what it means: the loop *does* terminate — the compiler can see that from `i < n`
-and `i = i + 1` — but not for the reason stated. A measure is an assertion about *why*, and an
-assertion the implementation cannot confirm is refused even when the conclusion happens to hold.
+The loop *does* terminate, by `n - i`, but not for the reason stated. A measure is an assertion
+about *why*, and the compiler checks the measure written rather than one it could find for itself,
+so an assertion it cannot confirm is refused even when the conclusion happens to hold.
 
 ### 6.4 Break & Continue
 
@@ -2396,7 +2396,7 @@ var z = x + 1000     // OK: result type is int
 var n int = 42
 var b = n as u8      // Explicit: int -> u8
 
-// `as` is the PROVEN tier: it narrows only where VRA can show the value fits, and is
+// `as` is the PROVEN tier: it narrows only where the compiler can show the value fits, and is
 // [E086] otherwise — `var n int = 300` then `n as u8` does not compile, and neither does
 // an unbounded `u32` narrowed to `u8`, or converted to `i32` (a signedness change narrows
 // too). To narrow a value you cannot bound, say which behaviour you mean: `as?` checks at
@@ -2796,19 +2796,31 @@ func bounded(x int >= 0 and <= 100) int {
 }
 ```
 
-### 8.6 Static Verification Mechanism (VRA)
+### 8.6 Static Verification Mechanism
 
-The compiler uses **Value Range Analysis (VRA)**, a decidable, polynomial-time static analysis. No SMT solver is required.
+Two parts work together. The **range analysis** (Value Range Analysis, VRA) goes over every
+function and works out what the values can be: a range for each variable and how pairs of
+variables compare. It always terminates, in time polynomial in the size of the function. What it
+finds is used as candidate facts.
+
+The **judge** decides. It restates each obligation (an index in bounds, an operation that cannot
+overflow, a divisor that is not zero, a measure that falls) as a question in linear integer
+arithmetic: do the facts at this point imply it? An untrusted solver looks for a proof within a
+fixed budget, and a small checker replays that proof step by step in exact integers. A proof that
+is not found within the budget is a refusal, with the obligation's code, never an assumption.
 
 | Property | Value |
 |:---------|:------|
-| Decidable | Yes (always terminates) |
-| Complexity | Polynomial |
-| Sound | Yes (does not accept invalid programs) |
-| Complete | No (may reject valid programs; conservative) |
+| Deterministic | Yes (the same program gets the same verdict; the budget counts steps, not time) |
+| Terminates | Yes (the range analysis is polynomial, the judge's search is budgeted) |
+| Sound | Yes (a program is accepted only with a checked proof of every obligation) |
+| Complete | No (may reject valid programs: a fact it cannot state, or a proof past its budget) |
 | Runtime overhead | Zero |
 
-**How it works:**
+`--judge=vra` lets the range analysis decide on its own instead, as the compiler did before the
+judge; it is kept to compare the two.
+
+**How the range analysis works:**
 
 1. **Interval tracking**: Every integer variable carries a range `[min, max]`.
    - Literals: `10` -> `[10, 10]`
@@ -3396,7 +3408,7 @@ Lain eliminates entire classes of bugs at compile time without runtime overhead.
 
 | Safety Concern | Guarantee | Mechanism |
 |:---------------|:----------|:----------|
-| **Buffer Overflows** | Impossible | Static Range Analysis (§8) verifies every array access at compile time. No runtime bounds checks needed. |
+| **Buffer Overflows** | Impossible | Static verification (§8.6) proves every array access at compile time. No runtime bounds checks needed. |
 | **Use-After-Free** | Impossible | Linear Types (`mov`) ensure resources are consumed exactly once. Accessing a moved variable is a compile error. |
 | **Double Free** | Impossible | Ownership is linear; a resource must be consumed exactly once, preventing double destruction. |
 | **Data Races** | Structurally impossible | Lain programs are single-threaded pre-1.0 — no concurrency model exists, so data races are not applicable. The Borrow Checker's exclusive-mutability rule still rules out aliasing-driven bugs intra-thread. Interrupt-aware concurrency (M2) is roadmapped. |

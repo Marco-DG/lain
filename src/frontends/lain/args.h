@@ -47,8 +47,9 @@ typedef struct
     bool        judge_shadow;       // --judge=shadow: the proof engine's judge beside VRA, every
                                     // disagreement reported (src/analysis/judge_shadow.h); no
                                     // verdict changes
-    bool        judge_authority;    // --judge=authority: the judge's records DECIDE the numeric and
-                                    // termination obligations (src/analysis/judge_authority.h, PE.10)
+    bool        judge_authority;    // DEFAULT (PE.9, 2026-10-20): the judge's records DECIDE the numeric
+                                    // and termination obligations (src/analysis/judge_authority.h);
+                                    // --judge=vra hands them back to the range analysis
 } Args;
 
 // ★ ONE TABLE OF FLAGS (I.90). The usage screen and the unknown-option message were two lists
@@ -66,10 +67,12 @@ static const LainFlag lain_flags[] = {
                                              " every discharged proof is checked as it is used" },
     { "--check-invariants",      NULL,       "with --interpret: also check that the range analysis's state at"
                                              " each block contains the running program's" },
-    { "--judge=",                "shadow",   "also run the proof engine's judge beside the range analysis and"
-                                             " report, on stderr, every check where the two disagree; no verdict changes" },
-    { "--judge=",                "authority", "let the proof engine's judge decide every bounds, overflow, division,"
-                                             " assert and termination obligation, in place of the range analysis" },
+    { "--judge=",                "authority", "the default: the proof engine's judge decides every bounds, overflow,"
+                                             " division, assert and termination obligation" },
+    { "--judge=",                "vra",      "let the range analysis decide those obligations instead of the judge"
+                                             " (the engine before the judge; for comparison)" },
+    { "--judge=",                "shadow",   "let the range analysis decide, run the judge beside it, and report on"
+                                             " stderr every check where the two disagree" },
     { "--dump-ast",              NULL,       "print the AST after parsing" },
     { "--dump-niche",            NULL,       "print the niche layout decision for every enum" },
     { "--dump-effects",          NULL,       "print each function's inferred effect row" },
@@ -136,6 +139,12 @@ static Args args_parse(int argc, char** argv)
     // survey that preceded it was wrong — it globbed `*_pass.ln` and missed 23 files.
     args.engine_ir = true;
     args.engine_ir_numeric = true;
+    // ── THE JUDGE DECIDES (PE.9, 2026-10-20) ─────────────────────────────────────────────
+    // Every bounds, overflow, division, assert and termination obligation is decided by the
+    // proof engine's judge: a small kernel checks every certificate, and an untrusted finder
+    // proposes the claims and rankings. The range analysis still runs, for the finder's
+    // candidates and the borrow pass, and decides only under --judge=vra or --judge=shadow.
+    args.judge_authority = true;
     // ── THE BACKEND, AND THERE IS ONLY ONE NOW ───────────────────────────────────────────
     // The C is emitted from the IR. `src/emit/`, the AST emitter, was deleted on 2026-09-23;
     // `--backend=ir` / `--backend=legacy` went with it, because a flag that selects between
@@ -188,12 +197,14 @@ static Args args_parse(int argc, char** argv)
         } else if (strcmp(argv[i], "--check-invariants") == 0) {
             args.interpret = true; args.check_invariants = true;
         } else if (strcmp(argv[i], "--judge=shadow") == 0) {
-            args.judge_shadow = true;
+            args.judge_shadow = true; args.judge_authority = false;
         } else if (strcmp(argv[i], "--judge=authority") == 0) {
-            args.judge_authority = true;
+            args.judge_authority = true; args.judge_shadow = false;
+        } else if (strcmp(argv[i], "--judge=vra") == 0) {
+            args.judge_authority = false; args.judge_shadow = false;
         } else if (strncmp(argv[i], "--judge=", 8) == 0) {
             // a mode this compiler does not have is refused, never read as another or ignored
-            fprintf(stderr, "lain: unknown --judge mode '%s' (this compiler has: shadow, authority)\n", argv[i] + 8);
+            fprintf(stderr, "lain: unknown --judge mode '%s' (this compiler has: authority, vra, shadow)\n", argv[i] + 8);
             exit(EXIT_FAILURE);
         } else if (strncmp(argv[i], "--backend=", 10) == 0) {   // IGNORED-FLAG (readme_gate reads this)
             // Accepted and ignored: there is one backend. Kept as a no-op rather than an

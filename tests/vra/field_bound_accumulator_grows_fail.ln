@@ -1,8 +1,7 @@
-// EXPECT: [E011]
-// EXPECT-TEXT: this loop is not provably terminating, and no measure could be inferred
-// ...and a bound a call can grow gives no trip count, so the u8 accumulator is not bounded by one.
-// The loop is not shown to end either (E011), and since I.159 the unbounded total is reported as a
-// note under that error rather than as an E086 of its own.
+// EXPECT: [E086]
+// ...and a bound a call can grow does not keep the trip count at 8. grow() raises b.cap by one a
+// trip until it reaches 1000, and b.len rises by one a trip, so the loop would end after 1000
+// trips. The u8 total counts every trip, so `s + 1` overflows on the 256th.
 type B {
     len usize
     cap usize

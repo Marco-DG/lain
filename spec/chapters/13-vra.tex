@@ -30,8 +30,9 @@ It is used to:
 conforming implementation shall guarantee --- not the abstract domain or
 algorithm used to achieve it.}  The domain and algorithm are an implementation
 concern; the reference design (a relational abstract interpreter over the
-octagon domain, run as a fixpoint over a control-flow graph) is described,
-informatively, in \S\,\ref{sec:vra.reference}.  Any analysis satisfying the contract below
+octagon domain, run as a fixpoint over a control-flow graph, whose facts a
+checker uses to decide each obligation in linear integer arithmetic) is
+described, informatively, in \S\,\ref{sec:vra.reference}.  Any analysis satisfying the contract below
 conforms, whether it reasons with intervals, difference bounds, octagons, or a
 stronger relational domain.
 
@@ -48,12 +49,83 @@ stronger relational domain.
 \end{constraint}
 
 \begin{constraint}
-  \textbf{Determinism and decidability.}
-  The VRA shall be deterministic and shall terminate on every input, in time
-  polynomial in program size.  No general SMT, Presburger, or unbounded search
-  procedure is required or permitted in the analysis core; a conforming
-  implementation reaches its verdict by a decidable, terminating computation.
+  \textbf{Determinism and termination.}
+  The VRA shall be deterministic and shall terminate on every input.  Each proof
+  obligation is decided by a deterministic procedure whose budgets count steps,
+  not time, so that the same program receives the same verdict on every
+  machine.  An obligation whose proof is not found within the budget shall be
+  reported as an error with that obligation's diagnostic code, as any other
+  obligation that is not discharged (\emph{prove-or-reject}), and the diagnostic
+  shall say that the budget, not the program, stopped the proof.
 \end{constraint}
+
+\section{The guaranteed fragment}
+\label{sec:vra.fragment}
+\index{guaranteed fragment}
+
+\pnum
+An obligation is \emph{guaranteed} when it follows, in linear integer arithmetic
+over $\mathbb{Z}$, from the \emph{available facts} at its program point.  A
+conforming implementation shall discharge every guaranteed obligation, within
+its translation limits (\S\,\ref{sec:conformance.limits}) and its proof budget,
+which is \idbehav{the number of steps spent on one obligation before the
+budget is reported as exhausted}.
+
+\pnum
+The available facts at a program point are:
+\begin{enumerate}
+  \item the conditions of the branches and loop tests that dominate the point,
+        including \lain{in} guards (\S\,\ref{sec:vra.in-guard}), as facts about
+        the values their variables had when they were tested;
+  \item the ranges of the operands' types, and the refinements of parameters,
+        results and fields (\S\,\ref{sec:vra.constraints});
+  \item an equality from an assignment to a variable, or to a field or
+        constant-index element of one, that holds along every path to the
+        point, with no call and no write through a reference on that path
+        that may change it; a variable the enclosing loops cannot change keeps
+        the facts it had before them; and where paths join, other than at a
+        loop head, a variable's range is the smallest interval containing the
+        ranges the available facts give it on each incoming path, so
+        \lain{if x > 63 \{ x = 63 \}} leaves \lain{x <= 63} whichever path was
+        taken;
+  \item the range of the variable of \lain{for i in a..b}
+        (\S\,\ref{sec:stmt.for});
+  \item the predicate of every \lain{assert} that dominates the point
+        (\S\,\ref{sec:stmt.assert});
+  \item the bound on the length of every slice (\S\,\ref{sec:types.slice});
+  \item for a constant power of two $N$, that \lain{x \& (N - 1)} lies in
+        $[0, N - 1]$.
+\end{enumerate}
+
+\pnum
+Everything else an implementation proves is beyond the guarantee: the loop
+invariants and termination measures it infers, and the facts it carries across
+a loop that the list above does not give.  An implementation may prove more,
+and shall not accept an obligation it has not proved.  A program whose
+obligations are all guaranteed is accepted by every conforming implementation.
+
+\pnum
+Termination follows the same split.  A written \lain{decreasing} measure is
+checked by the rules of \S\,\ref{sec:fn.termination}, and those checks are
+guaranteed when they follow from the available facts; a measure an
+implementation infers is beyond the guarantee.
+
+\begin{example}
+Both accesses are guaranteed: the first by the test that dominates it, which
+relates three quantities, the second by the range at the join.
+\begin{laincode}
+func window(a u8[], i usize < 64, j usize < 64) u8 {
+    if i + j < a.len { return a[i + j] }
+    return 0
+}
+
+func clamp(a u8[64], x0 usize) u8 {
+    var x = x0
+    if x > 63 { x = 63 }
+    return a[x]
+}
+\end{laincode}
+\end{example}
 
 \section{What the analysis tracks}
 \label{sec:vra.range}
@@ -499,6 +571,23 @@ These constraints are available to the VRA throughout the function body
 This section is informative. It says how the reference compiler meets the contract above, so
 that the precision a program may rely on is concrete. Every example in it is compiled by the
 specification's gate.
+
+\pnum
+\textbf{Two parts.} The reference compiler decides each obligation with a checker, the
+\emph{judge}, and uses the abstract interpreter described in the rest of this section to propose
+facts. The judge's generator states each obligation as a question in linear integer arithmetic,
+from the available facts (\S\,\ref{sec:vra.fragment}) and from \emph{claims}: invariants at loop
+heads, ranges at joins, and the contracts of results, proposed by an untrusted finder. Each claim
+is owed as an obligation of its own, so it is used only once it is proved. An untrusted solver
+writes a certificate for each question (non-negative combinations of facts, Chv\'atal--Gomory
+cuts, case splits), and a kernel replays it in exact integers; the kernel searches nothing. A
+termination measure is proposed the same way, linear, lexicographic or by regions and found with
+Farkas' lemma, and owed on every edge back into its loop (\S\,\ref{sec:fn.termination}). The
+kernel and the generator are trusted, with the front end, the lowering to the IR and the C
+emitter, as in any compiler; so is the abstract interpreter, for the one fact the borrow checker
+takes from it, that two borrows are disjoint. The finder and the solver are not trusted. With
+\lain{--judge=vra} the abstract interpreter decides on its own, as the compiler did before the
+judge.
 
 \pnum
 \textbf{Domain.} An abstract interpreter over the \emph{octagon} domain. Every tracked integer

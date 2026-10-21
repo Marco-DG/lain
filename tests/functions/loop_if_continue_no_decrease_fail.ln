@@ -1,8 +1,7 @@
 // EXPECT: [E011]
 // SOUNDNESS: a branch is exempt from decreasing the measure only when it LEAVES the
-// loop (break/return). Here the `else` neither decreases `i` nor exits — it continues
-// the loop while bumping an unrelated `x`, so the measure `n - i` is not guaranteed to
-// fall each iteration and the loop is not provably terminating.
+// loop (break/return). Here the `else` neither decreases `i` nor exits: `x` alternates
+// between 0 and 1, never passes 5, and the loop runs forever for every n > 0.
 func f(n i32) i32 {
     var i = 0
     var x = 0
@@ -10,7 +9,7 @@ func f(n i32) i32 {
         if x > 5 {
             i = i + 1
         } else {
-            x = x + 1
+            x = 1 - x
         }
     }
     return i

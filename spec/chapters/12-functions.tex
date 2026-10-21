@@ -128,26 +128,28 @@ func g(x i32) i32 {
   A function whose row does not name \lain{diverge}, and that lies on a recursion cycle with
   at least one \emph{other} function, owes termination over that cycle.  The unit is its
   \emph{component}: every function it calls, directly or through others, that calls it back.
-  The component is accepted when one integer parameter of each of its functions --- that
-  function's \emph{measure} --- can be chosen such that
+  Each function of the component needs a \emph{measure}, written with \lain{decreasing} or
+  inferred by the implementation, such that
   \begin{enumerate}
     \item at every call from a function of the component to a function of the component,
-          self-calls included, the argument passed for the callee's measure is at most the
+          self-calls included, the callee's measure of the arguments passed is at most the
           caller's measure there, and the caller's measure is at least 0 there (an unsigned
           type, or a guard that implies it); and
     \item every cycle of calls inside the component, of any length and through any of its
-          calls, contains at least one call at which that argument is strictly smaller.
+          calls, contains at least one call at which it is strictly smaller.
   \end{enumerate}
-  Otherwise each function of the component is \illformed{}, reported at its first call into
-  the component: \diagcode{E011}, or \diagcode{E082} when that function has a written
-  \lain{decreasing} clause.
+  Written measures that satisfy both from the facts available at the calls
+  (\S\,\ref{sec:vra.fragment}) shall be accepted; inferring a measure is beyond the guarantee.
+  A component with no such measure is \illformed{}, reported at a call on a cycle of the
+  component where the measure is not shown to fall: \diagcode{E011}, or \diagcode{E082} when
+  that function has a written \lain{decreasing} clause.
 \end{constraint}
 
 \begin{note}
   An implementation may refuse a component beyond the capacity of its proof search, with a
-  diagnostic saying so.  One parameter per function is the whole measure, so a
-  cycle that ends only by a sum of two parameters, or by a lexicographic pair, is refused; such a
-  function states \lain{effects diverge}.  A self-recursive function on no cycle with another
+  diagnostic saying so.  A measure of several parts compared in order is not available for a
+  cycle through several functions, written or inferred; such a function states
+  \lain{effects diverge}.  A self-recursive function on no cycle with another
   keeps the rule of \S\,\ref{sec:fn.termination}.  A call through a function pointer is, for
   this purpose, a call to every function of the program whose address is taken and whose
   parameter count matches.  An \lain{extern} that calls back into the program is outside the
@@ -166,6 +168,31 @@ func b(n u8) u8 {
 }
 
 func c(n u8) u8 {
+    if n == 0 { return 0 }
+    return a(n - 1)
+}
+
+func main() i32 {
+    if a(9) != 0 { return 1 }
+    return 0
+}
+\end{laincode}
+
+The same cycle with its measure written is guaranteed: \lain{n} is no greater at every call
+and smaller at one call on every way round.
+
+\begin{laincode}
+// VERIFY: exit 0
+func a(n u8) u8 decreasing n {
+    if n == 0 { return 0 }
+    return b(n - 1)              // falls here
+}
+
+func b(n u8) u8 decreasing n {
+    return c(n)                  // no greater here, which is enough
+}
+
+func c(n u8) u8 decreasing n {
     if n == 0 { return 0 }
     return a(n - 1)
 }
@@ -209,13 +236,46 @@ A \lain{func} is guaranteed to terminate because:
 \pnum
 \textbf{Recursion measure.}  The measure for a directly-recursive \lain{func}
 is a parameter (\lain{decreasing n}) or a difference of two parameters
-(\lain{decreasing hi - lo}).  When omitted, the implementation attempts to
-infer a single parameter that strictly decreases in \emph{every} self-call
-(each self-call passes it a syntactically smaller argument, such as
-\lain{n - 1} or \lain{n / 2}).  Each self-call is then verified to make the
-measure strictly smaller and to keep it non-negative (a base case); a call
-that does neither is reported \diagcode{E082}.  Inference never accepts a
-recursion an explicit measure could not.
+(\lain{decreasing hi - lo}).  When omitted, the implementation may infer one.  An inferred
+measure is beyond the guarantee (\S\,\ref{sec:vra.fragment}), and it may be one no
+\lain{decreasing} clause can state, such as the pair $(m, n)$ compared in order that makes
+Ackermann's function end.
+
+\pnum
+A measure, written or inferred, is checked at every call from a function of its recursion
+component to a function of that component, the function itself included
+(\S\,\ref{sec:fn.purity}), under the facts that hold at the call, as a loop's measure is checked
+on each iteration.  At each such call the caller's measure shall be well-defined and
+non-negative, and the measure of the callee's arguments shall be well-defined and no greater
+than the caller's; every cycle of such calls shall contain one at which it is strictly smaller.
+A function that recurses only on itself makes a cycle at each self-call, so each self-call shall
+make its measure strictly smaller.  A call that breaks this is \illformed{}: \diagcode{E082}
+when the measure was written, \diagcode{E011} otherwise.  ``Well-defined'' means that the
+measure's arithmetic is free of overflow there, as any expression's must be.
+
+\begin{laincode}
+func f(n i32, k i32 >= 0) i32 decreasing k {
+    if n <= 0 { return 0 }
+    return f(n - 1, k)    // ERROR [E082]
+}
+
+func main() i32 {
+    return f(3, 5)
+}
+\end{laincode}
+
+\begin{laincode}
+// VERIFY: exit 0
+func down(k i32 >= 0) i32 decreasing k {
+    if k <= 0 { return 0 }
+    return down(k - 1)
+}
+
+func main() i32 {
+    if down(3) != 0 { return 1 }
+    return 0
+}
+\end{laincode}
 
 \pnum
 No termination analysis is performed for a function whose row names \lain{diverge}.

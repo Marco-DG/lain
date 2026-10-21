@@ -36,9 +36,9 @@ out=$(cd "$T" && "$ROOT/lain" --judge=authority --dump-measures gcd.ln -o gcd.c 
 echo "$out" | grep -qF ': loop at line 7: `x + y` decreases (the judge'"'"'s)' \
     || { echo "the judge's ranking is not printed:"; echo "$out" | grep measure; exit 1; }
 echo "$out" | grep -q 'no measure found' && { echo "VRA's search is printed under authority:"; echo "$out" | grep measure; exit 1; }
-out=$(cd "$T" && "$ROOT/lain" --dump-measures gcd.ln -o gcd.c 2>&1)
-echo "$out" | grep -qE '^\[measure\] [a-z_]+: loop at line 7' || { echo "the default mode no longer prints VRA's measure:"; echo "$out" | head -4; exit 1; }
-echo "$out" | grep -q "(the judge's)" && { echo "the default mode prints the judge's ranking"; exit 1; }
+out=$(cd "$T" && "$ROOT/lain" --judge=vra --dump-measures gcd.ln -o gcd.c 2>&1)
+echo "$out" | grep -qE '^\[measure\] [a-z_]+: loop at line 7' || { echo "--judge=vra no longer prints VRA's measure:"; echo "$out" | head -4; exit 1; }
+echo "$out" | grep -q "(the judge's)" && { echo "--judge=vra prints the judge's ranking"; exit 1; }
 cat > "$T/n.ln" <<'LN'
 func f(n u32) u32 {
     var i u32 = 0
@@ -51,7 +51,7 @@ func main() i32 {
     return 0
 }
 LN
-for m in "" "--judge=authority"; do
+for m in "--judge=vra" "--judge=authority"; do
     out=$(cd "$T" && "$ROOT/lain" $m --dump-measures n.ln -o n.c 2>&1)
     echo "$out" | grep -qxF '[measure] n_f: loop at line 3: no measure found' \
         || { echo "${m:-default}: no 'no measure found' line:"; echo "$out" | head -4; exit 1; }

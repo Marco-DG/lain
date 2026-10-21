@@ -82,5 +82,5 @@ out=$("$ROOT/lain" selfhang.ln $A -o /dev/null 2>&1); rc=$?
 [ $rc -eq 1 ] && echo "$out" | grep -q '^\[E011\]' || { echo "3b: a self-call left unlowered not refused with E011 ($rc): $out"; exit 1; }
 printf 'func a(n i32) i32 {\n    var x = n\n    while false {\n    }\n    while 0 != 0 {\n        x = x + 1\n    }\n    return x\n}\nfunc main() i32 { return a(3) }\n' > dead.ln
 ok dead.ln 4
-"$ROOT/lain" dead.ln -o /dev/null > /dev/null 2>&1 && { echo "4: the default mode now accepts dead.ln: the probe has lost its point"; exit 1; }
+"$ROOT/lain" dead.ln --judge=vra -o /dev/null > /dev/null 2>&1 && { echo "4: the range analysis now accepts dead.ln: the probe has lost its point"; exit 1; }
 exit 0

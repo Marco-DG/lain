@@ -10,6 +10,8 @@
 # Then the round trip: parse and re-print must reproduce the file byte for byte, because the
 # checker (C.3) reads what the compiler writes. And the parser refuses malformed text with a line
 # number rather than guessing.
+# The certificate is the RANGE ANALYSIS's derivation, so every compile here is --judge=vra (the
+# judge decides by default since the flip, PE.9; its own proofs are the kernel's certificates).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LAIN="$ROOT/lain"
@@ -63,7 +65,7 @@ func main() i32 {
     return count(5) + t + v + total() + p as i32 + (fact(4) % 2) as i32
 }
 LN
-"$LAIN" "$D/t.ln" -o "$D/t.c" --emit-certificate "$D/t.cert" > "$D/out" 2>&1 || { echo "lain refused the program"; cat "$D/out"; exit 1; }
+"$LAIN" --judge=vra "$D/t.ln" -o "$D/t.c" --emit-certificate "$D/t.cert" > "$D/out" 2>&1 || { echo "lain refused the program"; cat "$D/out"; exit 1; }
 fail=0
 has() { grep -qE "$1" "$D/t.cert" || { echo "missing: $2 ($1)"; fail=1; }; }
 R='%[0-9]+(:[A-Za-z0-9_.]+)?'

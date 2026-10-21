@@ -12,7 +12,12 @@
 #                 (--check-invariants): a wrong fact, even one no obligation happened to read
 #   UB            undefined behaviour inside `unsafe` (a generator bug: its programs should be
 #                 defined, or the oracle of that generator means nothing)
-#   CRASH/BUDGET  the interpreter died or ran out of steps
+#   CRASH/BUDGET  the interpreter died, or ran out of steps where the C program finished
+#   LONG          (not a bug) the C program ran past its 20 s AND the interpreter past its steps: an
+#                 accepted program that runs too long to compare. Under the judge (PE.9) the default
+#                 accepts recursions VRA refused, some exponential: fuzz_cycles' `T(x, y) = T(x, y+1)
+#                 + T(x-1, y-1)` ends (ranked 56x - y + 147) after binomially many calls. Whether an
+#                 accepted program ENDS is fuzz_cycles' and fuzz_loops' question, with ground truth.
 #
 #   bash fuzz_interp.sh [N]                    # N programs per generator (default 30)
 #   RANDOM_SEED=123 bash fuzz_interp.sh 10     # reproducible
@@ -23,7 +28,7 @@ LAIN="$(pwd)/lain"; [ -x "$LAIN" ] || { echo "build first: make"; exit 2; }
 N="${1:-30}"; BASE=${RANDOM_SEED:-$$}
 SC="$(mktemp -d)"; trap 'rm -rf "$SC"' EXIT
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_calloc=calloc -Dlibc_realloc=realloc"
-agree=0 diff=0 proof=0 inv=0 ub=0 crash=0 unsup=0 rej=0 cfail=0 genfail=0
+agree=0 diff=0 proof=0 inv=0 ub=0 crash=0 unsup=0 rej=0 cfail=0 genfail=0 long=0
 for g in "$HERE"/fuzz_*.py; do
   gn=$(basename "$g" .py)
   # Not every fuzz_*.py is a program generator. fuzz_malformed.py MUTATES a corpus program (a source,
@@ -44,6 +49,7 @@ for g in "$HERE"/fuzz_*.py; do
     elif echo "$m" | grep -q "PROOF FAILED\|TRUSTED"; then proof=$((proof+1)); echo "── PROOF  $gn seed=$seed :: $m"
     elif echo "$m" | grep -q "UNDEFINED BEHAVIOUR";  then ub=$((ub+1));       echo "── UB  $gn seed=$seed :: $m"
     elif echo "$m" | grep -q "NOT MODELLED";         then unsup=$((unsup+1))
+    elif echo "$m" | grep -q "STEP BUDGET" && [ "$(cat "$SC/c.st")" = 124 ]; then long=$((long+1)); echo "── LONG  $gn seed=$seed (C past 20 s, interpreter past its steps)"
     elif echo "$m" | grep -q "STEP BUDGET";          then crash=$((crash+1)); echo "── BUDGET  $gn seed=$seed"
     elif [ "$is" = "$(cat "$SC/c.st")" ] && cmp -s "$SC/c.out" "$SC/i.out"; then agree=$((agree+1))
     elif [ "$is" -ge 124 ] && [ "$is" != "$(cat "$SC/c.st")" ]; then crash=$((crash+1)); echo "── CRASH($is)  $gn seed=$seed"
@@ -51,7 +57,7 @@ for g in "$HERE"/fuzz_*.py; do
   done
 done
 echo "=================================================================="
-echo "fuzz_interp: $N programs per generator   agree=$agree   (rejected=$rej, not modelled=$unsup, C link failed=$cfail)"
+echo "fuzz_interp: $N programs per generator   agree=$agree   (rejected=$rej, not modelled=$unsup, C link failed=$cfail, too long to compare=$long)"
 echo "  bugs:  DIFFER=$diff  PROOF=$proof  INVARIANT=$inv  UB=$ub  CRASH=$crash"
 [ $genfail -gt 0 ] && echo "  GENERATOR-FAIL=$genfail   (harness bug — these tested NOTHING)"
 echo "=================================================================="

@@ -1,0 +1,16 @@
+// LAINFLAGS: --engine=ir-full
+// guard_counter_step_two_fail.ln with n the length of a slice and the counter from 0. `i + 1`
+// reaches at most n + 1, and a slice of i32 has at most the largest isize divided by 4 elements
+// (§types.slice), so it cannot leave usize. From 0 a step of two also keeps i even, and usize's
+// maximum is odd.
+func sw(a i32[n], n usize) i32 effects diverge {
+    var s i32 = 0
+    var i usize = 0
+    while i + 1 < n {
+        s = s +% a[i]
+        i = i + 2
+    }
+    return s
+}
+
+func main() i32 { return 0 }

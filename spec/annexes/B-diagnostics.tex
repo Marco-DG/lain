@@ -322,9 +322,13 @@ Diagnostic codes are divided into the following ranges:
 
 \diagcode{E085}
   & \S\,\ref{sec:expr.index}, \S\,\ref{sec:expr.subslice}
-  & \textit{index or slice endpoint not proven in bounds} ---
-    Issued when VRA cannot prove a non-negativity or upper-bound requirement
-    for an array/slice index or sub-slice endpoint.
+  & \textit{index, slice endpoint or object size not proven valid} ---
+    Issued when the analysis cannot prove a non-negativity or upper-bound
+    requirement for an array/slice index or sub-slice endpoint; for the length
+    of a runtime-sized array, which shall be non-negative and small enough
+    that its size in bytes does not wrap around; or for the length of a slice,
+    whose size in bytes shall not exceed the object-size limit
+    (\S\,\ref{sec:types.slice}).
     \\[4pt]
 
 \diagcode{E086}

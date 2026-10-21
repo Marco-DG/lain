@@ -1,4 +1,5 @@
 // EXPECT: [E011]
+// LAINFLAGS: --judge=vra
 // EXPECT-TEXT: the cycle has 17 functions, and this implementation's search ranks cycles of at most 16
 // A cycle of 17 functions where every call falls (n - 1 on a u8 guarded by n == 0) HAS a measure,
 // n at every position. The range analysis's cycle search ranks at most 16 functions (CERT_SCC_MAX)

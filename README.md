@@ -138,13 +138,29 @@ Read the last line. `%7` is the index, so `%7−%5≤-1` says the index is at le
 length. Neither value is known at compile time. The comparison between them is, and that is
 enough to settle the bounds check before the program runs.
 
-**Step 3. Check each obligation against those facts.**
+**Step 3. Prove each obligation.** Every obligation becomes a question in linear integer
+arithmetic: do the facts at that point imply it? For the access `haystack[i]` the judge asks it
+like this, as `src/tools/judge_vc_driver.c` prints it (`%s2` is `i`, `%v5` the length the loop
+test read):
 
 ```
-  find      index bounds   @ 4:13  PROVEN check-free
-  find      arith overflow @ 5:4  PROVEN check-free
-  find      termination    @ 0:0  PROVEN check-free
-3/3 proof obligations discharged check-free
+vc bytes_find … bb2.2 bounds.hi 0
+  …
+  hyp h12 guard bb1->bb2 : 1*%s2@head.bb1 + -1*%v5 <= -1
+  …
+  hyp h15 def %v5 slice_len : -1*len(%v0) + 1*%v5 = 0
+  goal 1*%s2@head.bb1 + -1*len(%v0) <= -1
+end
+```
+
+An untrusted solver looks for a proof, and a checker of about 400 lines replays it in exact
+integers. This one is a single sum: the loop test `i < %v5`, the fact that `%v5` is the length,
+and the goal assumed false add up to `0 ≤ -1`. The facts the range analysis worked out appear in
+the full question as `claim` lines, and each of them is an obligation too, proved before anything
+rests on it. All 17 obligations of `find`, its termination included, are proved:
+
+```
+# judge proved=17 not-implied=0 outside=0 budget=0 capacity=0 solver-bug=0 uncertified=0 refused=0 no-claims=0
 ```
 
 **Step 4. Emit C, keeping what was proved.**
@@ -361,7 +377,9 @@ wrong.
 # 4. Value Range Analysis
 
 This is abstract interpretation (Cousot and Cousot, 1977) using the octagon domain (Miné, 2006),
-which stores facts of the form `±x ±y ≤ c`, widened against thresholds as in Astrée.
+which stores facts of the form `±x ±y ≤ c`, widened against thresholds as in Astrée. Its facts are
+candidates: the judge (§1, step 3) states each obligation over them, proves every fact it uses
+first, and checks each proof.
 
 Storing comparisons between values, rather than only ranges, is what makes it useful on real
 code. The fact that makes an array access safe is hardly ever a constant. It is usually a
@@ -382,8 +400,7 @@ Each row is a program in the test corpus. Since an index the compiler cannot pla
 an `E085` rather than a runtime check, a program compiling is what tells you the bound was
 proved.
 
-The last row is the current edge: binary search proves over a fixed-length array, and the same
-search over a runtime length is still rejected.
+The same binary search over a runtime length, `a i32[]`, is proven too.
 
 ## Lengths can be part of a type
 
@@ -593,8 +610,8 @@ func bits(x u32) u32 {
 }
 ```
 
-Euclid's algorithm needs the quantity named, though not justified. Since `b = a % b` lands in
-`[0, b-1]`, the divisor shrinks on every iteration:
+Euclid's algorithm needs nothing written either. Since `b = a % b` lands in `[0, b-1]`, the
+divisor shrinks on every iteration. A measure may still be named, and it is then checked:
 
 ```lain
 func gcd(a0 usize, b0 usize) usize {
@@ -1088,10 +1105,11 @@ ordinary work rather than a redesign.
 - **Generics are monomorphised with no trait bounds.** Mistakes show up when a generic is
   instantiated rather than where it is defined.
 
-- **A fact relating three quantities at once is outside the octagon by construction.** The
-  domain holds `x ± y <= c` with a constant on the right, so a window checked as
-  `pos + n <= h.len`, or an allocator's `pos + size <= cap`, cannot be proven, and the sum is
-  refused before that, since it can overflow:
+- **A sum in a bounds test can overflow before it bounds anything.** The judge relates three
+  quantities, so a window checked as `pos + n <= h.len`, or an allocator's `pos + size <= cap`,
+  proves the accesses it guards, but only once the sum itself cannot overflow. With `pos` and `n`
+  unbounded it can, and the test is refused first. (`--judge=vra` cannot relate three quantities
+  at all: its octagon holds `x ± y <= c` with a constant on the right.)
 
   ```lain
   func window_first(h u8[], pos usize, n usize) u8 {
@@ -1101,10 +1119,11 @@ ordinary work rather than a redesign.
   }
   ```
 
-  Two other spellings are within reach. Bound the length by a difference once the start is
-  known to be in range: after `pos <= h.len`, the check `n <= h.len - pos` is a subtraction
+  Bound `pos` and `n` with a refinement (`pos usize < 4096`) and the sum is proven, and so is the
+  window. Two other spellings work without one. Bound the length by a difference once the start
+  is known to be in range: after `pos <= h.len`, the check `n <= h.len - pos` is a subtraction
   that cannot underflow, and `h[pos + i]` with `i < n` is then proven, the add `pos + i`
-  included, because the analysis knows that subtraction exactly and bounds the sum through it.
+  included, because that subtraction is exact and bounds the sum.
   An allocator checks `size <= cap - pos` the same way. Or describe the window by its two ends:
   walk an index `k` from `pos` up to `end`, or take `h[pos..end]` once `end <= h.len` and
   `pos <= end` are known, and every fact relates two variables again.
@@ -1123,9 +1142,17 @@ ordinary work rather than a redesign.
   }
   ```
 
-- **None of this is machine-checked.** The analyses are fuzz-tested and the domain is validated
-  by brute force, but there is no mechanised soundness proof. That is future work, and not
-  something being claimed here.
+- **The proofs have fixed budgets, and a program past them is refused, not misjudged.** A
+  function with more than 2,048 values stops the range analysis ("too large for the range
+  analysis", exit 70). The search for invariants and measures stops after a fixed amount of work
+  per module, and each proof search has step limits of its own; an obligation not proved within
+  them is refused with its code and a line naming the budget that ran out. The budgets count
+  steps, not time, so the verdict is the same on every machine.
+
+- **The checker itself is not verified.** Every proof is replayed by the judge's checker, and
+  the facts the obligations start from are evaluated against running programs over the test
+  corpus, but neither the checker nor the code that states the obligations has a mechanised
+  soundness proof. That is future work, and not something being claimed here.
 
 ---
 

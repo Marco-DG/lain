@@ -9,6 +9,8 @@
 # (one accumulator legitimately has several facts, one per query point), so what it carried fails:
 # here the return range the certificate states for `total`, refused in turn.
 # scripts/gates/certificate_gate.sh runs emit-then-check over the whole corpus.
+# The certificate is the RANGE ANALYSIS's derivation, so every compile here is --judge=vra (the
+# judge decides by default since the flip, PE.9; its own proofs are the kernel's certificates).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LAIN="$ROOT/lain"
@@ -62,14 +64,14 @@ func main() i32 {
     return count(5) + t + v + total() + p as i32 + (fact(4) % 2) as i32
 }
 LN
-"$LAIN" "$D/t.ln" -o "$D/a.c" --emit-certificate "$D/t.cert" > "$D/out" 2>&1 || { echo "lain refused the program"; cat "$D/out"; exit 1; }
-"$LAIN" "$D/t.ln" -o "$D/b.c" --check-certificate "$D/t.cert" > "$D/out" 2>&1 || { echo "its own certificate does not check"; cat "$D/out"; exit 1; }
+"$LAIN" --judge=vra "$D/t.ln" -o "$D/a.c" --emit-certificate "$D/t.cert" > "$D/out" 2>&1 || { echo "lain refused the program"; cat "$D/out"; exit 1; }
+"$LAIN" --judge=vra "$D/t.ln" -o "$D/b.c" --check-certificate "$D/t.cert" > "$D/out" 2>&1 || { echo "its own certificate does not check"; cat "$D/out"; exit 1; }
 cmp -s "$D/a.c" "$D/b.c" || { echo "checking the certificate changed the C"; exit 1; }
 fail=0
 mut() {   # what, sed program, the message (or code) the checked compile must print, its status
     sed "$2" "$D/t.cert" > "$D/m.cert"
     cmp -s "$D/t.cert" "$D/m.cert" && { echo "the mutation did not apply: $1"; fail=1; return; }
-    out=$("$LAIN" "$D/t.ln" -o "$D/m.c" --check-certificate "$D/m.cert" 2>&1); rc=$?
+    out=$("$LAIN" --judge=vra "$D/t.ln" -o "$D/m.c" --check-certificate "$D/m.cert" 2>&1); rc=$?
     [ $rc -eq $4 ] && echo "$out" | grep -qF "$3" || { echo "not refused as expected ($1): rc=$rc"; echo "$out" | head -3; fail=1; }
 }
 mut "a header state, tightened"   '/^certificate t_total$/,/^end$/ s/^\(    %[0-9]*:k in \)\[0, 1000\]/\1[0, 999]/' "does not entail the header" 70
@@ -106,8 +108,8 @@ LN
 # lost the certificate still in its stdio buffer: an empty w.cert, "there is no certificate for it"
 # on the check, 10 of 200 runs under parallel load and none alone (a pipe's reader decides when its
 # writer dies).
-o1=$("$LAIN" "$D/w.ln" -o "$D/w1.c" --emit-certificate "$D/w.cert" 2>&1)
-o2=$("$LAIN" "$D/w.ln" -o "$D/w2.c" --check-certificate "$D/w.cert" 2>&1)
+o1=$("$LAIN" --judge=vra "$D/w.ln" -o "$D/w1.c" --emit-certificate "$D/w.cert" 2>&1)
+o2=$("$LAIN" --judge=vra "$D/w.ln" -o "$D/w2.c" --check-certificate "$D/w.cert" 2>&1)
 s1=$(printf '%s\n' "$o1" | grep -m1 '^\[E')
 s2=$(printf '%s\n' "$o2" | grep -m1 '^\[E')
 case "$s1" in "[E082]"*"not by the \`decreasing\` measure written"*) ;; *) echo "searched: not E082 ($s1)"; fail=1;; esac
@@ -129,7 +131,7 @@ func main() i32 {
     return spin(false)
 }
 LN
-out=$("$LAIN" "$D/o.ln" -o "$D/o.c" --emit-certificate "$D/o.cert" 2>&1)
+out=$("$LAIN" --judge=vra "$D/o.ln" -o "$D/o.c" --emit-certificate "$D/o.cert" 2>&1)
 echo "$out" | grep -q '^\[E011\]' || { echo "the \`or\` loop is not refused (E011)"; fail=1; }
 grep -A20 '^certificate o_spin$' "$D/o.cert" | grep -qE '^  measure loop bb[0-9]+ none$' || { echo "the \`or\` loop states a measure"; fail=1; }
 bnd=$(sed -n '/^certificate o_spin$/,/^end$/p' "$D/o.cert" | grep -m1 -oE '^  const %[0-9]+ = 10$' | grep -oE '%[0-9]+')
@@ -137,7 +139,7 @@ bnd=$(sed -n '/^certificate o_spin$/,/^end$/p' "$D/o.cert" | grep -m1 -oE '^  co
 for a in $(seq 0 20); do
     sed "/^certificate o_spin$/,/^end$/ s/^  measure loop \(bb[0-9]*\) none$/  measure loop \1 rises %$a $bnd/" "$D/o.cert" > "$D/om.cert"
     cmp -s "$D/o.cert" "$D/om.cert" && { echo "the claim did not apply"; fail=1; break; }
-    "$LAIN" "$D/o.ln" -o "$D/om.c" --check-certificate "$D/om.cert" > /dev/null 2>&1; rc=$?
+    "$LAIN" --judge=vra "$D/o.ln" -o "$D/om.c" --check-certificate "$D/om.cert" > /dev/null 2>&1; rc=$?
     [ $rc -eq 70 ] || { echo "a \`rises %$a $bnd\` claim on the \`or\` header was not refused (rc=$rc)"; fail=1; }
 done
 exit $fail

@@ -35,7 +35,7 @@ func main() i32 {
     return 0
 }
 LN
-"$ROOT/lain" ok.ln -o a.c > a.err 2>&1 || { echo "1: refused by default: $(cat a.err)"; exit 1; }
+"$ROOT/lain" ok.ln --judge=vra -o a.c > a.err 2>&1 || { echo "1: refused by the range analysis: $(cat a.err)"; exit 1; }
 "$ROOT/lain" ok.ln $A -o b.c > b.err 2>&1 || { echo "1: refused under authority: $(cat b.err)"; exit 1; }
 cmp -s a.c b.c || { echo "1: the C differs under authority"; diff a.c b.c | head; exit 1; }
 want() {   # want FILE CODE [TEXT]: refused under authority with CODE (and TEXT), exit 1
@@ -85,7 +85,7 @@ func f(n i32 >= 0 and <= 100) i32 {
 }
 func main() i32 { return f(10) }
 LN
-"$ROOT/lain" lex.ln -o /dev/null > /dev/null 2>&1 && { echo "4: the default mode now proves lex.ln: the probe has lost its point"; exit 1; }
+"$ROOT/lain" lex.ln --judge=vra -o /dev/null > /dev/null 2>&1 && { echo "4: the range analysis now proves lex.ln: the probe has lost its point"; exit 1; }
 "$ROOT/lain" lex.ln $A -o c.c > c.err 2>&1 || { echo "4: a lexicographic loop refused under authority: $(cat c.err)"; exit 1; }
 out=$("$ROOT/lain" ok.ln --judge=bogus -o d.c 2>&1); rc=$?
 [ $rc -ne 0 ] && echo "$out" | grep -q "unknown --judge mode 'bogus'" || { echo "5: --judge=bogus not refused ($rc): $out"; exit 1; }

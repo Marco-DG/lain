@@ -131,7 +131,6 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=access 4
-at=const 4
 at=nonnull 4
 at=pure 4
 ty=Slice_u8 scalar
@@ -273,7 +272,6 @@ at=vector_size 2
 rc=50
 out=
 at=nonnull 2
-at=pure 2
 at=vector_size 2
 ### tests/examples/simd_splat_store_pass.ln
 rc=16
@@ -296,7 +294,6 @@ at=nonnull 2
 rc=0
 out=
 at=nonnull 2
-at=pure 2
 ### tests/examples/vra_struct_field_slice_pass.ln
 rc=0
 out=
@@ -308,12 +305,10 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=nonnull 2
-at=pure 2
 ### tests/examples/vra_while_lt_wide_load_pass.ln
 rc=0
 out=
 at=nonnull 2
-at=pure 2
 at=vector_size 2
 ### tests/expressions/attribute_multiple_pass.ln
 rc=6
@@ -446,7 +441,7 @@ ty=Slice_u8 scalar
 rc=0
 out=add(10, 20) = 30
 out=fib(10) = 55
-at=const 4
+at=const 2
 ty=Slice_u8 scalar
 ### tests/functions/gcd_modulo_termination_pass.ln
 rc=12
@@ -466,6 +461,10 @@ out=
 at=const 2
 at=nonnull 2
 at=pure 2
+### tests/functions/loop_if_continue_two_phase_pass.ln
+rc=10
+out=
+at=const 2
 ### tests/functions/mutual_recursion_engine_pass.ln
 rc=33
 out=
@@ -473,6 +472,7 @@ at=const 12
 ### tests/functions/mutual_recursion_ranked_pass.ln
 rc=3
 out=
+at=const 12
 ### tests/functions/noreturn_defer_panic_pass.ln
 rc=0
 out=
@@ -707,7 +707,6 @@ rc=0
 out=
 at=access 2
 at=nonnull 2
-at=pure 2
 ty=Slice_i32 scalar
 ### tests/ir/match1.ln
 rc=0
@@ -2128,7 +2127,7 @@ rc=0
 out=7
 out=14
 out=15
-at=const 4
+at=const 14
 ty=Slice_u8 scalar
 ### tests/trust/named_bound_pass.ln
 rc=0
@@ -3348,12 +3347,24 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 2
+### tests/vra/guard_counter_nonstrict_slice_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
+ty=Slice_i32 scalar
 ### tests/vra/guard_counter_offset_pass.ln
 rc=0
 out=
 at=access 2
 at=nonnull 2
 at=pure 2
+ty=Slice_i32 scalar
+### tests/vra/guard_counter_step_two_slice_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 2
 ty=Slice_i32 scalar
 ### tests/vra/guards/affine_loop_post_pass.ln
 rc=0

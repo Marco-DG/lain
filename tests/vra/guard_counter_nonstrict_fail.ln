@@ -2,15 +2,14 @@
 // EXPECT: [E086]
 // Teeth for guard_counter_offset_pass.ln. The comparison must be STRICT: `i + 1 <= n` gives
 // i_prev <= n - 1 rather than n - 2, so i = i_prev + 1 <= n and `i + 1` reaches n + 1, which
-// leaves the type when n is at its maximum.
-func sw(a i32[n], n usize) i32 effects diverge {
-    var s i32 = 0
+// leaves the type when n is at its maximum. Here n is a plain usize; a slice's length could not
+// be at the maximum (§types.slice), see guard_counter_slice_bound_pass.ln.
+func count(n usize) usize effects diverge {
     var i usize = 0
     while i + 1 <= n {
-        s = s +% a[i]
         i = i + 1
     }
-    return s
+    return i
 }
 
 func main() i32 { return 0 }

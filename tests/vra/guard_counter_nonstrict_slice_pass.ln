@@ -1,0 +1,15 @@
+// LAINFLAGS: --engine=ir-full
+// guard_counter_nonstrict_fail.ln with n the length of a slice. `i + 1 <= n` lets i reach n, so
+// `i + 1` reaches n + 1, but a slice of i32 has at most the largest isize divided by 4 elements
+// (§types.slice), so n + 1 cannot leave usize.
+func sw(a i32[n], n usize) i32 effects diverge {
+    var s i32 = 0
+    var i usize = 0
+    while i + 1 <= n {
+        s = s +% a[i]
+        i = i + 1
+    }
+    return s
+}
+
+func main() i32 { return 0 }

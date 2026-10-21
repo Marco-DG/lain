@@ -26,7 +26,7 @@ func main() i32 {
     return 0
 }
 LN
-out=$(cd "$T" && "$ROOT/lain" --dump-measures le.ln -o le.c 2>&1)
+out=$(cd "$T" && "$ROOT/lain" --judge=vra --dump-measures le.ln -o le.c 2>&1)
 echo "$out" | grep -qF 'i rises by at least 1 each iteration and stays at most n' || { echo "the <= loop's text:"; echo "$out" | grep measure; exit 1; }
 echo "$out" | grep -qF 'k falls by at least 1 each iteration and stays at least 0' || { echo "the >= loop's text:"; echo "$out" | grep measure; exit 1; }
 exit 0

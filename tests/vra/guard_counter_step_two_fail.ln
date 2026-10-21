@@ -1,16 +1,16 @@
 // LAINFLAGS: --engine=ir-full
 // EXPECT: [E086]
 // Teeth for guard_counter_offset_pass.ln. STEP ONE is load-bearing in that proof: with step s,
-// `i_prev + 1 < n` gives i_prev <= n - 2 and i = i_prev + s <= n + s - 2, so `i + 1` reaches
-// n + s - 1 and can leave the type. Only a step of exactly one keeps the bound at n.
-func sw(a i32[n], n usize) i32 effects diverge {
-    var s i32 = 0
-    var i usize = 0
+// `i_prev + 1 < n` gives i_prev <= n - 2 and i = i_prev + s <= n + s - 2, so `i + 1` can reach
+// n + s - 1 and leave the type. The counter starts at 1: from 0, a step of two keeps it even, and
+// the type's maximum is odd, so it would never get there. Here n is a plain usize; a slice's
+// length could not be at the maximum (§types.slice).
+func count(n usize) usize effects diverge {
+    var i usize = 1
     while i + 1 < n {
-        s = s +% a[i]
         i = i + 2
     }
-    return s
+    return i
 }
 
 func main() i32 { return 0 }

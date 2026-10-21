@@ -1,0 +1,16 @@
+// The loop ends in two phases: `x` rises to 6, then `i` rises to n. Neither `n - i` nor `6 - x`
+// falls on every trip, but their sum does, and it stays non-negative because `x` grows only while
+// it is at most 5. loop_if_continue_no_decrease_fail.ln is the version that never ends.
+func f(n i32) i32 {
+    var i = 0
+    var x = 0
+    while i < n {
+        if x > 5 {
+            i = i + 1
+        } else {
+            x = x + 1
+        }
+    }
+    return i
+}
+func main() i32 effects diverge { return f(10) }
