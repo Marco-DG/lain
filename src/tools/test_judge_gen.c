@@ -4982,6 +4982,28 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  an element cell named by an address made late: read from its array and index\n");
+
+    // 87. bitwise NOT, exact (the flip's fuzz_modconst WRONG-REJECTs): `100 / (~x + 42)`, x an i8,
+    // states ~x = -x - 1; x a u16, ~x = 65535 - x; the divisor VC holds the definition
+    for (int c = 0; c < 2; c++) {
+        IrType *T = c == 0 ? ir_type_int(&A, 8, true) : ir_type_int(&A, 16, false);
+        IrFunc *f = ir_func_new(&A, nm("bnot87"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x"));
+        IrInstr *nt = ir_instr(f, IR_BNOT, T, 1); nt->operands[0] = x; ir_emit(f->entry, nt);
+        IrValue *dv = ir_binop(f, f->entry, IR_ADD, nt->result, ir_const_int(f, f->entry, 42, T), T);
+        IrValue *q = ir_binop(f, f->entry, c == 0 ? IR_SDIV : IR_UDIV, ir_const_int(f, f->entry, 100, T), dv, T);
+        ir_set_ret(f->entry, q);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        char key[48]; snprintf(key, sizeof key, "bb%d.%d divzero", f->entry->id, nins(f->entry) - 1);
+        const char *vd = t ? vc_of(t, key) : "";
+        char want[96];
+        snprintf(want, sizeof want, "def %%v%d bnot : 1*%%v%d + 1*%%v%d = %s", nt->result->id, nt->result->id, x->id, c == 0 ? "-1" : "65535");
+        CHECK(strstr(vd, want) != NULL, "87 case %d: %s:\n%s", c, want, vd);
+        free(t); gen_mod = NULL;
+    }
+    printf("  bitwise NOT: -x - 1 signed, 2^w - 1 - x unsigned\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

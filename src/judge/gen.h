@@ -2150,6 +2150,14 @@ static void jb_state(JB *B, int32_t x) {
             t[0].var = jb_val(B, d->operands[0]); t[0].c = -1;
             jb_def(B, x, t, 1, jb_str(B, "def %%v%lld neg", id, 0, 0));
             break;
+        case IR_BNOT:                                          // exact: interp.h wraps ~x into the type,
+            // which is -x - 1 for a signed w-bit x (never out of range) and (2^w - 1) - x for an
+            // unsigned one; a result of another type, a bool or a vector states nothing
+            if (d->n_operands < 1 || !d->operands[0]->type || d->operands[0]->type->kind != IRT_INT || !v->type || v->type->kind != IRT_INT ||
+                !jg_same_int_type(d->operands[0]->type, v->type) || v->type->bits < 1 || v->type->bits > 64) break;
+            t[0].var = jb_val(B, d->operands[0]); t[0].c = -1;
+            jb_defk(B, x, t, 1, v->type->is_signed ? -1 : (((__int128)1 << v->type->bits) - 1), jb_str(B, "def %%v%lld bnot", id, 0, 0));
+            break;
         case IR_MUL: {
             if (d->wrap == IR_WRAP_MODULAR && jg_wrap_op(d)) { jb_wrap(B, x, d, id); break; }   // `c *% y`, its cases
             if (d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) break;
