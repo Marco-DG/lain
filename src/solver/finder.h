@@ -2031,8 +2031,47 @@ static bool called_here(JFinder *F, IrFunc *f) {
 // ret_range_state), each side of the returned value, and of its difference and sum with each
 // integer parameter (`min(a, b) <= a`; `clamp(x, lo, hi) >= lo`). None for a function no caller
 // here can use them in. A return that may wrap is owed about the value it lands as (gen.h, s8).
+// A function returning a SLICE (s14's len(ret), the returned slice's length): each side of
+// len(ret), and of its difference with each integer parameter (`prefix(s, n)` returns n bytes),
+// bounded as an integer return's candidates are. `go() u8[] { return "xyz" }` then
+// `s.len as i32` was E086 under the judge: no return claim could name the length, and VRA,
+// which evaluates the call, had accepted it (census_gate's type-var-return cell). Built here, not
+// by cand_push, which reads its trial bound from an integer type: a length's is past any bound
+// the generator states (an object holds at most PTRDIFF_MAX bytes), and 0 below.
+static bool ret_len_candidates(IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
+    const __int128 far = (__int128)1 << 64;
+    for (int32_t q = -1; q < 0 || f->params; q++) {
+        IrParam *p = f->params;
+        for (int32_t k = 0; q >= 0 && p && k < q; k++) p = p->next;
+        if (q >= 0 && !p) break;
+        if (q >= 0 && (!p->value || !fd_is_int(p->value->type))) continue;
+        FdRange pr = { 0, 0, false, 0 };
+        if (q >= 0 && !fd_range(p->value->type, &pr)) continue;
+        for (int sr = 1; sr >= -1; sr -= 2)
+            for (int sp = (q >= 0 ? -1 : 0); sp <= (q >= 0 ? 1 : 0); sp += 2) {
+                if (*ncd == *ccd) {
+                    int32_t nc = *ccd ? *ccd * 2 : 32;
+                    JCand *x = realloc(*cd, sizeof *x * (size_t)nc);
+                    if (!x) return false;
+                    *cd = x; *ccd = nc;
+                }
+                JCand *c = &(*cd)[(*ncd)++]; memset(c, 0, sizeof *c);
+                c->c.blk = JCLAIM_RET; c->c.fn = f; c->c.nt = q >= 0 ? 2 : 1;
+                c->c.key[0] = JKEY_RET; c->c.tk[0] = JTERM_LEN; c->c.coef[0] = sr;
+                c->tb = sr > 0 ? far : 1;
+                if (q >= 0) {
+                    c->c.key[1] = p->value->id; c->c.tk[1] = JTERM_VALUE; c->c.coef[1] = sp;
+                    c->tb += sp > 0 ? pr.hi : -pr.lo;
+                }
+                if (q < 0) break;
+            }
+    }
+    return true;
+}
 static bool ret_candidates(JFinder *F, IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
     *ncd = 0;
+    if (f->ret_type && f->ret_type->kind == IRT_SLICE && !f->incomplete && called_here(F, f))
+        return ret_len_candidates(f, cd, ncd, ccd);
     if (!fd_is_int(f->ret_type) || f->incomplete || !called_here(F, f)) return true;
     FdRange tr;
     // a side tighter than the type's

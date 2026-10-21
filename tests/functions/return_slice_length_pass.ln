@@ -1,0 +1,18 @@
+// LAINFLAGS: --judge=authority
+// A function returning a slice, and the caller using the returned length (s14's len(ret)
+// return claims, proposed by the finder). `go() u8[] { return "xyz" }` then `s.len as i32`
+// was E086 under the judge: no return claim could name a returned slice's length, and the range
+// analysis, which evaluates the call, accepted it (census_gate's type-var-return cell). The
+// finder proposes each side of len(ret) and of its difference with each integer parameter.
+func go() u8[] { return "xyz" }
+func prefix(s u8[], n usize < 4) u8[] {
+    if n > s.len { return s }
+    return s[0..n]
+}
+func main() i32 {
+    s = go()
+    if s.len as i32 != 3 { return 1 }
+    t = prefix("abcdef", 2)
+    if t.len as i32 != 2 { return 2 }
+    return 0
+}
