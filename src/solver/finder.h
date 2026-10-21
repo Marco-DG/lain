@@ -1964,10 +1964,14 @@ static bool fd_claim_shape_ok(const JClaim *c) {
         if (c->coef[i] == 0 || c->coef[i] > big || c->coef[i] < -big) return false;
         // as gen.h: one key twice only as a cell beside its own ENTRY value (c40) or its version at
         // the enclosing loop's header (s11's HEAD), never one of those twice
+        // ...and s15's POST and PRE (a var parameter's part after and before the call) are two more
+        // classes, a part told apart by its fld: gen.h's jg_tk_class and jg_claim_shape. Taken for
+        // the same term twice, every frame summary was filtered out here, unproposed
         for (int32_t j = i + 1; j < c->nt; j++) {
-            int ci = c->tk[i] == JTERM_ENTRY ? 1 : c->tk[i] == JTERM_HEAD ? 2 : 0;
-            int cj = c->tk[j] == JTERM_ENTRY ? 1 : c->tk[j] == JTERM_HEAD ? 2 : 0;
-            if (c->key[i] == c->key[j] && ci == cj) return false;
+            int ci = c->tk[i] == JTERM_ENTRY ? 1 : c->tk[i] == JTERM_HEAD ? 2 : c->tk[i] == JTERM_POST ? 3 : c->tk[i] == JTERM_PRE ? 4 : 0;
+            int cj = c->tk[j] == JTERM_ENTRY ? 1 : c->tk[j] == JTERM_HEAD ? 2 : c->tk[j] == JTERM_POST ? 3 : c->tk[j] == JTERM_PRE ? 4 : 0;
+            bool part = c->key[i] == JKEY_RET || ci >= 3;
+            if (c->key[i] == c->key[j] && ci == cj && (!part || c->fld[i] == c->fld[j])) return false;
         }
     }
     // ...and a claim of ENTRY terms only is made by no header: gen.h refuses it, and one refused
@@ -2075,8 +2079,74 @@ static bool ret_len_candidates(IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd
     }
     return true;
 }
+// FRAME SUMMARIES (s15's POST and PRE terms): per integer part of a `var` parameter, the pointee
+// itself or an integer field of a struct pointee, as the generator takes them (gen.h's
+// jg_var_part_ok, copied: untrusted), how far the call moves it, `post(f) - pre(f)`, both sides,
+// and that move against the result, `post(f) - pre(f) +- ret` (each integer field of a returned
+// struct, `ret.k`), both sides; bounded as the other return candidates are. A call `take(var q)`
+// havocs q's cells unless a summary says otherwise: ring_buffer's `n + r.count = 16` was not
+// inductive across `pop(var r)` (TCW's real programs, its last authority E086), where pop's
+// `post(r.count) - pre(r.count) + ret.ok = 0` keeps it.
+static bool fd_var_part_ok(const IrParam *pp, int16_t fld) {
+    const IrType *pt = pp && pp->value ? pp->value->type : NULL;
+    if (!pt || pt->kind != IRT_PTR || pt->is_raw || !pt->ptr_mut || !pt->elem) return false;
+    if (fld < 0) return fld == -1 && pt->elem->kind == IRT_INT;
+    return pt->elem->kind == IRT_STRUCT && fld < pt->elem->n_fields && pt->elem->fields[fld] && pt->elem->fields[fld]->kind == IRT_INT;
+}
+static bool fd_frame_push(JCand **cd, int32_t *ncd, int32_t *ccd, IrFunc *f, int32_t nt, const int32_t *key,
+                          const uint8_t *tk, const int16_t *fld, const int *coef, __int128 tb) {
+    if (*ncd == *ccd) {
+        int32_t nc = *ccd ? *ccd * 2 : 32;
+        JCand *x = realloc(*cd, sizeof *x * (size_t)nc);
+        if (!x) return false;
+        *cd = x; *ccd = nc;
+    }
+    JCand *c = &(*cd)[(*ncd)++]; memset(c, 0, sizeof *c);
+    c->c.blk = JCLAIM_RET; c->c.fn = f; c->c.nt = nt; c->tb = tb;
+    for (int32_t k = 0; k < nt; k++) { c->c.key[k] = key[k]; c->c.tk[k] = tk[k]; c->c.fld[k] = fld[k]; c->c.coef[k] = coef[k]; }
+    return true;
+}
+static bool fd_frame_candidates(IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
+    // the result's terms: the integer returned (fld unread), or each integer field of a struct
+    const IrType *rt = f->ret_type;
+    int16_t rf[8]; FdRange rr[8]; int nr = 0;
+    if (rt && rt->kind == IRT_STRUCT) {
+        for (int16_t k = 0; k < rt->n_fields && nr < 8; k++)
+            if (rt->fields[k] && fd_is_int(rt->fields[k]) && fd_range(rt->fields[k], &rr[nr])) rf[nr++] = k;
+    } else if (rt && fd_range(rt, &rr[0])) { rf[0] = 0; nr = 1; }
+    for (IrParam *pp = f->params; pp; pp = pp->next) {
+        const IrType *pt = pp->value ? pp->value->type : NULL;
+        if (!pt || pt->kind != IRT_PTR || !pt->elem) continue;
+        int16_t parts[8]; int np = 0;
+        if (fd_var_part_ok(pp, -1)) parts[np++] = -1;
+        else if (pt->elem->kind == IRT_STRUCT)
+            for (int16_t k = 0; k < pt->elem->n_fields && np < 8; k++) if (fd_var_part_ok(pp, k)) parts[np++] = k;
+        for (int q = 0; q < np; q++) {
+            const IrType *ft = parts[q] < 0 ? pt->elem : pt->elem->fields[parts[q]];
+            FdRange fr;
+            if (!fd_range(ft, &fr)) continue;
+            __int128 span = fr.hi - fr.lo;
+            int32_t key[3] = { pp->value->id, pp->value->id, JKEY_RET };
+            uint8_t tk[3] = { JTERM_POST, JTERM_PRE, JTERM_VALUE };
+            for (int sd = 1; sd >= -1; sd -= 2) {                // post - pre, each side
+                int16_t fld[3] = { parts[q], parts[q], 0 };
+                int coef[3] = { sd, -sd, 0 };
+                if (!fd_frame_push(cd, ncd, ccd, f, 2, key, tk, fld, coef, span + 1)) return false;
+                for (int r = 0; r < nr; r++)                      // ...+- the result, each side
+                    for (int sr = 1; sr >= -1; sr -= 2) {
+                        int16_t fld3[3] = { parts[q], parts[q], rf[r] };
+                        int coef3[3] = { sd, -sd, sd * sr };
+                        __int128 rspan = sd * sr > 0 ? rr[r].hi : -rr[r].lo;
+                        if (!fd_frame_push(cd, ncd, ccd, f, 3, key, tk, fld3, coef3, span + rspan + 1)) return false;
+                    }
+            }
+        }
+    }
+    return true;
+}
 static bool ret_candidates(JFinder *F, IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
     *ncd = 0;
+    if (!f->incomplete && called_here(F, f) && !fd_frame_candidates(f, cd, ncd, ccd)) return false;
     if (f->ret_type && f->ret_type->kind == IRT_SLICE && !f->incomplete && called_here(F, f))
         return ret_len_candidates(f, cd, ncd, ccd);
     if (!fd_is_int(f->ret_type) || f->incomplete || !called_here(F, f)) return true;

@@ -1,0 +1,26 @@
+// s15 + f38 (the Secondary Compiler Worker's program; TCW's repro_ring_counter.ln, ring_buffer.ln's
+// shape): `take(var q)` decrements q.count and says so, false where it was 0. Its frame summary,
+// post(q.count) - pre(q.count) + ret = 0, owed at
+// take's returns and stated at the call, makes n + q.count = 16 inductive at the loop's header, so
+// n + 1 is proved and the loop ranked by q.count. main reads q.count once (as ring_buffer reads
+// r.count), so a header claim can name it. judge_gate runs main under --check-hyps: each summary's
+// post, pre and ret are read where the program runs.
+type Q {
+    count usize <= 16
+}
+func take(var q Q) bool {
+    if q.count == 0 { return false }
+    q.count = q.count - 1
+    return true
+}
+func main() i32 {
+    var q = Q(16)
+    if q.count != 16 { return 2 }
+    var n = 0
+    while true {
+        if !take(var q) { break }
+        n = n + 1
+    }
+    if n != 16 { return 1 }
+    return 0
+}

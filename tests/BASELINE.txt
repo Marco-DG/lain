@@ -1941,6 +1941,11 @@ at=nonnull 4
 at=pure 2
 ty=Lexer struct
 ty=Slice_u8 scalar
+### tests/trust/judge_frame_summary_pass.ln
+rc=0
+out=
+at=nonnull 2
+ty=Q struct
 ### tests/trust/judge_hull_nested_pass.ln
 rc=0
 out=
