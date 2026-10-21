@@ -189,7 +189,7 @@ static void ir_dump_effects_row(IrFunc *f, IrFunc *mod) {
 }
 
 // Compute effects for every function in the module (drives the fixpoint from each root).
-static void ir_effects_module(IrFunc *mod) {
+static maybe_unused void ir_effects_module(IrFunc *mod) {
     for (IrFunc *f=mod; f; f=f->next) if (!f->is_extern) ir_effects(f, mod);
 }
 

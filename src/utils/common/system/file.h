@@ -92,7 +92,7 @@ static file file_open_r(const char *path)
 }
 
 /* If the function fails, the return value is FILE_OPEN_FAILED */
-static file file_open_rw(const char *path)
+static maybe_unused file file_open_rw(const char *path)
 {
     file f;
 
@@ -121,7 +121,7 @@ static file file_open_rw(const char *path)
 }
 
 /* If the function fails, the return value is FILE_OPEN_FAILED */
-static file file_open_rw_create(const char *path)
+static maybe_unused file file_open_rw_create(const char *path)
 {
     file f;
 
@@ -150,7 +150,7 @@ static file file_open_rw_create(const char *path)
 }
 
 /* If the function fails, the return value is FILE_OPEN_FAILED */
-static file file_open_rw_create_truncate(const char *path)
+static maybe_unused file file_open_rw_create_truncate(const char *path)
 {
     file f;
 
@@ -287,7 +287,7 @@ static inline isize file_write(file handle, void *buf, usize nbytes) {
 
 
 /* Return MAP_FAILED on failure */
-static void* file_map_rw(file handle, int64 length) /* lenght should be = file size; also, i think lenght gets always page aligned */
+static maybe_unused void* file_map_rw(file handle, int64 length) /* lenght should be = file size; also, i think lenght gets always page aligned */
 {
 #if FILE_DEBUG
     assert(length > 0); /* mmap retuns FILE_MAP_FAILED if lenght is equal to zero */

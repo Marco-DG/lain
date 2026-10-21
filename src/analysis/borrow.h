@@ -415,7 +415,7 @@ static uint64_t bor_ret_borrow_mask(IrFunc *f) {
 }
 
 static Borrow *borrow_analyze_mod(IrFunc *f, IrFunc *mod);
-static Borrow *borrow_analyze(IrFunc *f) { return borrow_analyze_mod(f, NULL); }
+static maybe_unused Borrow *borrow_analyze(IrFunc *f) { return borrow_analyze_mod(f, NULL); }
 
 // A SCOPED loan: `IR_BORROW place` … `IR_BORROW_END place`. Unlike the liveness-derived
 // regions below, the extent is stated by the construct, because nothing's liveness expresses

@@ -3041,8 +3041,6 @@ void sema_infer_expr(Expr *e) {
                     // P2/S3: a literal assigned to an integer field must fit the
                     // field's type. Previously skipped entirely — a real overflow
                     // gap (e.g. S(300) with a u8 field compiled silently).
-                    long long lit = a->expr->as.literal_expr.value;
-                    Range r = { lit, lit, true };
                     Id *fn2 = f->decl->as.variable_decl.name;
                     char lbuf[160];
                     int ln2 = fn2 ? (int)fn2->length : 0;
@@ -3068,7 +3066,6 @@ void sema_infer_expr(Expr *e) {
                 // Q-002 Phase 5: overflow-at-boundary (struct field init).
                 if (sema_walk_phase && sema_ranges && field_ty
                     && a->expr->kind != EXPR_LITERAL) {
-                    Range r = sema_eval_range(a->expr, sema_ranges);
                     Id *fname = f->decl->as.variable_decl.name;
                     char buf[160];
                     int n = fname ? (int)fname->length : 0;
@@ -3655,17 +3652,6 @@ void sema_infer_expr(Expr *e) {
             // the boundary). Checking narrow results against i32 both catches that
             // UB and stays a no-op for u8+u8 (fits int; its narrow store is caught
             // at the assignment boundary). i32/u32 and wider check against self.
-            int abits; bool asgn;
-            bool narrow = parse_iN_uN(e->type, &abits, &asgn) && abits < 32;
-            Type *check_ty = narrow ? get_builtin_i32_type() : e->type;
-            Range rr = sema_eval_range(e, sema_ranges);
-            // Some parsed sub-expressions (notably arithmetic inside if/while
-            // conditions) carry no line info; borrow the left operand's so the
-            // diagnostic points somewhere useful instead of "Ln 0".
-            long dl = e->line > 0 ? e->line
-                      : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->line : e->line);
-            long dc = e->line > 0 ? e->col
-                      : (e->as.binary_expr.left ? (long)e->as.binary_expr.left->col : e->col);
             // Wide multiplication soundness: range_mul saturates the i64 product,
             // so a genuinely-overflowing wide multiply (u32*u32 up to ~1.8e19)
             // saturates into check_value_fits_type's fail-open window and is
@@ -3790,23 +3776,8 @@ void sema_infer_expr(Expr *e) {
                 }
             }
         }
-        // Unary negation overflow: `-x` overflows at the type minimum
-        // (e.g. -INT_MIN is not representable). Check against the operand's
-        // integer type. (The common abs idiom uses the binary form `0 - x`,
-        // which the EXPR_BINARY check above already covers.)
-        if (e->as.unary_expr.op == TOKEN_MINUS &&
-            sema_walk_phase && sema_ranges && !sema_in_unsafe_block) {
-            Type *ot = e->as.unary_expr.right ? e->as.unary_expr.right->type : NULL;
-            int nbits; bool nsgn;
-            bool narrow = ot && parse_iN_uN(ot, &nbits, &nsgn) && nbits < 32;
-            if (ot && is_integer_type(ot) && !narrow) {
-                Range rr = sema_eval_range(e, sema_ranges);
-                long dl = e->line > 0 ? e->line
-                          : (e->as.unary_expr.right ? (long)e->as.unary_expr.right->line : e->line);
-                long dc = e->line > 0 ? e->col
-                          : (e->as.unary_expr.right ? (long)e->as.unary_expr.right->col : e->col);
-            }
-        }
+        // Unary negation overflow (`-x` at the type minimum) is the IR analyses' obligation, as
+        // every overflow is since the front end's analysis was deleted: nothing is checked here.
     }
     break;
 
@@ -3941,7 +3912,6 @@ void sema_infer_expr(Expr *e) {
     // the same fact itself — so the exemption went with src/sema/bounds.h.
     // Capture and clear the addr-of flag before inferring the index sub-expression
     // so that nested array accesses within the index are NOT treated as addr-of.
-    bool _is_addr_of = sema_addr_of_context;
     sema_addr_of_context = false;
     sema_infer_expr(e->as.index_expr.index);
 
@@ -4132,7 +4102,6 @@ void sema_infer_expr(Expr *e) {
         src && tgt && sema_ranges) {
         int sb = 0, tb = 0; bool ss = false, ts = false;
         if (parse_iN_uN(src, &sb, &ss) && parse_iN_uN(tgt, &tb, &ts) && sb > tb) {
-            Range r = sema_eval_range(e->as.cast_expr.expr, sema_ranges);
         }
     }
     Type *src_u = src, *tgt_u = tgt;
@@ -4529,10 +4498,7 @@ void sema_infer_expr(Expr *e) {
                           bt->element_type->base_type->length == 2 &&
                           strncmp(bt->element_type->base_type->name, "u8", 2) == 0;
             if (u8_buf && vt && vt->kind == TYPE_VECTOR && e->as.builtin_expr.arg2) {
-                long L = (long)vt->array_len;
                 Expr *off  = e->as.builtin_expr.arg2;
-                Expr *last = expr_binary(sema_arena, TOKEN_PLUS, off,
-                                         expr_literal(sema_arena, L - 1));
                 // P2b: a wide load is ALSO proven if its LAST byte is in-guarded —
                 // `(off + L-1) in buf`. For an UNSIGNED offset (off >= 0 by type),
                 // the last-byte guard plus contiguity proves the whole [off, off+L)

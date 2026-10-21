@@ -193,7 +193,7 @@ static bool ir_place_overlaps(const IrPlace *a, const IrPlace *b) {
 
 // Is `a` the same place as `b` (not merely overlapping)? Used for "the access is through
 // this very loan" and for exact init-state updates.
-static bool ir_place_equal(const IrPlace *a, const IrPlace *b) {
+static maybe_unused bool ir_place_equal(const IrPlace *a, const IrPlace *b) {
     if (!a->valid || !b->valid) return false;
     if (a->base_kind!=b->base_kind || a->base_id!=b->base_id || a->nproj!=b->nproj) return false;
     for (int i=0;i<a->nproj;i++) {

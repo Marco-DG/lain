@@ -21,6 +21,7 @@
 // recursion obligation of a function without `diverge` proved.
 #ifndef LAIN_ANALYSIS_JUDGE_AUTHORITY_H
 #define LAIN_ANALYSIS_JUDGE_AUTHORITY_H
+#include <stdarg.h>                  // jau_put
 #include "analysis/judge_shadow.h"   // the untrusted callbacks (solver, finder) and VRA's header states
 
 // The records kept: every one but `proved`, and every recursion's (its site is its first call).
@@ -72,36 +73,46 @@ static void jau_site(IrFunc *f, const JauRec *q, bool loop, isize *line, isize *
 // A term in the program's names, as VRA's --dump-measures spells them (vra_src_expr): a cell by its
 // variable, a field by its path (`l.pos`), a slice's length as `s.len`, through loads and casts;
 // an IR number (%N) only where no name exists.
+// jau_src's writes into its caller's buffer: a name longer than the buffer is CUT, as it always was.
+// Through vsnprintf, so gcc's truncation analysis, which sees the recursion's 200-byte buffers and
+// warned on four of the literal formats below, is not in play; the formats and the text are the same.
+static void jau_put(char *b, size_t n, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+static void jau_put(char *b, size_t n, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(b, n, fmt, ap);
+    va_end(ap);
+}
 static void jau_src(IrFunc *f, IrValue *v, char *b, size_t n, int depth) {
-    if (!v || n < 2) { snprintf(b, n, "?"); return; }
-    if (depth > 8) { snprintf(b, n, "%%%d", v->id); return; }
+    if (!v || n < 2) { jau_put(b, n, "?"); return; }
+    if (depth > 8) { jau_put(b, n, "%%%d", v->id); return; }
     IrInstr *d = jau_def(f, v);
     if (!d || d->op == IR_ALLOCA) {                          // a parameter or a local
-        if (v->src_name && v->src_name->length > 0) snprintf(b, n, "%.*s", (int)v->src_name->length, v->src_name->name);
-        else snprintf(b, n, "%%%d", v->id);
+        if (v->src_name && v->src_name->length > 0) jau_put(b, n, "%.*s", (int)v->src_name->length, v->src_name->name);
+        else jau_put(b, n, "%%%d", v->id);
         return;
     }
     char x[200], y[200];
     switch (d->op) {
-        case IR_CONST: snprintf(b, n, "%lld", (long long)d->aux.imm); return;
+        case IR_CONST: jau_put(b, n, "%lld", (long long)d->aux.imm); return;
         case IR_LOAD: case IR_CAST: jau_src(f, d->n_operands >= 1 ? d->operands[0] : NULL, b, n, depth + 1); return;
-        case IR_SLICE_LEN: jau_src(f, d->operands[0], x, sizeof x, depth + 1); snprintf(b, n, "%s.len", x); return;
+        case IR_SLICE_LEN: jau_src(f, d->operands[0], x, sizeof x, depth + 1); jau_put(b, n, "%s.len", x); return;
         case IR_FIELD_PTR: {
             jau_src(f, d->n_operands >= 1 ? d->operands[0] : NULL, x, sizeof x, depth + 1);
             IrType *bt = d->n_operands >= 1 ? d->operands[0]->type : NULL;
             if (bt && bt->kind == IRT_PTR && bt->elem) bt = bt->elem;
             int k = (int)d->aux.field_idx;
             IrName *fn = (bt && bt->kind == IRT_STRUCT && k >= 0 && k < bt->n_fields && bt->field_names) ? bt->field_names[k] : NULL;
-            if (fn) snprintf(b, n, "%s.%.*s", x, (int)fn->length, fn->name); else snprintf(b, n, "%s.%d", x, k);
+            if (fn) jau_put(b, n, "%s.%.*s", x, (int)fn->length, fn->name); else jau_put(b, n, "%s.%d", x, k);
             return;
         }
         case IR_ADD: case IR_SUB:
             jau_src(f, d->operands[0], x, sizeof x, depth + 1); jau_src(f, d->operands[1], y, sizeof y, depth + 1);
-            snprintf(b, n, "(%s %c %s)", x, d->op == IR_ADD ? '+' : '-', y);
+            jau_put(b, n, "(%s %c %s)", x, d->op == IR_ADD ? '+' : '-', y);
             return;
         default:
-            if (v->src_name && v->src_name->length > 0) snprintf(b, n, "%.*s", (int)v->src_name->length, v->src_name->name);
-            else snprintf(b, n, "%%%d", v->id);
+            if (v->src_name && v->src_name->length > 0) jau_put(b, n, "%.*s", (int)v->src_name->length, v->src_name->name);
+            else jau_put(b, n, "%%%d", v->id);
             return;
     }
 }

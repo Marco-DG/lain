@@ -113,7 +113,9 @@ static void ct_on_block(IrFunc *f, IrBlock *b, IVal *vals, int nv) {
         if (cc->a >= 0 && !ct_value(c->V, vals, nv, cc->a, &va)) continue;
         if (cc->b >= 0 && !ct_value(c->V, vals, nv, cc->b, &vb)) continue;
         if (va - vb <= (__int128)cc->ub) continue;
-        char lhs[160], sa[48], sb[48], sd[48];
+        // lhs fits its longest form, "%a - %b = sa - sb = sd": two ids of up to 11 characters, three
+        // 128-bit numbers of up to 47, and 13 of separators, 177 and the NUL (160 could cut the message)
+        char lhs[192], sa[48], sb[48], sd[48];
         ct_i128(va, sa); ct_i128(vb, sb); ct_i128(va - vb, sd);
         if (cc->b < 0) snprintf(lhs, sizeof lhs, "%%%d = %s", cc->a, sa);
         else if (cc->a < 0) snprintf(lhs, sizeof lhs, "-%%%d = -(%s)", cc->b, sb);

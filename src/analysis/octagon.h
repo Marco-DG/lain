@@ -41,6 +41,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../utils/common/predef.h"   // maybe_unused: oct_copy/meet/widen serve test_octagon.c, not the compiler
 
 // Large enough to act as +∞ yet leave headroom so INF+INF doesn't overflow.
 #define OCT_INF (INT64_MAX/4)
@@ -131,7 +132,7 @@ static void oct_init_top(Octagon *o, int nvar, int64_t *storage) {
         for (int j=0;j<o->dim;j++)
             *oct_at(o,i,j) = (i==j) ? 0 : OCT_INF;
 }
-static void oct_copy(Octagon *dst, const Octagon *src) {
+static maybe_unused void oct_copy(Octagon *dst, const Octagon *src) {
     dst->nvar=src->nvar; dst->dim=src->dim; oct_set_clean(dst, false);
     memcpy(dst->m, src->m, (size_t)src->dim*src->dim*sizeof(int64_t));
 }
@@ -413,7 +414,7 @@ static void oct_join(Octagon *dst, const Octagon *a, const Octagon *b) {
     }
 }
 // Meet ⊓ — entrywise min (adds both constraint sets); caller re-closes.
-static void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
+static maybe_unused void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
     dst->nvar=a->nvar; dst->dim=a->dim; oct_set_clean(dst, false);
     for (int i=0;i<a->dim;i++)
         for (int j=0;j<a->dim;j++)
@@ -423,7 +424,7 @@ static void oct_meet(Octagon *dst, const Octagon *a, const Octagon *b) {
 // Guarantees termination of the ascending chain (no re-closing of the result).
 static void oct_widen_thr(Octagon *dst, const Octagon *a, const Octagon *b, const char *mod,
                           const int64_t *thr, int nthr);   // fwd
-static void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
+static maybe_unused void oct_widen(Octagon *dst, const Octagon *a, const Octagon *b) {
     oct_widen_thr(dst, a, b, NULL, NULL, 0);
 }
 // Order ⊑ — a ⊑ b (a tighter) iff entrywise a ≤ b (operands closed).

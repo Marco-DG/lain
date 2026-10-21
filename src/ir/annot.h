@@ -252,7 +252,7 @@ static int ir_c_access_list(IrFunc *f, IrFunc *mod, IrCAccess *out, int max) {
 // emitter complexity bought for nothing an optimizer can use. `restrict` is the qualifier
 // that carries a fact. Kept because the footprint is the honest source for it the day the
 // emitter propagates qualifiers, and because it documents which parameters are read-only.
-static bool ir_param_c_const(IrFunc *f, IrFunc *mod, int k, IrValue *pv) {
+static maybe_unused bool ir_param_c_const(IrFunc *f, IrFunc *mod, int k, IrValue *pv) {
     IrType *t = pv ? pv->type : NULL;
     if (!t || (t->kind!=IRT_PTR && t->kind!=IRT_SLICE)) return false;
     if (k >= 64) return false;                           // beyond the footprint's width
