@@ -1274,7 +1274,7 @@ int main(void) {
         struct { JClaim c; const char *why; } bad[3];
         for (int k = 0; k < 3; k++) bad[k].c = c;
         bad[0].c.tk[0] = JTERM_LEN; bad[0].why = "not a cell or a value fixed at its block";       // i is no slice
-        bad[1].c.tk[0] = 5; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
+        bad[1].c.tk[0] = 6; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
         memset(&bad[2].c, 0, sizeof bad[2].c);
         bad[2].c.blk = JCLAIM_RET; bad[2].c.fn = f; bad[2].c.nt = 2; bad[2].c.key[0] = JKEY_RET; bad[2].c.coef[0] = 1;
         bad[2].c.key[1] = xs->id; bad[2].c.tk[1] = JTERM_LEN; bad[2].c.coef[1] = -1; bad[2].why = "a return claim over a length";
@@ -4890,6 +4890,61 @@ int main(void) {
         free(t);
     }
     printf("  the wrap fixes: a feeding op's cases on a join's path, a modular quotient by a constant, c *%% y\n");
+
+    // 85. HEAD terms (s11), all u32: `i = 0; while i < n { if m > 5 { i++; while i < n { i++ } } else
+    // { i++ } }`, the arms joining at the latch b7. head(i) at the join b7 and at the inner header b4
+    // is i's version at the OUTER header b1 (b4's own loop excluded): the hull VC's goal on the else
+    // edge names it, its variable read at run time as the cell when b1 was last entered (vent b1,
+    // vente -1); head(i) beside i is two terms, head(i) twice is one named twice; at b1 (no other
+    // loop around it) and at the exit (in none) the claim is refused
+    for (int c = 0; c < 5; c++) {
+        IrFunc *f = ir_func_new(&A, nm("head85"), u32t, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, u32t, nm("n")), *m = ir_add_param(f, u32t, nm("m"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f), *b7 = ir_new_block(f), *b8 = ir_new_block(f);
+        IrValue *i = ir_alloca(f, b0, u32t);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, u32t)); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, ir_load(f, b1, i, u32t), n), b2, b8);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_UGT, m, ir_const_int(f, b2, 5, u32t)), b3, b6);
+        ir_store(f, b3, i, ir_binop(f, b3, IR_ADD, ir_load(f, b3, i, u32t), ir_const_int(f, b3, 1, u32t), u32t)); ir_set_br(b3, b4);
+        IrValue *li = ir_load(f, b4, i, u32t);
+        ir_set_br_cond(b4, ir_icmp(f, b4, IR_CMP_ULT, li, n), b5, b7);
+        ir_store(f, b5, i, ir_binop(f, b5, IR_ADD, li, ir_const_int(f, b5, 1, u32t), u32t)); ir_set_br(b5, b4);
+        ir_store(f, b6, i, ir_binop(f, b6, IR_ADD, ir_load(f, b6, i, u32t), ir_const_int(f, b6, 1, u32t), u32t)); ir_set_br(b6, b7);
+        ir_set_br(b7, b1);
+        ir_set_ret(b8, ir_const_int(f, b8, 0, u32t));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JClaim cl[2]; memset(cl, 0, sizeof cl);
+        IrBlock *at[5] = { b7, b4, b1, b8, b7 };
+        cl[0].blk = at[c]->id; cl[0].fn = f; cl[0].nt = 2; cl[0].key[0] = i->id; cl[0].key[1] = i->id; cl[0].tk[0] = JTERM_HEAD;
+        cl[0].coef[0] = 1; cl[0].coef[1] = -1; cl[0].rhs = -1;                                         // head(i) - i <= -1
+        if (c == 4) cl[0].tk[1] = JTERM_HEAD;
+        const char *bad = c == 2 || c == 3 ? "HEAD term" : c == 4 ? "naming one term twice" : NULL;
+        char why[200] = "";
+        char *t = gen_with(f, cl, 1, JGEN_ALL, why);
+        if (bad) { CHECK(!t && strstr(why, bad), "85 case %d: refused (%s): got \"%s\"", c, bad, why); free(t); gen_mod = NULL; continue; }
+        char hv[40], iv[40]; snprintf(hv, sizeof hv, "%%s%d@head.bb%d", i->id, b1->id); snprintf(iv, sizeof iv, "%%s%d@head.bb%d", i->id, b4->id);
+        IrBlock *P = c == 0 ? b6 : b3;                                 // the edge: else arm -> join, or into the inner loop
+        char k1[48]; snprintf(k1, sizeof k1, "bb%d.%d %s", P->id, nins(P), c == 0 ? "hull" : "inv.entry");
+        const char *vk = t ? vc_of(t, k1) : "", *gk = strstr(vk, "goal ");
+        CHECK(gk && strstr(gk, hv) && !strstr(gk, iv), "85 case %d: the goal names i at the outer header b%d:\n%s", c, b1->id, vk);
+        free(t);
+        if (c == 0) {                                                  // the run-time reading of that variable
+            JMem mm = jmem_over(region, sizeof region);
+            JObl *o; int32_t no; char err[200];
+            bool ok = jgen_func(&mm, f, gen_mod, cl, 1, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &no, err, sizeof err);
+            int found = 0;
+            for (int32_t q = 0; ok && q < no; q++) {
+                if (!o[q].vc.id.kind || strcmp(o[q].vc.id.kind, "hull") || o[q].blk != P) continue;
+                for (int32_t x = 0; x < o[q].vc.nvars; x++)
+                    if (!strcmp(o[q].vc.vars[x], hv)) found += !o[q].vcur[x] && o[q].vent && o[q].vent[x] == b1->id && o[q].vente[x] == -1 ? 1 : 100;
+            }
+            CHECK(ok && found == 1, "85: head(i) on the else edge read as the cell when b%d was last entered (%d)", b1->id, found);
+        }
+        gen_mod = NULL;
+    }
+    printf("  HEAD terms: a cell as the enclosing loop's trip began, at a join and an inner header\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

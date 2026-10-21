@@ -99,7 +99,10 @@ struct IrFunc; struct IrType;
 // owes them; nothing here is believed.
 enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
 // JTERM_ENTRY: an integer cell's version on the claim's loop's single entry edge (fixed in the loop)
-enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4 };
+// JTERM_HEAD: an integer cell's version at the header of the innermost loop around the claim's
+// block, the block's own loop excluded: what the cell held as the current trip of that loop began
+// (fixed in the trip; `head(i)` beside `i` at a join or an inner loop's header).
+enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4, JTERM_HEAD = 5 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
                  struct IrFunc *fn; } JClaim;
 // A GUARDED return claim (s7): a return claim of `fn`, as a JClaim at JCLAIM_RET (the value returned,

@@ -1341,6 +1341,58 @@ int main(void) {
         (void)H1;
     }
 
+    // HEAD terms (s11; R3c, simdlex's count_tokens_smart), all u32: `i = 0; while i < n { if m > 5 {
+    // i++; while i < n and k > 7 { i++ } } else { i++ } }`, the three exits joining at the latch b7.
+    // The ranking n - i falls only if i at the join exceeds i as the trip began, and where the inner
+    // loop leaves by `k > 7` its i says nothing of that. (0) claims head(i) - i <= -1 at the inner
+    // header b4 and at the join b7: every claim and rank VC proved; (1) none: the rank.fall not
+    // implied; (2) head(i) - i <= -2 at the join, false where i rose by one: a hull VC not implied;
+    // (3) a HEAD term at the outer header, which no other loop holds, and (4) at the exit, in no
+    // loop: the claims refused
+    for (int c = 0; c < 5; c++) {
+        IrFunc *ef = ir_func_new(&A, nm("head41"), u32t, IR_FUNC_PURE);
+        Stub se; memset(&se, 0, sizeof se);
+        se.propose = P_RANK;
+        IrValue *n = ir_add_param(ef, u32t, nm("n")), *m = ir_add_param(ef, u32t, nm("m")), *kk = ir_add_param(ef, u32t, nm("k"));
+        IrBlock *b0 = ef->entry, *b1 = ir_new_block(ef), *b2 = ir_new_block(ef), *b3 = ir_new_block(ef), *b4 = ir_new_block(ef),
+                *b5 = ir_new_block(ef), *b6 = ir_new_block(ef), *b7 = ir_new_block(ef), *b8 = ir_new_block(ef), *b9 = ir_new_block(ef);
+        IrValue *i = ir_alloca(ef, b0, u32t);
+        ir_store(ef, b0, i, ir_const_int(ef, b0, 0, u32t)); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(ef, b1, IR_CMP_ULT, ir_load(ef, b1, i, u32t), n), b2, b8);         // outer
+        ir_set_br_cond(b2, ir_icmp(ef, b2, IR_CMP_UGT, m, ir_const_int(ef, b2, 5, u32t)), b3, b6);
+        ir_store(ef, b3, i, ir_binop(ef, b3, IR_ADD, ir_load(ef, b3, i, u32t), ir_const_int(ef, b3, 1, u32t), u32t)); ir_set_br(b3, b4);
+        IrValue *li = ir_load(ef, b4, i, u32t);
+        ir_set_br_cond(b4, ir_icmp(ef, b4, IR_CMP_ULT, li, n), b9, b7);                                // inner
+        ir_set_br_cond(b9, ir_icmp(ef, b9, IR_CMP_UGT, kk, ir_const_int(ef, b9, 7, u32t)), b5, b7);   // and k > 7
+        ir_store(ef, b5, i, ir_binop(ef, b5, IR_ADD, li, ir_const_int(ef, b5, 1, u32t), u32t)); ir_set_br(b5, b4);
+        ir_store(ef, b6, i, ir_binop(ef, b6, IR_ADD, ir_load(ef, b6, i, u32t), ir_const_int(ef, b6, 1, u32t), u32t)); ir_set_br(b6, b7);
+        ir_set_br(b7, b1);
+        ir_set_ret(b8, ir_const_int(ef, b8, 0, u32t));
+        ir_finalize_cfg(ef);
+        IrBlock *at[5] = { b7, b7, b7, b1, b8 };
+        JClaim *cj = &se.claims[0], *ch = &se.claims[1];
+        cj->blk = at[c]->id; cj->fn = ef; cj->nt = 2; cj->key[0] = i->id; cj->key[1] = i->id; cj->tk[0] = JTERM_HEAD;
+        cj->coef[0] = 1; cj->coef[1] = -1; cj->rhs = c == 2 ? -2 : -1;                               // head(i) - i <= -1
+        *ch = *cj; ch->blk = b4->id; ch->rhs = -1;
+        se.nclaims = c == 1 ? 0 : 2;
+        JRank *r = se.rank;
+        IrBlock *hs[2] = { b1, b4 }, *ls[2] = { b7, b5 };
+        for (int q = 0; q < 2; q++) { r[q].blk = hs[q]->id; r[q].fn = ef; r[q].ncomp = 1; r[q].nt = 2; r[q].key[0] = n->id; r[q].key[1] = i->id;
+                                      r[q].coef[0][0] = 1; r[q].coef[0][1] = -1; r[q].nedge = 1; r[q].from[0] = ls[q]->id; }
+        se.nrank = 2;
+        CHECK(run(ef, &se, true, sizeof region, err), "judges: %s", err);
+        char fo[64]; snprintf(fo, sizeof fo, "not-implied bb%d.%d rank.fall", b7->id, nins_m(b7));
+        const char *ni = strstr(recs, "not-implied"), *nl = ni ? strchr(ni, '\n') : NULL, *hu = ni ? strstr(ni, " hull") : NULL;
+        if (c == 0) CHECK(!strstr(recs, "not-implied") && !strstr(recs, "refused") && !strstr(recs, "uncertified") && count_in(recs, " hull") == 3 &&
+                          count_in(recs, " inv.entry") == 1 && count_in(recs, " inv.keep") == 1 && count_in(recs, "proved") > 0 &&
+                          count_in(recs, "rank.fall") == 2, "case 0: every claim and rank VC proved:\n%s", recs);
+        else if (c == 1) CHECK(strstr(recs, fo) != NULL, "case 1: without the HEAD claims, the outer rank.fall not implied:\n%s", recs);
+        else if (c == 2) CHECK(hu && nl && hu < nl && !strstr(recs, "refused"), "case 2: head(i) - i <= -2 not implied:\n%s", recs);
+        else CHECK(!strstr(recs, "proved") && strstr(recs, "uncertified") && strstr(recs, "refuses the claims") && strstr(recs, "HEAD term"),
+                   "case %d: the HEAD term refused:\n%s", c, recs);
+    }
+    printf("  HEAD terms: i as the trip began, at a join and an inner header (R3c)\n");
+
     // a FREE edge over a MAX or MIN component (c41). (A) 4NestedWith3Variables, all i32: `while q > 0
     // { q = q + a - 1; (a, b) = (3a - 4b, 4a + 3b) }`, ranked <2^32 - |a| - |b|, q>, the first
     // component the MIN of the four rows 2^32 -+ a -+ b, the edge free: |a| + |b| grows unless

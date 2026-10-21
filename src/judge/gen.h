@@ -116,7 +116,8 @@ typedef struct {
     // whether it is the cell's version current at the point (a VC may name an older one)
     const int32_t *vaux; const uint8_t *vcur;
     // for an older version that is a loop's ENTRY version (its value on the edge E -> H into a loop
-    // the point is in), H and E: a harness reads it from the cell as that edge was taken (-1 else)
+    // the point is in), H and E: a harness reads it from the cell as that edge was taken (-1 else);
+    // for a header H's own version (JV_HEAD), H and E -1: the cell as H was last entered, by any edge
     const int32_t *vent, *vente;
     const JRecipe **vrec;                    // kind 3 (a fresh variable): its recipe
     // per hypothesis, for a harness that knows the path taken: an R7 join's block (-1 for any other
@@ -1695,8 +1696,34 @@ static bool jg_entry_ok(JG *g, int32_t H, int32_t key) {
     int32_t E = jg_entry_pred(g, H);
     return E >= 0 && g->outstate[(size_t)E * (size_t)g->ncells + (size_t)g->cell[key]] >= 0;
 }
+// The header a HEAD term at block b names: the innermost natural loop's around b, b's own loop
+// excluded; it dominates b. -1 where b is in no other loop, or where the loops around it do not
+// nest. Its version of a cell is fixed from the trip's start to b: b's every edge but a back edge
+// of its own loop comes from inside the trip, and a claim at b is stated only where b's latest
+// version is (b dominating, or on a forward join's path), never past the header's next arrival.
+static int32_t jg_head_of(JG *g, int32_t b) {
+    if (b < 0 || b >= g->nb) return -1;
+    int32_t H = -1;
+    for (int32_t h = 0; h < g->nb; h++) {
+        if (h == b || !jg_loop_header(g, h) || !g->inloop[(size_t)h * (size_t)g->nb + (size_t)b]) continue;
+        if (H < 0 || g->rpoix[h] > g->rpoix[H]) H = h;
+    }
+    if (H < 0 || !jg_dominates(g, H, b)) return -1;
+    for (int32_t h = 0; h < g->nb; h++)                        // every other loop around b holds H's
+        if (h != b && h != H && jg_loop_header(g, h) && g->inloop[(size_t)h * (size_t)g->nb + (size_t)b] &&
+            !g->inloop[(size_t)h * (size_t)g->nb + (size_t)H]) return -1;
+    return H;
+}
+// Can a HEAD term over `key` be stated at b: an integer cell with a version at b's header.
+static bool jg_head_ok(JG *g, int32_t b, int32_t key) {
+    if (key < 0 || key >= g->nv || g->cell[key] < 0 || !jg_is_int(g->cty[g->cell[key]])) return false;
+    int32_t H = jg_head_of(g, b);
+    return H >= 0 && g->instate[(size_t)H * (size_t)g->ncells + (size_t)g->cell[key]] >= 0;
+}
 static int32_t jb_cterm(JB *B, int32_t key, uint8_t tk, const int32_t *row, int32_t H) {
     JG *g = B->g;
+    if (tk == JTERM_HEAD)                                      // jg_claims_ok has checked b has one
+        return jb_ver(B, g->instate[(size_t)jg_head_of(g, H) * (size_t)g->ncells + (size_t)g->cell[key]]);
     if (tk != JTERM_ENTRY) return jb_term(B, key, tk, row);
     int32_t E = jg_entry_pred(g, H);
     return jb_ver(B, g->outstate[(size_t)E * (size_t)g->ncells + (size_t)g->cell[key]]);
@@ -3011,6 +3038,9 @@ static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *
         for (int32_t i = 0; i < B->nvars; i++) {
             ent[i] = ente[i] = -1;
             if (B->kind[i] != 1 || cur[i] || aux[i] >= 0) continue;
+            // a header's own version (a HEAD term's, or a back edge's pre value): what the cell held
+            // as the header was last entered, by any edge (ente -1)
+            if (g->ver[B->key[i]].kind == JV_HEAD && jg_loop_header(g, g->ver[B->key[i]].blk)) { ent[i] = g->ver[B->key[i]].blk; continue; }
             int32_t cell = g->ver[B->key[i]].cell;
             for (int32_t H = 0; H < g->nb && ent[i] < 0; H++) {
                 if (!g->blk[H] || !g->inloop[(size_t)H * (size_t)g->nb + (size_t)H] || !g->inloop[(size_t)H * (size_t)g->nb + (size_t)B->blk]) continue;
@@ -3567,6 +3597,8 @@ static bool jg_made_at(JG *g, int32_t blk, int32_t cell) {
     int32_t jv = g->instate[(size_t)blk * (size_t)g->ncells + (size_t)cell];
     return jv >= 0 && (g->ver[jv].kind == JV_JOIN || g->ver[jv].kind == JV_HEAD) && g->ver[jv].blk == blk;
 }
+// A term's version: the block's (0), the loop's entry edge's (1), the trip's start's (2).
+static int jg_tk_class(uint8_t tk) { return tk == JTERM_ENTRY ? 1 : tk == JTERM_HEAD ? 2 : 0; }
 // Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
 // Its terms: one to `max`, no key twice (a sum names each term once), but a cell beside its ENTRY
 // value (`x - entry(x)`: two terms, its version at the block and the one its loop was entered with).
@@ -3574,7 +3606,7 @@ static bool jg_claim_shape(JG *g, const int32_t *key, const uint8_t *tk, int32_t
     if (nt < 1 || nt > max) return jg_fail(g, "a claim of no terms, or of more than it may have");
     for (int32_t i = 0; i < nt; i++)
         for (int32_t j = i + 1; j < nt; j++)
-            if (key[i] == key[j] && (tk[i] == JTERM_ENTRY) == (tk[j] == JTERM_ENTRY)) return jg_fail(g, "a claim naming one term twice");
+            if (key[i] == key[j] && jg_tk_class(tk[i]) == jg_tk_class(tk[j])) return jg_fail(g, "a claim naming one term twice");
     return true;
 }
 // A return claim of h: its terms, the returned value among them and any other an integer
@@ -3666,6 +3698,10 @@ static bool jg_claims_ok(JG *g) {
                 if (jg_entry_pred(g, c->blk) < 0) return jg_fail(g, "a claim's ENTRY term at a loop entered by more than one edge");
                 if (!jg_entry_ok(g, c->blk, key)) return jg_fail(g, "a claim's ENTRY term of a cell with no version on the entry edge");
                 continue;                                    // fixed: no version the block makes
+            }
+            if (c->tk[k] == JTERM_HEAD) {                    // a cell's version as the trip began
+                if (!jg_head_ok(g, c->blk, key)) return jg_fail(g, "a claim's HEAD term of no integer cell with a version at an enclosing loop's header");
+                continue;                                    // fixed in the trip: no version the block makes
             }
             if (c->tk[k] == JTERM_UPTO) {                    // a value guarding each instance
                 if (++upto > 1) return jg_fail(g, "a claim of two UPTO terms");
@@ -4851,6 +4887,7 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const 
             continue;
         }
         if (tk && tk[i] == JTERM_ENTRY) { if (jg_entry_ok(&g, blk, keys[i])) kind[i] = 1; continue; }   // never made
+        if (tk && tk[i] == JTERM_HEAD) { if (jg_head_ok(&g, blk, keys[i])) kind[i] = 1; continue; }     // never made
         if (!jg_term_ok(&g, blk, keys[i], tk && tk[i] != JTERM_UPTO ? tk[i] : JTERM_VALUE)) continue;
         kind[i] = 1;
         if (g.cell[keys[i]] < 0) continue;
