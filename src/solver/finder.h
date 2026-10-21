@@ -2592,6 +2592,12 @@ static bool fd_nested_candidates(JFinder *F, IrFunc *f, const FdNest *N, const J
         LRel rel[32];
         int32_t nr = b2 ? lia_relations(L2.paths, L2.npaths, L2.pre, L2.post, L2.npairs, F->lim, F->work, F->worksz, rel, 32) : 0;
         bool c1 = nr > 0, b1 = c1 && fd_loop_build(F, f, H1, as, nv, &L1);
+        // each outer counter's step on the outer loop's paths: the same for every relation, so asked
+        // once (asked per relation, 14 relations times every counter and path cost 94e6 of a
+        // 37-line fuzz_window program's 383e6, and the judge's compile a minute)
+        int8_t *ost = b1 ? calloc((size_t)(L1.npk ? L1.npk : 1), 1) : NULL;    // 0 unknown, 1 one step, 2 not
+        int64_t *ostep = b1 ? calloc((size_t)(L1.npk ? L1.npk : 1), sizeof *ostep) : NULL;
+        if (b1 && (!ost || !ostep)) { free(ost); free(ostep); goto fail; }
         for (int32_t q = 0; b1 && q < nr; q++) {
             const LRel *r = &rel[q];
             if (r->t >= L2.npk || r->j >= L2.npk || L2.ptk[r->t] != JTERM_VALUE || L2.ptk[r->j] != JTERM_VALUE || r->cj >= 0) continue;
@@ -2603,14 +2609,18 @@ static bool fd_nested_candidates(JFinder *F, IrFunc *f, const FdNest *N, const J
             for (int32_t o = 0; o < L1.npk; o++) {                 // an outer counter: one step a trip
                 int32_t okey = L1.pkey[o];                          // (one that also moves inside has no
                 if (okey == sk || okey == jk || L1.ptk[o] != JTERM_VALUE) continue;   // such step, as a rule)
-                int64_t d = 0; bool cst = L1.npaths > 0;
-                for (int32_t k = 0; k < L1.npaths && cst; k++) {
-                    int64_t lo, hi;
-                    if (!rk_delta(L1.paths[k], L1.pre[o], L1.post[o], F->lim, F->work, F->worksz, &lo, &hi) || lo != hi || lo == 0 ||
-                        (d && (lo > 0) != (d > 0))) cst = false;
-                    else if (!d || (lo > 0 ? lo : -lo) < (d > 0 ? d : -d)) d = lo;
+                if (!ost[o]) {
+                    int64_t d0 = 0; bool cst = L1.npaths > 0;
+                    for (int32_t k = 0; k < L1.npaths && cst; k++) {
+                        int64_t lo, hi;
+                        if (!rk_delta(L1.paths[k], L1.pre[o], L1.post[o], F->lim, F->work, F->worksz, &lo, &hi) || lo != hi || lo == 0 ||
+                            (d0 && (lo > 0) != (d0 > 0))) cst = false;
+                        else if (!d0 || (lo > 0 ? lo : -lo) < (d0 > 0 ? d0 : -d0)) d0 = lo;
+                    }
+                    ost[o] = cst ? 1 : 2; ostep[o] = d0;
                 }
-                if (!cst) continue;
+                if (ost[o] != 1) continue;
+                int64_t d = ostep[o];
                 __int128 ad = d > 0 ? d : -d, rise = (__int128)(-r->cj) * T;
                 __int128 c = rise / ad + (rise % ad != 0);
                 if (c <= 0 || c > ((__int128)1 << 40)) continue;
@@ -2619,7 +2629,7 @@ static bool fd_nested_candidates(JFinder *F, IrFunc *f, const FdNest *N, const J
                 out1.key[0] = sk; out1.tk[0] = JTERM_VALUE; out1.coef[0] = r->ct;
                 out1.key[1] = okey; out1.tk[1] = JTERM_VALUE; out1.coef[1] = d > 0 ? -c : c;
                 __int128 K1;
-                if (!fd_entry_max(F, f, as, nv, &out1, &K1)) { if (F->oom) goto fail; continue; }
+                if (!fd_entry_max(F, f, as, nv, &out1, &K1)) { if (F->oom) { free(ost); free(ostep); goto fail; } continue; }
                 out1.rhs = K1;
                 JClaim in2; memset(&in2, 0, sizeof in2);
                 in2.blk = H2; in2.fn = f; in2.nt = 3;
@@ -2627,9 +2637,10 @@ static bool fd_nested_candidates(JFinder *F, IrFunc *f, const FdNest *N, const J
                 in2.key[1] = jk; in2.tk[1] = JTERM_VALUE; in2.coef[1] = r->cj;
                 in2.key[2] = okey; in2.tk[2] = JTERM_VALUE; in2.coef[2] = out1.coef[1];
                 in2.rhs = K1 + (__int128)r->cj * E;
-                if (!fd_push_claim(F, &out1, as, nv, cl, nc, ccl) || !fd_push_claim(F, &in2, as, nv, cl, nc, ccl)) goto fail;
+                if (!fd_push_claim(F, &out1, as, nv, cl, nc, ccl) || !fd_push_claim(F, &in2, as, nv, cl, nc, ccl)) { free(ost); free(ostep); goto fail; }
             }
         }
+        free(ost); free(ostep);
         if (c1) free(L1.mem);
         free(L2.mem);
         continue;
