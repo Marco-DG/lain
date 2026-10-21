@@ -4945,6 +4945,43 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  HEAD terms: a cell as the enclosing loop's trip began, at a join and an inner header\n");
+
+    // 86. an element cell named by an address made late (s12): `var a u8[32]; for i < 32 { a[i] = 32 };
+    // a[10] = 97; return 100 / a[10]`. The cell a[10] is keyed by the ELEM_PTR the store after the loop
+    // makes, which the loop's VCs cannot read at run time; its versions are read from the ALLOCA's
+    // address and the index instead (vkey the ALLOCA, voff 10), as an element no address names
+    {   IrType *u8 = ir_type_int(&A, 8, false), *usz = ir_type_int(&A, 64, false);
+        IrFunc *f = ir_func_new(&A, nm("late86"), u8, IR_FUNC_PURE);
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrType *a32 = ir_type_new(&A, IRT_ARRAY); a32->elem = u8; a32->array_len = 32;
+        IrValue *a = ir_alloca(f, b0, a32), *i = ir_alloca(f, b0, usz);
+        ir_store(f, b0, i, ir_const_int(f, b0, 0, usz)); ir_set_br(b0, b1);
+        IrValue *li = ir_load(f, b1, i, usz);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, li, ir_const_int(f, b1, 32, usz)), b2, b3);
+        IrValue *li2 = ir_load(f, b2, i, usz);
+        ir_store(f, b2, ir_elem_ptr(f, b2, a, li2, u8), ir_const_int(f, b2, 32, u8));
+        ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li2, ir_const_int(f, b2, 1, usz), usz)); ir_set_br(b2, b1);
+        IrValue *e10 = ir_elem_ptr(f, b3, a, ir_const_int(f, b3, 10, usz), u8);
+        ir_store(f, b3, e10, ir_const_int(f, b3, 97, u8));
+        IrValue *q = ir_binop(f, b3, IR_UDIV, ir_const_int(f, b3, 100, u8), ir_load(f, b3, e10, u8), u8);
+        ir_set_ret(b3, q);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JMem mm = jmem_over(region, sizeof region);
+        JObl *o; int32_t no; char err[200];
+        bool ok = jgen_func(&mm, f, gen_mod, NULL, 0, NULL, 0, NULL, 0, NULL, JGEN_ALL, &o, &no, err, sizeof err);
+        int seen = 0, right = 0;
+        for (int32_t k = 0; ok && k < no; k++) {
+            if (!o[k].vc.id.kind || strcmp(o[k].vc.id.kind, "divzero")) continue;
+            for (int32_t x = 0; x < o[k].vc.nvars; x++) {
+                if (o[k].vkind[x] != 1 || !strstr(o[k].vc.vars[x], "[10]")) continue;
+                seen++; right += o[k].vkey[x] == a->id && o[k].voff && o[k].voff[x] == 10;
+            }
+        }
+        CHECK(ok && seen > 0 && right == seen, "86: a[10]'s versions read from the ALLOCA %%v%d and index 10 (%d of %d)", a->id, right, seen);
+        gen_mod = NULL;
+    }
+    printf("  an element cell named by an address made late: read from its array and index\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

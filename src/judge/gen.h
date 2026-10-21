@@ -577,6 +577,25 @@ static bool jg_syn_array(JG *g, IrInstr *i) {
            g->aroot[i->result->id] == i->result->id && t->kind == IRT_ARRAY && t->array_len >= 1 &&
            t->array_len <= JELEM_MAXN && jg_is_int(t->elem);
 }
+enum { JELEM_BIG = 1 << 30 };
+// For a run-time reading only (vkey, voff): an element cell named by an address, `a[k]` of a fixed
+// integer array that is an ALLOCA, k constant. The harness reads it from the array's own address and
+// k, as an element no address names (csyn): the address value itself may be made only later in the
+// function (`buf[10] = 97` after the loop that fills buf), where a loop's VCs cannot read it.
+static bool jg_elem_at(JG *g, int32_t c, int32_t *root, int32_t *k) {
+    int32_t r = g->croot[c];
+    IrValue *rv = r >= 0 && r < g->nv ? jg_value(g, r) : NULL;
+    IrInstr *d = rv && rv->id >= 0 && rv->id < g->nv ? g->def[rv->id] : NULL;
+    const IrType *t = d && d->op == IR_ALLOCA && d->n_operands == 0 ? d->aux.alloca_ty : NULL;
+    if (!t || t->kind != IRT_ARRAY || !jg_is_int(t->elem) || g->aroot[r] != r || !g->cpath[c]) return false;
+    const char *p = g->cpath[c];                               // exactly `[k]`, as jg_cells spells it
+    int64_t kk = 0;
+    if (*p++ != '[' || *p < '0' || *p > '9') return false;
+    while (*p >= '0' && *p <= '9' && kk < JELEM_BIG) kk = kk * 10 + (*p++ - '0');
+    if (*p++ != ']' || *p != 0 || kk >= (int64_t)t->array_len) return false;
+    *root = r; *k = (int32_t)kk;
+    return true;
+}
 static bool jg_cells(JG *g) {
     IrFunc *f = g->f;
     int32_t nv = g->nv;
@@ -3010,8 +3029,9 @@ static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *
         int32_t *off = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1);
         if (!off) return false;
         for (int32_t i = 0; i < B->nvars; i++) {
-            int32_t cc = B->kind[i] == 1 || B->kind[i] == 4 ? g->ver[B->key[i]].cell : -1;
+            int32_t cc = B->kind[i] == 1 || B->kind[i] == 4 ? g->ver[B->key[i]].cell : -1, er, ek;
             off[i] = cc >= 0 && g->csyn[cc] ? g->coff[cc] : -1;
+            if (cc >= 0 && !g->csyn[cc] && B->kind[i] == 1 && jg_elem_at(g, cc, &er, &ek)) { k2[i] = er; off[i] = ek; }
         }
         o->voff = off;
         int32_t *aux = JG_NEW(g, int32_t, B->nvars ? B->nvars : 1);
