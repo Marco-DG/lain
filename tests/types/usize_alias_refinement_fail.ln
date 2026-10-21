@@ -1,0 +1,8 @@
+// EXPECT: [E086]
+// A refined `usize` alias is enforced where a value lands in it: 150 is not below 100.
+type Idx = usize < 100
+
+func main() i32 {
+    var i Idx = 150
+    return i as i32
+}

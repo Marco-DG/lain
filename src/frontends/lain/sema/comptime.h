@@ -61,6 +61,14 @@ Expr* comptime_evaluate_expr(Arena* arena, Expr* expr) {
                         return texpr;
                     }
                 }
+                // `usize` and `isize` (§2.1), as the sized builtins above: without them an alias of
+                // either (`type Idx = usize < 100`) was "not a type" (E012) while `u32 < 100` worked
+                if (L == 5 && (strncmp(raw, "usize", 5) == 0 || strncmp(raw, "isize", 5) == 0)) {
+                    Expr* texpr = clone_expr(arena, expr);
+                    texpr->kind = EXPR_TYPE;
+                    texpr->as.type_expr.type_value = type_simple(arena, id);
+                    return texpr;
+                }
                 if (L == 4 && strncmp(raw, "bool", 4) == 0) {
                     Expr* texpr = clone_expr(arena, expr);
                     texpr->kind = EXPR_TYPE;

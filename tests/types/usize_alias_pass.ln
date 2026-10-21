@@ -1,0 +1,19 @@
+// An alias of `usize`, refined and plain (§2.1, §8): until the comptime evaluator knew `usize` as a
+// type value, both were E012 "a type alias's right-hand side must be a type", while `u32 < 100` was
+// accepted. The refined alias carries its bound: `t[i]` needs no other proof.
+type Idx = usize < 100
+type Size = usize
+
+func get(t u8[100], i Idx) u8 {
+    return t[i]
+}
+
+func main() i32 {
+    var t u8[100]
+    for k in 0..100 { t[k] = k as u8 }
+    var i Idx = 42
+    var n Size = 7
+    if get(t, i) != 42 { return 1 }
+    if n + 1 != 8 { return 2 }
+    return 0
+}

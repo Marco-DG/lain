@@ -2940,6 +2940,10 @@ out=u8: 255
 out=i64: 1000000
 out=u32: 12345
 ty=Slice_u8 scalar
+### tests/types/isize_alias_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/types/local_array_pass.ln
 rc=58
 out=
@@ -3058,6 +3062,11 @@ rc=0
 out=Radius is 10
 ty=Shape struct
 ty=Slice_u8 scalar
+### tests/types/usize_alias_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
 ### tests/types/var_slice_param_write_pass.ln
 rc=0
 out=

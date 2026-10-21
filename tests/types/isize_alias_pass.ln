@@ -1,0 +1,16 @@
+// An alias of `isize`, refined and plain: as `usize` (usize_alias_pass.ln), it was E012 until the
+// comptime evaluator knew `isize` as a type value.
+type Off = isize >= -5 and <= 5
+type Diff = isize
+
+func shift(base usize < 50, d Off) usize {
+    return (base as isize + d + 5) as usize
+}
+
+func main() i32 {
+    var d Diff = -3
+    if shift(10, -5) != 10 { return 1 }
+    if shift(0, 5) != 10 { return 2 }
+    if d + 3 != 0 { return 3 }
+    return 0
+}
