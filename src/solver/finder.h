@@ -1762,6 +1762,42 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
                 !cand_push(cd, ncd, ccd, H, sl[k].key, -1, tm[t].key, 1, sl[k].type, tm[t].type)) goto oom;
         }
     }
+    // ...and each version made here against the SAME cell at the header of the innermost loop around
+    // the block (its own loop excluded): s11's HEAD term, `head(i) - i <= -1` at the join after an
+    // `if` whose branch runs a loop that only raises i. Without it nothing on the enclosing loop's
+    // path relates i after that join to i at the header, and simdlex's three outer loops had no
+    // ranking (R3c, TCW's real programs). Both sides, bounded as the pairs above are.
+    // Only for a cell the enclosing loop's own test compares (`while i < n`), the cells its ranking
+    // reads: every version against its header at every join was enough candidates to overflow the
+    // generator's region in simdlex's `tokenize` (1445 proved -> 1034).
+    {   int32_t encl = head ? fd_nest_around(N, H, H) : fd_nest_around(N, H, -1);
+        int32_t tk_[8]; int ntk = 0;
+        IrBlock *eb = NULL;
+        for (IrBlock *b = encl >= 0 ? f->blocks : NULL; b && !eb; b = b->next) if (b->id == encl) eb = b;
+        IrInstr *ec = eb && eb->term.cond ? fd_def_in(f, eb->term.cond) : NULL;
+        for (int o = 0; ec && ec->op == IR_ICMP && o < ec->n_operands && o < 2; o++) {
+            IrInstr *ld = fd_def_in(f, ec->operands[o]);
+            if (ld && ld->op == IR_LOAD && ld->n_operands >= 1 && ld->operands[0] && ntk < 8) tk_[ntk++] = ld->operands[0]->id;
+        }
+        for (int32_t k = i; encl >= 0 && k < j; k++) {
+            bool tested = false;
+            for (int q = 0; q < ntk && !tested; q++) tested = tk_[q] == sl[k].key;
+            if (!tested || !fd_is_int(sl[k].type)) continue;
+            for (int sg = 1; sg >= -1; sg -= 2) {
+                int32_t before = *ncd;
+                if (!cand_push(cd, ncd, ccd, H, sl[k].key, sg, sl[k].key, -sg, sl[k].type, sl[k].type)) goto oom;
+                if (*ncd == before + 1) (*cd)[before].c.tk[1] = JTERM_HEAD;
+                // ...and fixed, as a monotone counter's claims are: `head(i) - i <= 0` and `<= -1`
+                // (and the mirror for one that falls). The maximized bound alone lost them where a
+                // function is larger: simdlex's join kept `head(i) - i <= 4095`, no ranking reads
+                for (__int128 rhs = 0; rhs >= -1; rhs--) {
+                    int32_t b2 = *ncd;
+                    if (!cand_push(cd, ncd, ccd, H, sl[k].key, -sg, sl[k].key, sg, sl[k].type, sl[k].type)) goto oom;
+                    if (*ncd == b2 + 1) { (*cd)[b2].c.tk[1] = JTERM_HEAD; (*cd)[b2].fixed = true; (*cd)[b2].c.rhs = rhs; }
+                }
+            }
+        }
+    }
     // the comparisons in the block's loop (a header's own; a join's innermost): a version made here
     // against a constant or another term, each side at the compared value give or take one (fixed
     // bounds, nothing to maximize). One in the body as well as the header's: `if n < m { n = n + 1 }`
@@ -1919,8 +1955,13 @@ static bool fd_claim_shape_ok(const JClaim *c) {
     if (c->nt < 1 || c->nt > JCLAIM_MAXT || c->rhs > big || c->rhs < -big) return false;
     for (int32_t i = 0; i < c->nt; i++) {
         if (c->coef[i] == 0 || c->coef[i] > big || c->coef[i] < -big) return false;
-        // as gen.h: one key twice only as a cell beside its own ENTRY value (c40)
-        for (int32_t j = i + 1; j < c->nt; j++) if (c->key[i] == c->key[j] && (c->tk[i] == JTERM_ENTRY) == (c->tk[j] == JTERM_ENTRY)) return false;
+        // as gen.h: one key twice only as a cell beside its own ENTRY value (c40) or its version at
+        // the enclosing loop's header (s11's HEAD), never one of those twice
+        for (int32_t j = i + 1; j < c->nt; j++) {
+            int ci = c->tk[i] == JTERM_ENTRY ? 1 : c->tk[i] == JTERM_HEAD ? 2 : 0;
+            int cj = c->tk[j] == JTERM_ENTRY ? 1 : c->tk[j] == JTERM_HEAD ? 2 : 0;
+            if (c->key[i] == c->key[j] && ci == cj) return false;
+        }
     }
     // ...and a claim of ENTRY terms only is made by no header: gen.h refuses it, and one refused
     // candidate costs every candidate of its round in the function. gen.h's made rule proper (a
@@ -1929,7 +1970,7 @@ static bool fd_claim_shape_ok(const JClaim *c) {
     // only cells with an ENTRY pair (offered for written head versions only), and a relation's two
     // versions both change. This test is the part one line can state.
     bool made = false;
-    for (int32_t i = 0; i < c->nt; i++) made |= c->tk[i] != JTERM_ENTRY;
+    for (int32_t i = 0; i < c->nt; i++) made |= c->tk[i] != JTERM_ENTRY && c->tk[i] != JTERM_HEAD;
     return made;
 }
 // Each candidate's bound, from the VCs o[0..n) of a claim set whose candidates start at `base`:

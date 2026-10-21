@@ -1,0 +1,35 @@
+// LAINFLAGS: --judge=authority
+// An outer loop whose trip, in one branch, runs an inner loop that only raises the counter
+// (bench/simd_lexer's tokenizers). Ranking the outer loop by `n - i` needs, at the join after the
+// `if`, that i grew since the outer header: s11's HEAD term, `head(i) - i <= -1`, proposed at the
+// joins and inner headers inside a loop for the cells its own test compares (TCW's real programs,
+// R3c). Without it the join's version of i had only its type's bounds and no ranking was found.
+func is_letter(c u8) bool { return c >= 97 and c <= 122 }
+func word_ends(src u8[64], n u32 < 65) u32 {
+    var words u32 = 0
+    var i u32 = 0
+    while i < n {
+        if i < n {
+            var c u8 = src[i]
+            if is_letter(c) {
+                i = i + 1
+                while i < n and is_letter(src[i]) { i = i + 1 }
+                words = words +% 1
+            } else {
+                i = i + 1
+            }
+        }
+    }
+    return words
+}
+
+func main() i32 {
+    var s u8[64]
+    for k in 0..64 { s[k] = 32 }
+    s[3] = 97
+    s[4] = 98
+    s[10] = 99
+    if word_ends(s, 64) != 2 { return 1 }
+    if word_ends(s, 4) != 1 { return 2 }
+    return 0
+}
