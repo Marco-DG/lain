@@ -1,0 +1,33 @@
+// A loop guard with a disequality the other conjuncts already imply (`y != 0` beside `y < 200`
+// and the steps that only raise y from a positive start: here `y != 0` adds the case y < 0, which
+// a u8 cannot take). Each `!=` is two cases; flattened undecided they doubled the back edge's
+// paths past FD_MAXFLAT, the widest facts were dropped, and no ranking was proposed (E011). The
+// finder now decides a disjunction the path's own facts settle before flattening it (TCW's flip
+// check, fuzz_loops seed 20261021 k282; VRA ranked it, the judge did not).
+func run(x0 u8, y0 u8) u8 {
+    var x = x0
+    var y = y0
+    while x < 100 and x > 5 and y != 0 and x < 200 and y < 200 {
+        if y > 50 {
+            x = x + 1
+        } else {
+            x = x - 1
+        }
+        if x % 2 == 0 {
+            x = y
+        } else {
+            x = x - 2
+        }
+        if y % 3 == 0 {
+            y = y + 2
+        } else {
+            y = y + 1
+        }
+    }
+    return x
+}
+
+func main() i32 {
+    if run(60, 7) > 255 { return 1 }
+    return 0
+}

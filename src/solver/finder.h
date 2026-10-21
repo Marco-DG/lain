@@ -407,7 +407,14 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             // case (`i <= k` beside a stated `i >= 5`, c34), it is the bound alone, and the relation
             // search reads it (a sum over an array a finished loop filled); undecided, it stays
             // skipped. One satisfiability question per case, the path's conjunctive facts beside it.
-            if (o->upto) {
+            // ...and ANY disjunction the path decides, at a sixteenth of the budget: `x != 0` is
+            // two cases, and beside a stated `x > 5` only one lives. Undecided, each doubled the
+            // flattened paths, and two of them past FD_MAXFLAT (32) dropped the widest facts and
+            // the loop's ranking with them (TCW's flip check, fuzz_loops seed 20261021 k59, k282:
+            // terminating, ranked by VRA, E011 under the judge).
+            {
+                JWork dlim = F->lim;
+                if (!o->upto) { dlim.pivot /= 16; dlim.node /= 16; dlim.leaf /= 16; }
                 int32_t ncj = 0, mx = 0;
                 for (int32_t h2 = 0; h2 < v->nhyps; h2++) if (!v->hyps[h2].disj) ncj++;
                 for (int32_t d = 0; d < hy->ndis; d++) if (hy->dis[d].nc > mx) mx = hy->dis[d].nc;
@@ -419,7 +426,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
                     for (int32_t c = 0; c < hy->dis[d].nc; c++) { memset(&ph[m], 0, sizeof ph[m]); ph[m].cons = hy->dis[d].c[c]; ph[m].origin = "case"; m++; }
                     JVc q = *v; q.hyps = ph; q.nhyps = m;
                     memset(&q.goal, 0, sizeof q.goal); q.goal.op = J_LE; fd_jint(&q.goal.rhs, -1);
-                    if (lia_solve(&q, F->lim, F->work, F->worksz).k != J_ANS_CERT) { live = d; nlive++; }
+                    if (lia_solve(&q, dlim, F->work, F->worksz).k != J_ANS_CERT) { live = d; nlive++; }
                 }
                 free(ph);
                 if (nlive == 1) {                            // decided: that case alone, flattened as one
