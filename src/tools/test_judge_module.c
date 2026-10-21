@@ -1344,6 +1344,41 @@ int main(void) {
     }
     printf("  frame summaries over a returned struct's field: pop's ret.ok, through var p = pop(var q)\n");
 
+    // an AND in each arm (s16; MCW's and_in_branch_repro, fuzz_loops 20261021 k78, k151, k179), all
+    // i32: `while x > 5 and y > 0 { if x < 50 { y = y & (y - 1) } else { y = y & (y - 1) } }`, ranked
+    // by y. y - 1 is signed, so its AND hull is two cases, `y - 1 <= -1` or `0 <= r <= y - 1`; the
+    // join's paths split on them, so each arm's case holds a plain `r <= y - 1`: the fall proved
+    {   IrType *T = ir_type_int(&A, 32, true);
+        IrFunc *ef = ir_func_new(&A, nm("andbr"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(ef, T, nm("x")), *y0 = ir_add_param(ef, T, nm("y0"));
+        IrBlock *b0 = ef->entry, *b1 = ir_new_block(ef), *b2 = ir_new_block(ef), *b3 = ir_new_block(ef), *b4 = ir_new_block(ef),
+                *b5 = ir_new_block(ef), *b6 = ir_new_block(ef), *b7 = ir_new_block(ef);
+        IrValue *y = ir_alloca(ef, b0, T);
+        ir_store(ef, b0, y, y0); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(ef, b1, IR_CMP_SGT, x, ir_const_int(ef, b1, 5, T)), b2, b7);
+        ir_set_br_cond(b2, ir_icmp(ef, b2, IR_CMP_SGT, ir_load(ef, b2, y, T), ir_const_int(ef, b2, 0, T)), b3, b7);
+        ir_set_br_cond(b3, ir_icmp(ef, b3, IR_CMP_SLT, x, ir_const_int(ef, b3, 50, T)), b4, b5);
+        IrBlock *arm[2] = { b4, b5 };
+        for (int a = 0; a < 2; a++) {
+            IrValue *ly = ir_load(ef, arm[a], y, T);
+            IrValue *m1 = ir_binop(ef, arm[a], IR_SUB, ly, ir_const_int(ef, arm[a], 1, T), T);
+            ir_store(ef, arm[a], y, ir_binop(ef, arm[a], IR_AND, ly, m1, T));
+            ir_set_br(arm[a], b6);
+        }
+        ir_set_br(b6, b1);
+        ir_set_ret(b7, ir_const_int(ef, b7, 0, T));
+        ir_finalize_cfg(ef);
+        Stub sa; memset(&sa, 0, sizeof sa);
+        sa.propose = P_RANK;
+        JRank *rk = &sa.rank[0];
+        rk->blk = b1->id; rk->fn = ef; rk->ncomp = 1; rk->nt = 1; rk->key[0] = y->id; rk->coef[0][0] = 1; rk->nedge = 1; rk->from[0] = b6->id;
+        sa.nrank = 1;
+        CHECK(run(ef, &sa, true, sizeof region, err), "judges: %s", err);
+        char fall[64]; snprintf(fall, sizeof fall, "proved bb%d.%d rank.fall", b6->id, nins_m(b6));
+        CHECK(strstr(recs, fall) != NULL && !strstr(recs, "not-implied"), "an AND in each arm: y's fall proved:\n%s", recs);
+    }
+    printf("  an AND's two-case hull in a join's arms: the paths split on it, y & (y - 1) < y proved\n");
+
     // a RETURNED SLICE's length (s14; census_gate's `func go() u8[] { return "xyz" }`): go returns a
     // slice of length 3, the caller narrows len(go()) to an i8. (A) the return claim len(ret) <= 3:
     // certified, the narrowing proved; (B) len(ret) <= 2, false at the return: uncertified; (C) no

@@ -231,7 +231,8 @@ typedef struct {
     int32_t *ltwin;                // by LOAD value id: its twin load's id (jg_load_twin), -1 none, -2 not asked
     uint8_t *wneed;                // by value id: a path's stored values and what they are made of (jb_join_wraps)
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
-    int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases (2), none (1), not asked yet (0)
+    int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases, or an AND whose hull is two
+                                   // cases (s16), (2), none (1), not asked yet (0)
 } JG;
 
 // The value with id `id`: an instruction's result or a parameter.
@@ -2059,6 +2060,16 @@ static void jb_wrapto(JB *B, int32_t x, int32_t xv, const IrType *t, const char 
 // such q per p, the first in block order: each is two disjunctions, which the finder pays for
 // (it flattens them by "mul.mono", an interface).
 enum { JMONO_MAX = 2 };
+// Is integer value v >= 0 wherever the program runs: by its type (unsigned, or a bool), as the VC
+// states every value's range, or by its static range. A hull's case that only a negative operand
+// takes (`y <= -1` in an AND's) is then refuted, and its other case is stated plainly: a join's case
+// is a conjunction, which keeps a plain fact and drops a disjunction (MCW's and_in_branch repro).
+// The key a join's split on an AND's operand k is told by (s16; jg_and_case).
+static int32_t jg_and_key(int32_t id, int k) { return -(2 + 2 * id + k); }
+static bool jg_nonneg(JG *g, IrValue *v, JRange *r) {
+    if (v && v->type && (v->type->kind == IRT_BOOL || (v->type->kind == IRT_INT && !v->type->is_signed))) return true;
+    return jg_static_range(g, v, r, 0) && r->lo >= 0;
+}
 static void jb_mul_mono(JB *B, int32_t x, const IrInstr *d, int32_t id) {
     JG *g = B->g;
     if (B->jS >= 0 || id < 0 || id >= g->nv || g->defblk[id] < 0) return;   // a disjunct holds no disjunction
@@ -2074,7 +2085,7 @@ static void jb_mul_mono(JB *B, int32_t x, const IrInstr *d, int32_t id) {
             if (s < 0) continue;
             IrValue *c = d->operands[s], *a = d->operands[1 - s], *b = e->operands[1 - u];
             JRange rc;
-            if (a == b || !jg_is_int(b->type) || !jg_static_range(g, c, &rc, 0) || rc.lo < 0) continue;
+            if (a == b || !jg_is_int(b->type) || !jg_nonneg(g, c, &rc)) continue;
             int32_t av = jb_val(B, a), bv = jb_val(B, b), cv = jb_val(B, c), qv = jb_val(B, e->result);
             const char *o = jb_str(B, "def %%v%lld mul.mono", id, 0, 0);
             for (int w = 0; w < 2; w++) {                      // or { b - a <= 0 | p - q + c <= 0 }, and mirrored
@@ -2518,7 +2529,11 @@ static void jb_state(JB *B, int32_t x) {
                 for (int k = 0; k < 2 && d->n_operands >= 2; k++) {      // 0 <= x & y <= y
                     int32_t y = jb_val(B, d->operands[k]);
                     t[0].var = x; t[0].c = 1; t[1].var = y; t[1].c = -1;
-                    if (jg_static_range(g, d->operands[k], &ra, 0) && ra.lo >= 0) { jb_atom(B, o, t, 2, J_LE, 0); continue; }
+                    if (jg_nonneg(g, d->operands[k], &ra)) { jb_atom(B, o, t, 2, J_LE, 0); continue; }
+                    int32_t ak = -1;                           // inside a disjunct split on it: its case (s16)
+                    for (int32_t q = 0; B->jS >= 0 && B->wid && q < B->nw && ak < 0; q++) if (B->wid[q] == jg_and_key(id, k)) ak = B->wk[q];
+                    if (ak == 0) { JLT u[1]; u[0].var = y; u[0].c = 1; jb_atom(B, o, u, 1, J_LE, -1); continue; }
+                    if (ak == 1) { JLT u[1]; u[0].var = x; u[0].c = -1; jb_atom(B, o, u, 1, J_LE, 0); jb_atom(B, o, t, 2, J_LE, 0); continue; }
                     JCons c3[3]; JLT u[1];
                     u[0].var = y; u[0].c = 1;  if (!jb_cons(B, u, 1, J_LE, -1, &c3[0])) break;
                     u[0].var = x; u[0].c = -1; if (!jb_cons(B, u, 1, J_LE, 0, &c3[1])) break;
@@ -2923,6 +2938,17 @@ static bool jb_join_paths(JB *B, int32_t d0, IrBlock *Y, IrBlock *X, JJStep *cur
 // every k the operands' ranges allow. False, the paths as they were, past JJOIN_MAXP in all or past
 // JWRAP_MAXW such ops on one path; `*pw` the cases by path where it expands, else NULL.
 enum { JWRAP_MAXW = 8 };
+// An AND of two variables (no constant >= 0 operand) whose operand k is not known >= 0: its hull for
+// that operand is two cases, `y <= -1` or `0 <= r <= y` (jb_state). Inside a join's disjunct, which
+// holds no disjunction, the path is split on them as on a wrap's cases (s16), keyed -(2 + 2*id + k)
+// so that no wrap's result id is one.
+static bool jg_and_case(JG *g, const IrInstr *w, int k) {
+    if (w->op != IR_AND || w->n_operands < 2 || !w->result || w->result->id < 0 || w->result->id >= g->nv ||
+        !jg_is_int(w->result->type) || !jg_is_int(w->operands[0]->type) || !jg_is_int(w->operands[1]->type)) return false;
+    __int128 c; JRange ra;
+    for (int q = 0; q < 2; q++) if (jg_const_of(g, w->operands[q], &c) && c >= 0) return false;
+    return !jg_nonneg(g, w->operands[k], &ra);
+}
 static bool jb_join_wraps(JB *B, int32_t d0, JPathE *paths, int32_t *npath, JPathW **pw) {
     JG *g = B->g;
     if (!g->wraps) {                                         // once per function: most have none
@@ -2931,6 +2957,7 @@ static bool jb_join_wraps(JB *B, int32_t d0, JPathE *paths, int32_t *npath, JPat
             for (IrInstr *w = b->instrs; w && g->wraps == 1; w = w->next) {
                 __int128 lo, hi, M; JRange rr;
                 if (jg_wrap_op(w) && w->result->id >= 0 && jg_wrap_ks(g, w, &lo, &hi, &M, &rr) && lo != hi) g->wraps = 2;
+                if (jg_and_case(g, w, 0) || jg_and_case(g, w, 1)) g->wraps = 2;
             }
     }
     if (g->wraps == 1) return true;
@@ -2975,6 +3002,11 @@ static bool jb_join_wraps(JB *B, int32_t d0, JPathE *paths, int32_t *npath, JPat
             if (X->id == d0) continue;
             for (IrInstr *w = X->instrs; w; w = w->next) {
                 __int128 lo, hi, M; JRange rr;
+                for (int k = 0; k < 2; k++) {                  // an AND's two-case hull, per operand (s16)
+                    if (!jg_and_case(g, w, k) || !need[w->result->id]) continue;
+                    if (nw[p] == JWRAP_MAXW) return false;
+                    ids[p][nw[p]] = jg_and_key(w->result->id, k); klo[p][nw[p]] = 0; nk[p][nw[p]] = 2; nw[p]++;
+                }
                 if (!jg_wrap_op(w) || w->result->id < 0 || !jg_wrap_ks(g, w, &lo, &hi, &M, &rr) || lo == hi) continue;
                 if (w->result->id >= g->nv || !need[w->result->id]) continue;   // stored, or what a stored value is made of
                 if (nw[p] == JWRAP_MAXW) return false;

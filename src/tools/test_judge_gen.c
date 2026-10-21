@@ -5080,6 +5080,59 @@ int main(void) {
         gen_mod = NULL;
     }
     printf("  frame summaries: post and pre of a var parameter's field, owed at the returns, stated at the call\n");
+    // 89. an AND's hull (s16): of two u8 values, `r <= x` and `r <= y` plainly (an unsigned type is
+    // >= 0); of an i8 one, the two cases `y <= -1 | 0 <= r <= y`; and in each arm of a join, the
+    // paths split on those cases, so the back edge's VC has a case with `y - 1 <= -1` and one with
+    // `r - (y - 1) <= 0` as plain conjuncts
+    for (int c = 0; c < 2; c++) {
+        IrType *T = c == 0 ? ir_type_int(&A, 8, false) : ir_type_int(&A, 8, true);
+        IrFunc *f = ir_func_new(&A, nm("and89"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x")), *y = ir_add_param(f, T, nm("y"));
+        IrValue *r = ir_binop(f, f->entry, IR_AND, x, y, T);
+        IrValue *q = ir_binop(f, f->entry, c == 0 ? IR_UDIV : IR_SDIV, ir_const_int(f, f->entry, 100, T), r, T);
+        ir_set_ret(f->entry, q);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        char key[48]; snprintf(key, sizeof key, "bb%d.%d divzero", f->entry->id, idx_of(f->entry, q));
+        const char *vd = t ? vc_of(t, key) : "";
+        char px[64], py[64]; snprintf(px, sizeof px, "and.hull : 1*%%v%d + -1*%%v%d <= 0", r->id, x->id); snprintf(py, sizeof py, "and.hull : 1*%%v%d + -1*%%v%d <= 0", r->id, y->id);
+        if (c == 0) CHECK(strstr(vd, px) && strstr(vd, py) && !strstr(vd, "and.hull : or"), "89 u8: plain atoms:\n%s", vd);
+        else CHECK(strstr(vd, "and.hull : or {"), "89 i8: the two cases:\n%s", vd);
+        free(t); gen_mod = NULL;
+    }
+    {   IrType *T = ir_type_int(&A, 32, true);
+        IrFunc *f = ir_func_new(&A, nm("andj89"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x")), *y0 = ir_add_param(f, T, nm("y0"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f),
+                *b5 = ir_new_block(f), *b6 = ir_new_block(f);
+        IrValue *y = ir_alloca(f, b0, T);
+        ir_store(f, b0, y, y0); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SGT, ir_load(f, b1, y, T), ir_const_int(f, b1, 0, T)), b2, b6);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_SLT, x, ir_const_int(f, b2, 50, T)), b3, b4);
+        IrValue *m1[2], *ar[2]; IrBlock *arm[2] = { b3, b4 };
+        for (int a = 0; a < 2; a++) {
+            IrValue *ly = ir_load(f, arm[a], y, T);
+            m1[a] = ir_binop(f, arm[a], IR_SUB, ly, ir_const_int(f, arm[a], 1, T), T);
+            ar[a] = ir_binop(f, arm[a], IR_AND, ly, m1[a], T);
+            ir_store(f, arm[a], y, ar[a]); ir_set_br(arm[a], b5);
+        }
+        ir_set_br(b5, b1);
+        ir_set_ret(b6, ir_const_int(f, b6, 0, T));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        JRank rk; memset(&rk, 0, sizeof rk);
+        rk.blk = b1->id; rk.fn = f; rk.ncomp = 1; rk.nt = 1; rk.key[0] = y->id; rk.coef[0][0] = 1; rk.nedge = 1; rk.from[0] = b5->id;
+        gen_rk = &rk; gen_nrk = 1;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+        char key[48]; snprintf(key, sizeof key, "bb%d.%d rank.fall", b5->id, nins(b5));
+        const char *vf = t ? vc_of(t, key) : "";
+        char neg[48], le[64]; snprintf(neg, sizeof neg, "1*%%v%d <= -1", m1[0]->id); snprintf(le, sizeof le, "1*%%v%d + -1*%%v%d <= 0", ar[0]->id, m1[0]->id);
+        const char *jn = strstr(vf, " join bb");
+        CHECK(jn && strstr(jn, neg) && strstr(jn, le), "89 join: the arm's cases split, %s and %s:\n%s", neg, le, vf);
+        free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
+    }
+    printf("  an AND's hull: plain where an operand's type is unsigned, split by case in a join's paths\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }
