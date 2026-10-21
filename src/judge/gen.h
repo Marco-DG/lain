@@ -2014,6 +2014,34 @@ static void jb_mul_mono(JB *B, int32_t x, const IrInstr *d, int32_t id) {
     }
 }
 // The facts of one variable: its definition and its range.
+// A call d to h of this module: h's RETURN claims (I.181's boundary), `rv` for the returned term (the
+// call's result, or its length where h returns a slice: jg_ret_claim_ok ties the term's kind to h's
+// return type) and each argument for its parameter, where the argument lands exactly (its landing
+// obligation, owed at this call, licenses it).
+static void jb_contracts(JB *B, IrInstr *d, IrFunc *h, int32_t rv) {
+    JG *g = B->g;
+    for (int32_t ci = 0; ci < g->ncl && !B->fail; ci++) {
+        const JClaim *c = &g->cl[ci];
+        if (c->blk != JCLAIM_RET || c->fn != h) continue;
+        JLT u[JCLAIM_MAXT]; bool ok = true;                    // a return claim has up to JCLAIM_MAXT terms
+        for (int k = 0; k < c->nt && ok; k++) {
+            u[k].c = c->coef[k];
+            if (c->key[k] == JKEY_RET) { u[k].var = rv; continue; }
+            int pk = jg_param_at(h, c->key[k]);
+            IrParam *pp = h->params;
+            for (int q = 0; q < pk && pp; q++) pp = pp->next;
+            if (pk < 0 || pk >= d->n_operands || !pp || !pp->value ||
+                !jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
+            u[k].var = jb_val(B, d->operands[pk]);
+        }
+        if (!ok) continue;
+        char o[96]; snprintf(o, sizeof o, "contract %.*s #%lld", (int)h->name->length, h->name->name, (long long)ci);
+        char *os = JG_NEW(g, char, strlen(o) + 1);
+        if (!os) { B->fail = true; return; }
+        strcpy(os, o);
+        jb_atom(B, os, u, c->nt, J_LE, c->rhs);
+    }
+}
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
     if (B->kind[x] == 1) {                                     // a cell's version
@@ -2077,6 +2105,10 @@ static void jb_state(JB *B, int32_t x) {
         t[0].c = -1; jb_atom(B, jb_str(B, "objsize %%v%lld", B->key[x], 0, 0), t, 1, J_LE, 0);
         t[0].c = 1;  jb_atom(B, jb_str(B, "objsize %%v%lld", B->key[x], 0, 0), t, 1, J_LE, jg_len_max(st));
         IrInstr *d = g->def[B->key[x]];
+        if (d && d->op == IR_CALL) {                           // a callee's return claims on len(ret)
+            IrFunc *h = jg_callee(g, d);
+            if (h && jg_same_module(h, g->f) && h->ret_type && h->ret_type->kind == IRT_SLICE) jb_contracts(B, d, h, x);
+        }
         if (d && d->op == IR_MAKE_SLICE && d->n_operands >= 2 && jg_is_int(d->operands[1]->type)) {
             JLT u[1]; u[0].var = jb_val(B, d->operands[1]); u[0].c = 1;
             jb_def(B, x, u, 1, jb_str(B, "def %%v%lld make_slice", B->key[x], 0, 0));
@@ -2373,27 +2405,8 @@ static void jb_state(JB *B, int32_t x) {
         case IR_CALL: {
             IrFunc *h = jg_callee(g, d);
             if (!h || !jg_same_module(h, g->f)) break;
-            for (int32_t ci = 0; ci < g->ncl && !B->fail; ci++) {
-                const JClaim *c = &g->cl[ci];
-                if (c->blk != JCLAIM_RET || c->fn != h) continue;
-                JLT u[JCLAIM_MAXT]; bool ok = true;                // a return claim has up to JCLAIM_MAXT terms
-                for (int k = 0; k < c->nt && ok; k++) {
-                    u[k].c = c->coef[k];
-                    if (c->key[k] == JKEY_RET) { u[k].var = x; continue; }
-                    int pk = jg_param_at(h, c->key[k]);
-                    IrParam *pp = h->params;
-                    for (int q = 0; q < pk && pp; q++) pp = pp->next;
-                    if (pk < 0 || pk >= d->n_operands || !pp || !pp->value ||
-                        !jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
-                    u[k].var = jb_val(B, d->operands[pk]);
-                }
-                if (!ok) continue;
-                char o[96]; snprintf(o, sizeof o, "contract %.*s #%lld", (int)h->name->length, h->name->name, (long long)ci);
-                char *os = JG_NEW(g, char, strlen(o) + 1);
-                if (!os) { B->fail = true; return; }
-                strcpy(os, o);
-                jb_atom(B, os, u, c->nt, J_LE, c->rhs);
-            }
+            jb_contracts(B, d, h, x);
+            if (B->fail) return;
             // its GUARDED return claims (s7): where each guard argument is a literal equal to its
             // constant, the bound; a literal of another value, nothing; otherwise, VC-wide only,
             // `a1 <= c1 - 1 | a1 >= c1 + 1 | ... | sum <= rhs`, which the solver uses where it
@@ -3642,12 +3655,18 @@ static bool jg_claim_shape(JG *g, const int32_t *key, const uint8_t *tk, int32_t
 // caller receives, the landed one (jg_post_obligations, s8), as the caller's contract states it.
 static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
     const __int128 big = (__int128)1 << 66;
-    if (!h || h->is_extern || !jg_is_int(h->ret_type)) return jg_fail(g, "a return claim on a function returning no integer");
+    // the returned value is an integer's (JTERM_VALUE), or a returned slice's length (JTERM_LEN)
+    bool sret = h && h->ret_type && h->ret_type->kind == IRT_SLICE;
+    if (!h || h->is_extern || (!jg_is_int(h->ret_type) && !sret)) return jg_fail(g, "a return claim on a function returning no integer");
     // lowered with a construct dropped, the IR is not the function: it could return anything
     if (h->incomplete) return jg_fail(g, "a return claim on a function lowered incompletely");
     if (!jg_claim_shape(g, c->key, c->tk, c->nt, JCLAIM_MAXT)) return false;
     if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
-    for (int k = 0; k < c->nt; k++) if (c->tk[k] != JTERM_VALUE) return jg_fail(g, "a return claim over a length");
+    for (int k = 0; k < c->nt; k++) {
+        if (c->key[k] != JKEY_RET) { if (c->tk[k] != JTERM_VALUE) return jg_fail(g, "a return claim over a length"); continue; }
+        if (c->tk[k] != (sret ? JTERM_LEN : JTERM_VALUE))
+            return jg_fail(g, "a return claim's returned term not of its kind: an integer's value, a slice's length");
+    }
     bool ret = false;
     for (int k = 0; k < c->nt; k++) {
         if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
@@ -3673,6 +3692,7 @@ static JClaim jg_guard_as_claim(const JGuardClaim *c) {
 static bool jg_guard_claim_ok(JG *g, const JGuardClaim *c, const IrFunc *h) {
     JClaim r = jg_guard_as_claim(c);
     if (!jg_ret_claim_ok(g, &r, h)) return false;
+    for (int k = 0; k < c->nt; k++) if (c->tk[k] != JTERM_VALUE) return jg_fail(g, "a guarded return claim over a length");
     if (c->ng < 1 || c->ng > JGUARD_MAXP) return jg_fail(g, "a guarded claim of no guard, or of more than it may have");
     for (int k = 0; k < c->ng; k++) {
         for (int j = 0; j < k; j++) if (c->gkey[j] == c->gkey[k]) return jg_fail(g, "a guarded claim naming one parameter twice in its guard");
@@ -3768,9 +3788,11 @@ static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardCl
         // the value the caller receives: the returned one where its landing in the return type keeps
         // it, else that value WRAPPED into the type (a waived narrowing, as it_wrap makes it): a fresh
         // x = v - k*2^w within the type, its recipe the wrap for a run-time check
-        int32_t rv = jb_val(&B, b->term.cond);
+        // a returned slice: its length (a return claim's JTERM_LEN of JKEY_RET), the slice landing as it is
         const IrType *rt = g->f->ret_type;
-        if (!jg_lands_exact(b->term.cond->type, rt, b->term.unchecked) && rt && rt->kind == IRT_INT && rt->bits >= 1 && rt->bits <= 64) {
+        bool sret = rt && rt->kind == IRT_SLICE;
+        int32_t rv = sret ? jb_len(&B, b->term.cond) : jb_val(&B, b->term.cond);
+        if (!sret && !jg_lands_exact(b->term.cond->type, rt, b->term.unchecked) && rt && rt->kind == IRT_INT && rt->bits >= 1 && rt->bits <= 64) {
             JLT w[1]; w[0].var = rv; w[0].c = 1;
             int32_t x = jb_fresh(&B, "ret.landed", b->term.cond->id, w, 1, 1);
             if (!B.fail) {

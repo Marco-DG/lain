@@ -696,7 +696,7 @@ int main(int argc, char **argv) {
         if (cl[c].blk == JCLAIM_RET) printf("ret: "); else printf("bb%d: ", cl[c].blk);
         for (int k = 0; k < cl[c].nt; k++) {
             if (k) printf(" + ");
-            if (cl[c].key[k] == JKEY_RET) printf("%lld*%s", (long long)cl[c].coef[k], kn[0]);
+            if (cl[c].key[k] == JKEY_RET) printf(cl[c].tk[k] == JTERM_LEN ? "%lld*len(%s)" : "%lld*%s", (long long)cl[c].coef[k], kn[0]);
             else if (cl[c].tk[k] == JTERM_LEN) printf("%lld*len(%%%d)", (long long)cl[c].coef[k], cl[c].key[k]);
             else if (cl[c].tk[k] == JTERM_EACH) printf("%lld*each(%%%d)", (long long)cl[c].coef[k], cl[c].key[k]);
             else if (cl[c].tk[k] == JTERM_UPTO) printf("upto(%%%d)", cl[c].key[k]);

@@ -1209,6 +1209,48 @@ int main(void) {
         }
     }
 
+    // a RETURNED SLICE's length (s14; census_gate's `func go() u8[] { return "xyz" }`): go returns a
+    // slice of length 3, the caller narrows len(go()) to an i8. (A) the return claim len(ret) <= 3:
+    // certified, the narrowing proved; (B) len(ret) <= 2, false at the return: uncertified; (C) no
+    // claim: the narrowing not implied; (D) a GUARDED claim over len(ret): refused
+    for (int c = 0; c < 4; c++) {
+        IrType *mu8 = ir_type_int(&A, 8, false), *mi8 = ir_type_int(&A, 8, true), *mu64 = ir_type_int(&A, 64, false);
+        IrType *a3 = ir_type_new(&A, IRT_ARRAY); a3->elem = mu8; a3->array_len = 3;
+        IrType *st = ir_type_new(&A, IRT_SLICE); st->elem = mu8;
+        IrFunc *gf = ir_func_new(&A, nm("go"), st, IR_FUNC_PURE);
+        IrValue *gx = ir_add_param(gf, mu8, nm("x"));
+        IrValue *buf = ir_alloca(gf, gf->entry, a3);
+        ir_set_ret(gf->entry, ir_make_slice(gf, gf->entry, buf, ir_const_int(gf, gf->entry, 3, mu64), mu8));
+        ir_finalize_cfg(gf);
+        IrFunc *mf = ir_func_new(&A, nm("main"), mi8, IR_FUNC_PURE);
+        IrInstr *call = ir_instr(mf, IR_CALL, st, 1); call->aux.callee = nm("go");
+        call->operands[0] = ir_const_int(mf, mf->entry, 7, mu8); ir_emit(mf->entry, call);
+        IrValue *ln = ir_slice_len(mf, mf->entry, call->result);
+        IrInstr *nw = ir_instr(mf, IR_CAST, mi8, 1); nw->operands[0] = ln; ir_emit(mf->entry, nw);
+        ir_set_ret(mf->entry, nw->result);
+        ir_finalize_cfg(mf);
+        gf->next = mf;
+        Stub sl; memset(&sl, 0, sizeof sl);
+        sl.propose = P_RANK;
+        if (c == 0 || c == 1) { JClaim *r = &sl.claims[0]; r->blk = JCLAIM_RET; r->fn = gf; r->nt = 1; r->key[0] = JKEY_RET; r->tk[0] = JTERM_LEN;
+                                r->coef[0] = 1; r->rhs = c == 0 ? 3 : 2; sl.nclaims = 1; }
+        if (c == 3) { JGuardClaim *g = &sl.gc[0]; g->fn = gf; g->nt = 1; g->key[0] = JKEY_RET; g->tk[0] = JTERM_LEN; g->coef[0] = 1; g->rhs = 3;
+                      g->ng = 1; g->gkey[0] = gx->id; g->gval[0] = 7; sl.ngc = 1; }
+        CHECK(run(gf, &sl, true, sizeof region, err), "judges: %s", err);
+        int nhi = 0, phi = 0;
+        for (const char *l = recs; *l; ) {
+            const char *e = strchr(l, '\n'); size_t n = e ? (size_t)(e - l) : strlen(l);
+            char v[24] = "", pt[64] = "", kd[64] = "", line[600]; snprintf(line, sizeof line, "%.*s", (int)(n < 599 ? n : 599), l);
+            if (sscanf(line, "%23s %63s %63s", v, pt, kd) == 3 && !strcmp(kd, "narrow.hi")) { nhi++; phi += !strcmp(v, "proved"); }
+            l = e ? e + 1 : l + n;
+        }
+        if (c == 0) CHECK(nhi == 1 && phi == 1 && !strstr(recs, "uncertified") && !strstr(recs, "refused"), "len(ret) <= 3: the narrowing proved:\n%s", recs);
+        else if (c == 1) CHECK(strstr(recs, "uncertified") != NULL && phi == 0, "len(ret) <= 2: uncertified:\n%s", recs);
+        else if (c == 2) CHECK(nhi == 1 && phi == 0 && strstr(recs, "not-implied") != NULL, "no claim: the narrowing not implied:\n%s", recs);
+        else CHECK(strstr(recs, "guarded return claim over a length") != NULL, "a guarded claim over len(ret): refused:\n%s", recs);
+    }
+    printf("  a returned slice's length: return claims on len(ret), owed at the return, stated at the call\n");
+
     // a return that WRAPS (s8): g(p, q) returns the i32 sum p + q into an i8, waived (`unsafe { return
     // p + q }`), so g(100, 100) is -56. The caller divides by g(100, 100) + 57. (A) the guarded claim ret
     // in [-56, -56]: certified (its post is owed about the landed value), the division proved; (B) ret in
