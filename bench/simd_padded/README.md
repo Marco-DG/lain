@@ -8,7 +8,7 @@ to bound the load's last byte `buf[i+15] ≤ 4110 < 4112`. One compare per 16-by
 
 The doctrine (`proof_licensed_performance.md` §5.2) long held this branchless tail up as
 "the real payoff" of the padded-buffer invariant. So — per the doctrine's own measurement
-contract — we measured it against the **guarded** P2b form (`while (i+15) in buf and
+contract — we measured it against the **guarded** P2b form (`while (i+15) in 0..buf.len and
 i +% 16 <= n { … }` + a scalar tail), on a whitespace count.
 
 ```

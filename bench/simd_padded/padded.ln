@@ -2,13 +2,13 @@
 // tail (constraint-chaining, no in-guard, no scalar cleanup) actually run faster?
 // Both count whitespace (space=32) 16 bytes at a time via @load+@movemask+@popcount.
 
-// GUARDED: the P2b form. Wide loads proven by the last-byte in-guard `(i+15) in buf`;
+// GUARDED: the P2b form. Wide loads proven by the last-byte in-guard `(i+15) in 0..buf.len`;
 // a scalar tail finishes the final partial chunk. Two comparisons + a branch per
 // 16-byte block, plus the tail loop.
 func count_guarded(buf u8[4096], n u32 < 4097) u32 {
     var i u32 = 0
     var t u32 = 0
-    while (i + 15) in buf and i +% 16 <= n {
+    while (i + 15) in 0..buf.len and i +% 16 <= n {
         t = t +% (@popcount(@movemask(@load(u8x16, buf, i) == 32) & (65535 as u32)) as u32)
         i = i +% 16
     }
