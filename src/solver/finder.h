@@ -2106,7 +2106,27 @@ static bool fd_frame_push(JCand **cd, int32_t *ncd, int32_t *ccd, IrFunc *f, int
     for (int32_t k = 0; k < nt; k++) { c->c.key[k] = key[k]; c->c.tk[k] = tk[k]; c->c.fld[k] = fld[k]; c->c.coef[k] = coef[k]; }
     return true;
 }
-static bool fd_frame_candidates(IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
+// Whether a function of the module calls f from inside one of its loops: where a frame summary can
+// keep a caller's loop invariant across the call (ring_buffer's pop). Called outside every loop, a
+// summary helps no invariant, and its candidates cost the callee's proof: zune.ln's convert_days
+// (`var t SystemTime`, four fields: 24 candidates, each bounded over its loop's VCs), which main
+// calls once, took the finder 162e6 -> 226e6 operations (+40%, 10.5 -> 15.6 s; TCW).
+static bool fd_called_in_loop(const JFinder *F, const IrFunc *f) {
+    for (IrFunc *g = F->mod; g; g = g->next) {
+        if (g->is_extern || !g->entry || !fd_same_module(g, f)) continue;
+        FdNest NN; memset(&NN, 0, sizeof NN);
+        if (!fd_nest_build(g, &NN)) { fd_nest_free(&NN); return true; }   // no room to ask: as before
+        bool hit = false;
+        for (IrBlock *b = g->blocks; b && !hit; b = b->next)
+            for (IrInstr *i = b->instrs; i && !hit; i = i->next)
+                hit = i->op == IR_CALL && fd_callee(F, i) == f && fd_nest_around(&NN, b->id, -1) >= 0;
+        fd_nest_free(&NN);
+        if (hit) return true;
+    }
+    return false;
+}
+static bool fd_frame_candidates(const JFinder *F, IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
+    if (!fd_called_in_loop(F, f)) return true;
     // the result's terms: the integer returned (fld unread), or each integer field of a struct
     const IrType *rt = f->ret_type;
     int16_t rf[8]; FdRange rr[8]; int nr = 0;
@@ -2146,7 +2166,7 @@ static bool fd_frame_candidates(IrFunc *f, JCand **cd, int32_t *ncd, int32_t *cc
 }
 static bool ret_candidates(JFinder *F, IrFunc *f, JCand **cd, int32_t *ncd, int32_t *ccd) {
     *ncd = 0;
-    if (!f->incomplete && called_here(F, f) && !fd_frame_candidates(f, cd, ncd, ccd)) return false;
+    if (!f->incomplete && called_here(F, f) && !fd_frame_candidates(F, f, cd, ncd, ccd)) return false;
     if (f->ret_type && f->ret_type->kind == IRT_SLICE && !f->incomplete && called_here(F, f))
         return ret_len_candidates(f, cd, ncd, ccd);
     if (!fd_is_int(f->ret_type) || f->incomplete || !called_here(F, f)) return true;
