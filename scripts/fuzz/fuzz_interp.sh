@@ -13,11 +13,29 @@
 #   UB            undefined behaviour inside `unsafe` (a generator bug: its programs should be
 #                 defined, or the oracle of that generator means nothing)
 #   CRASH/BUDGET  the interpreter died, or ran out of steps where the C program finished
-#   LONG          (not a bug) the C program ran past its 20 s AND the interpreter past its steps: an
+#   INTERNAL      the compiler failed on a generated program (exit 70, a signal): no verdict at all.
+#                 Until 2026-10-21 every non-zero exit counted as `rejected`, so an internal error
+#                 read as the analysis refusing the program
+#   LONG          (not a bug) the C program ran past its 20 s AND the interpreter stopped on its own
+#                 limit, its step budget or its recursion depth (RECURSION TOO DEEP: fuzz_cycles seed
+#                 20261021012, until 2026-10-21 a DIFFER); either limit where the C FINISHED stays a
+#                 bug (BUDGET, or DIFFER for the depth). An
 #                 accepted program that runs too long to compare. Under the judge (PE.9) the default
 #                 accepts recursions VRA refused, some exponential: fuzz_cycles' `T(x, y) = T(x, y+1)
 #                 + T(x-1, y-1)` ends (ranked 56x - y + 147) after binomially many calls. Whether an
 #                 accepted program ENDS is fuzz_cycles' and fuzz_loops' question, with ground truth.
+#
+# Since PE.9's flip (2426d11) the judge decides by default, and its compile is slow on loop-heavy
+# programs (a 37-line fuzz_window program: 66 s, against 0.26 s under --judge=vra, all of it finder
+# work). Two consequences here:
+#   - the acceptance compile (the judge, the decider) has 300 s; a compile past that is counted as
+#     a COMPILE TIMEOUT, not as rejected;
+#   - --check-invariants checks the RANGE ANALYSIS's states, so it runs under --judge=vra: the
+#     check it means, without paying the judge's compile a second time. Under VRA it also checks
+#     every proof VRA discharged. A program VRA refuses (the judge proves more) is run by the
+#     judge's own `--interpret`, every proof the JUDGE discharged checked as it is used, and is
+#     counted. For a program both accept, the interpreter checks VRA's proofs, not the judge's;
+#     the judge's are then held only to the C leg's output.
 #
 #   bash fuzz_interp.sh [N]                    # N programs per generator (default 30)
 #   RANDOM_SEED=123 bash fuzz_interp.sh 10     # reproducible
@@ -28,7 +46,7 @@ LAIN="$(pwd)/lain"; [ -x "$LAIN" ] || { echo "build first: make"; exit 2; }
 N="${1:-30}"; BASE=${RANDOM_SEED:-$$}
 SC="$(mktemp -d)"; trap 'rm -rf "$SC"' EXIT
 DEFS="-Dlibc_printf=printf -Dlibc_puts=puts -Dlibc_malloc=malloc -Dlibc_free=free -Dlibc_calloc=calloc -Dlibc_realloc=realloc"
-agree=0 diff=0 proof=0 inv=0 ub=0 crash=0 unsup=0 rej=0 cfail=0 genfail=0 long=0
+agree=0 diff=0 proof=0 inv=0 ub=0 crash=0 unsup=0 rej=0 cfail=0 genfail=0 long=0 ctime=0 internal=0 jonly=0
 for g in "$HERE"/fuzz_*.py; do
   gn=$(basename "$g" .py)
   # Not every fuzz_*.py is a program generator. fuzz_malformed.py MUTATES a corpus program (a source,
@@ -40,16 +58,24 @@ for g in "$HERE"/fuzz_*.py; do
   for ((k=0; k<N; k++)); do
     seed=$((BASE * 1000 + k)); f="$SC/${gn}_$k.ln"
     python3 "$g" "$seed" > "$f" 2>/dev/null || { genfail=$((genfail+1)); continue; }
-    timeout 60 "$LAIN" "$f" -o "$SC/x.c" >/dev/null 2>&1 || { rej=$((rej+1)); continue; }
+    timeout -s KILL 300 "$LAIN" "$f" -o "$SC/x.c" >/dev/null 2>"$SC/x.err"; cr=$?
+    if [ $cr -eq 1 ]; then rej=$((rej+1)); continue; fi
+    if [ $cr -eq 137 ]; then ctime=$((ctime+1)); echo "── COMPILE TIMEOUT  $gn seed=$seed (past 300 s)"; continue; fi
+    if [ $cr -ne 0 ]; then internal=$((internal+1)); echo "── INTERNAL($cr)  $gn seed=$seed :: $(grep -v '^\s*$' "$SC/x.err" | head -1 | cut -c1-120)"; continue; fi
     gcc -O2 -o "$SC/x" "$SC/x.c" $DEFS -w -lm 2>/dev/null || { cfail=$((cfail+1)); continue; }
     ( cd "$SC" && timeout 20 ./x > c.out 2>/dev/null; echo $? > c.st ) 2>/dev/null
-    LAIN_INTERP_STEPS=50000000 timeout 60 "$LAIN" "$f" --check-invariants > "$SC/i.out" 2>"$SC/i.err"; is=$?
+    LAIN_INTERP_STEPS=50000000 timeout 60 "$LAIN" "$f" --check-invariants --judge=vra > "$SC/i.out" 2>"$SC/i.err"; is=$?
+    if grep -q '^\[E[0-9]*\] Error' "$SC/i.err"; then      # VRA refuses what the judge accepted
+      jonly=$((jonly+1))
+      LAIN_INTERP_STEPS=50000000 timeout 360 "$LAIN" "$f" --interpret > "$SC/i.out" 2>"$SC/i.err"; is=$?
+    fi
     m=$(grep -m1 'lain --interpret' "$SC/i.err")
     if   echo "$m" | grep -q "INVARIANT VIOLATED";   then inv=$((inv+1)); echo "── INVARIANT  $gn seed=$seed :: $m"
     elif echo "$m" | grep -q "PROOF FAILED\|TRUSTED"; then proof=$((proof+1)); echo "── PROOF  $gn seed=$seed :: $m"
     elif echo "$m" | grep -q "UNDEFINED BEHAVIOUR";  then ub=$((ub+1));       echo "── UB  $gn seed=$seed :: $m"
     elif echo "$m" | grep -q "NOT MODELLED";         then unsup=$((unsup+1))
-    elif echo "$m" | grep -q "STEP BUDGET" && [ "$(cat "$SC/c.st")" = 124 ]; then long=$((long+1)); echo "── LONG  $gn seed=$seed (C past 20 s, interpreter past its steps)"
+    elif echo "$m" | grep -q "STEP BUDGET\|RECURSION TOO DEEP" && [ "$(cat "$SC/c.st")" = 124 ]; then
+      long=$((long+1)); echo "── LONG  $gn seed=$seed (C past 20 s, interpreter past its own limit: $(echo "$m" | grep -oE 'STEP BUDGET|RECURSION TOO DEEP'))"
     elif echo "$m" | grep -q "STEP BUDGET";          then crash=$((crash+1)); echo "── BUDGET  $gn seed=$seed"
     elif [ "$is" = "$(cat "$SC/c.st")" ] && cmp -s "$SC/c.out" "$SC/i.out"; then agree=$((agree+1))
     elif [ "$is" -ge 124 ] && [ "$is" != "$(cat "$SC/c.st")" ]; then crash=$((crash+1)); echo "── CRASH($is)  $gn seed=$seed"
@@ -57,8 +83,9 @@ for g in "$HERE"/fuzz_*.py; do
   done
 done
 echo "=================================================================="
-echo "fuzz_interp: $N programs per generator   agree=$agree   (rejected=$rej, not modelled=$unsup, C link failed=$cfail, too long to compare=$long)"
-echo "  bugs:  DIFFER=$diff  PROOF=$proof  INVARIANT=$inv  UB=$ub  CRASH=$crash"
+echo "fuzz_interp: $N programs per generator   agree=$agree   (rejected=$rej, compile timeout=$ctime, not modelled=$unsup, C link failed=$cfail, too long to compare=$long)"
+echo "  run by the judge's interpreter (VRA refuses them): $jonly"
+echo "  bugs:  DIFFER=$diff  PROOF=$proof  INVARIANT=$inv  UB=$ub  CRASH=$crash  INTERNAL=$internal"
 [ $genfail -gt 0 ] && echo "  GENERATOR-FAIL=$genfail   (harness bug — these tested NOTHING)"
 echo "=================================================================="
-[ $((diff + proof + inv + ub + crash + genfail)) -eq 0 ]
+[ $((diff + proof + inv + ub + crash + genfail + internal)) -eq 0 ]

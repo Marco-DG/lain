@@ -15,7 +15,7 @@ N="${1:-300}"
 seed="${RANDOM_SEED:-$$}"
 RANDOM=$seed
 
-crashes=0; unsound=0; accepted=0; rejected=0
+crashes=0; unsound=0; accepted=0; rejected=0; ctime=0; internal=0
 
 sizes=(4 8 16 32 64)
 slice_gens=0
@@ -83,8 +83,20 @@ EOF
     # the generator called libc_printf without declaring it, and a new front-end check (E127)
     # turned that into an error. The fuzzer reported 0 unsound, truthfully and uselessly.
     # Anything but the numeric diagnostics is a broken GENERATOR, and it says so loudly.
-    if ! $LAIN "$src" -o "$cfile" >/dev/null 2>&1; then
-        why=$($LAIN "$src" -o /dev/null 2>&1 | grep -m1 -oE '^\[E[0-9]+\]')
+    # ONE compile, its refusal read from what it printed. The reason used to come from a second
+    # compile of every refused program: under the judge (PE.9's flip, ~4 s a program here, 9 in 10
+    # refused) that doubled the run, and the chain killed it at 3000 s. A compile past 300 s is a
+    # COMPILE TIMEOUT, not a refusal; an exit other than 0 and 1 is the compiler failing (INTERNAL).
+    timeout -s KILL 300 $LAIN "$src" -o "$cfile" >/dev/null 2>"$SC/cerr_$i"; crc=$?
+    if [ $crc -eq 137 ]; then
+        ctime=$((ctime+1)); echo "  COMPILE TIMEOUT (past 300 s): $src"; continue
+    fi
+    if [ $crc -ne 0 ] && [ $crc -ne 1 ]; then
+        internal=$((internal+1)); echo "  ★ INTERNAL (lain exit $crc): $src :: $(grep -v '^\s*$' "$SC/cerr_$i" | head -1 | cut -c1-120)"
+        continue
+    fi
+    if [ $crc -eq 1 ]; then
+        why=$(grep -m1 -oE '^\[E[0-9]+\]' "$SC/cerr_$i")
         case "$why" in
             "[E085]"|"[E086]"|"[E082]"|"[E087]"|"") ;;    # the obligations this fuzzer is about
             *) echo "  ★ GENERATOR BROKEN: $why on a generated program — this fuzzer has no teeth"
@@ -111,7 +123,7 @@ EOF
     fi
 done
 
-echo "fuzz_bsearch: gens=$N (slice carrier: $slice_gens) accepted=$accepted rejected=$rejected"
-echo "  bugs:  broken-C=$crashes  UNSOUND=$unsound"
+echo "fuzz_bsearch: gens=$N (slice carrier: $slice_gens) accepted=$accepted rejected=$rejected compile-timeout=$ctime"
+echo "  bugs:  broken-C=$crashes  UNSOUND=$unsound  INTERNAL=$internal"
 rm -rf "$SC"
-[ $((crashes + unsound)) -eq 0 ]
+[ $((crashes + unsound + internal)) -eq 0 ]
