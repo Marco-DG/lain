@@ -563,7 +563,10 @@ static JAnswer lia_cone(const JVc *vc, JWork limit, void *mem, size_t size) {
 // It is found with the decision procedure alone, so nothing new is trusted and nothing new is
 // searched: a model gives a lower bound L, a certificate of `obj <= U` an upper bound, the upper
 // bound is first found by doubling steps above L, and the gap is closed by halving. Each query is
-// one lia_solve; the work is summed over all of them against one limit.
+// one lia_solve; the work is summed over all of them against one limit. Two regions take turns: a
+// query runs in the free one, and a certificate's region is kept until a better one replaces it,
+// so the last certificate of `obj <= hi` is the answer's, not asked again (that final query was
+// one more in every maximization).
 typedef enum { LIA_MAX_BOUND, LIA_MAX_EMPTY, LIA_MAX_NONE, LIA_MAX_STOP } LMaxKind;
 typedef struct {
     LMaxKind k;      // BOUND: b, vc, cert, model. EMPTY: the hypotheses alone are refuted (vc's
@@ -591,15 +594,17 @@ static LMax lia_maximize(const JVc *hyps, const JTerm *obj, int32_t nt, JWork li
     LMax R; memset(&R, 0, sizeof R);
     LSol N; memset(&N, 0, sizeof N);                        // checked arithmetic only
     int32_t nv = hyps->nvars;
-    // The region: the best model's values first, then the final query's region, then the scratch
-    // every other query reuses.
+    // The region: the best model's values first, then two equal halves that take turns, the kept
+    // certificate's and the next query's.
     size_t keep = ((sizeof(JInt) * (size_t)(nv > 0 ? nv : 1)) + 15u) & ~(size_t)15u;
     if (size < keep + 2 * 4096) { R.k = LIA_MAX_STOP; R.stop = J_ANS_CAPACITY; return R; }
     JInt *best = (JInt *)mem;
-    char *fin = (char *)mem + keep;
+    char *fin = (char *)mem + keep;                          // the kept certificate's region
     size_t fsz = (size - keep) / 2;
-    char *wrk = fin + fsz;
+    char *wrk = fin + fsz;                                   // the next query's
     size_t wsz = size - keep - fsz;
+    if (wsz < fsz) fsz = wsz; else wsz = fsz;                // the two take turns: one size
+    JAnswer kept; memset(&kept, 0, sizeof kept); bool have_kept = false;
     JVc q = *hyps;
     memset(&q.goal, 0, sizeof q.goal);
     q.goal.op = J_LE;
@@ -613,11 +618,7 @@ static LMax lia_maximize(const JVc *hyps, const JTerm *obj, int32_t nt, JWork li
     } while (0)
     JAnswer A;
     LMAX_ASK(wrk, wsz);
-    if (A.k == J_ANS_CERT) {
-        LMAX_ASK(fin, fsz);                                  // the same query, kept
-        if (A.k != J_ANS_CERT) { R.k = LIA_MAX_STOP; R.stop = J_ANS_CAPACITY; return R; }
-        R.k = LIA_MAX_EMPTY; R.vc = q; R.cert = A.cert; return R;
-    }
+    if (A.k == J_ANS_CERT) { R.k = LIA_MAX_EMPTY; R.vc = q; R.cert = A.cert; return R; }   // its region is the answer's
     if (A.k != J_ANS_MODEL) { R.k = LIA_MAX_STOP; R.stop = A.k; return R; }
     memcpy(best, A.model.val, sizeof(JInt) * (size_t)nv);
     JModel bm; bm.id = hyps->id; bm.val = best; bm.n = nv;
@@ -637,7 +638,11 @@ static LMax lia_maximize(const JVc *hyps, const JTerm *obj, int32_t nt, JWork li
         }
         ls_to_j(ask, &q.goal.rhs);
         LMAX_ASK(wrk, wsz);
-        if (A.k == J_ANS_CERT) { hi = ask; have_hi = true; if (hi < lo) { N.cap = true; break; } }
+        if (A.k == J_ANS_CERT) {
+            hi = ask; have_hi = true; if (hi < lo) { N.cap = true; break; }
+            kept = A; have_kept = true;                      // keep its region: the next query takes the other
+            char *t = fin; fin = wrk; wrk = t;
+        }
         else if (A.k == J_ANS_MODEL) {
             LSi v = lmax_eval(&N, obj, nt, &A.model);
             if (v <= ask) { N.cap = true; break; }           // a model must violate the goal
@@ -646,12 +651,10 @@ static LMax lia_maximize(const JVc *hyps, const JTerm *obj, int32_t nt, JWork li
             if (have_hi && lo > hi) { N.cap = true; break; }
         } else { R.k = LIA_MAX_STOP; R.stop = A.k; return R; }
     }
-    if (N.cap) { R.k = LIA_MAX_STOP; R.stop = J_ANS_CAPACITY; return R; }
-    ls_to_j(hi, &q.goal.rhs);
-    LMAX_ASK(fin, fsz);                                      // the certificate of `obj <= b`, kept
     #undef LMAX_ASK
-    if (A.k != J_ANS_CERT) { R.k = LIA_MAX_STOP; R.stop = A.k == J_ANS_MODEL ? J_ANS_CAPACITY : A.k; return R; }
-    R.k = LIA_MAX_BOUND; ls_to_j(hi, &R.b); R.vc = q; R.cert = A.cert; R.model = bm;
+    if (N.cap || !have_kept) { R.k = LIA_MAX_STOP; R.stop = J_ANS_CAPACITY; return R; }
+    ls_to_j(hi, &q.goal.rhs);                                // the certificate of `obj <= hi`, kept
+    R.k = LIA_MAX_BOUND; ls_to_j(hi, &R.b); R.vc = q; R.cert = kept.cert; R.model = bm;
     return R;
 }
 
