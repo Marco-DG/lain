@@ -3217,6 +3217,22 @@ static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *
     }
     jb_facts(B);
     if (B->fail) return false;
+    // a disjunction of ONE case is that case's conjunction, stated as plain hypotheses (the format
+    // refuses a disjunction of fewer than two): a variable-index load of a one-element array, a
+    // one-entry table, a one-bit count. The first stays where it is, so no index into the
+    // hypotheses (an R7 join's) moves; any further conjunct is appended, with the same origin
+    for (int32_t i = 0, n0 = B->nhyps; i < n0 && !B->fail; i++) {
+        if (!B->hyps[i].disj || B->hyps[i].ndis != 1) continue;
+        JConj one = B->hyps[i].dis[0];
+        const char *origin = B->hyps[i].origin;
+        if (one.nc < 1) { B->fail = true; break; }            // an empty conjunction: none is made
+        B->hyps[i].disj = false; B->hyps[i].ndis = 0; B->hyps[i].dis = NULL; B->hyps[i].cons = one.c[0];
+        for (int32_t k = 1; k < one.nc; k++) {
+            JHyp *h = jb_hyp(B, origin);                      // may move B->hyps: reread by index
+            if (h) h->cons = one.c[k];
+        }
+    }
+    if (B->fail) return false;
     JG *g = B->g;
     memset(o, 0, sizeof *o);
     o->at = at; o->blk = g->blk[B->blk]; o->idx = B->idx;

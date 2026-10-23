@@ -1974,6 +1974,9 @@ ty=Slice_i32 scalar
 rc=0
 out=
 at=nonnull 8
+### tests/trust/judge_one_case_pass.ln
+rc=0
+out=
 ### tests/trust/judge_signed_division_pass.ln
 rc=0
 out=

@@ -1,0 +1,22 @@
+// A disjunction of ONE case (MCW, fuzz_trust gen_scanbounds: exit 70, "the judge: solver-bug ...
+// a disjunction of fewer than two disjuncts"): a variable-index load of a one-element array is one
+// disjunct per element, and so is a load of a one-entry module table. Such a disjunction is that
+// case's conjunction, stated as plain hypotheses. Both loops are proved, and s is 70 + 5.
+T u8[1] = [5]
+
+func main() i32 {
+    var a = [70]
+    var s = 0
+    var i = 0
+    while i < 1 decreasing 1 - i {
+        s = s + a[i]
+        i += 1
+    }
+    var j usize = 0
+    while j < 1 decreasing 1 - j {
+        s = s + T[j] as i32
+        j += 1
+    }
+    if s != 75 { return 1 }
+    return 0
+}
