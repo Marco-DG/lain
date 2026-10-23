@@ -153,14 +153,28 @@ static bool same_form(const JClaim *a, const JClaim *b) {
 // VCs than its region holds), only the function's NEW claims go first, so a round's candidates
 // never cost what earlier rounds kept (2519 candidates once cost the SIMD lexer's `tokenize` its
 // 142 claims: "out of memory building a VC").
+// INCREMENTAL: an iteration re-solves only the functions whose VCs can have changed. A function's
+// claim VCs read its own claims and, at its calls, the return claims of its callees; one whose own
+// claims all held and none of whose callees lost a claim has the same VCs next time, all implied
+// again. So after the first iteration, a function is solved again only if a claim of its own was
+// dropped, it calls a function that lost one, or it calls through a pointer (any target may have).
+// Exact in the claims kept. simdlex.ln: Houdini was 32% of the judge's run, every iteration
+// solving every function's VCs again.
 static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) {
     char err[200];
+    int32_t nfn = 0;
+    for (IrFunc *f = F->mod; f; f = f->next) nfn++;
+    uint8_t *dirty = malloc((size_t)(nfn ? nfn : 1)), *lost = calloc((size_t)(nfn ? nfn : 1), 1);
+    if (!dirty || !lost) { free(dirty); free(lost); return -1; }
+    memset(dirty, 1, (size_t)(nfn ? nfn : 1));
     for (bool again = nc > 0; again; ) {
         again = false;
         uint8_t *bad = calloc((size_t)nc, 1);
-        if (!bad) return -1;
+        if (!bad) { free(dirty); free(lost); return -1; }
+        int32_t fk = -1;
         for (IrFunc *f = F->mod; f; f = f->next) {
-            if (f->is_extern || !f->entry) continue;
+            fk++;
+            if (f->is_extern || !f->entry || !dirty[fk]) continue;
             JClaimVc *o; int32_t n;
             if (!F->gen->claim_vcs(F->gen->ctx, f, cl, nc, NULL, 0, JGEN_CLAIMS, &o, &n, err, sizeof err)) {
                 bool fresh = false;                          // this round's: drop those, then retry
@@ -171,6 +185,31 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) 
             for (int32_t q = 0; q < n; q++)
                 if (!bad[o[q].claim] && lia_solve(&o[q].vc, F->lim, F->work, F->worksz).k != J_ANS_CERT) bad[o[q].claim] = 1;
         }
+        // the functions that lost a claim, then next iteration's: those and their callers
+        memset(lost, 0, (size_t)(nfn ? nfn : 1));
+        bool any = false;
+        for (int32_t ci = 0; ci < nc; ci++) {
+            if (!bad[ci]) continue;
+            int32_t k = 0;
+            for (IrFunc *h = F->mod; h && h != cl[ci].fn; h = h->next) k++;
+            if (k < nfn) lost[k] = 1;
+            any = true;
+        }
+        fk = -1;
+        for (IrFunc *f = F->mod; f; f = f->next) {
+            fk++;
+            dirty[fk] = lost[fk];
+            if (!any || dirty[fk] || f->is_extern || !f->entry) continue;
+            for (IrBlock *b = f->blocks; b && !dirty[fk]; b = b->next)
+                for (IrInstr *i = b->instrs; i && !dirty[fk]; i = i->next) {
+                    if (i->op != IR_CALL) continue;
+                    const IrFunc *g = fd_callee(F, i);
+                    if (!g) { dirty[fk] = 1; continue; }     // through a pointer (or unresolved): solve
+                    int32_t kg = 0;
+                    for (IrFunc *h = F->mod; h && h != g; h = h->next) kg++;
+                    if (kg < nfn && lost[kg]) dirty[fk] = 1;
+                }
+        }
         int32_t keep = 0, kold = 0;
         for (int32_t ci = 0; ci < nc; ci++) {
             if (bad[ci]) { F->dropped++; again = true; continue; }
@@ -180,6 +219,7 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) 
         nc = keep; nold = kold;                              // the earlier rounds' still lead
         free(bad);
     }
+    free(dirty); free(lost);
     return nc;
 }
 // ── PE.5, PE.7: a loop's paths, merged into one variable list for rank.h ─────────────────────
