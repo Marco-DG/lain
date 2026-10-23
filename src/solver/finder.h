@@ -39,6 +39,7 @@ typedef struct {
     JGuardClaim *gc; int32_t ngc;        // the last call's guarded return claims (malloc'd; the caller frees)
     bool oom;                            // the last call returned no claims because memory ran out
     JRank *rk; int32_t nrk;              // the last call's ranking claims (malloc'd; the caller frees)
+    struct FdMemo *memo;                 // during a call: the solver's answers by VC (fd_implied)
 } JFinder;
 
 // ── its own small helpers (the generator's are the judge's; these are untrusted copies) ─────────
@@ -145,6 +146,105 @@ static bool same_form(const JClaim *a, const JClaim *b) {
     for (int k = 0; k < a->nt; k++) if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k]) return false;
     return true;
 }
+// ── Questions asked again ─────────────────────────────────────────────────────────────────────
+// Houdini's iterations and the finder's rounds put the same VC to the solver again: a candidate one
+// round dropped is proposed again by the next and dropped the same way (zune.ln: each of the three
+// rounds' Houdini repeated the last one's five iterations), and a candidate's bound is maximized
+// again in each round over VCs the new claims left as they were. An answer is a fact about the VC:
+// implied (a certificate) or not (a model); the greatest value of its goal's sum, its hypotheses
+// unsatisfiable, or no bound below lia_maximize's limit. So each is kept for the call, keyed by a
+// 128-bit FINGERPRINT of the VC's numbers (its variable count, every hypothesis, the goal) and its
+// function's name, and a VC met again is answered from it. A budget or capacity answer depends on
+// what was left and is never kept; the name keeps one function's answers from charging another's
+// account. Two VCs sharing a fingerprint would share an answer (for n VCs a chance about
+// n^2 / 2^129): a non-inductive claim kept so is still owed by the judge, which refuses it loudly,
+// and a true one dropped costs a proof, never soundness. Keeping the VCs themselves instead would
+// take 125 MB on simdlex.ln.
+typedef struct { uint64_t a, b; } FdPrint;
+typedef struct { FdPrint p; uint8_t tag, k; JInt b; } FdMemoE;   // tag 1: lia_solve; 2: lia_maximize
+struct FdMemo { FdMemoE *e; size_t cap, n; };
+static uint64_t fd_mix(uint64_t x) {                     // splitmix64's finalizer
+    x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ull; x ^= x >> 27; x *= 0x94d049bb133111ebull; return x ^ (x >> 31);
+}
+static void fd_fpw(FdPrint *p, uint64_t x) { p->a = fd_mix(p->a ^ x); p->b = fd_mix(p->b + (x ^ 0x9e3779b97f4a7c15ull)); }
+static void fd_fpint(FdPrint *p, const JInt *v) {
+    fd_fpw(p, (uint64_t)v->neg << 8 | v->n);
+    for (int i = 0; i < v->n; i++) fd_fpw(p, v->limb[i]);
+}
+static void fd_fpcons(FdPrint *p, const JCons *c, bool sum_only) {
+    fd_fpw(p, (uint64_t)(uint32_t)c->nt);
+    if (!sum_only) { fd_fpw(p, (uint64_t)c->op); fd_fpint(p, &c->rhs); }
+    for (int32_t i = 0; i < c->nt; i++) { fd_fpw(p, (uint64_t)(uint32_t)c->t[i].var); fd_fpint(p, &c->t[i].coef); }
+}
+// lia_maximize reads its goal's sum only: the operator and constant are left out of tag 2's
+static FdPrint fd_print(const JVc *v, uint8_t tag) {
+    FdPrint p = { 0x243f6a8885a308d3ull, 0x13198a2e03707344ull };
+    fd_fpw(&p, tag);
+    for (const char *s = v->id.fn ? v->id.fn : ""; *s; s++) fd_fpw(&p, (unsigned char)*s);
+    fd_fpw(&p, 0x100);
+    fd_fpw(&p, (uint64_t)(uint32_t)v->nvars); fd_fpw(&p, (uint64_t)(uint32_t)v->nhyps);
+    for (int32_t i = 0; i < v->nhyps; i++) {
+        const JHyp *y = &v->hyps[i];
+        fd_fpw(&p, y->disj);
+        if (!y->disj) { fd_fpcons(&p, &y->cons, false); continue; }
+        fd_fpw(&p, (uint64_t)(uint32_t)y->ndis);
+        for (int32_t d = 0; d < y->ndis; d++) {
+            fd_fpw(&p, (uint64_t)(uint32_t)y->dis[d].nc);
+            for (int32_t k = 0; k < y->dis[d].nc; k++) fd_fpcons(&p, &y->dis[d].c[k], false);
+        }
+    }
+    fd_fpcons(&p, &v->goal, tag == 2);
+    return p;
+}
+static const FdMemoE *fd_memo_get(const JFinder *F, FdPrint p, uint8_t tag) {
+    const struct FdMemo *M = F->memo;
+    if (!M || !M->cap) return NULL;
+    for (size_t i = p.a & (M->cap - 1); M->e[i].tag; i = (i + 1) & (M->cap - 1))
+        if (M->e[i].tag == tag && M->e[i].p.a == p.a && M->e[i].p.b == p.b) return &M->e[i];
+    return NULL;
+}
+static void fd_memo_put(JFinder *F, FdPrint p, uint8_t tag, uint8_t k, const JInt *b) {   // no memory: not kept
+    struct FdMemo *M = F->memo;
+    if (!M) return;
+    if (2 * (M->n + 1) > M->cap) {
+        size_t nc = M->cap ? 2 * M->cap : 1024;
+        FdMemoE *ne = calloc(nc, sizeof *ne);
+        if (!ne) return;
+        for (size_t i = 0; i < M->cap; i++) {
+            if (!M->e[i].tag) continue;
+            size_t j = M->e[i].p.a & (nc - 1);
+            while (ne[j].tag) j = (j + 1) & (nc - 1);
+            ne[j] = M->e[i];
+        }
+        free(M->e); M->e = ne; M->cap = nc;
+    }
+    size_t i = p.a & (M->cap - 1);
+    while (M->e[i].tag) i = (i + 1) & (M->cap - 1);
+    memset(&M->e[i], 0, sizeof M->e[i]);
+    M->e[i].p = p; M->e[i].tag = tag; M->e[i].k = k;
+    if (b) M->e[i].b = *b;
+    M->n++;
+}
+// Whether v is implied (lia_solve answers a certificate), from the memo when v was asked before.
+static bool fd_implied(JFinder *F, const JVc *v) {
+    FdPrint p = fd_print(v, 1);
+    const FdMemoE *e = fd_memo_get(F, p, 1);
+    if (e) return e->k == J_ANS_CERT;
+    JAnswerKind k = lia_solve(v, F->lim, F->work, F->worksz).k;
+    if (k == J_ANS_CERT || k == J_ANS_MODEL) fd_memo_put(F, p, 1, (uint8_t)k, NULL);
+    return k == J_ANS_CERT;
+}
+// lia_maximize of v's goal sum over its hypotheses: the kind and the bound only (no certificate,
+// no model: a caller reads x.k and x.b), from the memo when v was asked before.
+static LMax fd_max_goal(JFinder *F, const JVc *v) {
+    FdPrint p = fd_print(v, 2);
+    const FdMemoE *e = fd_memo_get(F, p, 2);
+    LMax x;
+    if (e) { memset(&x, 0, sizeof x); x.k = (LMaxKind)e->k; x.b = e->b; return x; }
+    x = lia_maximize(v, v->goal.t, v->goal.nt, F->lim, F->work, F->worksz);
+    if (x.k != LIA_MAX_STOP) fd_memo_put(F, p, 2, (uint8_t)x.k, &x.b);
+    return x;
+}
 // Houdini over the module's claims cl[0..nc): each function's claim VCs (its cut points' and its
 // returns'), solved; a claim one of them is not implied by is dropped, and the rest solved again,
 // until none is. The claims left, in order. A function the generator refuses has none of its own,
@@ -183,7 +283,7 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) 
                 continue;
             }
             for (int32_t q = 0; q < n; q++)
-                if (!bad[o[q].claim] && lia_solve(&o[q].vc, F->lim, F->work, F->worksz).k != J_ANS_CERT) bad[o[q].claim] = 1;
+                if (!bad[o[q].claim] && !fd_implied(F, &o[q].vc)) bad[o[q].claim] = 1;
         }
         // the functions that lost a claim, then next iteration's: those and their callers
         memset(lost, 0, (size_t)(nfn ? nfn : 1));
@@ -2038,8 +2138,8 @@ static bool bound_candidates(JFinder *F, const JCand *cd, int32_t ncd, const JCl
                 if (o[q].claim != base + c) continue;
                 JVc v = o[q].vc;
                 fd_jint(&v.goal.rhs, cd[c].tb - 1);
-                if (lia_solve(&v, F->lim, F->work, F->worksz).k != J_ANS_CERT) { ok = false; break; }
-                LMax x = lia_maximize(&o[q].vc, o[q].vc.goal.t, o[q].vc.goal.nt, F->lim, F->work, F->worksz);
+                if (!fd_implied(F, &v)) { ok = false; break; }
+                LMax x = fd_max_goal(F, &o[q].vc);
                 if (x.k == LIA_MAX_EMPTY) continue;
                 if (x.k != LIA_MAX_BOUND) { ok = false; break; }
                 __int128 bb = fd_int128(&x.b);
@@ -2615,7 +2715,7 @@ static bool fd_entry_max(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, co
     bool any = false; __int128 best = 0;
     for (int32_t k = 0; k < n; k++) {
         if (o[k].claim != nv || !o[k].vc.id.kind || strcmp(o[k].vc.id.kind, "inv.entry") != 0) continue;
-        LMax x = lia_maximize(&o[k].vc, o[k].vc.goal.t, o[k].vc.goal.nt, F->lim, F->work, F->worksz);
+        LMax x = fd_max_goal(F, &o[k].vc);
         if (x.k == LIA_MAX_EMPTY) continue;
         if (x.k != LIA_MAX_BOUND) return false;
         __int128 b = fd_int128(&x.b);
@@ -2735,7 +2835,7 @@ static bool fd_iter_bound(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, J
             if (o[k].claim != nv || !o[k].vc.id.kind) continue;
             bool entry = !strcmp(o[k].vc.id.kind, "inv.entry");
             if (!entry && strcmp(o[k].vc.id.kind, "inv.keep") != 0) continue;
-            LMax x = lia_maximize(&o[k].vc, o[k].vc.goal.t, o[k].vc.goal.nt, F->lim, F->work, F->worksz);
+            LMax x = fd_max_goal(F, &o[k].vc);
             if (x.k == LIA_MAX_EMPTY) continue;
             if (x.k != LIA_MAX_BOUND) { unb = true; break; }
             __int128 b = fd_int128(&x.b);
@@ -3281,7 +3381,7 @@ static bool fd_guarded_claims(JFinder *F, const JClaim *as, int32_t nv) {
                 for (int32_t q = 0; q < n && bounded; q++) {
                     int32_t s = o[q].claim - nv;
                     if (s < 0 || s > 1) continue;
-                    LMax x = lia_maximize(&o[q].vc, o[q].vc.goal.t, o[q].vc.goal.nt, F->lim, F->work, F->worksz);
+                    LMax x = fd_max_goal(F, &o[q].vc);
                     if (x.k == LIA_MAX_EMPTY) continue;
                     if (x.k != LIA_MAX_BOUND) { bounded = false; break; }
                     __int128 v = fd_int128(&x.b);
@@ -3312,7 +3412,7 @@ static bool fd_guarded_claims(JFinder *F, const JClaim *as, int32_t nv) {
             }
             for (int32_t q = 0; q < n; q++) {
                 int32_t s = o[q].claim - nv;
-                if (s >= 0 && s < ngc && !bad[s] && lia_solve(&o[q].vc, F->lim, F->work, F->worksz).k != J_ANS_CERT) bad[s] = 1;
+                if (s >= 0 && s < ngc && !bad[s] && !fd_implied(F, &o[q].vc)) bad[s] = 1;
             }
         }
         int32_t w = 0;
@@ -3361,7 +3461,10 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     for (IrFunc *f = F->mod; f; f = f->next) fd_acct_fn[n++] = f;
     for (int32_t i = 0; i < 2 * fd_acct_n - 1; i++) fd_acct_left[i] = cap;
     ls_meter_on = true; ls_meter_left = cap; ls_meter_spent = 0;
+    struct FdMemo memo; memset(&memo, 0, sizeof memo);
+    F->memo = &memo;
     JClaim *r = finder_propose_run(F, ncl);
+    F->memo = NULL; free(memo.e);
     ls_meter_on = false;
     fd_acct_left[fd_acct_cur] = ls_meter_left;
     F->meter = ls_meter_spent; F->meter_out = false;
