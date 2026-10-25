@@ -71,6 +71,10 @@ typedef struct IState {
     bool budget_is_callers;   // the caller reports an exhausted budget itself, with its total
 } IState;
 static IState *ist = NULL;
+// PE.12: a non-termination witness's run (ir_interpret_witness), NULL otherwise. Read at every
+// block entry and at every call: one test each.
+typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size_t *slen; uint64_t *shash; size_t bytes; int status; } IWit;
+static IWit *ii_wit = NULL;
 
 // ── stopping ─────────────────────────────────────────────────────────────────────────────
 static IrFunc *ii_cur_f = NULL;
@@ -1055,6 +1059,7 @@ static void ii_exec(IrInstr *ins) {
                 }
                 II_UNSUP(ins, "a call to %.*s, which the module does not define", ins->aux.callee ? (int)ins->aux.callee->length : 1, ins->aux.callee ? ins->aux.callee->name : "?");
             }
+            if (ii_wit && g->is_extern) { ii_wit->status = 4; ii_stop(95); }   // IW_EXTERN: not deterministic
             if (!g->is_extern) ii_var_alias(g, args, na, ins);
             IVal ret; memset(&ret, 0, sizeof ret); ret.k = IV_UNIT;
             int32_t open_saved = ii_open_seal;
@@ -1120,6 +1125,85 @@ static void (*ii_on_block)(IrFunc *f, IrBlock *b, IVal *v, int nv) = NULL;
 // one test per instruction. It is also called while a module constant is evaluated at compile
 // time (ir_interpret_call, static_eval.h), before `main` runs; `ist->who` is set then.
 static void (*ii_on_instr)(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) = NULL;
+// ── PE.12: a non-termination witness, run ─────────────────────────────────────────────────
+// The finder proposes an input for a loop the judge refused; it is untrusted (a model of the loop's
+// paths, which do not say what an unclaimed call returns). It is a WITNESS only if, run here, the
+// loop's header in the witness's own frame comes back to a state it was in. The run is
+// deterministic (a call to an extern ends it unconfirmed), so the same state runs the same laps
+// again, forever. The state is serialized EXACTLY, never hashed: every value of the frame and every
+// object reachable from them, each object numbered in the order the walk first meets it (so which
+// values alias which is part of the state, and two isomorphic heaps are one state), a sum's payload
+// included. Every object a later lap can read is reachable from the frame's values: no callee
+// frame is live at the header, and module constants are read-only. An object reachable from none
+// (an earlier lap's `var r = var i`, its alloca run again) is not state: walked, the frame's list
+// of objects grew every lap and no state ever repeated. A value an earlier lap left in the frame
+// is never read before it is defined again, so it can only delay a repeat, never fake one.
+typedef struct { char *b; size_t n, cap; IObj **seen; int ns, cs; bool oom; } IwBuf;
+static void iw_put(IwBuf *s, const void *p, size_t n) {
+    if (s->oom) return;
+    if (s->n + n > s->cap) {
+        size_t c = s->cap ? 2 * s->cap : 256;
+        while (c < s->n + n) c *= 2;
+        char *x = realloc(s->b, c);
+        if (!x) { s->oom = true; return; }
+        s->b = x; s->cap = c;
+    }
+    memcpy(s->b + s->n, p, n); s->n += n;
+}
+static void iw_val(IwBuf *s, const IVal *v);
+static void iw_obj(IwBuf *s, IObj *o) {
+    int32_t ix = -1;
+    for (int i = 0; o && i < s->ns && ix < 0; i++) if (s->seen[i] == o) ix = i;
+    if (!o || ix >= 0) { iw_put(s, &ix, sizeof ix); return; }   // NULL (-1), or met before
+    if (s->ns == s->cs) {
+        int c = s->cs ? 2 * s->cs : 16;
+        IObj **x = realloc(s->seen, sizeof *x * (size_t)c);
+        if (!x) { s->oom = true; return; }
+        s->seen = x; s->cs = c;
+    }
+    s->seen[s->ns] = o; ix = s->ns++;
+    iw_put(s, &ix, sizeof ix);
+    uint8_t flags = (uint8_t)(o->live | (o->ro << 1)); iw_put(s, &flags, 1);
+    iw_val(s, &o->root);
+}
+static void iw_val(IwBuf *s, const IVal *v) {
+    iw_put(s, &v->k, sizeof v->k);
+    switch (v->k) {
+        case IV_INT: iw_put(s, &v->i, sizeof v->i); break;
+        case IV_FLT: iw_put(s, &v->f, sizeof v->f); break;
+        case IV_PTR: case IV_SLICE: {
+            iw_obj(s, v->p.o);
+            iw_put(s, &v->p.d, sizeof v->p.d);
+            for (int k = 0; k < v->p.d && k < IP_MAX; k++) iw_put(s, &v->p.p[k], sizeof v->p.p[k]);
+            iw_put(s, &v->p.lo, sizeof v->p.lo); iw_put(s, &v->p.hi, sizeof v->p.hi);
+            if (v->k == IV_SLICE) iw_put(s, &v->len, sizeof v->len);
+            break;
+        }
+        case IV_AGG: case IV_SUM: {
+            int n = v->k == IV_AGG ? v->n : (int)v->len;        // a sum: its tag, then its payload
+            iw_put(s, &v->n, sizeof v->n);
+            if (v->k == IV_SUM) iw_put(s, &v->len, sizeof v->len);
+            for (int k = 0; v->e && k < n; k++) iw_val(s, &v->e[k]);
+            break;
+        }
+        case IV_FUNC: iw_put(s, &v->fn, sizeof v->fn); break;
+        default: break;                                          // uninitialised, unit: the kind says it
+    }
+}
+static void iw_visit(IFrame *fr) {
+    IwBuf s; memset(&s, 0, sizeof s);
+    for (int i = 0; i < fr->nv; i++) iw_val(&s, &fr->v[i]);
+    free(s.seen);
+    if (s.oom) { free(s.b); ii_wit->status = 3; ii_stop(95); }                 // IW_STOPPED
+    uint64_t h = 1469598103934665603ull;                     // a filter only: equal states are equal BYTES
+    for (size_t i = 0; i < s.n; i++) { h ^= (unsigned char)s.b[i]; h *= 1099511628211ull; }
+    for (int k = 0; k < ii_wit->laps; k++)
+        if (ii_wit->shash[k] == h && ii_wit->slen[k] == s.n && !memcmp(ii_wit->snap[k], s.b, s.n)) { free(s.b); ii_wit->status = 1; ii_stop(95); }   // IW_HANG
+    if (ii_wit->laps == ii_wit->maxlaps) { free(s.b); ii_wit->status = 5; ii_stop(95); }   // IW_LAPS
+    if (ii_wit->bytes + s.n > ((size_t)64 << 20)) { free(s.b); ii_wit->status = 3; ii_stop(95); }   // IW_STOPPED: 64 MB of states kept
+    ii_wit->snap[ii_wit->laps] = s.b; ii_wit->slen[ii_wit->laps] = s.n; ii_wit->shash[ii_wit->laps] = h;
+    ii_wit->bytes += s.n; ii_wit->laps++;
+}
 static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
     { char here; uintptr_t h = (uintptr_t)&here;
       size_t used = ii_stack_base > h ? ii_stack_base - h : h - ii_stack_base;
@@ -1147,6 +1231,7 @@ static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
             for (IrPhiArg *pa = phi->phi_args; pa; pa = pa->next)
                 if (pa->pred == prev) { ii_set(phi->result, ii_val(pa->value, phi)); break; }
         if (ii_on_block) ii_on_block(f, b, fr.v, fr.nv);
+        if (ii_wit && f == ii_wit->f && b->id == ii_wit->header && ii_depth == 1) iw_visit(&fr);
         for (IrInstr *i = b->instrs; i; i = i->next) {
             if (++ist->steps > ist->budget) ii_fail(97, "STEP BUDGET EXHAUSTED", i, "%lld steps", ist->budget);
             if (ii_on_instr) ii_on_instr(f, b, i, fr.v, fr.nv);
@@ -1262,6 +1347,80 @@ static int ir_interpret_call(IrFunc *f, IrFunc *mod, const char *file, IVal *arg
     ist = NULL;
     *used = s.steps;
     return 0;
+}
+
+// Run f on a proposed input and watch loop `header` (PE.12). An integer or bool parameter takes
+// val[k] where given[k] (else 0); a parameter pointing at a struct, an array or an integer takes a
+// fresh object, its integers 0; any other parameter, or a value its type does not hold, cannot be
+// given (IW_ARGS). Nothing is printed: a failed check, a panic, an unmodelled operation and the
+// step budget all end the run unconfirmed (IW_STOPPED), as do a call to an extern (IW_EXTERN) and
+// more than `maxlaps` visits of the header without a repeat (IW_LAPS). IW_HANG only when a visit's
+// state equals an earlier one's. The states kept are capped at 64 MB (IW_STOPPED past it).
+enum { IW_HANG = 1, IW_RETURNED, IW_STOPPED, IW_EXTERN, IW_LAPS, IW_ARGS };
+static void iw_zero(IVal *v, const IrType *t) {
+    if (!t) return;
+    if (t->kind == IRT_INT || t->kind == IRT_BOOL) { iv_int(v, 0); return; }
+    if (t->kind == IRT_FLOAT) { memset(v, 0, sizeof *v); v->k = IV_FLT; return; }
+    if ((t->kind == IRT_STRUCT || (t->kind == IRT_ARRAY && t->array_len >= 0)) && v->k == IV_AGG)
+        for (int k = 0; v->e && k < v->n; k++) iw_zero(&v->e[k], t->kind == IRT_STRUCT ? t->fields[k] : t->elem);
+}
+static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __int128 *val, const uint8_t *given,
+                                int nparam, long long budget, int maxlaps) {
+    static IState s; memset(&s, 0, sizeof s);
+    s.mod = mod; s.file = "witness"; s.budget = budget;
+    s.who = "a witness's run"; s.budget_is_callers = true;
+    static IWit w; memset(&w, 0, sizeof w);                 // static: changed between setjmp and longjmp
+    w.f = f; w.header = header; w.maxlaps = maxlaps;
+    w.snap = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.snap);
+    w.slen = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.slen);
+    w.shash = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.shash);
+    int na = 0;
+    for (IrParam *p = f->params; p; p = p->next) na++;
+    IVal *args = calloc((size_t)(na ? na : 1), sizeof *args);
+    IObj **made = calloc((size_t)(na ? na : 1), sizeof *made);   // the arguments' objects: no frame frees them
+    if (!w.snap || !w.slen || !w.shash || !args || !made) { free(w.snap); free(w.slen); free(w.shash); free(args); free(made); return IW_STOPPED; }
+    bool quiet = ii_quiet; ii_quiet = true;
+    ist = &s;
+    { char base; ii_stack_enter((uintptr_t)&base); }
+    (void)ii_prepare(mod);
+    volatile int r = IW_ARGS;
+    if (setjmp(s.stop)) {                                    // as ir_interpret_call: the frames are gone
+        ii_frame = NULL; ii_cur_f = NULL; ii_frame_allocs = NULL; ii_open_seal = 0;
+        r = w.status ? w.status : IW_STOPPED;
+        goto out;
+    }
+    {
+        int k = 0;
+        for (IrParam *p = f->params; p; p = p->next, k++) {
+            const IrType *ty = p->value ? p->value->type : NULL;
+            if (ty && (ty->kind == IRT_INT || ty->kind == IRT_BOOL)) {
+                __int128 x = k < nparam && given && given[k] ? val[k] : 0;
+                if (!it_fits(x, ty)) goto out;               // IW_ARGS
+                iv_int(&args[k], x);
+                continue;
+            }
+            if (ty && ty->kind == IRT_PTR && ty->elem &&
+                (ty->elem->kind == IRT_STRUCT || ty->elem->kind == IRT_INT || ty->elem->kind == IRT_BOOL ||
+                 (ty->elem->kind == IRT_ARRAY && ty->elem->array_len >= 0))) {
+                IObj *o = ii_new_obj(ty->elem, 1, "a witness's argument");
+                made[k] = o;
+                iw_zero(&o->root.e[0], ty->elem);
+                args[k].k = IV_PTR; args[k].p = ip_of(o, 0);
+                continue;
+            }
+            goto out;                                        // IW_ARGS: a parameter the witness cannot give
+        }
+        ii_wit = &w;
+        IVal ret; memset(&ret, 0, sizeof ret);
+        ii_call(f, args, na, &ret, NULL);
+        r = IW_RETURNED;
+    }
+out:
+    ii_wit = NULL; ii_quiet = quiet; ist = NULL;
+    for (int i = 0; i < w.laps; i++) free(w.snap[i]);
+    for (int i = 0; i < na; i++) if (made[i]) { iv_free_owned(&made[i]->root); free(made[i]); }
+    free(w.snap); free(w.slen); free(w.shash); free(args); free(made);
+    return r;
 }
 
 #endif // LAIN_IR_INTERP_H

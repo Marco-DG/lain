@@ -1647,6 +1647,203 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
     for (int32_t e = 0; e < L->nedges; e++) out->fall[e] = (int8_t)fall_of_edge[e];
     return true;
 }
+// ── PE.12: inputs that may make a loop run forever (untrusted: the caller runs each) ───────────
+// For a header the judge refused, a model of: the entry edge E (the state on arrival, in terms of
+// f's parameters), then `stem` laps, then `period` laps that end in the state they began in. Each
+// is one lia_solve on the paths gen->paths gives, stitched: one lap's post is the next one's pre,
+// pair by pair, and the cycle's last post its first pre. A value fixed at the header (a parameter,
+// anything defined before the loop: term_kinds 1) is ONE variable on every path; every other
+// variable is its own path's (a temporary is a fresh value each lap). The paths do not say what an
+// unclaimed call returns, so a model may describe a run that cannot happen: a candidate is a
+// witness only once the interpreter has run it into a repeated state (ir_interpret_witness).
+#define FD_WMAXP 16
+#define FD_WMAXQ 32
+typedef struct { __int128 val[FD_WMAXP]; uint8_t given[FD_WMAXP]; int32_t stem, period; } FdWitness;
+typedef struct { JVc vc; JPathPair *pairs; int32_t npairs; bool back; } FdWPath;
+static bool fd_wcopy_cons(FdLoop *R, JCons *d, const JCons *s) {
+    *d = *s; d->t = fd_bump(R, sizeof(JTerm) * (size_t)(s->nt ? s->nt : 1));
+    if (!d->t) return false;
+    if (s->nt) memcpy(d->t, s->t, sizeof(JTerm) * (size_t)s->nt);
+    return true;
+}
+static bool fd_wcopy_path(FdLoop *R, FdWPath *d, const JPath *s) {
+    const JVc *v = s->vc;
+    memset(d, 0, sizeof *d);
+    d->vc = *v; d->back = s->back; d->npairs = s->npairs;
+    d->vc.vars = fd_bump(R, sizeof(char *) * (size_t)(v->nvars ? v->nvars : 1));
+    d->vc.hyps = fd_bump(R, sizeof(JHyp) * (size_t)(v->nhyps ? v->nhyps : 1));
+    d->pairs = fd_bump(R, sizeof(JPathPair) * (size_t)(s->npairs ? s->npairs : 1));
+    if (!d->vc.vars || !d->vc.hyps || !d->pairs) return false;
+    for (int32_t i = 0; i < v->nvars; i++) {
+        size_t n = v->vars[i] ? strlen(v->vars[i]) + 1 : 1;
+        char *c = fd_bump(R, n);
+        if (!c) return false;
+        if (v->vars[i]) memcpy(c, v->vars[i], n); else c[0] = 0;
+        d->vc.vars[i] = c;
+    }
+    for (int32_t i = 0; i < v->nhyps; i++) {
+        const JHyp *h = &v->hyps[i]; JHyp *o = &d->vc.hyps[i];
+        *o = *h; o->origin = NULL;
+        if (!h->disj) { if (!fd_wcopy_cons(R, &o->cons, &h->cons)) return false; continue; }
+        o->dis = fd_bump(R, sizeof(JConj) * (size_t)h->ndis);
+        if (!o->dis) return false;
+        for (int32_t q = 0; q < h->ndis; q++) {
+            o->dis[q].nc = h->dis[q].nc;
+            o->dis[q].c = fd_bump(R, sizeof(JCons) * (size_t)(h->dis[q].nc ? h->dis[q].nc : 1));
+            if (!o->dis[q].c) return false;
+            for (int32_t k = 0; k < h->dis[q].nc; k++) if (!fd_wcopy_cons(R, &o->dis[q].c[k], &h->dis[q].c[k])) return false;
+        }
+    }
+    if (s->npairs) memcpy(d->pairs, s->pairs, sizeof(JPathPair) * (size_t)s->npairs);
+    return true;
+}
+static const JPathPair *fd_wpair(const FdWPath *p, const JPathPair *of) {
+    for (int32_t k = 0; k < p->npairs; k++) if (p->pairs[k].key == of->key && p->pairs[k].tk == of->tk) return &p->pairs[k];
+    return NULL;
+}
+// a - b = 0
+static bool fd_weq(FdLoop *R, JHyp *h, int32_t a, int32_t b) {
+    memset(h, 0, sizeof *h); h->origin = "witness";
+    h->cons.op = J_EQ; fd_jint(&h->cons.rhs, 0);
+    h->cons.t = fd_bump(R, sizeof(JTerm) * 2);
+    if (!h->cons.t) return false;
+    if (a == b) { h->cons.nt = 0; return true; }
+    int32_t lo = a < b ? a : b, hi = a < b ? b : a;
+    h->cons.nt = 2;
+    h->cons.t[0].var = lo; fd_jint(&h->cons.t[0].coef, lo == a ? 1 : -1);
+    h->cons.t[1].var = hi; fd_jint(&h->cons.t[1].coef, hi == a ? 1 : -1);
+    return true;
+}
+// One stitched query: E, then laps seq[0..n) (the first `stem` lead in), the rest a cycle. True with
+// *out filled on a model.
+static bool fd_wquery(JFinder *F, IrFunc *f, FdLoop *R, const FdWPath *E, const FdWPath *const *seq, int32_t n,
+                      int32_t stem, const int32_t *shared, int32_t nshared, FdWitness *out) {
+    char *mark = R->cur;
+    int32_t np = n + 1;
+    const FdWPath *P[1 + 4];
+    P[0] = E; for (int32_t j = 0; j < n; j++) P[1 + j] = seq[j];
+    int32_t *base = fd_bump(R, sizeof(int32_t) * (size_t)np), nv = nshared;
+    if (!base) return false;
+    for (int32_t j = 0; j < np; j++) { base[j] = nv; nv += P[j]->vc.nvars; }
+    int32_t **map = fd_bump(R, sizeof(int32_t *) * (size_t)np), nh = 0;
+    if (!map) { R->cur = mark; return false; }
+    for (int32_t j = 0; j < np; j++) {
+        map[j] = fd_bump(R, sizeof(int32_t) * (size_t)(P[j]->vc.nvars ? P[j]->vc.nvars : 1));
+        if (!map[j]) { R->cur = mark; return false; }
+        for (int32_t x = 0; x < P[j]->vc.nvars; x++) {
+            int32_t id = fd_value_id(P[j]->vc.vars[x]), s = -1;
+            for (int32_t q = 0; q < nshared && s < 0 && id >= 0; q++) if (shared[q] == id) s = q;
+            map[j][x] = s >= 0 ? s : base[j] + x;
+        }
+        nh += P[j]->vc.nhyps;
+    }
+    nh += 2 * np * (E->npairs + 1);
+    JVc q; memset(&q, 0, sizeof q);
+    q.id = E->vc.id; q.nvars = nv;
+    q.vars = fd_bump(R, sizeof(char *) * (size_t)(nv ? nv : 1));
+    q.hyps = fd_bump(R, sizeof(JHyp) * (size_t)(nh ? nh : 1));
+    if (!q.vars || !q.hyps) { R->cur = mark; return false; }
+    for (int32_t j = 0; j < np; j++)
+        for (int32_t x = 0; x < P[j]->vc.nvars; x++) q.vars[map[j][x]] = P[j]->vc.vars[x];
+    for (int32_t i = 0; i < nv; i++) if (!q.vars[i]) q.vars[i] = "";
+    int32_t h = 0;
+    for (int32_t j = 0; j < np; j++)
+        for (int32_t i = 0; i < P[j]->vc.nhyps; i++) {
+            const JHyp *src = &P[j]->vc.hyps[i]; JHyp *dst = &q.hyps[h++];
+            *dst = *src;
+            if (!src->disj) { if (!fd_map_cons(R, &src->cons, map[j], &dst->cons)) { R->cur = mark; return false; } continue; }
+            dst->dis = fd_bump(R, sizeof(JConj) * (size_t)src->ndis);
+            if (!dst->dis) { R->cur = mark; return false; }
+            for (int32_t d = 0; d < src->ndis; d++) {
+                dst->dis[d].nc = src->dis[d].nc;
+                dst->dis[d].c = fd_bump(R, sizeof(JCons) * (size_t)(src->dis[d].nc ? src->dis[d].nc : 1));
+                if (!dst->dis[d].c) { R->cur = mark; return false; }
+                for (int32_t k = 0; k < src->dis[d].nc; k++)
+                    if (!fd_map_cons(R, &src->dis[d].c[k], map[j], &dst->dis[d].c[k])) { R->cur = mark; return false; }
+            }
+        }
+    // the links: E's post is the first lap's pre, each lap's post the next one's pre, and the
+    // cycle's last post its first pre; pair by pair, a pair a path lacks is no link (it says less)
+    for (int32_t k = 0; k < E->npairs; k++) {
+        const JPathPair *ep = &E->pairs[k];
+        int32_t prev = ep->post >= 0 ? map[0][ep->post] : -1, first = -1;
+        for (int32_t j = 1; j < np && prev >= 0; j++) {
+            const JPathPair *lp = fd_wpair(P[j], ep);
+            if (!lp || lp->pre < 0 || lp->post < 0) { prev = -1; break; }
+            if (!fd_weq(R, &q.hyps[h++], prev, map[j][lp->pre])) { R->cur = mark; return false; }
+            if (j == stem + 1) first = map[j][lp->pre];
+            prev = map[j][lp->post];
+        }
+        if (prev >= 0 && first >= 0 && !fd_weq(R, &q.hyps[h++], prev, first)) { R->cur = mark; return false; }
+    }
+    q.nhyps = h;
+    q.goal.op = J_LE; q.goal.nt = 0; fd_jint(&q.goal.rhs, -1);   // 0 <= -1 is false: a model is the answer
+    JWork lim = F->lim; lim.pivot /= 16; lim.node /= 16; lim.leaf /= 16;
+    JAnswer A = lia_solve(&q, lim, F->work, F->worksz);
+    bool got = A.k == J_ANS_MODEL;
+    if (got) {
+        memset(out, 0, sizeof *out); out->stem = stem; out->period = n - stem;
+        int32_t k = 0;
+        for (IrParam *pp = f->params; pp && k < FD_WMAXP; pp = pp->next, k++) {
+            if (!pp->value) continue;
+            char nm[24]; snprintf(nm, sizeof nm, "%%v%d", pp->value->id);
+            for (int32_t i = 0; i < nv && !out->given[k]; i++)
+                if (q.vars[i] && !strcmp(q.vars[i], nm)) { out->val[k] = fd_int128(&A.model.val[i]); out->given[k] = 1; }
+        }
+    }
+    R->cur = mark;
+    return got;
+}
+// Up to `max` candidates for header H of f under the claims cl (the judge's): the number found.
+static int32_t fd_witness(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdWitness *out, int32_t max) {
+    char err[200];
+    FdLoop R; memset(&R, 0, sizeof R);
+    size_t cap = (size_t)1 << 22;
+    if (!(R.mem = malloc(cap))) return 0;
+    R.cur = R.mem; R.end = R.mem + cap;
+    JPaths P;
+    if (!F->gen->paths || !F->gen->paths(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) || P.refused) { free(R.mem); return 0; }
+    // copied out first: the generator's next call (term_kinds) reuses its region
+    FdWPath *W = fd_bump(&R, sizeof *W * (size_t)(P.n ? P.n : 1));
+    int32_t nw = 0;
+    for (int32_t k = 0; W && k < P.n; k++) if (fd_wcopy_path(&R, &W[nw], &P.p[k])) nw++;
+    if (!W || nw != P.n) { free(R.mem); return 0; }
+    // the values fixed at the header, across every path: one variable each
+    int32_t nval = 0, *vals = fd_bump(&R, sizeof(int32_t) * 256), *vid = fd_bump(&R, sizeof(int32_t) * 256);
+    uint8_t *vtk = fd_bump(&R, 256), *kind = fd_bump(&R, 256);
+    if (!vals || !vid || !vtk || !kind) { free(R.mem); return 0; }
+    for (int32_t k = 0; k < nw; k++)
+        for (int32_t x = 0; x < W[k].vc.nvars; x++) {
+            int32_t id = fd_value_id(W[k].vc.vars[x]); bool seen = false;
+            if (id < 0) continue;
+            for (int32_t q = 0; q < nval && !seen; q++) seen = vals[q] == id;
+            if (!seen && nval < 256) vals[nval++] = id;
+        }
+    for (int32_t q = 0; q < nval; q++) { vid[q] = vals[q] / 2; vtk[q] = (uint8_t)(vals[q] % 2); }
+    if (nval && (!F->gen->term_kinds || !F->gen->term_kinds(F->gen->ctx, f, H, vid, vtk, nval, kind, err, sizeof err))) { free(R.mem); return 0; }
+    int32_t nshared = 0;
+    for (int32_t q = 0; q < nval; q++) if (kind[q] == 1) vals[nshared++] = vals[q];
+    const FdWPath *back[FD_MAXEDGES]; int32_t nb = 0;
+    for (int32_t k = 0; k < nw && nb < FD_MAXEDGES; k++) if (W[k].back) back[nb++] = &W[k];
+    int32_t got = 0, asked = 0;
+    // stem 0 or 1 lap, then a cycle of 1 or 2: the shortest first
+    static const int32_t shape[][2] = { {0, 1}, {0, 2}, {1, 1}, {1, 2} };
+    for (int32_t s = 0; s < 4 && got < max; s++) {
+        int32_t stem = shape[s][0], n = stem + shape[s][1], combos = 1;
+        for (int32_t j = 0; j < n; j++) combos *= nb;
+        for (int32_t e = 0; e < nw && got < max; e++) {
+            if (W[e].back) continue;
+            for (int32_t c = 0; c < combos && got < max && asked < FD_WMAXQ; c++) {
+                const FdWPath *seq[4]; int32_t r = c;
+                for (int32_t j = 0; j < n; j++) { seq[j] = back[r % nb]; r /= nb; }
+                asked++;
+                if (fd_wquery(F, f, &R, &W[e], seq, n, stem, vals, nshared, &out[got])) got++;
+            }
+        }
+    }
+    free(R.mem);
+    return got;
+}
 // PE.7: the two-variable relations the loop keeps (lia_relations), as candidates for the header's
 // claims, bounded like any other (bound_candidates) and kept by Houdini only if inductive. One of
 // the two terms must be a version the header makes (a claim names one); a relation between two

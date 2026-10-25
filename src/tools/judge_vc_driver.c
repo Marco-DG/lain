@@ -20,6 +20,12 @@
 //                               exit 1 on a solver bug, unstable claims or a refusal
 //   --judge-corrupt             --judge with every certificate damaged (a sign byte of 2) before
 //                               the judge reads it: nothing may be proved (judge_gate's canary)
+//   --witness                   PE.12: for each loop header the finder does not rank, the inputs
+//                               fd_witness proposes and what running each did (ir_interpret_witness):
+//                               `witness <fn> bb<H> (stem m, cycle k) <param> = <v> ...: HANG` when
+//                               a header state repeated, else `returned`, `stopped`, `extern`, `laps`
+//                               or `args`; `no witness <fn> bb<H>` when nothing was proposed. Only
+//                               these lines are printed
 //   --cover                     each of VRA's checks (termination aside) beside an obligation of
 //                               its class at its instruction (Main Compiler Work's census): one
 //                               `UNCOVERED` line for a check the judge owes nothing for, then a
@@ -623,7 +629,7 @@ int main(int argc, char **argv) {
     // back edges made free, so the lexicographic VCs (rank.lex) are run on loops the finder ranks
     // with a fixed falling component, a MAX or MIN of rows among them (its definitions, c41). A
     // ranking whose fixed edges hold owes nothing more there: its hypotheses are facts all the same
-    bool ranks = false, ranks_free = false;
+    bool ranks = false, ranks_free = false, witness = false;
     unsigned long long meter_cap = 0;                       // --finder-work=N: the finder's work cap (tests)
     for (int k = 2; k < argc; k++) {
         if (!strcmp(argv[k], "--no-claims")) claims = false;
@@ -638,6 +644,7 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--judge")) judge = true;
         if (!strcmp(argv[k], "--judge-corrupt")) judge = corrupt = true;
         if (!strcmp(argv[k], "--cover")) cover = true;
+        if (!strcmp(argv[k], "--witness")) witness = true;
         if (!strncmp(argv[k], "--finder-work=", 14)) meter_cap = strtoull(argv[k] + 14, NULL, 10);   // tests: the meter's cap
     }
     Arena aa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -694,6 +701,36 @@ int main(int argc, char **argv) {
             if (F.oom) fprintf(stderr, "finder_propose: out of memory\n");
             for (int32_t k = 0; ranks_free && k < F.nrk; k++)
                 for (int32_t e = 0; e < F.rk[k].nedge; e++) F.rk[k].fall[e] = -1;
+            if (witness) {
+                static const char *what[] = { "?", "HANG", "returned", "stopped", "extern", "laps", "args" };
+                for (IrFunc *f = irmod; f; f = f->next) {
+                    if (f->is_extern || !f->entry) continue;
+                    for (IrBlock *b = f->blocks; b; b = b->next) {
+                        if (!b->is_loop_header) continue;
+                        bool ranked = false;
+                        for (int32_t k = 0; k < F.nrk && !ranked; k++) ranked = F.rk[k].fn == f && F.rk[k].blk == b->id;
+                        if (ranked) continue;
+                        FdWitness w[4];
+                        int32_t nw = fd_witness(&F, f, b->id, cl, ncl, w, 4);
+                        if (nw == 0) printf("no witness %.*s bb%d\n", (int)f->name->length, f->name->name, b->id);
+                        for (int32_t c = 0; c < nw; c++) {
+                            int np = 0;
+                            for (IrParam *pp = f->params; pp; pp = pp->next) np++;
+                            int r = ir_interpret_witness(f, irmod, b->id, w[c].val, w[c].given, np < FD_WMAXP ? np : FD_WMAXP, 2000000LL, 4096);
+                            printf("witness %.*s bb%d (stem %d, cycle %d)", (int)f->name->length, f->name->name, b->id, w[c].stem, w[c].period);
+                            int k = 0;
+                            for (IrParam *pp = f->params; pp; pp = pp->next, k++) {
+                                if (!pp->value || k >= FD_WMAXP || !w[c].given[k]) continue;
+                                const IrName *nm = pp->value->src_name;
+                                printf(" %.*s = %lld", nm ? (int)nm->length : 1, nm ? nm->name : "?", (long long)w[c].val[k]);
+                            }
+                            printf(": %s\n", r >= 1 && r <= 6 ? what[r] : "?");
+                            if (r == IW_HANG) break;
+                        }
+                    }
+                }
+                return 0;
+            }
         }
     }
     if (judge) {
