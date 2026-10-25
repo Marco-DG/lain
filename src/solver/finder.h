@@ -19,6 +19,7 @@
 #include "solver/lia.h"
 #include "solver/rank.h"                 // PE.5 ranking functions and PE.7 relations, over a loop's paths
 #include "ir/callgraph.h"                 // a recursion cycle's members, ranked jointly (fd_rank_cycle)
+#include "ir/lap_only.h"                  // PE.12: a witness's cycle leaves out what only the loop's counting reads
 
 // VRA's relation at a loop header (PE.4's sink: vra.h's VraRel, copied by whoever runs VRA):
 // sa*x[a] + sb*x[b] <= c, b < 0 for one term; and a header's converged state.
@@ -1656,6 +1657,8 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
 // variable is its own path's (a temporary is a fresh value each lap). The paths do not say what an
 // unclaimed call returns, so a model may describe a run that cannot happen: a candidate is a
 // witness only once the interpreter has run it into a repeated state (ir_interpret_witness).
+// A cell only the loop's own counting reads (lap_only.h) is no link: the run leaves it out of the
+// state it compares, and a lap counter would leave the cycle with no model at all.
 #define FD_WMAXP 16
 #define FD_WMAXQ 32
 #define FD_WMAXK 8
@@ -1719,7 +1722,8 @@ static bool fd_weq(FdLoop *R, JHyp *h, int32_t a, int32_t b) {
 // One stitched query: E, then laps seq[0..n) (the first `stem` lead in), the rest a cycle. True with
 // *out filled on a model.
 static bool fd_wquery(JFinder *F, IrFunc *f, FdLoop *R, const FdWPath *E, const FdWPath *const *seq, int32_t n,
-                      int32_t stem, const int32_t *shared, int32_t nshared, FdWitness *out) {
+                      int32_t stem, const int32_t *shared, int32_t nshared, const uint8_t *lap, int32_t nlap,
+                      FdWitness *out) {
     char *mark = R->cur;
     int32_t np = n + 1;
     const FdWPath *P[1 + 4];
@@ -1768,6 +1772,7 @@ static bool fd_wquery(JFinder *F, IrFunc *f, FdLoop *R, const FdWPath *E, const 
     // cycle's last post its first pre; pair by pair, a pair a path lacks is no link (it says less)
     for (int32_t k = 0; k < E->npairs; k++) {
         const JPathPair *ep = &E->pairs[k];
+        if (ep->key >= 0 && ep->key < nlap && lap[ep->key]) continue;
         int32_t prev = ep->post >= 0 ? map[0][ep->post] : -1, first = -1;
         for (int32_t j = 1; j < np && prev >= 0; j++) {
             const JPathPair *lp = fd_wpair(P[j], ep);
@@ -1786,7 +1791,8 @@ static bool fd_wquery(JFinder *F, IrFunc *f, FdLoop *R, const FdWPath *E, const 
     if (got) {
         memset(out, 0, sizeof *out); out->stem = stem; out->period = n - stem;
         for (int32_t k = 0; k < E->npairs && out->nkey < FD_WMAXK; k++)
-            if (E->pairs[k].tk == JTERM_VALUE) out->key[out->nkey++] = E->pairs[k].key;
+            if (E->pairs[k].tk == JTERM_VALUE && !(E->pairs[k].key >= 0 && E->pairs[k].key < nlap && lap[E->pairs[k].key]))
+                out->key[out->nkey++] = E->pairs[k].key;
         int32_t k = 0;
         for (IrParam *pp = f->params; pp && k < FD_WMAXP; pp = pp->next, k++) {
             if (!pp->value) continue;
@@ -1846,6 +1852,11 @@ static int32_t fd_witness(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
     for (int32_t q = 0; q < nval; q++) if (kind[q] == 1) vals[nshared++] = vals[q];
     const FdWPath *back[FD_MAXEDGES]; int32_t nb = 0;
     for (int32_t k = 0; k < nw && nb < FD_MAXEDGES; k++) if (W[k].back) back[nb++] = &W[k];
+    int32_t nlap = f->next_value_id > 0 ? f->next_value_id : 1;
+    uint8_t *lap = fd_bump(&R, (size_t)nlap);
+    const IrBlock *hb = NULL;
+    for (const IrBlock *b = f->blocks; b && !hb; b = b->next) if (b->id == H) hb = b;
+    if (!lap || !ir_lap_only(f, hb, lap)) nlap = 0;
     int32_t got = 0, asked = 0;
     // stem 0 or 1 lap, then a cycle of 1 or 2: the shortest first
     static const int32_t shape[][2] = { {0, 1}, {0, 2}, {1, 1}, {1, 2} };
@@ -1858,7 +1869,7 @@ static int32_t fd_witness(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
                 const FdWPath *seq[4]; int32_t r = c;
                 for (int32_t j = 0; j < n; j++) { seq[j] = back[r % nb]; r /= nb; }
                 asked++;
-                if (fd_wquery(F, f, &R, &W[e], seq, n, stem, vals, nshared, &out[got])) got++;
+                if (fd_wquery(F, f, &R, &W[e], seq, n, stem, vals, nshared, lap, nlap, &out[got])) got++;
             }
         }
     }

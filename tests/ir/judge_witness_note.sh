@@ -5,7 +5,8 @@
 # and said zeroed, the repeated state by source names, the period. A loop in a function with no
 # parameters: no call, one variable ("comes back"). `while flag {}` names no variable: g(true), a
 # value tried because no path's facts constrain `flag`, and "no lap changes anything". A loop fed by
-# an extern: no note (its input is not the run's to decide), the E011 alone.
+# an extern: no note (its input is not the run's to decide), the E011 alone. A lap counter nothing in
+# the loop depends on (src/ir/lap_only.h) is left out of the repeated state, and the note says it changes.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 D="$(mktemp -d)"; trap 'rm -rf "${D:?}"' EXIT
@@ -83,6 +84,40 @@ LN
 out=$(cd "$D" && "$ROOT/lain" flag.ln -o flag.c 2>&1) && { echo "flag: accepted"; exit 1; }
 want='       this loop never ends for g(true): at line 2, no lap changes anything'
 echo "$out" | grep -qxF "$want" || { echo "flag: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
+cat > "$D/counted.ln" <<'LN'
+func run(x0 i32, flag i32) i32 {
+    var i i32 = x0
+    var n i32 = 0
+    while 0 < i {
+        n = n +% 1
+        if flag > 0 {
+            i = i -% 1
+        }
+    }
+    return n
+}
+func main() i32 {
+    return run(4, 1)
+}
+LN
+out=$(cd "$D" && "$ROOT/lain" counted.ln -o counted.c 2>&1) && { echo "counted: accepted"; exit 1; }
+want='       this loop never ends for run(1, 0): at line 4, i = 1 comes back after every lap; n changes too, but nothing in the loop depends on it'
+echo "$out" | grep -qxF "$want" || { echo "counted: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
+cat > "$D/count.ln" <<'LN'
+func g(flag bool) i32 {
+    var n i32 = 0
+    while flag {
+        n = n +% 1
+    }
+    return n
+}
+func main() i32 {
+    return g(false)
+}
+LN
+out=$(cd "$D" && "$ROOT/lain" count.ln -o count.c 2>&1) && { echo "count: accepted"; exit 1; }
+want='       this loop never ends for g(true): at line 3, no lap changes anything but n, and nothing in the loop depends on it'
+echo "$out" | grep -qxF "$want" || { echo "count: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
 out=$(cd "$D" && "$ROOT/lain" extern.ln -o extern.c 2>&1) && { echo "extern: accepted"; exit 1; }
 echo "$out" | grep -q '^\[E011\]' || { echo "extern: no E011"; echo "$out"; exit 1; }
 echo "$out" | grep -q 'never ends' && { echo "extern: a note for a loop fed by an extern:"; echo "$out"; exit 1; }

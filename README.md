@@ -648,7 +648,8 @@ func settle(n u32) u32 {
 ```
 
 The compiler prints that last line only after running the loop from that input back into a state it
-was already in, so it is a fact about the program. Without it, `[E011]` says only that no proof was
+was already in, leaving out any value nothing in the loop depends on, so it is a fact about the
+program. Without it, `[E011]` says only that no proof was
 found.
 
 Recursion is held to the same standard:

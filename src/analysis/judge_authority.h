@@ -340,6 +340,20 @@ static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, con
                 jau_cat(st, sizeof st, "%s%s = %s", shown == 0 ? "" : shown == nshow - 1 ? " and " : ", ", nm, val);
                 shown++;
             }
+            // the cells the run left out of the state (lap_only.h): they change, and the note says so
+            char lapn[96] = ""; int nl = 0, nlall = 0;
+            uint8_t *lap = calloc((size_t)(f->next_value_id > 0 ? f->next_value_id : 1), 1);
+            if (lap && ir_lap_only(f, H, lap))
+                for (int pass = 0; pass < 2; pass++)
+                    for (int32_t v = 0; v < f->next_value_id; v++) {
+                        if (lap[v] != IR_LAP_CELL) continue;
+                        char nm[48]; jau_name(f, v, nm, sizeof nm);
+                        if (nm[0] == '%' || nm[0] == '?') continue;
+                        if (pass == 0) { nlall++; continue; }
+                        jau_cat(lapn, sizeof lapn, "%s%s", nl == 0 ? "" : nl == nlall - 1 ? " and " : ", ", nm);
+                        nl++;
+                    }
+            free(lap);
             const char *period = cw->period == 1 ? "after every lap" : "every two laps";
             const char *stem = cw->stem == 1 ? ", from the second lap on" : "";
             isize ln = 0, cl0 = 0; jau_site(f, q, true, &ln, &cl0);
@@ -347,7 +361,11 @@ static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, con
             jau_put(head, sizeof head, "this loop never ends%s%s", call, zero);
             if (shown) jau_put(w->note, sizeof w->note, "%s: at line %lld, %s %s %s%s", head, (long long)ln, st,
                                shown == 1 ? "comes back" : "come back", period, stem);
+            else if (nl) jau_put(w->note, sizeof w->note, "%s: at line %lld, no lap changes anything but %s%s", head, (long long)ln, lapn, stem);
             else jau_put(w->note, sizeof w->note, "%s: at line %lld, no lap changes anything%s", head, (long long)ln, stem);   // no variable to name (Documentation)
+            if (nl && shown) jau_cat(w->note, sizeof w->note, "; %s %s too, but nothing in the loop depends on %s", lapn,
+                                     nl == 1 ? "changes" : "change", nl == 1 ? "it" : "them");
+            else if (nl) jau_cat(w->note, sizeof w->note, ", and nothing in the loop depends on %s", nl == 1 ? "it" : "them");
           }
     }
     F->gen = saved;

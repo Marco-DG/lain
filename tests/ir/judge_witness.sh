@@ -5,6 +5,9 @@
 # is found and confirmed; a loop that ends for every input (Collatz from n > 1 under checked
 # arithmetic, which traps on 3n + 1 past the type) never shows HANG; a loop fed by an extern stops
 # at the call (`extern`), its input not the run's to decide; a ranked loop is not searched.
+# A lap counter (`n = n +% 1`) that nothing in the loop depends on is left out of the state (src/ir/lap_only.h),
+# so the loop around it is confirmed; the same counter checked (`n + 1`, whose overflow ends the run),
+# read by a test, or handed to a call is state, and no HANG is shown.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 D="$(mktemp -d)"; trap 'rm -rf "${D:?}"' EXIT
@@ -83,6 +86,40 @@ func main() i32 {
     return count(5) as i32
 }
 LN
+for c in counted checked tested passed; do
+    case $c in
+        counted) step='n = n +% 1' ;;
+        checked) step='n = n + 1' ;;
+        tested)  step='n = n +% 1
+        if n == 7 { i = 0 }' ;;
+        passed)  step='n = n +% 1
+        if stop(n) { i = 0 }' ;;
+    esac
+    cat > "$D/$c.ln" <<LN
+func stop(n i32) bool { return n == 7 }
+func run(x0 i32, flag i32) i32 {
+    var i i32 = x0
+    var n i32 = 0
+    while 0 < i {
+        $step
+        if flag > 0 {
+            i = i -% 1
+        }
+    }
+    return n
+}
+func main() i32 {
+    return run(4, 1)
+}
+LN
+done
+out=$(cd "$D" && ./jvc counted.ln --witness 2>&1)
+echo "$out" | grep -qE '^witness counted_run bb[0-9]* \(stem 0, cycle 1\) .*: HANG$' \
+    || { echo "counted: the loop around a lap counter was not confirmed:"; echo "$out"; exit 1; }
+for c in checked tested passed; do
+    out=$(cd "$D" && ./jvc $c.ln --witness 2>&1)
+    echo "$out" | grep -q 'HANG' && { echo "$c: a counter the run depends on was left out of the state:"; echo "$out"; exit 1; }
+done
 out=$(cd "$D" && ./jvc zune.ln --witness 2>&1)
 echo "$out" | grep -q '^witness zune_convert_days bb[0-9]* (stem 0, cycle 1) days0 = 366: HANG$' \
     || { echo "zune: convert_days(366) not found and confirmed:"; echo "$out"; exit 1; }

@@ -34,6 +34,7 @@
 #include <sys/resource.h>   // getrlimit: the stack the interpreter may use
 #include "ir.h"
 #include "layout.h"
+#include "lap_only.h"   // PE.12: the part of a loop's state a repeat may leave out
 
 typedef enum { IV_UNINIT, IV_INT, IV_FLT, IV_PTR, IV_SLICE, IV_AGG, IV_SUM, IV_FUNC, IV_UNIT } IvKind;
 
@@ -74,7 +75,8 @@ static IState *ist = NULL;
 // PE.12: a non-termination witness's run (ir_interpret_witness), NULL otherwise. Read at every
 // block entry and at every call: one test each.
 typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size_t *slen; uint64_t *shash; size_t bytes; int status;
-                 const int32_t *keys; int nkeys; uint64_t *kval; uint8_t *kgot; } IWit;
+                 const int32_t *keys; int nkeys; uint64_t *kval; uint8_t *kgot;
+                 const uint8_t *lap; int32_t nlap; } IWit;   // lap[id]: lap_only.h's, left out of the state
 static IWit *ii_wit = NULL;
 
 // ── stopping ─────────────────────────────────────────────────────────────────────────────
@@ -1139,6 +1141,8 @@ static void (*ii_on_instr)(IrFunc *f, IrBlock *b, IrInstr *i, IVal *v, int nv) =
 // (an earlier lap's `var r = var i`, its alloca run again) is not state: walked, the frame's list
 // of objects grew every lap and no state ever repeated. A value an earlier lap left in the frame
 // is never read before it is defined again, so it can only delay a repeat, never fake one.
+// A value lap_only.h finds only the loop's own counting reads (`n = n +% 1`, nothing in the loop depends on n)
+// is left out: lap_only.h says why a repeat of the rest is a hang.
 typedef struct { char *b; size_t n, cap; IObj **seen; int ns, cs; bool oom; } IwBuf;
 static void iw_put(IwBuf *s, const void *p, size_t n) {
     if (s->oom) return;
@@ -1193,7 +1197,8 @@ static void iw_val(IwBuf *s, const IVal *v) {
 }
 static void iw_visit(IFrame *fr) {
     IwBuf s; memset(&s, 0, sizeof s);
-    for (int i = 0; i < fr->nv; i++) iw_val(&s, &fr->v[i]);
+    for (int i = 0; i < fr->nv; i++)
+        if (!(i < ii_wit->nlap && ii_wit->lap[i])) iw_val(&s, &fr->v[i]);
     free(s.seen);
     if (s.oom) { free(s.b); ii_wit->status = 3; ii_stop(95); }                 // IW_STOPPED
     uint64_t h = 1469598103934665603ull;                     // a filter only: equal states are equal BYTES
@@ -1202,7 +1207,8 @@ static void iw_visit(IFrame *fr) {
         if (ii_wit->shash[k] == h && ii_wit->slen[k] == s.n && !memcmp(ii_wit->snap[k], s.b, s.n)) {
             for (int q = 0; q < ii_wit->nkeys; q++) {            // IW_HANG: what each named cell holds
                 int32_t id = ii_wit->keys[q];
-                const IVal *v = id >= 0 && id < fr->nv ? &fr->v[id] : NULL, *c = NULL;
+                bool lap = id >= 0 && id < ii_wit->nlap && ii_wit->lap[id];   // changes: not reported as coming back
+                const IVal *v = id >= 0 && id < fr->nv && !lap ? &fr->v[id] : NULL, *c = NULL;
                 if (v && v->k == IV_INT) c = v;
                 else if (v && v->k == IV_PTR && v->p.o && v->p.o->live && v->p.d == 1 && v->p.p[0] >= 0 &&
                          v->p.o->root.k == IV_AGG && v->p.p[0] < v->p.o->root.n) c = &v->p.o->root.e[v->p.p[0]];
@@ -1394,7 +1400,12 @@ static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __
     for (IrParam *p = f->params; p; p = p->next) na++;
     IVal *args = calloc((size_t)(na ? na : 1), sizeof *args);
     IObj **made = calloc((size_t)(na ? na : 1), sizeof *made);   // the arguments' objects: no frame frees them
-    if (!w.snap || !w.slen || !w.shash || !args || !made) { free(w.snap); free(w.slen); free(w.shash); free(args); free(made); return IW_STOPPED; }
+    int32_t nlap = f->next_value_id > 0 ? f->next_value_id : 1;
+    uint8_t *lap = calloc((size_t)nlap, 1);
+    if (!w.snap || !w.slen || !w.shash || !args || !made || !lap) { free(w.snap); free(w.slen); free(w.shash); free(args); free(made); free(lap); return IW_STOPPED; }
+    const IrBlock *hb = NULL;
+    for (const IrBlock *b = f->blocks; b && !hb; b = b->next) if (b->id == header) hb = b;
+    if (ir_lap_only(f, hb, lap)) { w.lap = lap; w.nlap = nlap; }
     bool quiet = ii_quiet; ii_quiet = true;
     ist = &s;
     { char base; ii_stack_enter((uintptr_t)&base); }
@@ -1435,7 +1446,7 @@ out:
     ii_wit = NULL; ii_quiet = quiet; ist = NULL;
     for (int i = 0; i < w.laps; i++) free(w.snap[i]);
     for (int i = 0; i < na; i++) if (made[i]) { iv_free_owned(&made[i]->root); free(made[i]); }
-    free(w.snap); free(w.slen); free(w.shash); free(args); free(made);
+    free(w.snap); free(w.slen); free(w.shash); free(args); free(made); free(lap);
     return r;
 }
 

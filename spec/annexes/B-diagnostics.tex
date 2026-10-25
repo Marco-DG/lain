@@ -169,7 +169,8 @@ Diagnostic codes are divided into the following ranges:
     present-but-failing measure is \diagcode{E082}/\diagcode{E091}.)  For a
     loop, a note may name an input on which it never ends.  It is printed only
     when running the loop from that input brings the loop back to a state it was
-    already in, so the note is a fact about the program, not a guess; without
+    already in, leaving out any value nothing in the loop depends on (a count of
+    its laps, say), so the note is a fact about the program, not a guess; without
     it, the code means only that no proof was found.
     \\[4pt]
 
