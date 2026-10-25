@@ -1,0 +1,60 @@
+// A scan length `p - p0` after a three-armed branch whose first arm runs a loop (the handwritten
+// lexer's ident, number and one-character branches). `p - p0` owes p >= p0: at the loop's header a
+// claim relating p to p0 says so (p only rises from p0), and at the inner join of the `else if`
+// arms, where the finder's claims are all that is said of p past it, one relating p to p0 again
+// (p = p0 + 1 on both arms). Before, neither was proposed: p0 is compared nowhere in the loop.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func is_alpha(c u8) bool {
+    return c >= 97 and c <= 122
+}
+
+func scan(s u8[], p0 usize) usize {
+    if p0 >= s.len {
+        return 0
+    }
+    var p = p0
+    c = s[p]
+    if is_alpha(c) {
+        while p < s.len and is_alpha(s[p]) {
+            p = p + 1
+        }
+    } else if c == 49 {
+        p = p + 1
+    } else {
+        p = p + 1
+    }
+    return p - p0
+}
+
+type Lexer {
+    src u8[]
+    pos usize <= src.len
+}
+
+// ...and the same through a `var` struct's field, the length measured from a slot of its own
+func scan_field(l var Lexer) usize {
+    start = l.pos
+    if l.pos == l.src.len {
+        return 0
+    }
+    c = l.src[l.pos]
+    if is_alpha(c) {
+        while l.pos < l.src.len and is_alpha(l.src[l.pos]) {
+            l.pos = l.pos + 1
+        }
+    } else if c == 49 {
+        while l.pos < l.src.len and is_alpha(l.src[l.pos]) {
+            l.pos = l.pos + 1
+        }
+    } else {
+        l.pos = l.pos + 1
+    }
+    return l.pos - start
+}
+
+func main() i32 effects io {
+    var l = Lexer("ab+", 0)
+    libc_printf("%zu %zu %zu\n", scan("ab+", 0), scan("ab+", 2), scan_field(var l))
+    return 0
+}

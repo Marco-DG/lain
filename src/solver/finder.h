@@ -2097,6 +2097,124 @@ static bool fd_const_cell(const JFinder *F, IrFunc *f, int32_t key) {
             }
     return true;
 }
+// Are two addresses one (gen.h's jg_same_addr, copied: untrusted): one value, or the same FIELD_PTR
+// (one field) or ELEM_PTR of operands that are pairwise one or equal constants, to a small depth.
+// Each `l.pos` computes its own FIELD_PTR; the slot's key is one of them.
+static bool fd_same_addr(IrFunc *f, IrValue *a, IrValue *b, int depth) {
+    if (a == b) return true;
+    if (!a || !b || depth > 4) return false;
+    IrInstr *x = fd_def_in(f, a), *y = fd_def_in(f, b);
+    if (!x || !y || x->op != y->op || (x->op != IR_ELEM_PTR && x->op != IR_FIELD_PTR) || x->n_operands != y->n_operands) return false;
+    if (x->op == IR_FIELD_PTR && x->aux.field_idx != y->aux.field_idx) return false;
+    for (int k = 0; k < x->n_operands; k++) {
+        IrInstr *cx = fd_def_in(f, x->operands[k]), *cy = fd_def_in(f, y->operands[k]);
+        if (cx && cy && cx->op == IR_CONST && cy->op == IR_CONST) { if (fd_const(cx) != fd_const(cy)) return false; continue; }
+        if (!fd_same_addr(f, x->operands[k], y->operands[k], depth + 1)) return false;
+    }
+    return true;
+}
+static IrValue *fd_value_by_id(IrFunc *f, int32_t id) {
+    for (IrParam *p = f->params; p; p = p->next) if (p->value && p->value->id == id) return p->value;
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) if (i->result && i->result->id == id) return i->result;
+    return NULL;
+}
+// Whether value v reads cell `key` as it is (a LOAD of its address, or a cast of one); key -1: any
+// cell. *under: the value below the casts.
+static bool fd_reads_cell(IrFunc *f, IrValue *v, int32_t key, IrValue **under) {
+    for (int hop = 0; hop < 3 && v; hop++) {
+        if (under) *under = v;
+        IrInstr *d = fd_def_in(f, v);
+        if (!d) return false;                                // a parameter
+        if (d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0])
+            return key < 0 || d->operands[0]->id == key || fd_same_addr(f, d->operands[0], fd_value_by_id(f, key), 0);
+        if (d->op != IR_CAST || d->n_operands < 1) return false;
+        v = d->operands[0];
+    }
+    return false;
+}
+// Whether instruction i's result is stored back into the cell its minuend reads (`x = x - d`: the
+// cell's own update, not a measure of how far it went). Followed through casts, further arithmetic
+// (`q = (q -? y) -? 1`, LeikeHeizmann-TACAS2014-Ex1) and the slots the lowering makes for itself: a
+// checked `x -? c else panic(...)` subtracts in i64, casts back, and reaches x through an unnamed
+// alloca (Mysore-2: x's own update searched as a measure).
+static bool fd_stores_back(IrFunc *f, IrInstr *i, IrValue *minuend) {
+    IrInstr *ld = fd_def_in(f, minuend);
+    while (ld && ld->op == IR_CAST && ld->n_operands >= 1) ld = fd_def_in(f, ld->operands[0]);
+    if (!ld || ld->op != IR_LOAD || ld->n_operands < 1 || !i->result) return false;
+    IrValue *cell = ld->operands[0], *vs[16]; int nvs = 0;
+    vs[nvs++] = i->result;
+    for (int at = 0; at < nvs; at++)
+        for (IrBlock *b = f->blocks; b; b = b->next)
+            for (IrInstr *s = b->instrs; s; s = s->next) {
+                bool uses = false;
+                for (int o = 0; o < s->n_operands && !uses; o++) uses = s->operands[o] == vs[at];
+                if (!uses) continue;
+                if ((s->op == IR_CAST || s->op == IR_ADD || s->op == IR_SUB || s->op == IR_MUL) && s->result && nvs < 16) {
+                    vs[nvs++] = s->result;                   // `q = (q -? y) -? 1`: still q's update
+                    continue;
+                }
+                if (s->op != IR_STORE || s->n_operands < 2 || s->operands[1] != vs[at]) continue;
+                if (fd_same_addr(f, s->operands[0], cell, 0)) return true;
+                IrInstr *ad = fd_def_in(f, s->operands[0]);
+                if (!ad || ad->op != IR_ALLOCA || s->operands[0]->src_name) continue;   // a temporary: its loads
+                for (IrBlock *b2 = f->blocks; b2; b2 = b2->next)
+                    for (IrInstr *l2 = b2->instrs; l2 && nvs < 16; l2 = l2->next)
+                        if (l2->op == IR_LOAD && l2->n_operands >= 1 && l2->operands[0] == s->operands[0] && l2->result) {
+                            bool have = false;
+                            for (int q = 0; q < nvs && !have; q++) have = vs[q] == l2->result;
+                            if (!have) vs[nvs++] = l2->result;
+                        }
+            }
+    return false;
+}
+// Whether value v reads a slot the lowering made for itself (an alloca with no source name: `x +? a
+// else panic(...)` keeps its sum in one), not a variable or a field the program named. Gothenburg_v2-1's
+// `x = ((x +? a) -? b) -? 1` subtracts from two such slots: searched, they doubled its finder work.
+static bool fd_temp_cell(IrFunc *f, IrValue *v) {
+    for (int hop = 0; hop < 3 && v; hop++) {
+        IrInstr *d = fd_def_in(f, v);
+        if (!d) return false;
+        if (d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0]) {
+            IrInstr *ad = fd_def_in(f, d->operands[0]);
+            return ad && ad->op == IR_ALLOCA && !d->operands[0]->src_name;
+        }
+        if (d->op != IR_CAST || d->n_operands < 1) return false;
+        v = d->operands[0];
+    }
+    return false;
+}
+// What f subtracts from cell `key` (-1: any cell), or puts below it as a subslice's lower end, to
+// MEASURE it: `p - p0`, `l.pos - start`, `s[p0..p]`. Each such operation owes the cell at least the
+// other side. Not the cell's own update (`x = x - d`, stored back) and not a constant (a bound is a
+// single version's): every decrement in every loop searched cost the trap ports 22% more finder work
+// and CookSeeZuleger-TACAS2013-Fig7b its ranking. Up to `max` values (below their casts; a load's
+// cell itself), each once, with their types. A value not fixed where a claim would name it is
+// filtered by term_kinds there.
+static int fd_sub_partners(IrFunc *f, int32_t key, int32_t *out, const IrType **ty, int max) {
+    int n = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i && n < max; i = i->next) {
+            IrValue *a = i->op == IR_SUB && i->n_operands >= 2 ? i->operands[0] : i->op == IR_SUBSLICE && i->n_operands >= 3 ? i->operands[2] : NULL;
+            IrValue *o = i->op == IR_SUB && i->n_operands >= 2 ? i->operands[1] : i->op == IR_SUBSLICE && i->n_operands >= 3 ? i->operands[1] : NULL;
+            if (!a || !o || !fd_reads_cell(f, a, key, NULL) || (i->op == IR_SUB && fd_stores_back(f, i, a)) || fd_temp_cell(f, a)) continue;
+            IrValue *ov = o;
+            for (int hop = 0; hop < 3; hop++) {              // below the casts; a load's cell itself
+                IrInstr *d = fd_def_in(f, ov);              // (`start = l.pos` is a slot of its own,
+                if (d && d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0]) { ov = d->operands[0]; break; }   // loaded at the `-`)
+                if (!d || d->op != IR_CAST || d->n_operands < 1) break;
+                ov = d->operands[0];
+            }
+            IrInstr *od = fd_def_in(f, ov);
+            if (!ov || (od && od->op == IR_CONST) || ov->id == key) continue;
+            bool seen = false;
+            for (int q = 0; q < n && !seen; q++) seen = out[q] == ov->id;
+            if (seen) continue;
+            if (!out) return 1;                              // asked only whether there is one
+            out[n] = ov->id; ty[n] = od && od->op == IR_ALLOCA ? od->aux.alloca_ty : ov->type; n++;
+        }
+    return n;
+}
 static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, const JSlot *sl, int32_t i, int32_t j,
                              JCand **cd, int32_t *ncd, int32_t *ccd, char *err, size_t errcap) {
     int32_t H = sl[i].blk, nt = 0;
@@ -2125,6 +2243,25 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
             if (own && tm[t].key < sl[k].key) continue;
             if (!cand_push(cd, ncd, ccd, H, sl[k].key, 1, tm[t].key, -1, sl[k].type, tm[t].type) ||
                 !cand_push(cd, ncd, ccd, H, sl[k].key, -1, tm[t].key, 1, sl[k].type, tm[t].type)) goto oom;
+        }
+    }
+    // ...and each version against what f later subtracts from its cell, or puts below it as a
+    // subslice's lower end (fd_sub_partners: `p - p0`, `s[p0..p]`), at a join as at a header. Such an
+    // operation owes the cell at least that value, and a join's claims are all that is said of its
+    // version past it: `p = p0 + 1` on both arms of an inner `else if` was lost at that join, its
+    // claims only `p >= 1`, and `return p - p0` failed (the handwritten lexer's ident, number and
+    // one-character branches). A header's terms pair it already where they list it.
+    for (int32_t k = i; k < j; k++) {
+        int32_t pw[8]; const IrType *pt[8]; uint8_t pk[8];
+        int npw = fd_sub_partners(f, sl[k].key, pw, pt, 8);
+        if (npw == 0 || !F->gen->term_kinds(F->gen->ctx, f, H, pw, NULL, npw, pk, err, (uint32_t)errcap)) continue;
+        for (int q = 0; q < npw; q++) {
+            if (!pk[q]) continue;                            // not nameable here: no claim can say it
+            bool have = false;
+            for (int32_t t = 0; head && t < nt && !have; t++) have = tm[t].key == pw[q];
+            if (have) continue;
+            if (!cand_push(cd, ncd, ccd, H, sl[k].key, 1, pw[q], -1, sl[k].type, pt[q]) ||
+                !cand_push(cd, ncd, ccd, H, sl[k].key, -1, pw[q], 1, sl[k].type, pt[q])) goto oom;
         }
     }
     // ...and each version made here against the SAME cell at the header of the innermost loop around
@@ -3376,19 +3513,22 @@ static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JCl
 // parameter carries `i >= start` across both. Only returned cells: every version of every loop
 // against every parameter is a search per header the corpus would pay for nothing.
 static bool fd_returns_cell(IrFunc *f, int32_t key);
+// Whether cell `key` (-1: any) is what f subtracts from to measure it, or a subslice's upper end
+// (fd_sub_partners)
+static bool fd_cell_feeds_sub(IrFunc *f, int32_t key) { return fd_sub_partners(f, key, NULL, NULL, 1) > 0; }
 static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
     char err[200];
     for (IrBlock *h2 = f->blocks; h2; h2 = h2->next) {
         bool nested = h2->is_loop_header && fd_nest_around(N, h2->id, h2->id) >= 0;
-        if (!h2->is_loop_header || (!nested && !fd_returns_cell(f, -1))) continue;
+        if (!h2->is_loop_header || (!nested && !fd_returns_cell(f, -1) && !fd_cell_feeds_sub(f, -1))) continue;
         FdLoop L;
         if (!fd_loop_build(F, f, h2->id, as, nv, &L)) { free(L.mem); if (F->oom) return false; continue; }
         for (int32_t v = 0; v < L.npk; v++) {
             if (L.ptk[v] != JTERM_VALUE) continue;
             int32_t e = -1;
             for (int32_t z = 0; z < L.npk && e < 0; z++) if (L.ptk[z] == JTERM_ENTRY && L.pkey[z] == L.pkey[v]) e = z;
-            if (e < 0 || !L.moves || !L.moves[v] || (!nested && !fd_returns_cell(f, L.pkey[v]))) continue;
+            if (e < 0 || !L.moves || !L.moves[v] || (!nested && !fd_returns_cell(f, L.pkey[v]) && !fd_cell_feeds_sub(f, L.pkey[v]))) continue;
             int dir = 0;                                     // +1: never falls, -1: never rises
             for (int sg = 1; sg >= -1 && !dir; sg -= 2) {
                 bool all = L.npaths > 0;

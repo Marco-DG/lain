@@ -1,0 +1,25 @@
+// EXPECT: [E086]
+// The twin of join_subtracted_partner_pass.ln: one `else if` arm LOWERS p, so p - p0 may be -1 (an
+// unsigned subtraction past zero). The claims that relate p to p0 at the inner join are bounded by
+// what each arm does, and here the bound is p - p0 >= -1: no claim says p >= p0, and E086 stands.
+func scan(s u8[], p0 usize) usize {
+    if p0 >= s.len or p0 == 0 {
+        return 0
+    }
+    var p = p0
+    c = s[p]
+    if c >= 97 and c <= 122 {
+        while p < s.len and s[p] >= 97 and s[p] <= 122 {
+            p = p + 1
+        }
+    } else if c == 49 {
+        p = p - 1
+    } else {
+        p = p + 1
+    }
+    return p - p0
+}
+
+func main() i32 {
+    return scan("ab+", 1) as i32
+}
