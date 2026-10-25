@@ -201,12 +201,25 @@ static bool iv_is_null(const IVal *v) { return v->k == IV_INT && v->i == 0; }
 // ── allocation: frame temporaries are released with their frame; object trees with the object ──
 typedef struct IAlloc { void *p; struct IAlloc *next; } IAlloc;
 static IAlloc *ii_frame_allocs = NULL;     // the current frame's temporaries
+// Out of memory, a run stops as it does for an object it cannot make (ii_new_obj): NOT MODELLED, a
+// resource like the step budget. Unchecked, a run that filled memory wrote through NULL and took the
+// compiler down with it (SIGSEGV at 4.1 GB under prlimit --as=4G, TCW), and a witness's run is the
+// compiler's own.
 static void *ii_tmp(size_t n) {
-    IAlloc *a = malloc(sizeof *a); a->p = calloc(1, n ? n : 1); a->next = ii_frame_allocs; ii_frame_allocs = a;
+    IAlloc *a = malloc(sizeof *a);
+    if (!a) ii_fail(98, "NOT MODELLED", NULL, "out of memory for a frame's temporaries");
+    a->p = calloc(1, n ? n : 1);
+    if (!a->p) { free(a); ii_fail(98, "NOT MODELLED", NULL, "out of memory for a frame's temporaries (%zu bytes)", n); }
+    a->next = ii_frame_allocs; ii_frame_allocs = a;
     return a->p;
 }
 static void iv_copy(IVal *dst, const IVal *src, bool owned);   // owned: the tree belongs to an object
-static IVal *iv_elems(int n, bool owned) { return owned ? calloc((size_t)(n > 0 ? n : 1), sizeof(IVal)) : ii_tmp(sizeof(IVal) * (size_t)(n > 0 ? n : 1)); }
+static IVal *iv_elems(int n, bool owned) {
+    if (!owned) return ii_tmp(sizeof(IVal) * (size_t)(n > 0 ? n : 1));
+    IVal *e = calloc((size_t)(n > 0 ? n : 1), sizeof(IVal));
+    if (!e) ii_fail(98, "NOT MODELLED", NULL, "out of memory for %d elements", n);
+    return e;
+}
 static void iv_copy(IVal *dst, const IVal *src, bool owned) {
     *dst = *src;
     if ((src->k == IV_AGG || src->k == IV_SUM) && src->e && src->n >= 0) {
