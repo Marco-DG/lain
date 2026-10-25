@@ -12,15 +12,25 @@
 #                 (--check-invariants): a wrong fact, even one no obligation happened to read
 #   UB            undefined behaviour inside `unsafe` (a generator bug: its programs should be
 #                 defined, or the oracle of that generator means nothing)
-#   CRASH/BUDGET  the interpreter died, or ran out of steps where the C program finished
+#   CRASH/BUDGET  the interpreter died, or ran out of steps where the C program finished in under 1 s
+#                 (-O2 C does about 1e9 simple operations a second, so such a program fits in 5e7
+#                 steps: running out points at the interpreter, e.g. a wrong loop exit) or died of a
+#                 signal
 #   INTERNAL      the compiler failed on a generated program (exit 70, a signal): no verdict at all.
 #                 Until 2026-10-21 every non-zero exit counted as `rejected`, so an internal error
 #                 read as the analysis refusing the program
-#   LONG          (not a bug) the C program ran past its 20 s AND the interpreter stopped on its own
-#                 limit, its step budget or its recursion depth (RECURSION TOO DEEP: fuzz_cycles seed
-#                 20261021012, until 2026-10-21 a DIFFER); either limit where the C FINISHED stays a
-#                 bug (BUDGET, or DIFFER for the depth). An
-#                 accepted program that runs too long to compare. Under the judge (PE.9) the default
+#   LONG          (not a bug) an accepted program that runs too long to compare. Either:
+#                 - the C program ran past its 20 s AND the interpreter stopped on its own limit, its
+#                   step budget or its recursion depth (RECURSION TOO DEEP: fuzz_cycles seed
+#                   20261021012, until 2026-10-21 a DIFFER);
+#                 - or the C program FINISHED after at least 1 s, the interpreter ran out of steps,
+#                   and all it printed is the start of what the C printed (fuzz_cycles seed
+#                   2062896004, until 2026-10-25 a BUDGET: 3.9e9 calls, 4.4 s of -O2 C, past the 5e7
+#                   steps the interpreter makes in about 4 s). The budget cannot simply grow: every
+#                   call keeps its frame's object shells, so that a dangling pointer is caught (1.2 GB
+#                   at 1e8 steps on that program).
+#                 Out of steps with output that is NOT the start of the C's is a DIFFER, and so is the
+#                 depth limit where the C FINISHED. Under the judge (PE.9) the default
 #                 accepts recursions VRA refused, some exponential: fuzz_cycles' `T(x, y) = T(x, y+1)
 #                 + T(x-1, y-1)` ends (ranked 56x - y + 147) after binomially many calls. Whether an
 #                 accepted program ENDS is fuzz_cycles' and fuzz_loops' question, with ground truth.
@@ -63,7 +73,9 @@ for g in "$HERE"/fuzz_*.py; do
     if [ $cr -eq 137 ]; then ctime=$((ctime+1)); echo "── COMPILE TIMEOUT  $gn seed=$seed (past 300 s)"; continue; fi
     if [ $cr -ne 0 ]; then internal=$((internal+1)); echo "── INTERNAL($cr)  $gn seed=$seed :: $(grep -v '^\s*$' "$SC/x.err" | head -1 | cut -c1-120)"; continue; fi
     gcc -O2 -o "$SC/x" "$SC/x.c" $DEFS -w -lm 2>/dev/null || { cfail=$((cfail+1)); continue; }
+    t0=$(date +%s%N)
     ( cd "$SC" && timeout 20 ./x > c.out 2>/dev/null; echo $? > c.st ) 2>/dev/null
+    cms=$(( ($(date +%s%N) - t0) / 1000000 ))
     LAIN_INTERP_STEPS=50000000 timeout 60 "$LAIN" "$f" --check-invariants --judge=vra > "$SC/i.out" 2>"$SC/i.err"; is=$?
     if grep -q '^\[E[0-9]*\] Error' "$SC/i.err"; then      # VRA refuses what the judge accepted
       jonly=$((jonly+1))
@@ -76,7 +88,11 @@ for g in "$HERE"/fuzz_*.py; do
     elif echo "$m" | grep -q "NOT MODELLED";         then unsup=$((unsup+1))
     elif echo "$m" | grep -q "STEP BUDGET\|RECURSION TOO DEEP" && [ "$(cat "$SC/c.st")" = 124 ]; then
       long=$((long+1)); echo "── LONG  $gn seed=$seed (C past 20 s, interpreter past its own limit: $(echo "$m" | grep -oE 'STEP BUDGET|RECURSION TOO DEEP'))"
-    elif echo "$m" | grep -q "STEP BUDGET";          then crash=$((crash+1)); echo "── BUDGET  $gn seed=$seed"
+    elif echo "$m" | grep -q "STEP BUDGET" && ! cmp -s -n "$(wc -c < "$SC/i.out")" "$SC/i.out" "$SC/c.out"; then
+      diff=$((diff+1)); echo "── DIFFER  $gn seed=$seed :: the interpreter ran out of steps, and what it printed is not the start of the C's output"
+    elif echo "$m" | grep -q "STEP BUDGET" && [ "$(cat "$SC/c.st")" -lt 124 ] && [ $cms -ge 1000 ]; then
+      long=$((long+1)); echo "── LONG  $gn seed=$seed (C finished in $((cms/1000)).$((cms%1000/100)) s; the interpreter ran out of steps, all it printed the C's)"
+    elif echo "$m" | grep -q "STEP BUDGET";          then crash=$((crash+1)); echo "── BUDGET  $gn seed=$seed (C exit $(cat "$SC/c.st") in $((cms/1000)).$((cms%1000/100)) s)"
     elif [ "$is" = "$(cat "$SC/c.st")" ] && cmp -s "$SC/c.out" "$SC/i.out"; then agree=$((agree+1))
     elif [ "$is" -ge 124 ] && [ "$is" != "$(cat "$SC/c.st")" ]; then crash=$((crash+1)); echo "── CRASH($is)  $gn seed=$seed"
     else diff=$((diff+1)); echo "── DIFFER  $gn seed=$seed :: C exit $(cat "$SC/c.st"), interpreter exit $is"; fi
