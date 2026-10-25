@@ -8,6 +8,11 @@
 # A lap counter (`n = n +% 1`) that nothing in the loop depends on is left out of the state (src/ir/lap_only.h),
 # so the loop around it is confirmed; the same counter checked (`n + 1`, whose overflow ends the run),
 # read by a test, or handed to a call is state, and no HANG is shown.
+# A recursion (w5) is run on small inputs until a call is made while a call with the same state is
+# still running: rec(x, y) from rec(0, 0), a stem away from rec(0, 1); walk(var c) when c.i stays,
+# and not when it rises (the object an argument reaches is part of the state); g(g(x - 1) + 1)
+# from g(1). A recursion that ends on the inputs tried (Collatz from 0..4) and one fed by an extern
+# show none.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 D="$(mktemp -d)"; trap 'rm -rf "${D:?}"' EXIT
@@ -119,6 +124,79 @@ echo "$out" | grep -qE '^witness counted_run bb[0-9]* \(stem 0, cycle 1\) .*: HA
 for c in checked tested passed; do
     out=$(cd "$D" && ./jvc $c.ln --witness 2>&1)
     echo "$out" | grep -q 'HANG' && { echo "$c: a counter the run depends on was left out of the state:"; echo "$out"; exit 1; }
+done
+cat > "$D/fixed.ln" <<'LN'
+func rec(x i32, y i32) {
+    if x < 10 {
+        rec(2 *% y -% 2, x +% 1)
+    }
+}
+func main() i32 {
+    rec(5, 5)
+    return 0
+}
+LN
+cat > "$D/collatz_rec.ln" <<'LN'
+func c(n u32) u32 {
+    if n <= 1 {
+        return 0
+    }
+    if n % 2 == 0 {
+        return c(n / 2) +% 1
+    }
+    return c(3 *% n +% 1) +% 1
+}
+func main() i32 {
+    return c(27) as% i32
+}
+LN
+cat > "$D/fed.ln" <<'LN'
+extern func nondet() i32 effects io
+func r(x i32) effects io {
+    if nondet() > 0 {
+        r(x)
+    }
+}
+func main() i32 effects io {
+    r(0)
+    return 0
+}
+LN
+for step in 0 1; do cat > "$D/walk$step.ln" <<LN
+type C { i i32, pad i32 }
+func walk(var c C) {
+    if c.i < 5 {
+        c.i = c.i +% $step
+        walk(var c)
+    }
+}
+func main() i32 {
+    var c = C(0, 0)
+    walk(var c)
+    return 0
+}
+LN
+done
+cat > "$D/nested.ln" <<'LN'
+func g(x i32) i32 {
+    if x == 0 {
+        return 1
+    }
+    return g(g(x -% 1) +% 1)
+}
+func main() i32 {
+    return g(0)
+}
+LN
+for c in fixed:fixed_rec walk0:walk0_walk nested:nested_g; do
+    out=$(cd "$D" && ./jvc ${c%%:*}.ln --witness 2>&1)
+    echo "$out" | grep -qE "^witness ${c#*:} recursion.*: HANG, ${c#*:} called again$" \
+        || { echo "${c%%:*}: the recursion was not confirmed:"; echo "$out"; exit 1; }
+done
+for c in collatz_rec:collatz_rec_c walk1:walk1_walk fed:fed_r; do
+    out=$(cd "$D" && ./jvc ${c%%:*}.ln --witness 2>&1)
+    echo "$out" | grep -q 'HANG' && { echo "${c%%:*}: a recursion that ends, or is fed by an extern, was shown to hang:"; echo "$out"; exit 1; }
+    echo "$out" | grep -qx "no witness ${c#*:} recursion" || { echo "${c%%:*}: the recursion was not searched:"; echo "$out"; exit 1; }
 done
 out=$(cd "$D" && ./jvc zune.ln --witness 2>&1)
 echo "$out" | grep -q '^witness zune_convert_days bb[0-9]* (stem 0, cycle 1) days0 = 366: HANG$' \

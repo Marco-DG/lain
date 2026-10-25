@@ -76,7 +76,11 @@ static IState *ist = NULL;
 // block entry and at every call: one test each.
 typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size_t *slen; uint64_t *shash; size_t bytes; int status;
                  const int32_t *keys; int nkeys; uint64_t *kval; uint8_t *kgot;
-                 const uint8_t *lap; int32_t nlap; } IWit;   // lap[id]: lap_only.h's, left out of the state
+                 const uint8_t *lap; int32_t nlap;            // lap[id]: lap_only.h's, left out of the state
+                 // w5 (header < 0): the calls in progress, each one's state (iw_call_push)
+                 bool rec; char **cs; size_t *cslen; uint64_t *cshash; IrFunc **csf; int ncs, ccs; size_t csbytes; } IWit;
+// the call a recursion witness's run found made again, read by the caller after IW_HANG
+static struct { IrFunc *f, *caller; IrInstr *at; int n; uint64_t arg[16]; uint8_t isint[16]; } iw_rep;
 static IWit *ii_wit = NULL;
 
 // ── stopping ─────────────────────────────────────────────────────────────────────────────
@@ -341,6 +345,8 @@ static IrFunc *ii_find(const IrName *n) {
 static bool ii_name_is(const IrName *n, const char *s) { size_t l = strlen(s); return n && (size_t)n->length == l && memcmp(n->name, s, l) == 0; }
 
 static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at);
+static void iw_call_push(IrFunc *g, const IVal *args, int na, IrInstr *at);   // PE.12 w5 (below)
+static void iw_call_pop(void);
 
 // ── C's `printf`, over interpreted values ────────────────────────────────────────────────
 static void ii_cstring(const IVal *v, char *buf, size_t cap, IrInstr *at) {
@@ -1068,6 +1074,7 @@ static void ii_exec(IrInstr *ins) {
             int32_t open_saved = ii_open_seal;
             if (ins->seal) ii_open_seal = ins->seal;              // part of a binding's initialiser
             if (g->is_extern) ii_extern(g, args, na, ins->operands + a0, &ret, ins);
+            else if (ii_wit && ii_wit->rec) { iw_call_push(g, args, na, ins); ii_call(g, args, na, &ret, ins); iw_call_pop(); }
             else ii_call(g, args, na, &ret, ins);
             ii_open_seal = open_saved;
             if (ins->result) ii_set(ins->result, &ret);
@@ -1168,7 +1175,10 @@ static void iw_obj(IwBuf *s, IObj *o) {
     }
     s->seen[s->ns] = o; ix = s->ns++;
     iw_put(s, &ix, sizeof ix);
-    uint8_t flags = (uint8_t)(o->live | (o->ro << 1)); iw_put(s, &flags, 1);
+    // what a write or a read may check: whether it lives, is read-only, is heap memory (read
+    // unwritten: UB), raw, and the seal of an immutable binding's storage (written only by it)
+    uint8_t flags = (uint8_t)(o->live | (o->ro << 1) | (o->heap << 2) | (o->raw << 3)); iw_put(s, &flags, 1);
+    iw_put(s, &o->seal, sizeof o->seal);
     iw_val(s, &o->root);
 }
 static void iw_val(IwBuf *s, const IVal *v) {
@@ -1220,6 +1230,44 @@ static void iw_visit(IFrame *fr) {
     if (ii_wit->bytes + s.n > ((size_t)64 << 20)) { free(s.b); ii_wit->status = 3; ii_stop(95); }   // IW_STOPPED: 64 MB of states kept
     ii_wit->snap[ii_wit->laps] = s.b; ii_wit->slen[ii_wit->laps] = s.n; ii_wit->shash[ii_wit->laps] = h;
     ii_wit->bytes += s.n; ii_wit->laps++;
+}
+// PE.12 w5: a CALL made while a call with the same state is still running never returns. The state
+// is the callee, the seal its caller opened (a binding's initialiser may write that storage:
+// ii_open_seal), its arguments and every object they reach, numbered as iw_visit numbers them. A
+// callee reads nothing else: no caller's frame but through those objects, no mutable global (module
+// constants are read-only), and an extern call ends the run. So the inner call runs as the outer
+// one did up to here, makes the same call again, and so on forever. Exact bytes, as iw_visit's.
+static void iw_call_push(IrFunc *g, const IVal *args, int na, IrInstr *at) {
+    IwBuf s; memset(&s, 0, sizeof s);
+    iw_put(&s, &g, sizeof g); iw_put(&s, &ii_open_seal, sizeof ii_open_seal); iw_put(&s, &na, sizeof na);
+    for (int k = 0; k < na; k++) iw_val(&s, &args[k]);
+    free(s.seen);
+    if (s.oom) { free(s.b); ii_wit->status = 3; ii_stop(95); }                 // IW_STOPPED
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < s.n; i++) { h ^= (unsigned char)s.b[i]; h *= 1099511628211ull; }
+    for (int k = 0; k < ii_wit->ncs; k++)
+        if (ii_wit->csf[k] == g && ii_wit->cshash[k] == h && ii_wit->cslen[k] == s.n && !memcmp(ii_wit->cs[k], s.b, s.n)) {
+            memset(&iw_rep, 0, sizeof iw_rep);
+            iw_rep.f = g; iw_rep.caller = ii_cur_f; iw_rep.at = at; iw_rep.n = na < 16 ? na : 16;
+            for (int q = 0; q < iw_rep.n; q++) { iw_rep.isint[q] = args[q].k == IV_INT; iw_rep.arg[q] = args[q].i; }
+            free(s.b); ii_wit->status = 1; ii_stop(95);                          // IW_HANG
+        }
+    if (ii_wit->csbytes + s.n > ((size_t)64 << 20)) { free(s.b); ii_wit->status = 3; ii_stop(95); }
+    if (ii_wit->ncs == ii_wit->ccs) {
+        int c = ii_wit->ccs ? 2 * ii_wit->ccs : 64;
+        char **a = realloc(ii_wit->cs, sizeof *a * (size_t)c); if (a) ii_wit->cs = a;
+        size_t *l = realloc(ii_wit->cslen, sizeof *l * (size_t)c); if (l) ii_wit->cslen = l;
+        uint64_t *hh = realloc(ii_wit->cshash, sizeof *hh * (size_t)c); if (hh) ii_wit->cshash = hh;
+        IrFunc **ff = realloc(ii_wit->csf, sizeof *ff * (size_t)c); if (ff) ii_wit->csf = ff;
+        if (!a || !l || !hh || !ff) { free(s.b); ii_wit->status = 3; ii_stop(95); }
+        ii_wit->ccs = c;
+    }
+    ii_wit->cs[ii_wit->ncs] = s.b; ii_wit->cslen[ii_wit->ncs] = s.n; ii_wit->cshash[ii_wit->ncs] = h;
+    ii_wit->csf[ii_wit->ncs] = g; ii_wit->csbytes += s.n; ii_wit->ncs++;
+}
+static void iw_call_pop(void) {
+    if (ii_wit->ncs <= 0) return;
+    ii_wit->ncs--; ii_wit->csbytes -= ii_wit->cslen[ii_wit->ncs]; free(ii_wit->cs[ii_wit->ncs]);
 }
 static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
     { char here; uintptr_t h = (uintptr_t)&here;
@@ -1390,7 +1438,8 @@ static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __
     s.mod = mod; s.file = "witness"; s.budget = budget;
     s.who = "a witness's run"; s.budget_is_callers = true;
     static IWit w; memset(&w, 0, sizeof w);                 // static: changed between setjmp and longjmp
-    w.f = f; w.header = header; w.maxlaps = maxlaps;
+    w.f = f; w.header = header; w.maxlaps = maxlaps; w.rec = header < 0;   // < 0: a recursion's run (w5)
+    memset(&iw_rep, 0, sizeof iw_rep);
     w.keys = keys; w.nkeys = keys ? nkeys : 0; w.kval = kval; w.kgot = kgot;
     for (int q = 0; q < w.nkeys; q++) { kval[q] = 0; kgot[q] = 0; }
     w.snap = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.snap);
@@ -1439,12 +1488,15 @@ static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __
         }
         ii_wit = &w;
         IVal ret; memset(&ret, 0, sizeof ret);
+        if (w.rec) iw_call_push(f, args, na, NULL);        // the run's own call is the outermost one
         ii_call(f, args, na, &ret, NULL);
         r = IW_RETURNED;
     }
 out:
     ii_wit = NULL; ii_quiet = quiet; ist = NULL;
     for (int i = 0; i < w.laps; i++) free(w.snap[i]);
+    for (int i = 0; i < w.ncs; i++) free(w.cs[i]);
+    free(w.cs); free(w.cslen); free(w.cshash); free(w.csf);
     for (int i = 0; i < na; i++) if (made[i]) { iv_free_owned(&made[i]->root); free(made[i]); }
     free(w.snap); free(w.slen); free(w.shash); free(args); free(made); free(lap);
     return r;

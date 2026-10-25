@@ -1739,7 +1739,9 @@ func year_of(days0 u32) i32 {
 The last line is an input the compiler found by running the loop: from `year_of(366)` the loop comes
 back to the same state after every lap, so it never ends. A line like it is printed only when such
 a run repeats a state, leaving out any value nothing in the loop depends on; without one, `[E011]`
-means only that no proof was found.
+means only that no proof was found. A recursion can get such a line too,
+`this recursion never returns for ...`, printed when a run calls a function again with exactly the
+arguments, and the values they reach, of a call that has not yet returned.
 
 The fix is an `else { break }` on the inner test: then every path through the loop either lowers
 `days` or leaves the loop.

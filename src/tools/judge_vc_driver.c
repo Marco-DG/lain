@@ -24,8 +24,11 @@
 //                               fd_witness proposes and what running each did (ir_interpret_witness):
 //                               `witness <fn> bb<H> (stem m, cycle k) <param> = <v> ...: HANG` when
 //                               a header state repeated, else `returned`, `stopped`, `extern`, `laps`
-//                               or `args`; `no witness <fn> bb<H>` when nothing was proposed. Only
-//                               these lines are printed
+//                               or `args`; `no witness <fn> bb<H>` when nothing was proposed. Then,
+//                               for each function on a recursion cycle, small inputs (w5) until a call
+//                               repeats while the same call is running: `witness <fn> recursion
+//                               <param> = <v> ...: HANG, <g> called again`, else `no witness <fn>
+//                               recursion`. Only these lines are printed
 //   --cover                     each of VRA's checks (termination aside) beside an obligation of
 //                               its class at its instruction (Main Compiler Work's census): one
 //                               `UNCOVERED` line for a check the judge owes nothing for, then a
@@ -734,6 +737,33 @@ int main(int argc, char **argv) {
                             }
                     }
                 }
+                // PE.12 w5: each function on a recursion cycle, run on fd_witness_enum's inputs
+                IrCallGraph CG; memset(&CG, 0, sizeof CG);
+                bool cg = ir_cg_build(&CG, irmod);
+                for (IrFunc *f = irmod; cg && f; f = f->next) {
+                    if (f->is_extern || !f->entry) continue;
+                    int ci = ir_cg_index(&CG, f);
+                    if (ci < 0 || !ir_cg_on_cycle(&CG, ci)) continue;
+                    FdWitness e[49];
+                    int32_t ne = fd_witness_enum(f, e, 49), c = 0;
+                    int np = 0, r = 0;
+                    for (IrParam *pp = f->params; pp; pp = pp->next) np++;
+                    for (c = 0; c < ne; c++) {
+                        r = ir_interpret_witness(f, irmod, -1, e[c].val, e[c].given, np < FD_WMAXP ? np : FD_WMAXP, 100000LL, 0,
+                                                 NULL, 0, NULL, NULL);
+                        if (r == IW_HANG) break;
+                    }
+                    if (c == ne) { printf("no witness %.*s recursion\n", (int)f->name->length, f->name->name); continue; }
+                    printf("witness %.*s recursion", (int)f->name->length, f->name->name);
+                    int k = 0;
+                    for (IrParam *pp = f->params; pp; pp = pp->next, k++) {
+                        if (!pp->value || k >= FD_WMAXP || !e[c].given[k]) continue;
+                        const IrName *nm = pp->value->src_name;
+                        printf(" %.*s = %lld", nm ? (int)nm->length : 1, nm ? nm->name : "?", (long long)e[c].val[k]);
+                    }
+                    printf(": HANG, %.*s called again\n", (int)iw_rep.f->name->length, iw_rep.f->name->name);
+                }
+                if (cg) ir_cg_free(&CG);
                 return 0;
             }
         }

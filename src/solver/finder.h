@@ -1821,6 +1821,35 @@ static bool fd_witness_variant(const FdWitness *in, IrFunc *f, int k, FdWitness 
     }
     return changed;
 }
+// PE.12 w5: inputs for a recursion to be run on, smallest first: each of f's first two integer or
+// bool parameters over 0, 1, -1, 2, 3, -2, 4 (a bool over false, true; an unsigned parameter
+// skips the negative ones), the others 0. Any input a run confirms is a witness however it was
+// proposed: the run decides, not this list. The number written to out (at most max).
+static int32_t fd_witness_enum(IrFunc *f, FdWitness *out, int32_t max) {
+    static const int64_t vals[] = { 0, 1, -1, 2, 3, -2, 4 };
+    int32_t slot[2] = { -1, -1 }, ns = 0, q = 0, n[2] = { 1, 1 };
+    for (IrParam *p = f->params; p && q < FD_WMAXP; p = p->next, q++) {
+        const IrType *ty = p->value ? p->value->type : NULL;
+        if (ns < 2 && ty && (ty->kind == IRT_INT || ty->kind == IRT_BOOL)) {
+            n[ns] = ty->kind == IRT_BOOL ? 2 : 7; slot[ns++] = q;
+        }
+    }
+    int32_t got = 0;
+    for (int32_t a = 0; a < n[0] && got < max; a++)
+        for (int32_t b = 0; b < n[1] && got < max; b++) {
+            FdWitness w; memset(&w, 0, sizeof w);
+            bool ok = true; q = 0;
+            for (IrParam *p = f->params; p && q < FD_WMAXP; p = p->next, q++) {
+                const IrType *ty = p->value ? p->value->type : NULL;
+                if (!ty || (ty->kind != IRT_INT && ty->kind != IRT_BOOL)) continue;
+                int64_t v = q == slot[0] ? vals[a] : q == slot[1] ? vals[b] : 0;
+                if (v < 0 && (ty->kind == IRT_BOOL || !ty->is_signed)) ok = false;
+                w.val[q] = v; w.given[q] = 1;
+            }
+            if (ok) out[got++] = w;
+        }
+    return got;
+}
 // Up to `max` candidates for header H of f under the claims cl (the judge's): the number found.
 static int32_t fd_witness(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdWitness *out, int32_t max) {
     char err[200];

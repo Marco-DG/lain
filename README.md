@@ -650,7 +650,9 @@ func settle(n u32) u32 {
 The compiler prints that last line only after running the loop from that input back into a state it
 was already in, leaving out any value nothing in the loop depends on, so it is a fact about the
 program. Without it, `[E011]` says only that no proof was
-found.
+found. A recursion gets the same kind of line, `this recursion never returns for ...`, when a run
+calls a function again with exactly the arguments, and the values they reach, of a call that has not
+yet returned.
 
 Recursion is held to the same standard:
 

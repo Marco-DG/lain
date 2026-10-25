@@ -254,6 +254,7 @@ static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
                                 "       name it with `decreasing <param>`, guard the base "
                                 "case, or write `effects diverge` to say it may not "
                                 "terminate\n");
+                if (c->wit_input && !c->had_measure) fprintf(stderr, "       %s\n", c->wit_input);   // PE.12 w5
             } else {
                 // Annex B again, and the same rule as the recursive case above: E011 is a
                 // loop "whose measure is neither given nor inferable", E082 one whose

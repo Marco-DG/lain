@@ -7,6 +7,8 @@
 # value tried because no path's facts constrain `flag`, and "no lap changes anything". A loop fed by
 # an extern: no note (its input is not the run's to decide), the E011 alone. A lap counter nothing in
 # the loop depends on (src/ir/lap_only.h) is left out of the repeated state, and the note says it changes.
+# A recursion's E011 (w5) names an input on which a call is made while the same call is still
+# running: the call made again by its arguments, or, when one is not an integer, by its name.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 D="$(mktemp -d)"; trap 'rm -rf "${D:?}"' EXIT
@@ -118,6 +120,81 @@ LN
 out=$(cd "$D" && "$ROOT/lain" count.ln -o count.c 2>&1) && { echo "count: accepted"; exit 1; }
 want='       this loop never ends for g(true): at line 3, no lap changes anything but n, and nothing in the loop depends on it'
 echo "$out" | grep -qxF "$want" || { echo "count: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
+cat > "$D/fixed.ln" <<'LN'
+func rec(x i32, y i32) {
+    if x < 10 {
+        rec(2 *% y -% 2, x +% 1)
+    }
+}
+func main() i32 {
+    rec(5, 5)
+    return 0
+}
+LN
+cat > "$D/collatz_rec.ln" <<'LN'
+func c(n u32) u32 {
+    if n <= 1 {
+        return 0
+    }
+    if n % 2 == 0 {
+        return c(n / 2) +% 1
+    }
+    return c(3 *% n +% 1) +% 1
+}
+func main() i32 {
+    return c(27) as% i32
+}
+LN
+cat > "$D/fed.ln" <<'LN'
+extern func nondet() i32 effects io
+func r(x i32) effects io {
+    if nondet() > 0 {
+        r(x)
+    }
+}
+func main() i32 effects io {
+    r(0)
+    return 0
+}
+LN
+for step in 0 1; do cat > "$D/walk$step.ln" <<LN
+type C { i i32, pad i32 }
+func walk(var c C) {
+    if c.i < 5 {
+        c.i = c.i +% $step
+        walk(var c)
+    }
+}
+func main() i32 {
+    var c = C(0, 0)
+    walk(var c)
+    return 0
+}
+LN
+done
+cat > "$D/nested.ln" <<'LN'
+func g(x i32) i32 {
+    if x == 0 {
+        return 1
+    }
+    return g(g(x -% 1) +% 1)
+}
+func main() i32 {
+    return g(0)
+}
+LN
+for c in 'fixed|this recursion never returns for rec(0, 0): rec(0, 1) is called again before it returns' \
+         'nested|this recursion never returns for g(1): g(1) is called again before it returns' \
+         'walk0|this recursion never returns for walk(c), with c zeroed: walk is called again, with the same arguments, before it returns'; do
+    f=${c%%|*}; want="       ${c#*|}"
+    out=$(cd "$D" && "$ROOT/lain" $f.ln -o $f.c 2>&1) && { echo "$f: accepted"; exit 1; }
+    echo "$out" | grep -qxF "$want" || { echo "$f: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
+done
+for f in collatz_rec walk1 fed; do
+    out=$(cd "$D" && "$ROOT/lain" $f.ln -o $f.c 2>&1) && { echo "$f: accepted"; exit 1; }
+    echo "$out" | grep -q '^\[E011\]' || { echo "$f: no E011"; echo "$out"; exit 1; }
+    echo "$out" | grep -qE 'never (ends|returns)' && { echo "$f: a note for a recursion that ends or is fed by an extern:"; echo "$out"; exit 1; }
+done
 out=$(cd "$D" && "$ROOT/lain" extern.ln -o extern.c 2>&1) && { echo "extern: accepted"; exit 1; }
 echo "$out" | grep -q '^\[E011\]' || { echo "extern: no E011"; echo "$out"; exit 1; }
 echo "$out" | grep -q 'never ends' && { echo "extern: a note for a loop fed by an extern:"; echo "$out"; exit 1; }
