@@ -1741,7 +1741,9 @@ back to the same state after every lap, so it never ends. A line like it is prin
 a run repeats a state, leaving out any value nothing in the loop depends on; without one, `[E011]`
 means only that no proof was found. A recursion can get such a line too,
 `this recursion never returns for ...`, printed when a run calls a function again with exactly the
-arguments, and the values they reach, of a call that has not yet returned.
+arguments, and the values they reach, of a call that has not yet returned. When the run reads an
+`extern` declared `effects io` that reaches none of the program's memory, the line may assume the
+`extern` returns one value every time, and it says so (`... if nondet() returns 0 every time`).
 
 The fix is an `else { break }` on the inner test: then every path through the loop either lowers
 `days` or leaves the loop.

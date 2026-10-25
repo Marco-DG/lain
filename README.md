@@ -652,7 +652,9 @@ was already in, leaving out any value nothing in the loop depends on, so it is a
 program. Without it, `[E011]` says only that no proof was
 found. A recursion gets the same kind of line, `this recursion never returns for ...`, when a run
 calls a function again with exactly the arguments, and the values they reach, of a call that has not
-yet returned.
+yet returned. When the run reads an `extern` declared `effects io` that reaches none of the
+program's memory, the line may assume it returns one value every time, and says so:
+`... if nondet() returns 0 every time`.
 
 Recursion is held to the same standard:
 

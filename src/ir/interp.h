@@ -81,6 +81,35 @@ typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size
                  bool rec; char **cs; size_t *cslen; uint64_t *cshash; IrFunc **csf; int ncs, ccs; size_t csbytes; } IWit;
 // the call a recursion witness's run found made again, read by the caller after IW_HANG
 static struct { IrFunc *f, *caller; IrInstr *at; int n; uint64_t arg[16]; uint8_t isint[16]; } iw_rep;
+// PE.12 w6: an INPUT TAPE. An extern whose parameters and result are all integers or bools is
+// reached by no pointer of the program's, so it changes nothing the program holds; a run in which
+// it returns the same value every time is deterministic again, and a repeat there is a hang ON
+// THAT CONDITION, which the note states. Only an extern declared `effects io`, whose result the
+// environment chooses (input, a sensor), and only values its result type admits: a pure extern is
+// a function of its arguments, and "returns 0 whatever its argument" no real one may meet
+// (Documentation). fn/v: the tape (n entries, set by
+// ir_interpret_witness_taped); the run marks each entry it used and names the extern that stopped
+// it (one with no entry, or one no tape can stand for); steps: what the run spent.
+static struct { int n; IrFunc *fn[2]; uint64_t v[2]; bool used[2]; IrFunc *stopped; long long steps; } iw_tape;
+static bool iw_tape_ok(const IrFunc *g) {
+    if (!g || !g->is_extern || g->is_variadic || !g->ret_type || (g->ret_type->kind != IRT_INT && g->ret_type->kind != IRT_BOOL))
+        return false;
+    if (!g->has_declared_row || !(g->declared_row & IR_EFFECT_IO)) return false;
+    for (IrParam *p = g->params; p; p = p->next) {
+        const IrType *t = p->value ? p->value->type : NULL;
+        if (!t || (t->kind != IRT_INT && t->kind != IRT_BOOL)) return false;
+    }
+    return true;
+}
+// a value the extern's result type admits: its range, a bool's 0 and 1, a refinement's bounds
+static bool it_fits(__int128 x, const IrType *t);
+static bool iw_tape_fits(const IrType *t, int64_t v) {
+    if (!t) return false;
+    if (t->kind == IRT_BOOL) return v == 0 || v == 1;
+    if (t->kind != IRT_INT || !it_fits((__int128)v, t)) return false;
+    if (t->has_refine && (v < t->refine_lo || v > t->refine_hi)) return false;
+    return !(t->has_ne && v == t->refine_ne);
+}
 static IWit *ii_wit = NULL;
 
 // ── stopping ─────────────────────────────────────────────────────────────────────────────
@@ -1068,7 +1097,16 @@ static void ii_exec(IrInstr *ins) {
                 }
                 II_UNSUP(ins, "a call to %.*s, which the module does not define", ins->aux.callee ? (int)ins->aux.callee->length : 1, ins->aux.callee ? ins->aux.callee->name : "?");
             }
-            if (ii_wit && g->is_extern) { ii_wit->status = 4; ii_stop(95); }   // IW_EXTERN: not deterministic
+            if (ii_wit && g->is_extern) {           // IW_EXTERN: not deterministic, unless the tape stands for it
+                int t = -1;
+                for (int q = 0; q < iw_tape.n && t < 0; q++) if (iw_tape.fn[q] == g) t = q;
+                IrType *xt = ins->result ? ins->result->type : NULL;
+                __int128 x = t >= 0 ? (__int128)(int64_t)iw_tape.v[t] : 0;
+                if (t < 0 || !iw_tape_ok(g) || (xt && !it_fits(x, xt))) { iw_tape.stopped = g; ii_wit->status = 4; ii_stop(95); }
+                iw_tape.used[t] = true;
+                if (ins->result) { IVal tv; memset(&tv, 0, sizeof tv); iv_int(&tv, x); ii_set(ins->result, &tv); }
+                return;
+            }
             if (!g->is_extern) ii_var_alias(g, args, na, ins);
             IVal ret; memset(&ret, 0, sizeof ret); ret.k = IV_UNIT;
             int32_t open_saved = ii_open_seal;
@@ -1440,6 +1478,7 @@ static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __
     static IWit w; memset(&w, 0, sizeof w);                 // static: changed between setjmp and longjmp
     w.f = f; w.header = header; w.maxlaps = maxlaps; w.rec = header < 0;   // < 0: a recursion's run (w5)
     memset(&iw_rep, 0, sizeof iw_rep);
+    memset(iw_tape.used, 0, sizeof iw_tape.used); iw_tape.stopped = NULL; iw_tape.steps = 0;
     w.keys = keys; w.nkeys = keys ? nkeys : 0; w.kval = kval; w.kgot = kgot;
     for (int q = 0; q < w.nkeys; q++) { kval[q] = 0; kgot[q] = 0; }
     w.snap = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.snap);
@@ -1497,9 +1536,39 @@ out:
     for (int i = 0; i < w.laps; i++) free(w.snap[i]);
     for (int i = 0; i < w.ncs; i++) free(w.cs[i]);
     free(w.cs); free(w.cslen); free(w.cshash); free(w.csf);
+    iw_tape.steps = s.steps;
     for (int i = 0; i < na; i++) if (made[i]) { iv_free_owned(&made[i]->root); free(made[i]); }
     free(w.snap); free(w.slen); free(w.shash); free(args); free(made); free(lap);
     return r;
+}
+// PE.12 w6: ir_interpret_witness, and when an extern a tape can stand for stops the run, again with
+// that extern returning 0, 1, -1, then 2 every time (two externs at most, each tried under the
+// other's values). Every run's steps come out of *left, the caller's allowance for this loop or
+// recursion; per is one run's budget. After an IW_HANG, iw_tape holds the tape it rests on.
+static int iw_taped(IrFunc *f, IrFunc *mod, int32_t header, const __int128 *val, const uint8_t *given, int nparam,
+                    long long per, int maxlaps, const int32_t *keys, int nkeys, uint64_t *kval, uint8_t *kgot, long long *left) {
+    if (*left <= 0) return IW_STOPPED;
+    int r = ir_interpret_witness(f, mod, header, val, given, nparam, per < *left ? per : *left, maxlaps, keys, nkeys, kval, kgot);
+    *left -= iw_tape.steps > 0 ? iw_tape.steps : 1;
+    IrFunc *e = iw_tape.stopped;
+    if (r != IW_EXTERN || !iw_tape_ok(e) || iw_tape.n >= 2) return r;
+    for (int q = 0; q < iw_tape.n; q++) if (iw_tape.fn[q] == e) return r;   // on the tape already
+    static const int64_t tv[] = { 0, 1, -1, 2 };
+    int k = iw_tape.n++;
+    for (int q = 0; q < 4 && *left > 0; q++) {
+        if (!iw_tape_fits(e->ret_type, tv[q])) continue;
+        iw_tape.fn[k] = e; iw_tape.v[k] = (uint64_t)tv[q];
+        r = iw_taped(f, mod, header, val, given, nparam, per, maxlaps, keys, nkeys, kval, kgot, left);
+        if (r == IW_HANG) return r;
+    }
+    iw_tape.n = k;
+    return r;
+}
+static int ir_interpret_witness_taped(IrFunc *f, IrFunc *mod, int32_t header, const __int128 *val, const uint8_t *given,
+                                      int nparam, long long per, int maxlaps, const int32_t *keys, int nkeys,
+                                      uint64_t *kval, uint8_t *kgot, long long *left) {
+    iw_tape.n = 0;
+    return iw_taped(f, mod, header, val, given, nparam, per, maxlaps, keys, nkeys, kval, kgot, left);
 }
 
 #endif // LAIN_IR_INTERP_H

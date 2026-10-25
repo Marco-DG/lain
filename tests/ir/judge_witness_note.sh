@@ -5,7 +5,8 @@
 # and said zeroed, the repeated state by source names, the period. A loop in a function with no
 # parameters: no call, one variable ("comes back"). `while flag {}` names no variable: g(true), a
 # value tried because no path's facts constrain `flag`, and "no lap changes anything". A loop fed by
-# an extern: no note (its input is not the run's to decide), the E011 alone. A lap counter nothing in
+# nondet(): the note says it holds if nondet() returns 1 every time (w6); a loop calling an extern
+# that takes a pointer, or a pure one: no note, the E011 alone. A lap counter nothing in
 # the loop depends on (src/ir/lap_only.h) is left out of the repeated state, and the note says it changes.
 # A recursion's E011 (w5) names an input on which a call is made while the same call is still
 # running: the call made again by its arguments, or, when one is not an integer, by its name.
@@ -185,17 +186,43 @@ func main() i32 {
 LN
 for c in 'fixed|this recursion never returns for rec(0, 0): rec(0, 1) is called again before it returns' \
          'nested|this recursion never returns for g(1): g(1) is called again before it returns' \
-         'walk0|this recursion never returns for walk(c), with c zeroed: walk is called again, with the same arguments, before it returns'; do
+         'walk0|this recursion never returns for walk(c), with c zeroed: walk is called again, with the same arguments, before it returns' \
+         'fed|this recursion never returns for r(0) if nondet() returns 1 every time: r(0) is called again before it returns'; do
     f=${c%%|*}; want="       ${c#*|}"
     out=$(cd "$D" && "$ROOT/lain" $f.ln -o $f.c 2>&1) && { echo "$f: accepted"; exit 1; }
     echo "$out" | grep -qxF "$want" || { echo "$f: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
 done
-for f in collatz_rec walk1 fed; do
+for f in collatz_rec walk1; do
     out=$(cd "$D" && "$ROOT/lain" $f.ln -o $f.c 2>&1) && { echo "$f: accepted"; exit 1; }
     echo "$out" | grep -q '^\[E011\]' || { echo "$f: no E011"; echo "$out"; exit 1; }
-    echo "$out" | grep -qE 'never (ends|returns)' && { echo "$f: a note for a recursion that ends or is fed by an extern:"; echo "$out"; exit 1; }
+    echo "$out" | grep -qE 'never (ends|returns)' && { echo "$f: a note for a recursion that ends:"; echo "$out"; exit 1; }
 done
 out=$(cd "$D" && "$ROOT/lain" extern.ln -o extern.c 2>&1) && { echo "extern: accepted"; exit 1; }
-echo "$out" | grep -q '^\[E011\]' || { echo "extern: no E011"; echo "$out"; exit 1; }
-echo "$out" | grep -q 'never ends' && { echo "extern: a note for a loop fed by an extern:"; echo "$out"; exit 1; }
+want='       this loop never ends if nondet() returns 1 every time: at line 4, x = 1 comes back after every lap'
+echo "$out" | grep -qxF "$want" || { echo "extern: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
+cat > "$D/puts.ln" <<'LN'
+extern func libc_puts(s *u8) i32 effects io
+func main() i32 effects io {
+    var x i32 = 1
+    while x > 0 {
+        libc_puts("again")
+    }
+    return 0
+}
+LN
+out=$(cd "$D" && "$ROOT/lain" puts.ln -o puts.c 2>&1) && { echo "puts: accepted"; exit 1; }
+echo "$out" | grep -q '^\[E011\]' || { echo "puts: no E011"; echo "$out"; exit 1; }
+echo "$out" | grep -qE 'never (ends|returns)' && { echo "puts: a note for a loop calling an extern that takes a pointer:"; echo "$out"; exit 1; }
+cat > "$D/pure.ln" <<'LN'
+extern func pure_id(x i32) i32 effects
+func main() i32 {
+    var y i32 = 1
+    while y > 0 {
+        y = pure_id(y)
+    }
+    return 0
+}
+LN
+out=$(cd "$D" && "$ROOT/lain" pure.ln -o pure.c 2>&1) && { echo "pure: accepted"; exit 1; }
+echo "$out" | grep -qE 'never (ends|returns)' && { echo "pure: a note resting on a pure extern:"; echo "$out"; exit 1; }
 exit 0

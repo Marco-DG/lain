@@ -3,16 +3,19 @@
 # inputs and ir_interpret_witness runs each; HANG only when the loop's header came back to a state
 # it was in. The Zune clock's convert_days(366, ...) (days = 366 in a leap year, no branch moves it)
 # is found and confirmed; a loop that ends for every input (Collatz from n > 1 under checked
-# arithmetic, which traps on 3n + 1 past the type) never shows HANG; a loop fed by an extern stops
-# at the call (`extern`), its input not the run's to decide; a ranked loop is not searched.
+# arithmetic, which traps on 3n + 1 past the type) never shows HANG; a loop fed by nondet() is
+# confirmed with nondet() returning 1 every time (w6: an extern no pointer of the program's reaches
+# can stand on a tape, when it is declared `effects io`), and one that calls an extern taking a
+# pointer, or a pure one, stops at the call (`extern`);
+# a ranked loop is not searched.
 # A lap counter (`n = n +% 1`) that nothing in the loop depends on is left out of the state (src/ir/lap_only.h),
 # so the loop around it is confirmed; the same counter checked (`n + 1`, whose overflow ends the run),
 # read by a test, or handed to a call is state, and no HANG is shown.
 # A recursion (w5) is run on small inputs until a call is made while a call with the same state is
 # still running: rec(x, y) from rec(0, 0), a stem away from rec(0, 1); walk(var c) when c.i stays,
 # and not when it rises (the object an argument reaches is part of the state); g(g(x - 1) + 1)
-# from g(1). A recursion that ends on the inputs tried (Collatz from 0..4) and one fed by an extern
-# show none.
+# from g(1), and r(0) when nondet() returns 1 every time. A recursion that ends on the inputs tried
+# (Collatz from 0..4) shows none.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 D="$(mktemp -d)"; trap 'rm -rf "${D:?}"' EXIT
@@ -188,14 +191,14 @@ func main() i32 {
     return g(0)
 }
 LN
-for c in fixed:fixed_rec walk0:walk0_walk nested:nested_g; do
+for c in fixed:fixed_rec walk0:walk0_walk nested:nested_g fed:fed_r; do
     out=$(cd "$D" && ./jvc ${c%%:*}.ln --witness 2>&1)
     echo "$out" | grep -qE "^witness ${c#*:} recursion.*: HANG, ${c#*:} called again$" \
         || { echo "${c%%:*}: the recursion was not confirmed:"; echo "$out"; exit 1; }
 done
-for c in collatz_rec:collatz_rec_c walk1:walk1_walk fed:fed_r; do
+for c in collatz_rec:collatz_rec_c walk1:walk1_walk; do
     out=$(cd "$D" && ./jvc ${c%%:*}.ln --witness 2>&1)
-    echo "$out" | grep -q 'HANG' && { echo "${c%%:*}: a recursion that ends, or is fed by an extern, was shown to hang:"; echo "$out"; exit 1; }
+    echo "$out" | grep -q 'HANG' && { echo "${c%%:*}: a recursion that ends was shown to hang:"; echo "$out"; exit 1; }
     echo "$out" | grep -qx "no witness ${c#*:} recursion" || { echo "${c%%:*}: the recursion was not searched:"; echo "$out"; exit 1; }
 done
 out=$(cd "$D" && ./jvc zune.ln --witness 2>&1)
@@ -205,8 +208,34 @@ out=$(cd "$D" && ./jvc collatz.ln --witness 2>&1)
 echo "$out" | grep -q 'HANG' && { echo "collatz: a loop that ends for every input was shown to hang:"; echo "$out"; exit 1; }
 echo "$out" | grep -qE '^(no witness|witness) collatz_steps ' || { echo "collatz: the unranked loop was not searched:"; echo "$out"; exit 1; }
 out=$(cd "$D" && ./jvc extern.ln --witness 2>&1)
-echo "$out" | grep -q 'HANG' && { echo "extern: a loop fed by an extern was shown to hang:"; echo "$out"; exit 1; }
-echo "$out" | grep -qE '^witness extern_spin bb[0-9]* .*: extern$' || { echo "extern: the run did not stop at the extern call:"; echo "$out"; exit 1; }
+echo "$out" | grep -qE '^witness extern_spin bb[0-9]* .* \[nondet = 1\]: HANG$' \
+    || { echo "extern: the loop fed by nondet() was not confirmed on a tape:"; echo "$out"; exit 1; }
+cat > "$D/puts.ln" <<'LN'
+extern func libc_puts(s *u8) i32 effects io
+func main() i32 effects io {
+    var x i32 = 1
+    while x > 0 {
+        libc_puts("again")
+    }
+    return 0
+}
+LN
+out=$(cd "$D" && ./jvc puts.ln --witness 2>&1)
+echo "$out" | grep -q 'HANG' && { echo "puts: a loop calling an extern that takes a pointer was shown to hang:"; echo "$out"; exit 1; }
+echo "$out" | grep -qE '^witness main bb[0-9]* .*: extern$' || { echo "puts: the run did not stop at the extern call:"; echo "$out"; exit 1; }
+cat > "$D/pure.ln" <<'LN'
+extern func pure_id(x i32) i32 effects
+func main() i32 {
+    var y i32 = 1
+    while y > 0 {
+        y = pure_id(y)
+    }
+    return 0
+}
+LN
+out=$(cd "$D" && ./jvc pure.ln --witness 2>&1)
+echo "$out" | grep -q 'HANG' && { echo "pure: a loop calling a pure extern was shown to hang on a tape:"; echo "$out"; exit 1; }
+echo "$out" | grep -qE '^witness main bb[0-9]* .*: extern$' || { echo "pure: the run did not stop at the pure extern:"; echo "$out"; exit 1; }
 out=$(cd "$D" && ./jvc ranked.ln --witness 2>&1)
 [ -z "$out" ] || { echo "ranked: a loop the finder ranks was searched for a witness:"; echo "$out"; exit 1; }
 exit 0

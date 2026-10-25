@@ -173,8 +173,14 @@ Diagnostic codes are divided into the following ranges:
     its laps, say), so the note is a fact about the program, not a guess.  For a
     recursion, a note may name an input on which it never returns.  It is printed
     only when a run from that input calls a function with exactly the arguments,
-    and the values reachable from them, of a call that has not yet returned.
-    Without a note, the code means only that no proof was found.
+    and the values reachable from them, of a call that has not yet returned.  When
+    the run calls an \lain{extern} declared \lain{effects io} that reaches nothing
+    the program holds (its parameters and result are integers or \lain{bool}),
+    the note may instead
+    assume that the \lain{extern} returns one value every time, a value its result
+    type admits, and it says so; it then states that the program never ends, or
+    never returns, if the \lain{extern} behaves that way.  Without a note, the code
+    means only that no proof was found.
     \\[4pt]
 
 \diagcode{E012}

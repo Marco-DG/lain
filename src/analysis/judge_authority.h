@@ -300,6 +300,26 @@ static void jau_call_text(IrFunc *f, const __int128 *val, char *call, size_t nca
     if (f->params) jau_cat(call, ncall, ")");
     if (nz) jau_cat(zero, nzero, " zeroed");
 }
+// " if nondet() returns 0 every time": the condition the last run rests on (w6), in Documentation's
+// words: each extern by name ("()" when it takes nothing) with the value it returned, and "whatever
+// its arguments" when one takes any. After a zeroed argument (", with t zeroed") it opens with a comma.
+static void jau_tape_text(char *b, size_t n, bool comma) {
+    int k = 0, nu = 0; bool args = false;
+    for (int q = 0; q < iw_tape.n; q++) nu += iw_tape.used[q];
+    for (int q = 0; q < iw_tape.n; q++) {
+        if (!iw_tape.used[q]) continue;
+        const IrFunc *g = iw_tape.fn[q]; const IrName *gn = g->src_name ? g->src_name : g->name;
+        const IrType *rt = g->ret_type;
+        args |= g->params != NULL;
+        jau_cat(b, n, "%s%.*s%s returns ", k == 0 ? (comma ? ", if " : " if ") : k == nu - 1 ? " and " : ", ",
+                (int)gn->length, gn->name, g->params ? "" : "()");
+        if (rt->kind == IRT_BOOL) jau_cat(b, n, "%s", iw_tape.v[q] ? "true" : "false");
+        else if (rt->is_signed) jau_cat(b, n, "%lld", (long long)(int64_t)iw_tape.v[q]);
+        else jau_cat(b, n, "%llu", (unsigned long long)iw_tape.v[q]);
+        k++;
+    }
+    if (k) jau_cat(b, n, " every time%s", args ? (nu == 1 ? ", whatever its arguments" : ", whatever their arguments") : "");
+}
 // PE.12 w5: a recursion the judge refused, run on fd_witness_enum's inputs until a call is made
 // again while the same call is still running (ir_interpret_witness with header -1). The note goes
 // on the recursion E011 (one a function) of the function that made that call when the judge refused
@@ -309,9 +329,10 @@ static void jau_rec_witness(IrFunc *mod, IrFunc *f) {
     int32_t nc = fd_witness_enum(f, cand, 49);
     int np = 0;
     for (IrParam *p = f->params; p; p = p->next) np++;
-    for (int32_t c = 0; c < nc; c++) {
-        int r = ir_interpret_witness(f, mod, -1, cand[c].val, cand[c].given, np < FD_WMAXP ? np : FD_WMAXP,
-                                     100000LL, 0, NULL, 0, NULL, NULL);
+    long long left = 10000000LL;                       // the steps all of f's runs may spend
+    for (int32_t c = 0; c < nc && left > 0; c++) {
+        int r = ir_interpret_witness_taped(f, mod, -1, cand[c].val, cand[c].given, np < FD_WMAXP ? np : FD_WMAXP,
+                                           100000LL, 0, NULL, 0, NULL, NULL, &left);
         if (r != IW_HANG || !iw_rep.f) continue;
         const JauRec *on = NULL;
         for (int64_t j = 0; j < jau_n && !on; j++)
@@ -324,8 +345,9 @@ static void jau_rec_witness(IrFunc *mod, IrFunc *f) {
         jau_w = x;
         JauWit *w = &jau_w[jau_nw++]; memset(w, 0, sizeof *w);
         w->fn = on->fn; w->header = -1; w->at = on->at;
-        char call[112] = "", zero[64] = "", again[112] = "";
+        char call[112] = "", zero[64] = "", again[112] = "", tape[96] = "";
         jau_call_text(f, cand[c].val, call, sizeof call, zero, sizeof zero);
+        jau_tape_text(tape, sizeof tape, zero[0] != 0);
         // the call made again, as a user would type it when every argument is an integer or bool
         const IrName *gn = iw_rep.f->src_name ? iw_rep.f->src_name : iw_rep.f->name;
         bool scalar = true; int k = 0;
@@ -344,7 +366,7 @@ static void jau_rec_witness(IrFunc *mod, IrFunc *f) {
             }
             jau_cat(again, sizeof again, ") is called again before it returns");
         } else jau_cat(again, sizeof again, "%.*s is called again, with the same arguments, before it returns", (int)gn->length, gn->name);
-        jau_put(w->note, sizeof w->note, "this recursion never returns%s%s: %s", call, zero, again);
+        jau_put(w->note, sizeof w->note, "this recursion never returns%s%s%s: %s", call, zero, tape, again);
         return;
     }
 }
@@ -376,14 +398,15 @@ static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, con
         int np = 0;
         for (IrParam *p = f->params; p; p = p->next) np++;
         bool found = false;
+        long long left = 30000000LL;                   // the steps all of this loop's runs may spend
         for (int32_t c0 = 0; c0 < nc && !found; c0++)
           for (int vk = 0; vk < 3 && !found; vk++) {
             FdWitness one;
             if (!fd_witness_variant(&cand[c0], f, vk, &one)) continue;
             FdWitness *cw = &one;
             uint64_t kv[FD_WMAXK]; uint8_t kg[FD_WMAXK];
-            int r = ir_interpret_witness(f, mod, H->id, cw->val, cw->given, np < FD_WMAXP ? np : FD_WMAXP,
-                                         2000000LL, 4096, cw->key, cw->nkey, kv, kg);
+            int r = ir_interpret_witness_taped(f, mod, H->id, cw->val, cw->given, np < FD_WMAXP ? np : FD_WMAXP,
+                                               2000000LL, 4096, cw->key, cw->nkey, kv, kg, &left);
             if (r != IW_HANG) continue;
             found = true;
             JauWit *x = realloc(jau_w, sizeof *x * (size_t)(jau_nw + 1));
@@ -396,8 +419,9 @@ static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, con
             // no call for a function without parameters; the variables of the repeated state by their
             // source names; the period and the stem. No "checked by running it": it is printed only
             // on a repeated state, so it is a fact; the documentation says how it is known.
-            char call[112] = "", zero[64] = "", st[112] = "";
+            char call[112] = "", zero[64] = "", st[112] = "", tape[96] = "";
             jau_call_text(f, cw->val, call, sizeof call, zero, sizeof zero);
+            jau_tape_text(tape, sizeof tape, zero[0] != 0);
             int shown = 0, nshow = 0;
             for (int32_t q2 = 0; q2 < cw->nkey; q2++) {
                 char nm[48]; jau_name(f, cw->key[q2], nm, sizeof nm);
@@ -435,7 +459,7 @@ static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, con
             const char *stem = cw->stem == 1 ? ", from the second lap on" : "";
             isize ln = 0, cl0 = 0; jau_site(f, q, true, &ln, &cl0);
             char head[200];
-            jau_put(head, sizeof head, "this loop never ends%s%s", call, zero);
+            jau_put(head, sizeof head, "this loop never ends%s%s%s", call, zero, tape);
             if (shown) jau_put(w->note, sizeof w->note, "%s: at line %lld, %s %s %s%s", head, (long long)ln, st,
                                shown == 1 ? "comes back" : "come back", period, stem);
             else if (nl) jau_put(w->note, sizeof w->note, "%s: at line %lld, no lap changes anything but %s%s", head, (long long)ln, lapn, stem);

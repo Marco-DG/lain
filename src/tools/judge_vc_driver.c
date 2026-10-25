@@ -717,14 +717,15 @@ int main(int argc, char **argv) {
                         int32_t nw = fd_witness(&F, f, b->id, cl, ncl, w, 4);
                         if (nw == 0) printf("no witness %.*s bb%d\n", (int)f->name->length, f->name->name, b->id);
                         bool hang = false;
+                        long long left = 30000000LL;
                         for (int32_t c = 0; c < nw && !hang; c++)
                             for (int v = 0; v < 3 && !hang; v++) {
                                 FdWitness x;
                                 if (!fd_witness_variant(&w[c], f, v, &x)) continue;
                                 int np = 0;
                                 for (IrParam *pp = f->params; pp; pp = pp->next) np++;
-                                int r = ir_interpret_witness(f, irmod, b->id, x.val, x.given, np < FD_WMAXP ? np : FD_WMAXP, 2000000LL, 4096,
-                                                             NULL, 0, NULL, NULL);
+                                int r = ir_interpret_witness_taped(f, irmod, b->id, x.val, x.given, np < FD_WMAXP ? np : FD_WMAXP, 2000000LL,
+                                                                   4096, NULL, 0, NULL, NULL, &left);
                                 printf("witness %.*s bb%d (stem %d, cycle %d)", (int)f->name->length, f->name->name, b->id, x.stem, x.period);
                                 int k = 0;
                                 for (IrParam *pp = f->params; pp; pp = pp->next, k++) {
@@ -732,6 +733,9 @@ int main(int argc, char **argv) {
                                     const IrName *nm = pp->value->src_name;
                                     printf(" %.*s = %lld", nm ? (int)nm->length : 1, nm ? nm->name : "?", (long long)x.val[k]);
                                 }
+                                for (int q = 0; r == IW_HANG && q < iw_tape.n; q++)
+                                    if (iw_tape.used[q]) printf(" [%.*s = %lld]", (int)iw_tape.fn[q]->name->length, iw_tape.fn[q]->name->name,
+                                                                (long long)(int64_t)iw_tape.v[q]);
                                 printf(": %s\n", r >= 1 && r <= 6 ? what[r] : "?");
                                 hang = r == IW_HANG;
                             }
@@ -747,12 +751,14 @@ int main(int argc, char **argv) {
                     FdWitness e[49];
                     int32_t ne = fd_witness_enum(f, e, 49), c = 0;
                     int np = 0, r = 0;
+                    long long left = 10000000LL;
                     for (IrParam *pp = f->params; pp; pp = pp->next) np++;
-                    for (c = 0; c < ne; c++) {
-                        r = ir_interpret_witness(f, irmod, -1, e[c].val, e[c].given, np < FD_WMAXP ? np : FD_WMAXP, 100000LL, 0,
-                                                 NULL, 0, NULL, NULL);
+                    for (c = 0; c < ne && left > 0; c++) {
+                        r = ir_interpret_witness_taped(f, irmod, -1, e[c].val, e[c].given, np < FD_WMAXP ? np : FD_WMAXP, 100000LL, 0,
+                                                       NULL, 0, NULL, NULL, &left);
                         if (r == IW_HANG) break;
                     }
+                    if (c < ne && r != IW_HANG) c = ne;
                     if (c == ne) { printf("no witness %.*s recursion\n", (int)f->name->length, f->name->name); continue; }
                     printf("witness %.*s recursion", (int)f->name->length, f->name->name);
                     int k = 0;
@@ -761,6 +767,9 @@ int main(int argc, char **argv) {
                         const IrName *nm = pp->value->src_name;
                         printf(" %.*s = %lld", nm ? (int)nm->length : 1, nm ? nm->name : "?", (long long)e[c].val[k]);
                     }
+                    for (int q = 0; q < iw_tape.n; q++)
+                        if (iw_tape.used[q]) printf(" [%.*s = %lld]", (int)iw_tape.fn[q]->name->length, iw_tape.fn[q]->name->name,
+                                                    (long long)(int64_t)iw_tape.v[q]);
                     printf(": HANG, %.*s called again\n", (int)iw_rep.f->name->length, iw_rep.f->name->name);
                 }
                 if (cg) ir_cg_free(&CG);
