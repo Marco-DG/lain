@@ -78,7 +78,7 @@ static void jsh_sink(void *ctx, const JRecord *r) {
 }
 
 // ── the untrusted callbacks ──────────────────────────────────────────────────────────────────
-typedef struct { char *work; size_t wcap; JFinder *F; JClaim *last; JRank *last_rk; JGuardClaim *last_gc; } JshCtx;
+typedef struct { char *work; size_t wcap; JFinder *F; JClaim *last; JRank *last_rk; JGuardClaim *last_gc; int32_t nlast; } JshCtx;
 static bool jsh_solve(void *ctx, const JVc *vc, JWork lim, JAnswer *out) {
     JshCtx *c = ctx;
     *out = lia_solve(vc, lim, c->work, c->wcap);
@@ -90,6 +90,7 @@ static bool jsh_propose(void *ctx, IrFunc *mod, const JudgeGen *gen, JClaim **ou
     c->F->gen = gen; c->F->mod = mod;
     free(c->last); free(c->last_rk);
     c->last = *out = finder_propose(c->F, nout);
+    c->nlast = *nout;
     free(c->last_gc); c->last_gc = *gc = c->F->gc; *ngc = c->F->ngc;   // guarded return claims (s7)
     c->last_rk = *rk = c->F->rk; *nrk = c->F->nrk;      // ranking claims (PE.5): owed, never facts
     return !c->F->oom;                              // the judge reports a failed proposer
@@ -163,7 +164,7 @@ static void judge_shadow_module(IrFunc *mod) {
     JFinder F; memset(&F, 0, sizeof F);
     F.work = work; F.worksz = wcap; F.use_vra = true; F.hdr = jsh_hdr; F.nhdr = jsh_nhdr;
     F.lim.pivot = 100000; F.lim.node = 4096; F.lim.leaf = 4096;
-    JshCtx jc = { work, wcap, &F, NULL, NULL, NULL };
+    JshCtx jc = { work, wcap, &F, NULL, NULL, NULL, 0 };
     JudgeCalls calls = { &jc, jsh_solve, jsh_propose };
     JudgeLimits lim; lim.lim = F.lim;
     char err[200] = "";

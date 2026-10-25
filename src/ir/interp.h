@@ -73,7 +73,8 @@ typedef struct IState {
 static IState *ist = NULL;
 // PE.12: a non-termination witness's run (ir_interpret_witness), NULL otherwise. Read at every
 // block entry and at every call: one test each.
-typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size_t *slen; uint64_t *shash; size_t bytes; int status; } IWit;
+typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size_t *slen; uint64_t *shash; size_t bytes; int status;
+                 const int32_t *keys; int nkeys; uint64_t *kval; uint8_t *kgot; } IWit;
 static IWit *ii_wit = NULL;
 
 // ── stopping ─────────────────────────────────────────────────────────────────────────────
@@ -1198,7 +1199,17 @@ static void iw_visit(IFrame *fr) {
     uint64_t h = 1469598103934665603ull;                     // a filter only: equal states are equal BYTES
     for (size_t i = 0; i < s.n; i++) { h ^= (unsigned char)s.b[i]; h *= 1099511628211ull; }
     for (int k = 0; k < ii_wit->laps; k++)
-        if (ii_wit->shash[k] == h && ii_wit->slen[k] == s.n && !memcmp(ii_wit->snap[k], s.b, s.n)) { free(s.b); ii_wit->status = 1; ii_stop(95); }   // IW_HANG
+        if (ii_wit->shash[k] == h && ii_wit->slen[k] == s.n && !memcmp(ii_wit->snap[k], s.b, s.n)) {
+            for (int q = 0; q < ii_wit->nkeys; q++) {            // IW_HANG: what each named cell holds
+                int32_t id = ii_wit->keys[q];
+                const IVal *v = id >= 0 && id < fr->nv ? &fr->v[id] : NULL, *c = NULL;
+                if (v && v->k == IV_INT) c = v;
+                else if (v && v->k == IV_PTR && v->p.o && v->p.o->live && v->p.d == 1 && v->p.p[0] >= 0 &&
+                         v->p.o->root.k == IV_AGG && v->p.p[0] < v->p.o->root.n) c = &v->p.o->root.e[v->p.p[0]];
+                if (c && c->k == IV_INT) { ii_wit->kval[q] = c->i; ii_wit->kgot[q] = 1; }
+            }
+            free(s.b); ii_wit->status = 1; ii_stop(95);
+        }
     if (ii_wit->laps == ii_wit->maxlaps) { free(s.b); ii_wit->status = 5; ii_stop(95); }   // IW_LAPS
     if (ii_wit->bytes + s.n > ((size_t)64 << 20)) { free(s.b); ii_wit->status = 3; ii_stop(95); }   // IW_STOPPED: 64 MB of states kept
     ii_wit->snap[ii_wit->laps] = s.b; ii_wit->slen[ii_wit->laps] = s.n; ii_wit->shash[ii_wit->laps] = h;
@@ -1364,17 +1375,22 @@ static void iw_zero(IVal *v, const IrType *t) {
     if ((t->kind == IRT_STRUCT || (t->kind == IRT_ARRAY && t->array_len >= 0)) && v->k == IV_AGG)
         for (int k = 0; v->e && k < v->n; k++) iw_zero(&v->e[k], t->kind == IRT_STRUCT ? t->fields[k] : t->elem);
 }
+// At IW_HANG, kval[q] receives the bits the cell (or value) keys[q] holds in the repeated state, and
+// kgot[q] 1, for an integer one; the rest 0.
 static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __int128 *val, const uint8_t *given,
-                                int nparam, long long budget, int maxlaps) {
+                                int nparam, long long budget, int maxlaps,
+                                const int32_t *keys, int nkeys, uint64_t *kval, uint8_t *kgot) {
     static IState s; memset(&s, 0, sizeof s);
     s.mod = mod; s.file = "witness"; s.budget = budget;
     s.who = "a witness's run"; s.budget_is_callers = true;
     static IWit w; memset(&w, 0, sizeof w);                 // static: changed between setjmp and longjmp
     w.f = f; w.header = header; w.maxlaps = maxlaps;
+    w.keys = keys; w.nkeys = keys ? nkeys : 0; w.kval = kval; w.kgot = kgot;
+    for (int q = 0; q < w.nkeys; q++) { kval[q] = 0; kgot[q] = 0; }
     w.snap = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.snap);
     w.slen = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.slen);
     w.shash = calloc((size_t)(maxlaps > 0 ? maxlaps : 1), sizeof *w.shash);
-    int na = 0;
+    static int na; na = 0;                                    // static: read after a longjmp
     for (IrParam *p = f->params; p; p = p->next) na++;
     IVal *args = calloc((size_t)(na ? na : 1), sizeof *args);
     IObj **made = calloc((size_t)(na ? na : 1), sizeof *made);   // the arguments' objects: no frame frees them

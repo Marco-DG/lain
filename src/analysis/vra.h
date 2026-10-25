@@ -133,6 +133,9 @@ typedef struct {
     int      wit_n;
     int64_t  wit_line[6], wit_col[6];
     bool     wit_true[6];
+    // PE.12 (--judge=authority): an input the loop never ends for, RUN before it is reported (the
+    // header came back to a state it was in), as E011's last note; judge_authority.h's storage
+    const char *wit_input;
     // A VRA_TERMINATION check about a RECURSION rather than a loop. The two are one
     // obligation — "this does not run forever" — proved by two different arguments (a loop
     // measure, a well-founded ranking over the self-call's arguments), and a user needs to be

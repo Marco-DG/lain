@@ -320,6 +320,7 @@ static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
                         fprintf(stderr, "\n");
                     }
                 }
+                if (c->wit_input && !c->had_measure) fprintf(stderr, "       %s\n", c->wit_input);   // PE.12
             }
             n++; break;
     }

@@ -1733,7 +1733,12 @@ func year_of(days0 u32) i32 {
    |            ^ true
  6 |             if days > 366 {
    |                ^ false
+       this loop never ends for year_of(366): at line 4, days = 366 and year = 1980 come back after every lap
 ```
+
+The last line is an input the compiler found by running the loop: from `year_of(366)` the loop comes
+back to the same state after every lap, so it never ends. A line like it is printed only when such
+a run repeats a state; without one, `[E011]` means only that no proof was found.
 
 The fix is an `else { break }` on the inner test: then every path through the loop either lowers
 `days` or leaves the loop.

@@ -32,6 +32,9 @@ typedef struct {
     char reason[200];                // an outside's, a budget's
 } JauRec;
 static JauRec *jau_r; static int64_t jau_n, jau_cap;
+// PE.12: a loop the judge refused, and the input it never ends for (the note's line), run first
+typedef struct { IrFunc *fn; int32_t header; char note[200]; } JauWit;
+static JauWit *jau_w; static int32_t jau_nw;
 static bool jau_oom;
 static char jau_internal[400];       // the first compiler bug the judge reported, if any
 
@@ -83,6 +86,16 @@ static void jau_put(char *b, size_t n, const char *fmt, ...) {
     vsnprintf(b, n, fmt, ap);
     va_end(ap);
 }
+// ...and appended to what the buffer holds (PE.12's note is built from parts)
+static void jau_cat(char *b, size_t n, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+static void jau_cat(char *b, size_t n, const char *fmt, ...) {
+    size_t at = strlen(b);
+    if (at + 1 >= n) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(b + at, n - at, fmt, ap);
+    va_end(ap);
+}
 static void jau_src(IrFunc *f, IrValue *v, char *b, size_t n, int depth) {
     if (!v || n < 2) { jau_put(b, n, "?"); return; }
     if (depth > 8) { jau_put(b, n, "%%%d", v->id); return; }
@@ -115,6 +128,13 @@ static void jau_src(IrFunc *f, IrValue *v, char *b, size_t n, int depth) {
             else jau_put(b, n, "%%%d", v->id);
             return;
     }
+}
+static IrValue *jau_value_of(IrFunc *f, int32_t key) {
+    IrValue *v = NULL;
+    for (IrParam *p = f->params; p && !v; p = p->next) if (p->value && p->value->id == key) v = p->value;
+    for (IrBlock *bb = f->blocks; bb && !v; bb = bb->next)
+        for (IrInstr *i = bb->instrs; i && !v; i = i->next) if (i->result && i->result->id == key) v = i->result;
+    return v;
 }
 static void jau_name(IrFunc *f, int32_t key, char *b, size_t n) {
     IrValue *v = NULL;
@@ -234,8 +254,107 @@ static const char *jau_out_where(const IrFunc *f) {
 }
 // Run the judge on `mod`. False with jau_internal set when it could not run, or reported a compiler
 // bug: the caller refuses the program with exit 70, never emits it.
+// PE.12: for each loop the judge refused, inputs the finder proposes (fd_witness, untrusted), each
+// RUN (ir_interpret_witness) until one brings the header back to a state it was in; that one is
+// E011's last note. The generator is offered again over the judge's region, which the judge is
+// done with, with the claims the finder proposed. Only refused loops pay for it.
+static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, const JClaim *cl, int32_t ncl) {
+    JGenOffer offer; memset(&offer, 0, sizeof offer);
+    offer.buf = region; offer.cap = cap; offer.mod = mod;
+    JudgeGen gen = jgen_offer(&offer);
+    const JudgeGen *saved = F->gen; F->gen = &gen;
+    for (int64_t j = 0; j < jau_n; j++) {
+        const JauRec *q = &jau_r[j];
+        if (q->k == JREC_PROVED || strncmp(q->kind, "rank.", 5)) continue;
+        IrBlock *H = jau_header(q);
+        if (!H || !q->fn || q->fn->is_extern) continue;
+        bool done = false;
+        for (int32_t w = 0; w < jau_nw && !done; w++) done = jau_w[w].fn == q->fn && jau_w[w].header == H->id;
+        if (done) continue;
+        IrFunc *f = q->fn;
+        FdWitness cand[4];
+        int32_t nc = fd_witness(F, f, H->id, cl, ncl, cand, 4);
+        int np = 0;
+        for (IrParam *p = f->params; p; p = p->next) np++;
+        bool found = false;
+        for (int32_t c0 = 0; c0 < nc && !found; c0++)
+          for (int vk = 0; vk < 3 && !found; vk++) {
+            FdWitness one;
+            if (!fd_witness_variant(&cand[c0], f, vk, &one)) continue;
+            FdWitness *cw = &one;
+            uint64_t kv[FD_WMAXK]; uint8_t kg[FD_WMAXK];
+            int r = ir_interpret_witness(f, mod, H->id, cw->val, cw->given, np < FD_WMAXP ? np : FD_WMAXP,
+                                         2000000LL, 4096, cw->key, cw->nkey, kv, kg);
+            if (r != IW_HANG) continue;
+            found = true;
+            JauWit *x = realloc(jau_w, sizeof *x * (size_t)(jau_nw + 1));
+            if (!x) break;
+            jau_w = x;
+            JauWit *w = &jau_w[jau_nw++]; memset(w, 0, sizeof *w);
+            w->fn = f; w->header = H->id;
+            // The note, in Documentation's words (2026-10-25): the call as a user would type it, an
+            // integer or bool argument by value, any other by its parameter's NAME and said zeroed;
+            // no call for a function without parameters; the variables of the repeated state by their
+            // source names; the period and the stem. No "checked by running it": it is printed only
+            // on a repeated state, so it is a fact; the documentation says how it is known.
+            char call[112] = "", zero[64] = "", st[112] = "";
+            const IrName *fnm = f->src_name ? f->src_name : f->name;
+            int k = 0, nz = 0, nzall = 0;
+            for (IrParam *p = f->params; p; p = p->next) {
+                const IrType *ty = p->value ? p->value->type : NULL;
+                if (!(ty && (ty->kind == IRT_INT || ty->kind == IRT_BOOL))) nzall++;
+            }
+            if (f->params) jau_cat(call, sizeof call, " for %.*s(", (int)fnm->length, fnm->name);
+            for (IrParam *p = f->params; p; p = p->next, k++) {
+                const IrType *ty = p->value ? p->value->type : NULL;
+                const IrName *pn = p->value ? p->value->src_name : NULL;
+                __int128 x = k < FD_WMAXP ? cw->val[k] : 0;
+                if (ty && ty->kind == IRT_BOOL) jau_cat(call, sizeof call, "%s%s", k ? ", " : "", x ? "true" : "false");
+                else if (ty && ty->kind == IRT_INT && ty->is_signed) jau_cat(call, sizeof call, "%s%lld", k ? ", " : "", (long long)x);
+                else if (ty && ty->kind == IRT_INT) jau_cat(call, sizeof call, "%s%llu", k ? ", " : "", (unsigned long long)x);
+                else {
+                    jau_cat(call, sizeof call, "%s%.*s", k ? ", " : "", pn ? (int)pn->length : 1, pn ? pn->name : "_");
+                    jau_cat(zero, sizeof zero, "%s%.*s", nz == 0 ? ", with " : nz == nzall - 1 ? " and " : ", ",
+                            pn ? (int)pn->length : 1, pn ? pn->name : "_");
+                    nz++;
+                }
+            }
+            if (f->params) jau_cat(call, sizeof call, ")");
+            if (nz) jau_cat(zero, sizeof zero, " zeroed");
+            int shown = 0, nshow = 0;
+            for (int32_t q2 = 0; q2 < cw->nkey; q2++) {
+                char nm[48]; jau_name(f, cw->key[q2], nm, sizeof nm);
+                if (kg[q2] && nm[0] != '%' && nm[0] != '?') nshow++;
+            }
+            for (int32_t q2 = 0; q2 < cw->nkey; q2++) {
+                if (!kg[q2]) continue;
+                char nm[48]; jau_name(f, cw->key[q2], nm, sizeof nm);
+                if (nm[0] == '%' || nm[0] == '?') continue;
+                IrValue *kvv = jau_value_of(f, cw->key[q2]);
+                const IrType *ct = kvv ? kvv->type : NULL;
+                if (ct && ct->kind == IRT_PTR) ct = ct->elem;
+                char val[32];
+                if (ct && ct->kind == IRT_BOOL) snprintf(val, sizeof val, "%s", kv[q2] ? "true" : "false");
+                else if (ct && ct->kind == IRT_INT && !ct->is_signed) snprintf(val, sizeof val, "%llu", (unsigned long long)kv[q2]);
+                else snprintf(val, sizeof val, "%lld", (long long)(int64_t)kv[q2]);
+                jau_cat(st, sizeof st, "%s%s = %s", shown == 0 ? "" : shown == nshow - 1 ? " and " : ", ", nm, val);
+                shown++;
+            }
+            const char *period = cw->period == 1 ? "after every lap" : "every two laps";
+            const char *stem = cw->stem == 1 ? ", from the second lap on" : "";
+            isize ln = 0, cl0 = 0; jau_site(f, q, true, &ln, &cl0);
+            char head[200];
+            jau_put(head, sizeof head, "this loop never ends%s%s", call, zero);
+            if (shown) jau_put(w->note, sizeof w->note, "%s: at line %lld, %s %s %s%s", head, (long long)ln, st,
+                               shown == 1 ? "comes back" : "come back", period, stem);
+            else jau_put(w->note, sizeof w->note, "%s: at line %lld, no lap changes anything%s", head, (long long)ln, stem);   // no variable to name (Documentation)
+          }
+    }
+    F->gen = saved;
+}
 static bool judge_authority_run(IrFunc *mod) {
     free(jau_r); jau_r = NULL; jau_n = jau_cap = 0; jau_oom = false; jau_internal[0] = 0;
+    free(jau_w); jau_w = NULL; jau_nw = 0;
     jau_nout_fn = 0; jau_out_more = jau_out_module = false;
     jsh_nhdr = 0;                                     // VRA's header states: the finder's candidates
     for (IrFunc *f = mod; f; f = f->next) {
@@ -250,7 +369,7 @@ static bool judge_authority_run(IrFunc *mod) {
     JFinder F; memset(&F, 0, sizeof F);
     F.work = work; F.worksz = wcap; F.use_vra = true; F.hdr = jsh_hdr; F.nhdr = jsh_nhdr;
     F.lim.pivot = 100000; F.lim.node = 4096; F.lim.leaf = 4096;
-    JshCtx jc = { work, wcap, &F, NULL, NULL, NULL };
+    JshCtx jc = { work, wcap, &F, NULL, NULL, NULL, 0 };
     JudgeCalls calls = { &jc, jsh_solve, jsh_propose };
     JudgeLimits lim; lim.lim = F.lim;
     char err[200] = "";
@@ -262,6 +381,7 @@ static bool judge_authority_run(IrFunc *mod) {
     if (!ran && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "the judge could not run: %s", err);
     if (jau_oom && !jau_internal[0]) snprintf(jau_internal, sizeof jau_internal, "out of memory keeping the judge's records");
     if (ran && jau_dump_measures) jau_print_measures(jc.last_rk, jc.last_rk ? F.nrk : 0);
+    if (ran && !jau_internal[0]) jau_witnesses(mod, &F, buf, cap, jc.last, jc.last ? jc.nlast : 0);
     jau_nout_fn = F.nout_fn; jau_out_more = F.out_more; jau_out_module = F.out_module;
     for (int32_t i = 0; i < F.nout_fn; i++) jau_out_fn[i] = F.out_fn[i];
     free(buf); free(work); free(jc.last); free(jc.last_rk); free(jc.last_gc);
@@ -437,6 +557,11 @@ static int judge_authority_report(IrFunc *f, const char *file, Vra *V) {
             if (c.kind == VRA_TERMINATION && !c.recursion && !tw->ok) { /* VRA's witness and its site */ }
             else if (c.kind == VRA_TERMINATION && !c.recursion) { d.wit_counter = NULL; d.wit_n = 0; }
             c = d;
+        }
+        if (loop && c.kind == VRA_TERMINATION && !c.recursion) {   // PE.12: its input that never ends
+            IrBlock *H = jau_header(q);
+            for (int32_t w = 0; H && w < jau_nw && !c.wit_input; w++)
+                if (jau_w[w].fn == f && jau_w[w].header == H->id) c.wit_input = jau_w[w].note;
         }
         c.by_judge = true;
         // I.159: a running total in a loop the judge did not show to end is a consequence of that

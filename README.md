@@ -626,6 +626,31 @@ func gcd(a0 usize, b0 usize) usize {
 }
 ```
 
+When a loop really can run forever, the compiler may show where. Here `x` never moves while it is
+below 7:
+
+```lain
+func settle(n u32) u32 {
+    var x = n
+    while x != 7 {               // ERROR [E011]
+        if x > 7 { x = x - 1 }
+    }
+    return x
+}
+```
+
+```
+[E011] Error Ln 3, Col 11: this loop is not provably terminating, and no measure could be inferred
+   |
+ 3 |     while x != 7 {               // ERROR [E011]
+   |           ^
+       this loop never ends for settle(0): at line 3, x = 0 comes back after every lap
+```
+
+The compiler prints that last line only after running the loop from that input back into a state it
+was already in, so it is a fact about the program. Without it, `[E011]` says only that no proof was
+found.
+
 Recursion is held to the same standard:
 
 ```lain

@@ -713,20 +713,25 @@ int main(int argc, char **argv) {
                         FdWitness w[4];
                         int32_t nw = fd_witness(&F, f, b->id, cl, ncl, w, 4);
                         if (nw == 0) printf("no witness %.*s bb%d\n", (int)f->name->length, f->name->name, b->id);
-                        for (int32_t c = 0; c < nw; c++) {
-                            int np = 0;
-                            for (IrParam *pp = f->params; pp; pp = pp->next) np++;
-                            int r = ir_interpret_witness(f, irmod, b->id, w[c].val, w[c].given, np < FD_WMAXP ? np : FD_WMAXP, 2000000LL, 4096);
-                            printf("witness %.*s bb%d (stem %d, cycle %d)", (int)f->name->length, f->name->name, b->id, w[c].stem, w[c].period);
-                            int k = 0;
-                            for (IrParam *pp = f->params; pp; pp = pp->next, k++) {
-                                if (!pp->value || k >= FD_WMAXP || !w[c].given[k]) continue;
-                                const IrName *nm = pp->value->src_name;
-                                printf(" %.*s = %lld", nm ? (int)nm->length : 1, nm ? nm->name : "?", (long long)w[c].val[k]);
+                        bool hang = false;
+                        for (int32_t c = 0; c < nw && !hang; c++)
+                            for (int v = 0; v < 3 && !hang; v++) {
+                                FdWitness x;
+                                if (!fd_witness_variant(&w[c], f, v, &x)) continue;
+                                int np = 0;
+                                for (IrParam *pp = f->params; pp; pp = pp->next) np++;
+                                int r = ir_interpret_witness(f, irmod, b->id, x.val, x.given, np < FD_WMAXP ? np : FD_WMAXP, 2000000LL, 4096,
+                                                             NULL, 0, NULL, NULL);
+                                printf("witness %.*s bb%d (stem %d, cycle %d)", (int)f->name->length, f->name->name, b->id, x.stem, x.period);
+                                int k = 0;
+                                for (IrParam *pp = f->params; pp; pp = pp->next, k++) {
+                                    if (!pp->value || k >= FD_WMAXP || !x.given[k]) continue;
+                                    const IrName *nm = pp->value->src_name;
+                                    printf(" %.*s = %lld", nm ? (int)nm->length : 1, nm ? nm->name : "?", (long long)x.val[k]);
+                                }
+                                printf(": %s\n", r >= 1 && r <= 6 ? what[r] : "?");
+                                hang = r == IW_HANG;
                             }
-                            printf(": %s\n", r >= 1 && r <= 6 ? what[r] : "?");
-                            if (r == IW_HANG) break;
-                        }
                     }
                 }
                 return 0;

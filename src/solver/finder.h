@@ -1658,7 +1658,9 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
 // witness only once the interpreter has run it into a repeated state (ir_interpret_witness).
 #define FD_WMAXP 16
 #define FD_WMAXQ 32
-typedef struct { __int128 val[FD_WMAXP]; uint8_t given[FD_WMAXP]; int32_t stem, period; } FdWitness;
+#define FD_WMAXK 8
+// key[0..nkey): the header's versions of integer cells (JTERM_VALUE pairs), for whoever reports
+typedef struct { __int128 val[FD_WMAXP]; uint8_t given[FD_WMAXP]; int32_t stem, period, nkey, key[FD_WMAXK]; } FdWitness;
 typedef struct { JVc vc; JPathPair *pairs; int32_t npairs; bool back; } FdWPath;
 static bool fd_wcopy_cons(FdLoop *R, JCons *d, const JCons *s) {
     *d = *s; d->t = fd_bump(R, sizeof(JTerm) * (size_t)(s->nt ? s->nt : 1));
@@ -1783,6 +1785,8 @@ static bool fd_wquery(JFinder *F, IrFunc *f, FdLoop *R, const FdWPath *E, const 
     bool got = A.k == J_ANS_MODEL;
     if (got) {
         memset(out, 0, sizeof *out); out->stem = stem; out->period = n - stem;
+        for (int32_t k = 0; k < E->npairs && out->nkey < FD_WMAXK; k++)
+            if (E->pairs[k].tk == JTERM_VALUE) out->key[out->nkey++] = E->pairs[k].key;
         int32_t k = 0;
         for (IrParam *pp = f->params; pp && k < FD_WMAXP; pp = pp->next, k++) {
             if (!pp->value) continue;
@@ -1793,6 +1797,23 @@ static bool fd_wquery(JFinder *F, IrFunc *f, FdLoop *R, const FdWPath *E, const 
     }
     R->cur = mark;
     return got;
+}
+// A candidate's variants, tried in order until one runs into a repeat: 0 the model as it is; 1 every
+// integer or bool parameter the model leaves free set to 1 (true); 2 every free signed one to -1.
+// A free parameter is one no path's facts name: the generator states a path's facts for the
+// header's versions, and `while flag {}` has none, so its test on `flag` was in no VC and g(true)
+// was never tried. False when variant k is the same input as an earlier one.
+static bool fd_witness_variant(const FdWitness *in, IrFunc *f, int k, FdWitness *out) {
+    *out = *in;
+    if (k == 0) return true;
+    bool changed = false; int q = 0;
+    for (IrParam *p = f->params; p && q < FD_WMAXP; p = p->next, q++) {
+        const IrType *ty = p->value ? p->value->type : NULL;
+        if (in->given[q] || !ty || (ty->kind != IRT_INT && ty->kind != IRT_BOOL)) continue;
+        if (k == 1) { out->val[q] = 1; out->given[q] = 1; changed = true; }
+        else if (k == 2 && ty->kind == IRT_INT && ty->is_signed) { out->val[q] = -1; out->given[q] = 1; changed = true; }
+    }
+    return changed;
 }
 // Up to `max` candidates for header H of f under the claims cl (the judge's): the number found.
 static int32_t fd_witness(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdWitness *out, int32_t max) {
