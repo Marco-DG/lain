@@ -37,6 +37,20 @@ typedef struct { IrFunc *fn; int32_t header; char note[200]; } JauWit;
 static JauWit *jau_w; static int32_t jau_nw;
 static bool jau_oom;
 static char jau_internal[400];       // the first compiler bug the judge reported, if any
+// VRA's analysis of each function, made for its header states and kept for the report
+// (report.h's ir_report_vra_hook), which would make the same one again. Not kept when a certificate
+// is written or checked: that is the report's own run (vra_cert_next), as it was.
+typedef struct { IrFunc *fn; Vra *V; } JauVra;
+static JauVra *jau_vra; static int32_t jau_nvra;
+static void jau_vra_release(void) {
+    for (int32_t i = 0; i < jau_nvra; i++) vra_free(jau_vra[i].V);
+    free(jau_vra); jau_vra = NULL; jau_nvra = 0;
+}
+static Vra *jau_take_vra(IrFunc *f) {
+    for (int32_t i = 0; i < jau_nvra; i++)
+        if (jau_vra[i].fn == f) { Vra *V = jau_vra[i].V; jau_vra[i].V = NULL; return V; }
+    return NULL;
+}
 
 static void jau_sink(void *ctx, const JRecord *r) {
     (void)ctx;
@@ -375,12 +389,18 @@ static bool judge_authority_run(IrFunc *mod) {
     free(jau_w); jau_w = NULL; jau_nw = 0;
     jau_nout_fn = 0; jau_out_more = jau_out_module = false;
     jsh_nhdr = 0;                                     // VRA's header states: the finder's candidates
+    jau_vra_release();
+    bool keep = !vra_cert_out && !vra_check_mode;
+    int32_t nf = 0;
+    for (IrFunc *f = mod; f; f = f->next) nf++;
+    if (keep && !(jau_vra = calloc((size_t)(nf ? nf : 1), sizeof *jau_vra))) keep = false;
     for (IrFunc *f = mod; f; f = f->next) {
         if (f->is_extern || !f->entry) continue;
         vra_header_sink = jsh_hdr_sink; vra_header_ctx = NULL;
         Vra *VH = vra_analyze(f);
         vra_header_sink = NULL;
-        if (VH) vra_free(VH);
+        if (VH && keep) { jau_vra[jau_nvra].fn = f; jau_vra[jau_nvra].V = VH; jau_nvra++; }
+        else if (VH) vra_free(VH);
     }
     size_t cap = (size_t)1 << 28, wcap = (size_t)1 << 26;
     char *buf = malloc(cap), *work = malloc(wcap);

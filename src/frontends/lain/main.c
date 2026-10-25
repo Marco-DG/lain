@@ -288,6 +288,7 @@ int main(int argc, char **argv) {
                 sema_destroy(); return 70;
             }
             ir_report_numeric_hook = judge_authority_report;
+            ir_report_vra_hook = jau_take_vra;
         }
         for (IrFunc *f = mod; f; f = f->next) {
             if (f->is_extern) continue;
@@ -300,6 +301,7 @@ int main(int argc, char **argv) {
             found += ir_report_findings(f, mod, args.filename, args.engine_ir_numeric);
         }
         ir_diag_excerpt = NULL; ir_diag_mark = NULL;
+        if (args.judge_authority) { ir_report_vra_hook = NULL; jau_vra_release(); }   // any the report did not take
         // --judge=shadow (PE.6): the judge on the same module, every disagreement with VRA reported;
         // on refused programs too, which is where a replacement prover's wrong facts would matter
         if (args.judge_shadow) judge_shadow_module(mod);

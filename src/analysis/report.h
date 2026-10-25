@@ -334,6 +334,11 @@ static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
 // running total's numbers, the range a value lands in) where VRA has a check at the same place: the
 // judge decides whether anything is reported, VRA's record only says it in the same words.
 static int (*ir_report_numeric_hook)(IrFunc *f, const char *file, Vra *V) = NULL;
+// ...and when set, VRA's analysis of f made before (the judge's run reads its header states; the
+// judge decides nothing here from it), handed over once, NULL when there is none: run again, the
+// same analysis of the same IR cost the judge's compiles twice VRA's time (Handwriting's lexer,
+// 3.1 of 6.8 s).
+static Vra *(*ir_report_vra_hook)(IrFunc *f) = NULL;
 
 // Run every sovereign analysis over one function and print what it finds.
 // Returns the number of ERRORS (warnings and notes do not count).
@@ -353,7 +358,9 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     // use. Emission order is unchanged; only the analysis order and this suppression are new.
     // One range analysis serves the borrow pass's disjointness queries and the report below.
     if (numeric) vra_cert_next = f;          // this is the analysis a certificate states (C.2)
-    Vra *V = numeric ? vra_analyze(f) : NULL;
+    Vra *V = numeric && ir_report_vra_hook ? ir_report_vra_hook(f) : NULL;
+    if (V) vra_cert_next = NULL;
+    else if (numeric) V = vra_analyze(f);
     vra_shared_f = V ? f : NULL; vra_shared_V = V;
     Borrow *B = borrow_analyze_mod(f, mod);
     vra_shared_f = NULL; vra_shared_V = NULL;
