@@ -215,31 +215,43 @@ static void jau_print_measures(const JRank *rk, int32_t nrk) {
         }
         if (!ok) continue;
         isize line = 0;
+        IrBlock *H = NULL;
         if (rec) {                                           // the first call that may close the cycle
             for (int64_t q = 0; q < jau_n && !line; q++)
                 if (jau_r[q].fn == f && !strncmp(jau_r[q].kind, "rec.", 4)) { isize col = 0; jau_site(f, &jau_r[q], false, &line, &col); }
         } else {
-            IrBlock *H = NULL;
             for (IrBlock *b = f->blocks; b && !H; b = b->next) if (b->id == r->blk) H = b;
             IrInstr *hc = H && H->term.cond ? jau_def(f, H->term.cond) : NULL;
             line = hc && hc->line ? hc->line : H ? H->term.line : 0;
         }
         char row[600], all[2000]; size_t at = 0; all[0] = 0;
         const IrName *fn = f->name;                          // as VRA's line names it, in both modes
-        if (r->nreg == 0) {
-            for (int32_t j = 0; j < r->ncomp; j++) {
+        // A WRITTEN measure is the one the judge's VCs prove (`decreasing n`), whatever the finder
+        // proposed beside it: it printed the finder's `n + 2147483648` for fib (Documentation).
+        IrValue *wm = rec ? (f->has_decreasing ? f->measure_val : NULL) : (H && H->has_measure ? H->measure_val : NULL);
+        if (wm || r->nreg == 0) {
+            // the components: a row continuing a MAX (cont 1) or a MIN (cont 2) joins the rows before
+            // it into one, `max(x, y)`; a tuple is of components, not of rows (a MAX group printed as
+            // `<x, y>` "lexicographically" said what this loop does not do: Documentation)
+            int32_t nc = 0;
+            if (wm) { jau_src(f, wm, all, sizeof all, 0); nc = 1; }
+            for (int32_t j = 0; !wm && j < r->ncomp; j++) {
+                bool starts = r->cont[j] == 0, grouped = j + 1 < r->ncomp && r->cont[j + 1] != 0;
                 jau_row(f, r, j, row, sizeof row);
-                at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%s%s", j ? ", " : "", row);
+                if (starts) nc++;
+                at += (size_t)snprintf(all + at, at < sizeof all ? sizeof all - at : 0, "%s%s%s%s", starts && j ? ", " : !starts ? ", " : "",
+                                       starts && grouped ? (r->cont[j + 1] == 1 ? "max(" : "min(") : "", row,
+                                       !starts && !(j + 1 < r->ncomp && r->cont[j + 1] != 0) ? ")" : "");
             }
             // a function whose calls are listed (rec.le, spec 12's cut) only keeps its measure from
             // rising at them: what falls is every cycle, not every call
             if (rec) fprintf(stderr, "[measure] %.*s: recursion at line %lld: `%s%s%s` %s (the judge's)\n",
-                             fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all, r->ncomp > 1 ? ">" : "",
+                             fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, nc > 1 ? "<" : "", all, nc > 1 ? ">" : "",
                              r->nle ? "does not rise at any call that may close the cycle, and every cycle of calls lowers it"
                                     : "decreases at every call that may close the cycle");
             else fprintf(stderr, "[measure] %.*s: loop at line %lld: `%s%s%s` decreases%s (the judge's)\n",
-                         fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, r->ncomp > 1 ? "<" : "", all,
-                         r->ncomp > 1 ? ">" : "", r->ncomp > 1 ? " lexicographically" : "");
+                         fn ? (int)fn->length : 1, fn ? fn->name : "?", (long long)line, nc > 1 ? "<" : "", all,
+                         nc > 1 ? ">" : "", nc > 1 ? " lexicographically" : "");
             continue;
         }
         for (int32_t k = 0; k < r->nreg; k++) {                // piecewise: each region's guard and tuple
