@@ -25,6 +25,13 @@
 # of the NEGATION, always 0, so the 124 the whole harness exists to see was invisible and it
 # reported "all clean" over a program that provably hangs. Take the status directly.
 #
+# PE.12's GATE, a second engine on every E011 note. A note names an input on which the program never
+# ends, and the interpreter ran it into a repeated state before it was printed. Here the NATIVE
+# program is built with `main` making that call (scripts/fuzz/note_harness.py) and run: a loop's
+# must time out, a recursion's must time out or exhaust the stack (SIGSEGV). Ending any other way,
+# a trap included, is a FALSE NOTE. A note the harness cannot rebuild (a value it assumes of an
+# extern, a function with no parameters, which the note names by no call) is counted, not checked.
+#
 #   bash fuzz_termination.sh [N]
 set -u
 cd "$(dirname "$0")/../.."
@@ -41,7 +48,7 @@ proven=0; notproven=0; unsound=0; skipped=0; brokenc=0; ran=0
 junsound=0
 # The judge leg's oracle is the VRA leg's: a program lain accepted ends, under the same 5 s.
 judge_leg() {   # PROG VRA ID
-  jl_compile "$1" "$2" "$3" "$SC/j.c" || return 0
+  jl_compile "$1" "$2" "$3" "$SC/j.c" || { note_leg "$1" "$3"; return 0; }
   gcc -std=c99 -w -o "$SC/j" "$SC/j.c" $DEFS 2>/dev/null || { jl_brokenc=$((jl_brokenc+1)); cp "$1" "$SC/jbrokenc.$3.ln"; return 0; }
   jl_ran=$((jl_ran+1))
   timeout 5 "$SC/j" >/dev/null 2>&1; local rc=$?
@@ -51,6 +58,23 @@ judge_leg() {   # PROG VRA ID
     cp "$1" "$SC/junsound.$3.ln"; sed 's/^/      /' "$1"
   fi
   return 0
+}
+notes=0; nconfirmed=0; nunchecked=0; nfalse=0
+# note_leg PROG ID: each note lain printed for PROG (in $SC/j.c.err), run natively
+note_leg() {
+  local line kind rc
+  while IFS= read -r line; do
+    notes=$((notes+1))
+    kind=$(python3 scripts/fuzz/note_harness.py "$1" "$line" "$SC/h.ln")
+    if [ "$kind" != loop ] && [ "$kind" != rec ]; then nunchecked=$((nunchecked+1)); continue; fi
+    "$SC/lowerdrv" "$SC/h.ln" --emit-c --suppress-term > "$SC/h.c" 2>/dev/null \
+      && gcc -std=c99 -w -o "$SC/h" "$SC/h.c" $DEFS 2>/dev/null || { nunchecked=$((nunchecked+1)); continue; }
+    ( timeout 2 prlimit --core=0 -- "$SC/h" >/dev/null 2>&1 ) 2>/dev/null; rc=$?   # quiet: a recursion's SIGSEGV
+    if [ $rc -eq 124 ] || { [ "$kind" = rec ] && [ $rc -eq 139 ]; }; then nconfirmed=$((nconfirmed+1)); continue; fi
+    nfalse=$((nfalse+1))
+    echo "  ★ FALSE NOTE: $2 — the native program ended (exit $rc) on the input the note names:"
+    echo "      $line"; cp "$1" "$SC/falsenote.$2.ln"; sed 's/^/      /' "$1"
+  done < <(grep -E 'this (loop never ends|recursion never returns)' "$SC/j.c.err" 2>/dev/null | sed 's/^ *//')
 }
 for ((k=0; k<N; k++)); do
     prog="$SC/t.ln"
@@ -100,5 +124,7 @@ fi
 echo "  proven AND EXECUTED : $ran   <- the ones actually held to account"
 echo "  bugs:  UNSOUND(hang on a proven loop)=$unsound  broken-C=$brokenc"
 jl_report "UNSOUND(hang)=$junsound"
+echo "  E011 notes (PE.12): $notes  confirmed natively=$nconfirmed  not rebuildable=$nunchecked"
+echo "    bugs:  FALSE-NOTE(the native program ends on the noted input)=$nfalse"
 echo "=============================================================="
-[ $unsound -eq 0 ] && [ $brokenc -eq 0 ] && [ $junsound -eq 0 ] && jl_bugs && exit 0 || exit 1
+[ $unsound -eq 0 ] && [ $brokenc -eq 0 ] && [ $junsound -eq 0 ] && [ $nfalse -eq 0 ] && jl_bugs && exit 0 || exit 1
