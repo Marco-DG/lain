@@ -3603,6 +3603,10 @@ rc=0
 out=
 at=nonnull 2
 at=pure 2
+### tests/vra/negated_and_assume_pass.ln
+rc=0
+out=
+at=const 8
 ### tests/vra/negative_refinement_pass.ln
 rc=0
 out=

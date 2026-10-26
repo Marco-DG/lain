@@ -3472,6 +3472,17 @@ static void ir_list_member_br(LowerCtx *c, Expr *R, IrValue *x, IrBlock *tb, IrB
 }
 
 static void ir_lower_cond_br(LowerCtx *c, Expr *cond, IrBlock *tb, IrBlock *fb) {
+    // ★ `!A` BRANCHES AS A WITH THE TARGETS SWAPPED. As a value, `!A` is `A == 0`, and `A and B` as a
+    // value is a bool cell, so `if !((lo <= y) and (y <= hi)) { return 0 }` kept neither of y's
+    // facts on the edge that goes on: the value of `y <= hi` was stored with no relation to y.
+    // That is how an SV-COMP `assume(lo <= y && y <= hi)` reads once translated (14 of the 127
+    // PE.11 ports), and `y + 1` after it was E086 under the judge and VRA alike, while `if y < lo or
+    // y > hi { return 0 }` proved. A's truth value decides the branch either way (ir_lower_truth),
+    // and A's operands are evaluated in the same order, short-circuit included.
+    if (cond && cond->kind==EXPR_UNARY && cond->as.unary_expr.op==TOKEN_BANG && cond->as.unary_expr.right) {
+        ir_lower_cond_br(c, cond->as.unary_expr.right, fb, tb);
+        return;
+    }
     if (cond && cond->kind==EXPR_BINARY && cond->as.binary_expr.op==TOKEN_KEYWORD_IN &&
         cond->as.binary_expr.right && cond->as.binary_expr.right->kind==EXPR_RANGE) {
         ir_lower_range_member(c, cond, tb, fb);
