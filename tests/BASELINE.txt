@@ -3842,6 +3842,10 @@ ty=Slice_i32 scalar
 rc=0
 out=
 at=const 4
+### tests/vra/shl_u64_top_bit_vra_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/vra/sized_param_constant_length_pass.ln
 rc=0
 out=

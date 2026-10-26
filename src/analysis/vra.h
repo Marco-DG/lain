@@ -3679,7 +3679,9 @@ static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
     // how a program says it means to discard them.
     if (!a->type->is_signed) {
         IrType *ut = (ins->result && ins->result->type) ? ins->result->type : a->type;
-        int64_t ulo, uhi; if (!irtype_int_range(ut, &ulo, &uhi)) return;
+        // the type's top in 128 bits: read into an int64_t, a u64's was 2^63 - 1, and `(1 as u64)
+        // << 63`, 2^63, was refused as losing bits (bitset.ln's `(1 as u64) << (i % 64)`, TCW)
+        __int128 ulo, uhi; if (!vra_int_bounds128(ut, &ulo, &uhi)) return;
         int64_t alo, ahi; vra_range(V, W, a, &alo, &ahi);
         // (`((__int128)1 << 127) - 1` shifted into the sign bit and overflowed: undefined in C,
         // folded by gcc at compile time so a UBSan build never saw it; -Woverflow did. I.171.)
@@ -3687,7 +3689,7 @@ static void vra_check_shift(Vra *V, Octagon *W, IrInstr *ins) {
                                                      : (__int128)(((unsigned __int128)1 << 127) - 1);
         VraCheck u; memset(&u,0,sizeof u); u.kind = VRA_OVERFLOW; u.at = ins;
         u.line = ins->line; u.col = ins->col; u.shift = 4;
-        u.ok = alo >= 0 && ahi < OCT_INF/2 && top <= (__int128)uhi;
+        u.ok = alo >= 0 && ahi < OCT_INF/2 && top <= uhi;
         vra_add_check(V, u);
         return;
     }

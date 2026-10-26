@@ -1,0 +1,12 @@
+// LAINFLAGS: --judge=vra
+// VRA's unsigned left-shift check read the result type's range into an int64, so a u64's top was
+// 2^63 - 1, and `(1 as u64) << 63`, which is 2^63 and fits, was refused as losing bits. So was a
+// bitset's `(1 as u64) << (i % 64)` (TCW's real programs, bitset.ln). The judge's half is gen.h's.
+func bit(i u8) u64 { return (1 as u64) << (i % 64) }
+
+func main() i32 {
+    var t = (1 as u64) << 63
+    if bit(63) != t { return 1 }
+    if bit(64) != 1 { return 2 }
+    return 0
+}
