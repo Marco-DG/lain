@@ -1310,14 +1310,16 @@ static bool jg_const_of(JG *g, IrValue *v, __int128 *c) { return jg_const_at(g, 
 static bool jg_mul_ok(__int128 a, __int128 b, __int128 *out);
 static IrInstr *jg_cond_cmp(JG *g, IrValue *cv);
 static IrValue *jg_param_value(const IrFunc *h, int32_t key);
-// A parameter's REFINEMENT as its lowering states it: an ASSUME comparing it with a constant in
-// the entry block's PROLOGUE (nothing but constants, comparisons and assumes before it), which
-// holds at every point of the function (a parameter is one value, and the prologue runs first).
-// Narrows r; a predicate it cannot read narrows nothing.
-static void jg_param_refine(JG *g, IrValue *v, JRange *r) {
-    for (IrInstr *i = g->f->entry ? g->f->entry->instrs : NULL; i; i = i->next) {
+// A REFINEMENT as its lowering states it: an ASSUME comparing v with a constant in the run of
+// constants, comparisons and assumes from i on. A parameter's is the entry block's PROLOGUE, which
+// holds at every point of the function (a parameter is one value, and the prologue runs first). A
+// call result's is the run right after the call (B2: the callee's return refinement, which it
+// proves at each return, or an extern's, believed); nothing in the run can stop, so it holds
+// wherever the result is. Narrows r; a predicate it cannot read narrows nothing.
+static void jg_refine_from(JG *g, IrInstr *i, IrValue *v, JRange *r) {
+    for (; i; i = i->next) {
         if (i->op == IR_CONST || i->op == IR_ICMP) continue;
-        if (i->op != IR_ASSUME) return;                        // the prologue ends here
+        if (i->op != IR_ASSUME) return;                        // the run ends here
         IrInstr *ic = i->n_operands ? jg_cond_cmp(g, i->operands[0]) : NULL;
         __int128 c;
         if (!ic || ic->n_operands < 2) continue;
@@ -1447,16 +1449,17 @@ static bool jg_f2i(JG *g, int32_t blk, int32_t idx, IrValue *x, JRange *r, bool 
 }
 
 // A value's STATIC range: a constant's value; through a cast whose source's static range lies in
-// its result type (the value kept under any mode a cast has), the source's; a parameter's type
-// narrowed by its refinement (jg_param_refine); a load of a store version, the stored value's; else
-// its type's (a refinement included, as every type fact). False where none is known.
+// its result type (the value kept under any mode a cast has), the source's; a parameter's or a call
+// result's type narrowed by its refinement (jg_refine_from); a load of a store version, the stored
+// value's; else its type's (a refinement included, as every type fact). False where none is known.
 static bool jg_op_range(JG *g, const IrInstr *d, JRange *h, int depth);
 static bool jg_static_range(JG *g, IrValue *v, JRange *r, int depth) {
     __int128 c;
     if (jg_const_of(g, v, &c)) { r->lo = r->hi = c; r->has_ne = false; return true; }
     if (!v || !v->type || !jg_range(v->type, r)) return false;
     IrInstr *d = v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
-    if (!d && jg_param_value(g->f, v->id) == v) jg_param_refine(g, v, r);
+    if (!d && jg_param_value(g->f, v->id) == v) jg_refine_from(g, g->f->entry ? g->f->entry->instrs : NULL, v, r);
+    if (d && d->op == IR_CALL) jg_refine_from(g, d->next, v, r);
     // a CHECKED +, - or unary - of static ranges: the exact interval, within its type (it traps outside)
     if (depth < 4 && d && (d->op == IR_ADD || d->op == IR_SUB || d->op == IR_NEG) && d->wrap == IR_WRAP_CHECK && !d->unchecked) {
         JRange a, b;
@@ -1549,7 +1552,7 @@ static bool jr_bit(IrOp op, const JRange *a, const JRange *b, JRange *h) {
 // corners over x and [2^n.lo, 2^n.hi].
 static bool jr_shl(const JRange *a, const JRange *n, int w, JRange *h) {
     __int128 nlo = n->lo < 0 ? 0 : n->lo, nhi = n->hi > w - 1 ? w - 1 : n->hi;
-    if (nlo > nhi || nhi > 62) return false;
+    if (nlo > nhi || nhi > 63) return false;
     JRange p2; p2.lo = (__int128)1 << nlo; p2.hi = (__int128)1 << nhi; p2.has_ne = false; p2.ne = 0;
     return jr_mul(a, &p2, h);
 }
@@ -2497,7 +2500,7 @@ static void jb_state(JB *B, int32_t x) {
             if (d->n_operands < 2 || !jg_const_of(g, d->operands[1], &k) || !jg_is_int(d->operands[0]->type)) break;
             const IrType *xt = d->operands[0]->type;
             int w = xt->kind == IRT_BOOL ? 1 : xt->bits;
-            if (k < 0 || k >= w || k > 62) break;
+            if (k < 0 || k >= w || k > 63) break;
             int32_t xv = jb_val(B, d->operands[0]);
             __int128 p = (__int128)1 << k;
             if (d->op == IR_SHL) {

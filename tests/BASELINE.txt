@@ -1579,6 +1579,10 @@ at=nonnull 8
 ty=Slice_Token scalar
 ty=Slice_u8 scalar
 ty=Token struct
+### tests/trust/call_refine_product_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/trust/case_instance_qualified_pass.ln
 rc=0
 out=
@@ -2460,6 +2464,13 @@ at=const 6
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
+### tests/trust/shl_top_bit_pass.ln
+rc=0
+out=
+at=const 8
+at=nonnull 4
+at=pure 2
+ty=Bits struct
 ### tests/trust/signed_shift_negative_pass.ln
 rc=0
 out=

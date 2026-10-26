@@ -1,0 +1,32 @@
+// A checked shift to a 64-bit type's top bit: `(1 as u64) << 63` is 2^63, which fits u64, and
+// `(-1 as i64) << 63` is -2^63, which fits i64. The judge stated `x << k` as 2^k * x only for
+// k <= 62, so both were refused, and so was a bitset's `(1 as u64) << (i % 64)`. A right shift by 63
+// is the floored quotient by 2^63: 0 or 1 for a u64, -1 or 0 for an i64.
+type Bits {
+    w u64[4]
+}
+
+func bit_set(var b Bits, i u8) { b.w[i / 64] = b.w[i / 64] | ((1 as u64) << (i % 64)) }
+func bit_test(b Bits, i u8) bool { return b.w[i / 64] & ((1 as u64) << (i % 64)) != 0 }
+
+func top() u64 { return (1 as u64) << 63 }
+func low() i64 { return (-1 as i64) << 63 }
+func sign(x i64) i64 { return x >> 63 }
+func high(x u64) u64 { return x >> 63 }
+
+func main() i32 {
+    var b = Bits([0, 0, 0, 0])
+    for k in 0..256 {
+        if k % 3 == 0 { bit_set(var b, k as u8) }
+    }
+    var n = 0
+    for k in 0..256 {
+        if bit_test(b, k as u8) { n = n + 1 }
+    }
+    if n != 86 { return 1 }
+    if top() != 9223372036854775808 { return 2 }
+    if low() + 1 != -9223372036854775807 { return 3 }
+    if sign(low()) != -1 or sign(5) != 0 { return 4 }
+    if high(top()) != 1 or high(top() - 1) != 0 { return 5 }
+    return 0
+}

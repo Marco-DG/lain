@@ -5133,6 +5133,52 @@ int main(void) {
         free(t); gen_rk = NULL; gen_nrk = 0; gen_mod = NULL;
     }
     printf("  an AND's hull: plain where an operand's type is unsigned, split by case in a join's paths\n");
+    // 90. a 64-bit shift to the TOP BIT, and a call result's REFINEMENT in its static range:
+    // (0) x << 63 of a u64, checked, is 2^63 * x; (1) x >> 63 of a u64 and (2) of an i64, the floored
+    // quotient by 2^63; (3) 1 << k, k in [0, 63], the hull [1, 2^63]; r = c90(x) of `u64 <= 65535`
+    // (the assume right after the call, as B2 lowers it), stored, then r * r of two loads: (4) the
+    // hull [0, 65535^2]; (5) a store between the call and its assume ends the run: outside, and no
+    // hull (the corners pass jg_mul_ok's); (6) `u64 <= 2^32`: the hull [0, 2^64], outside u64
+    for (int c = 0; c < 7; c++) {
+        IrType *T = c == 2 ? i64t : u64t;
+        IrFunc *f = ir_func_new(&A, nm("s90"), T, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, T, nm("x"));
+        IrBlock *b0 = f->entry;
+        IrValue *p = NULL, *v = NULL;
+        if (c <= 2) p = ir_binop(f, b0, c == 0 ? IR_SHL : c == 1 ? IR_LSHR : IR_ASHR, x, ir_const_int(f, b0, 63, T), T);
+        else if (c == 3) {
+            ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_ULE, x, ir_const_int(f, b0, 63, T)));
+            p = ir_binop(f, b0, IR_SHL, ir_const_int(f, b0, 1, T), x, T);
+        } else {
+            IrValue *cell = ir_alloca(f, b0, T), *r = mk_call(f, b0, "c90", x, T);
+            if (c == 5) ir_store(f, b0, cell, r);
+            ir_assume(f, b0, ir_icmp(f, b0, IR_CMP_ULE, r, ir_const_int(f, b0, c == 6 ? (int64_t)1 << 32 : 65535, T)));
+            if (c != 5) ir_store(f, b0, cell, r);
+            p = ir_binop(f, b0, IR_MUL, ir_load(f, b0, cell, T), ir_load(f, b0, cell, T), T);
+        }
+        v = ir_binop(f, b0, c == 2 ? IR_SDIV : IR_UDIV, ir_const_int(f, b0, 100, T), p, T);   // p in a goal
+        ir_set_ret(b0, v);
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), w0[96], w1[96];
+        static const char *on[3] = { "shl", "lshr", "ashr" };
+        if (c <= 2) {                                        // the def's line has 2^63 on x (shl) or on p
+            snprintf(w0, sizeof w0, "def %%v%d %s : ", p->id, on[c]);
+            snprintf(w1, sizeof w1, " -9223372036854775808*%%v%d ", c == 0 ? x->id : p->id);
+            const char *l = t ? strstr(t, w0) : NULL, *e = l ? strchr(l, '\n') : NULL, *m = l ? strstr(l, w1) : NULL;
+            CHECK(m && e && m < e, "90 case %d: %s with%s:\n%s", c, w0, w1, t ? t : "");
+        } else if (c <= 4) {
+            const char *hn = c == 3 ? "shl.hull" : "mul.hull";
+            snprintf(w0, sizeof w0, "def %%v%d %s : -1*%%v%d <= %s\n", p->id, hn, p->id, c == 3 ? "-1" : "0");
+            snprintf(w1, sizeof w1, "def %%v%d %s : 1*%%v%d <= %s\n", p->id, hn, p->id, c == 3 ? "9223372036854775808" : "4294836225");
+            CHECK(t && strstr(t, w0) && strstr(t, w1), "90 case %d: %s and %s:\n%s", c, w0, w1, t ? t : "");
+        } else {                                             // the hull past 2^128 is none; 2^64 is stated
+            snprintf(w1, sizeof w1, "def %%v%d mul.hull : 1*%%v%d <= 18446744073709551616\n", p->id, p->id);
+            CHECK(t && strstr(t, "outside atom.mul") && (c == 5 ? !strstr(t, "mul.hull") : !!strstr(t, w1)), "90 case %d: outside:\n%s", c, t ? t : "");
+        }
+        free(t); gen_mod = NULL;
+    }
+    printf("  a 64-bit shift's top bit, stated exactly; a call result's refinement bounds a product of it\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

@@ -1,0 +1,17 @@
+// EXPECT: [E086]
+// The twin of call_refine_product_pass.ln: `half` may return 2^32, and 2^32 * 2^32 is 2^64, one
+// past u64. The product's bound comes from the refinement exactly, so E086 stands.
+func half(n u64) u64 <= 4294967296 {
+    if n > 4294967296 { return 4294967296 }
+    return n
+}
+
+func square(n u64) u64 {
+    var r = half(n)
+    return r * r
+}
+
+func main() i32 {
+    if square(3) != 9 { return 1 }
+    return 0
+}

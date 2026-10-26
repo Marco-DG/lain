@@ -1,0 +1,32 @@
+// A callee's return refinement bounds a product of its result: `func half(n u64) u64 <= 4294967295`
+// puts r = half(n) in [0, 2^32 - 1], so r * r <= 2^64 - 2^33 + 1 fits u64, also through a `var`
+// and a widening cast. The refinement reaches the caller as an assume right after the call, and the
+// judge read it at the points it holds, not in the result's range wherever the result is used: a
+// product of two variables was bounded only from type ranges and parameter refinements.
+func half(n u64) u64 <= 4294967295 {
+    if n > 4294967295 { return 4294967295 }
+    return n
+}
+
+func root(n u32) u32 <= 65535 {
+    var r u32 = 0
+    while r < 65535 and r + 1 <= n / (r + 1) { r = r + 1 }
+    return r
+}
+
+func square(n u64) u64 {
+    var r = half(n)
+    return r * r
+}
+
+func main() i32 {
+    if square(3) != 9 or square(18446744073709551615) != 18446744065119617025 { return 1 }
+    var bad = 0
+    for k in 0..200 {
+        var n = (k * 7919 % 100000) as u32
+        var r = root(n) as u64
+        if r * r > n as u64 { return 2 }
+        if (r + 1) * (r + 1) <= n as u64 { return 3 }
+    }
+    return 0
+}
