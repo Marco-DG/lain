@@ -1,4 +1,4 @@
-// EXPECT: [E087]
+// EXPECT: [E139]
 // Passing the same array to two params, one of which mutates it, would violate the
 // non-aliasing (`restrict`) the codegen assumes — undefined behaviour. Must reject.
 func vadd(n usize, dst i32[n], src i32[n]) {

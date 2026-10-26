@@ -5,7 +5,7 @@
 # The trust fuzzer generates programs Lain should PROVE SAFE. This one is the
 # opposite: it generates programs that stress the two fail-open classes the
 # 2026-08-24 memory-safety hunt found — call-site ALIASING of restrict'd params
-# (E087) and whole/fixed ARRAY COPY codegen — and checks Lain never miscompiles.
+# (E139) and whole/fixed ARRAY COPY codegen — and checks Lain never miscompiles.
 #
 # Crucially it compiles each ACCEPTED program at BOTH -O0 and -O3, because a
 # restrict-aliasing violation is undefined behaviour the OPTIMISER exploits: it
@@ -15,11 +15,11 @@
 #   • COMPILER CRASH   — lain dies by signal
 #   • BROKEN-C         — lain ACCEPTS but the emitted C is rejected by gcc
 #   • ALIAS-MISCOMPILE — lain ACCEPTS, C compiles, but -O0 and -O3 disagree
-#                        (a restrict UB it should have rejected via E087)
+#                        (a restrict UB it should have rejected via E139)
 #   • WRONG-COPY       — an array-copy program's result != its computed oracle
 #   • UNSOUND (ASan)   — a sanitizer trap at run time
 #
-# A clean REJECT (E087/E085/…, exit 1) is correct fail-closed behaviour, not a bug.
+# A clean REJECT (E139/E085/…, exit 1) is correct fail-closed behaviour, not a bug.
 #
 # Usage: bash fuzz_alias.sh [iterations]   (default 250)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ TDIR="$(mktemp -d)"; trap 'rm -rf "$TDIR"' EXIT
 r() { echo $(( RANDOM % ($1 - $2 + 1) + $2 )); }
 
 # ── gen_alias: `vadd(k, a[lo1..lo1+k], a[lo2..lo2+k])`. Overlap iff |lo1-lo2|<k.
-#    Overlap+write MUST be rejected (E087); disjoint MUST be accepted and correct.
+#    Overlap+write MUST be rejected (E139); disjoint MUST be accepted and correct.
 gen_alias() {
     local n=$(r 12 6) k=$(r 4 2) lo1 lo2 i vals=""
     lo1=$(r $((n-k)) 0); lo2=$(r $((n-k)) 0)

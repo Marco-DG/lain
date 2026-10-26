@@ -21,7 +21,8 @@
 # interpreter can execute, not only on those today's prover accepts. A refused program is exactly
 # one the judge will decide at phase 4, and its false hypothesis would be a false proof there.
 # Two sources: every fail test whose expected codes are all VRA's obligation codes (E085, E086,
-# E087, E015, E011, E082, E121, the precondition E012, or [VRA]; such a refusal comes after the IR
+# E087, E015, E011, E082, E121, the precondition E012, the co-argument conflict E139, or [VRA]; such a
+# refusal comes after the IR
 # exists), and the probes in scripts/gates/judge_runnable/, which no test holds. Each must leave
 # 0 false hypotheses and no generator refusal; any exit status is accepted, since such a program
 # may trap, and runs on a 1,000,000-step budget (an E011 test is a loop that does not end). One
@@ -149,7 +150,7 @@ export -f one recs; export T
 for f in $(find tests -name '*_fail.ln' | sort); do
     codes=$(grep -oE '^// EXPECT: \[[A-Z0-9]+\]' "$f" | grep -oE '\[[A-Z0-9]+\]' | sort -u)
     [ -n "$codes" ] || continue
-    echo "$codes" | grep -qvE '^\[(E085|E086|E087|E015|E011|E082|E121|E012|VRA)\]$' && continue
+    echo "$codes" | grep -qvE '^\[(E085|E086|E087|E015|E011|E082|E121|E012|E139|VRA)\]$' && continue
     echo "$f"
 done > "$T/refused.txt"
 ls scripts/gates/judge_runnable/*.ln >> "$T/refused.txt"

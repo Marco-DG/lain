@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# s17: two `var` arguments of one call naming the same storage (E087 refuses it; the emitted C
+# s17: two `var` arguments of one call naming the same storage (E139 refuses it; the emitted C
 # passes two restrict pointers, undefined behaviour) stop the interpreter at the call, exit 99,
 # as at an obligation that does not hold: the callee's facts model the two as distinct, so its body
 # must not run on aliased cells (judge_gate checked mix's post VC there and found it false). Two
@@ -21,7 +21,7 @@ func main() i32 {
 LN
 out=$(cd "$D" && "$ROOT/lain" --interpret two.ln 2>&1); rc=$?
 [ $rc -eq 0 ] || { echo "two distinct elements: expected exit 0, got $rc: $out"; exit 1; }
-# the compiler refuses one element twice (E087) before it runs; judge_gate's --check-hyps runs it
+# the compiler refuses one element twice (E139) before it runs; judge_gate's --check-hyps runs it
 gcc -std=c99 -O2 -w -o "$D/jvc" "$ROOT/src/tools/judge_vc_driver.c" -I "$ROOT/src" || { echo "the driver does not build"; exit 1; }
 out=$(cd "$ROOT" && "$D/jvc" tests/ownership/coarg_alias_element_fail.ln --check-hyps 2>&1)
 echo "$out" | grep -q "status=99" || { echo "one element twice: expected the run to stop, status 99: $out"; exit 1; }

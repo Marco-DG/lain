@@ -112,6 +112,15 @@ Uninit      & read or \lain{mov}            & \illformed{} \\
 \end{constraint}
 
 \begin{constraint}
+  Two arguments of one call that reach overlapping places, where the callee writes through at
+  least one of them, are \illformed{}: \diagcode{E008} when one of them moves the place (below),
+  \diagcode{E139} when the place is an array or a slice or an element of one, and
+  \diagcode{E004} otherwise.  Elements at indices not proven distinct are taken to overlap
+  (\S\,\ref{sec:own.refbind}), so \lain{f(var a[i], var a[j])} needs a proof that $i \neq j$,
+  and \lain{f(var a[i], var a[i + 1])} has one.
+\end{constraint}
+
+\begin{constraint}
   Reading a variable, struct field, or array element before it has been
   initialized (use of an uninitialized value; the Uninit state) is
   \illformed{}~(\diagcode{E005}).  Definite-assignment analysis tracks

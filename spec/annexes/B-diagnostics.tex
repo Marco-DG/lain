@@ -28,7 +28,7 @@ Diagnostic codes are divided into the following ranges:
 \diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
 \diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
-\diagcode{E084}, \diagcode{E101}--\diagcode{E138} & Modules, attributes, generics, packing, ADT access, effects, verification \\
+\diagcode{E084}, \diagcode{E101}--\diagcode{E139} & Modules, attributes, generics, packing, ADT access, effects, verification \\
 \diagcode{E100}                 & Miscellaneous \\
 \diagcode{VRA}                  & Value range analysis \\
 \end{longtable}
@@ -360,10 +360,9 @@ Diagnostic codes are divided into the following ranges:
   & \S\,\ref{sec:expr.subslice}, \S\,\ref{sec:vra.sized-slice-callsite}
   & \textit{sized slice constraint violated} ---
     Issued (1) when both endpoints of a sub-slice \lain{arr[a..b]} are
-    integer literals and $a > b$; (2) at a call site where VRA can prove
-    that the argument does not satisfy the formal parameter's sized slice
-    constraint (\lain{T[k]}, \lain{T[>= k]}, \lain{T[> k]}, or
-    \lain{T[ref.len]}).
+    integer literals and $a > b$; (2) at a call site where the argument is
+    not proven to satisfy the formal parameter's sized slice constraint
+    (\lain{T[k]}, \lain{T[>= k]}, \lain{T[> k]}, or \lain{T[ref.len]}).
     \\[4pt]
 
 \end{longtable}
@@ -448,4 +447,5 @@ the \S\,\ref{annex:B-diagnostics} reconciliation pass.
 \diagcode{E136} & a module constant computed at compile time cannot be: its initialiser reaches a function whose effect row is not empty, a function that may panic, or a call through a function pointer; its computation reads the constant itself, exceeds the step limit, recurses deeper than the evaluator can hold, or fails a check (\S\,\ref{sec:decl.module-const}) \\[2pt]
 \diagcode{E137} & a compile-time constant is required and the expression is not one: a parameter refinement or sized-slice length the call site cannot evaluate (a call, a cast; \S\,\ref{sec:vra.sized-slice-callsite}), the length of a local array declared with an initializer, an array comprehension's bounds, a \lain{comptime if} condition \\[2pt]
 \diagcode{E138} & control would leave a deferred statement: a \lain{return}, a \lain{break} or \lain{continue} aimed at a loop outside it, or a \lain{try} or \lain{else return} that leaves the function (\S\,\ref{sec:stmt.defer}) \\[2pt]
+\diagcode{E139} & an array or slice reaches two parameters of one call and the callee writes through one of them --- the array, a sub-slice or an element of it, at places not proven distinct (\S\,\ref{sec:own.rwlock}); such parameters are emitted \texttt{restrict}, so the call would alias them \\[2pt]
 \end{longtable}

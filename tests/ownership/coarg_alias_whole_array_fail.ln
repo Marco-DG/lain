@@ -1,4 +1,4 @@
-// EXPECT: [E087]
+// EXPECT: [E139]
 // ★ A LIVE HOLE, half one. `addto(var x, x)` passes one array to two parameters of a call that
 // WRITES one of them. Both lower to `int32_t* restrict`, so the emitted `addto(v0, v0)` hands one
 // pointer to two `restrict` parameters — undefined behaviour by the C standard, whatever a given

@@ -1,4 +1,4 @@
-// EXPECT: [E087]
+// EXPECT: [E139]
 // ★ A LIVE MISCOMPILE, half two — observable, not merely undefined:
 //
 //     -O0 -> 4 6 9 12        -O2 -> 4 6 8 10

@@ -1,4 +1,4 @@
-// EXPECT: [E087]
+// EXPECT: [E139]
 // A sub-slice of a mutated array, aliasing the same array at another parameter,
 // must be rejected: `a[0..4]` lowers to `a+0`, aliasing the `restrict` dst — the
 // exact `vadd(a,a)` UB written to dodge the bare-identifier aliasing check.
