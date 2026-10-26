@@ -42,6 +42,7 @@ typedef struct {
     JRank *rk; int32_t nrk;              // the last call's ranking claims (malloc'd; the caller frees)
     const char **rkstage;                // with fd_track_stages: the stage that ranked each (a label)
     struct FdMemo *memo;                 // during a call: the solver's answers by VC (fd_implied)
+    bool keep_dead;                      // fd_loop_from keeps the paths the solver refutes (f64)
 } JFinder;
 
 // ── its own small helpers (the generator's are the judge's; these are untrusted copies) ─────────
@@ -760,7 +761,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             // keeps the path, which is what the full budget's stop did, at 65e6 operations each on
             // isqrt.ln's `main` (`% 100000` and a wrap's case on six of its paths: 393e6 of 5e8)
             JWork dlim = F->lim; dlim.pivot /= 16; dlim.node /= 16; dlim.leaf /= 16;
-            if (lia_solve(vc, dlim, F->work, F->worksz).k == J_ANS_CERT) { ndead++; continue; }
+            if (!F->keep_dead && lia_solve(vc, dlim, F->work, F->worksz).k == J_ANS_CERT) { ndead++; continue; }
             fd_jint(&vc->goal.rhs, 0);                       // 0 <= 0: nothing is asked of it
             JVc *fv = fd_bump(L, sizeof *fv); JHyp *fh = fd_bump(L, sizeof(JHyp) * (size_t)(m ? m : 1));
             if (!fv || !fh) return false;
@@ -4016,11 +4017,26 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             const char *stage = fd_stage;
             if (!built && L.dead && L.nedges > 0 && L.nedges <= JRANK_MAXE) {
                 // no back edge can be taken (a constant guard, c2): the constant measure 0, which
-                // falls on every edge only because none runs; the judge owes it as any other
-                memset(&r, 0, sizeof r);
-                r.blk = b->id; r.fn = f; r.ncomp = 1; r.nedge = L.nedges;
-                for (int32_t e = 0; e < L.nedges; e++) { r.from[e] = L.edges[e]; r.fall[e] = 0; }
-                got = true; stage = "dead";
+                // falls on every edge only because none runs; the judge owes it as any other. The
+                // solver refuted the WHOLE paths, and the judge states for a measure only the facts
+                // its terms are made of, none for 0: a refutation that needs another (`a[i]` reads
+                // an element only at an index in bounds, and the claims put i at -3:
+                // for_signed_range_negative_index_fail.ln) left the judge 0 <= -1 to prove, a false
+                // E011 for a loop that ends. So the refuted paths are ranked first, as if they ran,
+                // and 0 is proposed only when that finds nothing.
+                int32_t ne = L.nedges, ed[JRANK_MAXE];
+                for (int32_t e = 0; e < ne; e++) ed[e] = L.edges[e];
+                free(L.mem);
+                F->keep_dead = true;
+                got = fd_loop_build(F, f, b->id, as, nv, &L) && fd_rank(F, f, b->id, &L, &r);
+                F->keep_dead = false;
+                stage = fd_stage;
+                if (!got) {
+                    memset(&r, 0, sizeof r);
+                    r.blk = b->id; r.fn = f; r.ncomp = 1; r.nedge = ne;
+                    for (int32_t e = 0; e < ne; e++) { r.from[e] = ed[e]; r.fall[e] = 0; }
+                    got = true; stage = "dead";
+                }
             }
             free(L.mem);
             if (!got) continue;
