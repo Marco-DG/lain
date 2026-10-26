@@ -228,15 +228,17 @@ static void fd_memo_put(JFinder *F, FdPrint p, uint8_t tag, uint8_t k, const JIn
     if (b) M->e[i].b = *b;
     M->n++;
 }
-// Whether v is implied (lia_solve answers a certificate), from the memo when v was asked before.
-static bool fd_implied(JFinder *F, const JVc *v) {
+// Whether v is implied (lia_solve answers a certificate) within `lim`, from the memo when v was
+// asked before. A budget answer is not kept: a larger budget may still decide v.
+static bool fd_implied_in(JFinder *F, const JVc *v, JWork lim) {
     FdPrint p = fd_print(v, 1);
     const FdMemoE *e = fd_memo_get(F, p, 1);
     if (e) return e->k == J_ANS_CERT;
-    JAnswerKind k = lia_solve(v, F->lim, F->work, F->worksz).k;
+    JAnswerKind k = lia_solve(v, lim, F->work, F->worksz).k;
     if (k == J_ANS_CERT || k == J_ANS_MODEL) fd_memo_put(F, p, 1, (uint8_t)k, NULL);
     return k == J_ANS_CERT;
 }
+static bool fd_implied(JFinder *F, const JVc *v) { return fd_implied_in(F, v, F->lim); }
 // lia_maximize of v's goal sum over its hypotheses: the kind and the bound only (no certificate,
 // no model: a caller reads x.k and x.b), from the memo when v was asked before.
 static LMax fd_max_goal(JFinder *F, const JVc *v) {
@@ -2560,6 +2562,12 @@ static bool fd_claim_shape_ok(const JClaim *c) {
 // unless a verified claim is as tight or this very claim was proposed already, goes into cl.
 static bool bound_candidates(JFinder *F, const JCand *cd, int32_t ncd, const JClaimVc *o, int32_t n, int32_t base,
                              const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    // ★ The threshold test below is a SIDE QUESTION: a budget answer drops the candidate, as a model
+    // does, so a query the full budget stops costs that budget for nothing. isqrt.ln's `main` asked
+    // four such (its loop's inv.keep at the `bad` counter, 55 to 84 hypotheses), 110e6 operations
+    // each, 450e6 of the 590e6 its search spent before its account ran out. Under a sixteenth of the
+    // budget, as the finder's other side questions (a dead path's refutation, fd_loop_from).
+    JWork tlim = F->lim; tlim.pivot /= 16; tlim.node /= 16; tlim.leaf /= 16;
     for (int32_t c = 0; c < ncd; c++) {
         JClaim got = cd[c].c;
         if (!cd[c].fixed) {
@@ -2569,7 +2577,7 @@ static bool bound_candidates(JFinder *F, const JCand *cd, int32_t ncd, const JCl
                 if (o[q].claim != base + c) continue;
                 JVc v = o[q].vc;
                 fd_jint(&v.goal.rhs, cd[c].tb - 1);
-                if (!fd_implied(F, &v)) { ok = false; break; }
+                if (!fd_implied_in(F, &v, tlim)) { ok = false; break; }
                 LMax x = fd_max_goal(F, &o[q].vc);
                 if (x.k == LIA_MAX_EMPTY) continue;
                 if (x.k != LIA_MAX_BOUND) { ok = false; break; }
