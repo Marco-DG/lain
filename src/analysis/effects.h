@@ -138,9 +138,9 @@ static IrEffect ir_effects_direct(IrFunc *f, IrFunc *mod) {
 }
 
 // Transitive effects, memoized. An EXTERN's row is BELIEVED (there is no body to infer from)
-// and defaults to ⊤ — see below. A recursion cycle yields DIVERGE via the in-progress guard
-// (conservative: the IR does not carry the `decreasing` measure that would let a well-founded
-// self-call stay total — a known gap).
+// and defaults to ⊤ — see below. A recursion cycle yields DIVERGE via the in-progress guard, unless
+// a parameter is a well-founded measure (3.4) or, under the judge (ir_effects_row_only), the row says
+// no `diverge` or the function carries a written `decreasing` (IrFunc.has_decreasing).
 static IrEffect ir_effects(IrFunc *f, IrFunc *mod) {
     if (!f) return 0;
     // ★ E.5 — an extern with no row is ⊤, not ∅. It used to be `kind==PROC ? IO : 0`, i.e. the

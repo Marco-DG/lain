@@ -3859,8 +3859,8 @@ static bool fd_guarded_claims(JFinder *F, const JClaim *as, int32_t nv) {
     return true;
 }
 static JClaim *finder_propose_run(JFinder *F, int32_t *ncl);
-// The finder's work, metered (lia.h): FD_WORK rational operations for a module's whole proposal,
-// then every query answers budget and what was found so far is proposed. Set from the corpus and
+// The finder's work, metered (lia.h): FD_WORK rational operations an ACCOUNT (below), then every query
+// that account pays for answers budget and what was found so far is proposed. Set from the corpus and
 // the PE.11 ports' three legs at 8405d47: the most any of them spends is 3.8e8 (tests/trust/
 // judge_signed_division_pass.ln, 16 s); a u8 loop with two `if`s of wrapping steps (fuzz_loops'
 // wrap mode, seed 2490187, k 216) spent 2.1e9, 146 s, and still had no ranking.

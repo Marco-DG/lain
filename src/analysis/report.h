@@ -39,9 +39,10 @@ static void ir_diag(const char *file, isize line, isize col, const char *code, c
     else if (file && line) fprintf(stderr, "  --> %s:%lld:%lld\n", file, (long long)line, (long long)col);
 }
 
-// One unproved check, as its diagnostic: the code, the message, and the notes. `V` is the analysis
-// the check came from, for the source names of a loop's witness (I.165, I.200); NULL when the check
-// was made from a judge's record (--judge=authority), which carries no witness. 1 when printed.
+// One unproved check, as its diagnostic: the code, the message, and the notes. `V` is VRA's analysis
+// of the function, for the source names of a loop's witness (I.165, I.200), under the judge too, whose
+// records take VRA's words where VRA checks the same place (jau_vra_twin); NULL when VRA did not run.
+// 1 when printed.
 static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
     int n = 0;
     switch (c->kind) {
@@ -328,9 +329,10 @@ static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
     return n;
 }
 
-// --judge=authority (PE.10): when set, the numeric obligations of a function are reported from the
-// judge's records (analysis/judge_authority.h) and VRA's checks are not read. VRA still runs here
-// for the borrow pass's disjointness queries (phase D), until those are owed as asserts.
+// --judge=authority (PE.10; the default since 2426d11): when set, the numeric obligations of a
+// function are reported from the judge's records (analysis/judge_authority.h); VRA's checks decide
+// nothing. VRA still runs for the borrow pass's disjointness queries (phase D), until those are owed
+// as asserts, its one analysis a function shared with the judge's run (f47).
 // VRA's analysis of the function is passed for the DESCRIPTION of a check (a loop's witness, a
 // running total's numbers, the range a value lands in) where VRA has a check at the same place: the
 // judge decides whether anything is reported, VRA's record only says it in the same words.

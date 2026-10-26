@@ -133,9 +133,11 @@ typedef struct { int32_t nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; 
 // their conjunction G_k) and its tuple rows reg[k].t0 .. + nt - 1 (lexicographic), every row in
 // exactly one of them, every edge free and every cont 0. The ranking is <rho, tuple_rho> with rho
 // the largest k whose guard holds: a trip starts in some region (`rank.cover`), never moves to a
-// higher one (`rank.region`), and within one lowers its tuple (`rank.lex`). Loops only.
-// At blk JRANK_ENTRY it is a function's measure for its recursion: one component over its integer
-// parameters (or their slices' lengths) at entry, owed at every call that may close a cycle
+// higher one (`rank.region`), and within one lowers its tuple (`rank.lex`). A loop's, or a
+// recursion measure's for a function alone in its cycle (c43: `rec.cover`, `rec.region`, `rec.lex`).
+// At blk JRANK_ENTRY it is a function's measure for its recursion: over its integer parameters (or
+// their slices' lengths) at entry, one component, or for a function alone in its cycle several (a
+// tuple, MAX/MIN groups, regions: c42, c43), owed at every call that may close a cycle
 // through it (`rec.fall`, `rec.bound`); its edges are not read. The calls `le` lists, each by its
 // block and instruction index, owe only that the callee's measure not rise (`rec.le`); over the
 // whole component the calls listed must close no cycle (spec 12), or the claim is refused. A loop's

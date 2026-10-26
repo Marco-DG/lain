@@ -15,8 +15,9 @@
 // gives them (jau_vra_twin, for the words only); and an accumulator's E086 in a loop the judge did
 // not show to end is dropped as that E011's consequence (I.159, judge_authority_report).
 //
-// Opt-in. VRA still runs for the finder's candidates (untrusted) and, in report.h, for the borrow
-// pass's disjointness queries (phase D) until those are owed as asserts. The effect row's DIVERGE is
+// The default since PE.9's flip (2426d11); --judge=vra makes VRA decide instead. VRA still runs, once a
+// function (f47), for the finder's candidates (untrusted), the borrow pass's disjointness queries
+// (phase D) until those are owed as asserts, and the words of a record (jau_vra_twin). The effect row's DIVERGE is
 // read from the row alone (effects.h, ir_effects_row_only): an accepted program has every loop and
 // recursion obligation of a function without `diverge` proved.
 #ifndef LAIN_ANALYSIS_JUDGE_AUTHORITY_H
