@@ -13,7 +13,11 @@
 #   - a ranking the finder proposes that the generator refuses (RANKINGS, below);
 #   - a program whose run left no SUMMARY line (the harness died: that is not a verdict);
 #   - fewer obligation events than the floor (a run that judged almost nothing is not a hold), or
-#     fewer ranking hypotheses checked than theirs.
+#     fewer ranking hypotheses checked than theirs;
+#   - more of the hypothesis evaluations NOT EVALUABLE than the ceiling (NOEVAL_CEILING, percent):
+#     a hypothesis the run cannot evaluate (a past version with no snapshot, a cell not written
+#     yet) is not checked. The summary says how many, why, and in which programs most.
+#     13.6% of the corpus's were not, and the summary did not say so (Documentation, 2026-10-26).
 # A rule no program exercises is not seen here; src/tools/test_judge_gen.c pins those over a
 # hand-built IR (run_ir_tests.sh).
 #
@@ -93,6 +97,7 @@ EDGE_FLOOR=50000         # claims checked at run time on the edges they are owed
 RETURN_FLOOR=4000        # return claims checked at run time where the program returns; 9,065 when the floor was set
 CONTRACT_FLOOR=2000      # return claims checked at run time where a caller uses them; 4,096 when the floor was set
 USE_FLOOR=100000         # claims checked at run time where they are used; 1,215,712 when the floor was set
+NOEVAL_CEILING=16        # percent of the accepted programs' hypothesis evaluations; 13.6 when set
 RANK_FLOOR=290000        # rank.* hypotheses checked at run time on their edges; 582,450 when the floor was set (e49b886)
 MUST_REFUSE="tests/vra/overflow/field_assign_overflow_fail.ln:narrow tests/vra/overflow/return_overflow_fail.ln:narrow
              tests/vra/overflow/arg_literal_overflow_fail.ln:narrow tests/vra/overflow/struct_field_literal_overflow_fail.ln:narrow
@@ -171,7 +176,8 @@ export -f cover_one
 xargs -P "${LAIN_GATE_JOBS:-4}" -I{} bash -c 'cover_one "{}"' < "$T/cover.txt"
 judged=0; nosum=0; refused=0; falsec=0; reached=0; checked=0; solverr=0; implied=0; notimp=0; outbudget=0; krefused=0
 claims=0; hullok=0; hullbad=0; edges=0; claimchk=0; claimgoals=0; mustfail=0; retgoals=0; contractchk=0
-refrk=0; rankedges=0; rankchk=0
+refrk=0; rankedges=0; rankchk=0; noeval=0; : > "$T/noeval.txt"
+declare -A neby=([unsnapped]=0 [missed]=0 [result]=0 [dead]=0 [not-int]=0 [other]=0)
 while read -r f; do
     o=$(echo "$f" | tr '/' '_')
     s=$(grep -m1 '^SUMMARY ' "$T/$o.err")
@@ -220,6 +226,11 @@ while read -r f; do
     c=$(echo "$s" | sed -nE 's/.* contract-hyps-checked=([0-9]+).*/\1/p'); contractchk=$((contractchk + ${c:-0}))
     c=$(echo "$s" | sed -nE 's/.* rank-edges=([0-9]+).*/\1/p'); rankedges=$((rankedges + ${c:-0}))
     c=$(echo "$s" | sed -nE 's/.* rank-hyps-checked=([0-9]+).*/\1/p'); rankchk=$((rankchk + ${c:-0}))
+    c=$(echo "$s" | sed -nE 's/.* not-evaluable=([0-9]+) .*/\1/p'); noeval=$((noeval + ${c:-0}))
+    [ "${c:-0}" -gt 0 ] && echo "$c $f" >> "$T/noeval.txt"
+    for k in "${!neby[@]}"; do
+        c=$(echo "$s" | sed -nE "s/.*[=,]$k:([0-9]+).*/\1/p"); neby[$k]=$((neby[$k] + ${c:-0}))
+    done
 done < "$T/files.txt"
 mustrefuse=0
 for fk in $MUST_REFUSE; do
@@ -268,6 +279,9 @@ done < "$T/refused.txt"
 echo "=================================================================="
 echo "programs declared $declared, judged $judged, no summary $nosum"
 echo "obligation events $reached, hypotheses checked at run time $checked, false $falsec, generator refusals $refused"
+nepct=$(LC_ALL=C awk -v n="$noeval" -v c="$checked" 'BEGIN { printf "%.1f", (n + c > 0) ? 100 * n / (n + c) : 0 }')
+echo "hypotheses NOT evaluable at run time, so not checked: $noeval, $nepct% (ceiling $NOEVAL_CEILING%): a past version with no snapshot ${neby[unsnapped]}, its snapshot not taken or empty ${neby[missed]}, the obligation's own result ${neby[result]}, no storage in the frame ${neby[dead]}, not an integer yet ${neby[not-int]}, other ${neby[other]}"
+[ "$noeval" -gt 0 ] && echo "  the most in: $(sort -nr "$T/noeval.txt" | head -3 | awk '{ printf "%s%s (%s)", (NR > 1) ? ", " : "", $2, $1 }')"
 echo "VCs implied $implied (each certificate accepted by the kernel), not implied $notimp, budget or capacity $outbudget, solver failures $solverr, certificates the kernel refused $krefused (floor $IMPLIED_FLOOR)"
 echo "claims $claims: their VCs implied $hullok, not implied $hullbad; at run time, claims checked on $claimgoals edges taken (floor $EDGE_FLOOR) and $claimchk times where used (floor $USE_FLOOR)"
 echo "return claims checked at run time at $retgoals returns (floor $RETURN_FLOOR) and $contractchk times at a call (floor $CONTRACT_FLOOR)"
@@ -287,6 +301,9 @@ if [ "$claimgoals" -lt "$EDGE_FLOOR" ] || [ "$claimchk" -lt "$USE_FLOOR" ]; then
 fi
 if [ "$retgoals" -lt "$RETURN_FLOOR" ] || [ "$contractchk" -lt "$CONTRACT_FLOOR" ]; then
     echo "judge_gate: FAIL — return claims checked at run time, $retgoals at returns and $contractchk at calls, below the floors ($RETURN_FLOOR, $CONTRACT_FLOOR): contracts are stated where no run evaluates them"; exit 1
+fi
+if LC_ALL=C awk -v p="$nepct" -v c="$NOEVAL_CEILING" 'BEGIN { exit !(p > c) }'; then
+    echo "judge_gate: FAIL — $nepct% of the hypothesis evaluations were not evaluable, above the ceiling of $NOEVAL_CEILING%: the run checks less of what the generator states"; exit 1
 fi
 if [ "$rankchk" -lt "$RANK_FLOOR" ]; then
     echo "judge_gate: FAIL — $rankchk ranking hypotheses checked at run time, below the floor of $RANK_FLOOR: rank.* VCs are stated where no run evaluates them"; exit 1

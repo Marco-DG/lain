@@ -184,6 +184,18 @@ static void cover_func(IrFunc *f, Vra *V, JObl *o, int32_t n) {
 typedef struct { IrInstr *at; JObl *o; } HK;
 static HK *hk; static int64_t nhk;
 static long long reached, checked, falsec, unknown, premises, claimchk, claimgoals, contractchk, postgoals, mmevals, refusedrk;
+// Why the last hk_var could not read a variable, for the not-evaluable census judge_gate prints: a
+// hypothesis not evaluated is not checked, and 13.6% of the corpus's were not, which the summary did
+// not say. RESULT: the obligation's own result, which the hook runs before. DEAD: a cell version
+// whose storage the frame does not hold: not allocated yet (a local declared after the point), or
+// gone. UNSNAPPED: a version no longer current that no snapshot is registered for (a local's at the
+// function's entry, before its first store). MISSED: one registered, and not taken in this frame or
+// taken while the cell held no integer (an element not written yet). NOTINT: a value that is not an
+// integer yet. OTHER: the rest.
+enum { HKW_OTHER, HKW_RESULT, HKW_DEAD, HKW_UNSNAPPED, HKW_MISSED, HKW_NOTINT, HKW_N };
+static int hk_why;
+static long long unknown_by[HKW_N];
+static void hk_unknown(void) { unknown++; unknown_by[hk_why]++; }
 static long long rankedges, rankchk;                   // a ranking's VCs (rank.*) reached on their edge, their hypotheses checked
 static int hk_cmp(const void *a, const void *b) {
     uintptr_t x = (uintptr_t)((const HK *)a)->at, y = (uintptr_t)((const HK *)b)->at;
@@ -227,6 +239,7 @@ static void hk_ent_add(const IrFunc *fn, int32_t H, int32_t E, int32_t cell, int
 }
 // A variable's value at the instruction, or false when it cannot be read (not an integer yet).
 static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
+    hk_why = HKW_OTHER;                                // a MAX row's own failure below keeps its reason
     int32_t k = o->vkind[x], key = o->vkey[x];
     const JRecipe *rm = k == 3 && o->vrec ? o->vrec[x] : NULL;
     if (rm && rm->mm) {                                // the MAX (MIN) of linear forms: a ranking
@@ -249,7 +262,7 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
     if (key < 0 || key >= nv) return false;
     // the obligation's own result does not exist yet: the hook runs before the instruction, and
     // the VC's variable for it is the exact value the instruction is about to settle
-    if ((k == 0 || k == 5) && o->at && o->at->result && key == o->at->result->id) return false;
+    if ((k == 0 || k == 5) && o->at && o->at->result && key == o->at->result->id) { hk_why = HKW_RESULT; return false; }
     IVal *c = &v[key];
     if (k == 5) {                                      // a struct value's field (s15): field voff of it
         int32_t fi = o->voff ? o->voff[x] : -1;
@@ -261,7 +274,7 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
         // store wrote, which the frame still holds (the store and that value dominate the point);
         // kind 4 is a slice cell version's length, read the same way
         if (o->vcur[x]) {
-            if (c->k != IV_PTR || !c->p.o || !c->p.o->live) return false;
+            if (c->k != IV_PTR || !c->p.o || !c->p.o->live) { hk_why = HKW_DEAD; return false; }
             IPtr p = c->p;                             // an element no address names: its root's + k
             if (o->voff && o->voff[x] >= 0) p.p[p.d - 1] += o->voff[x];
             if (o->vfld && o->vfld[x] >= 0) {          // a field below its root: appended (s15)
@@ -273,11 +286,13 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
             if (o->vaux[x] >= nv) return false;
             c = &v[o->vaux[x]];
         } else {                                       // a loop's ENTRY (or a header's) version: its snapshot, if taken
-            if (!o->vent || o->vent[x] < 0 || k != 1) return false;
+            if (!o->vent || o->vent[x] < 0 || k != 1) { hk_why = HKW_UNSNAPPED; return false; }
             int32_t off = o->voff ? o->voff[x] : -1;
             int32_t hk = hk_snap_key(o->vent[x], o->vente ? o->vente[x] : 0), fl = o->vfld ? o->vfld[x] : -1;
             const HkSnap *s = &hk_snap[hk_snap_slot(v, hk_curf, hk, key, off, fl)];
-            if (!s->ok || s->v != v || s->fn != hk_curf || s->H != hk || s->cell != key || s->off != off || s->fld != fl) return false;
+            if (!s->ok || s->v != v || s->fn != hk_curf || s->H != hk || s->cell != key || s->off != off || s->fld != fl) {
+                hk_why = HKW_MISSED; return false;
+            }
             c = (IVal *)&s->iv;                        // read as any version, by its type below
         }
     }
@@ -306,7 +321,7 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
         }
         *out = s; return true;
     }
-    if (c->k != IV_INT) return false;
+    if (c->k != IV_INT) { hk_why = HKW_NOTINT; return false; }
     const IrType *t = o->vtype[x];
     bool uns = t && ((t->kind == IRT_INT && !t->is_signed) || t->kind == IRT_BOOL);
     *out = uns ? (__int128)c->i : (__int128)(int64_t)c->i;
@@ -396,7 +411,7 @@ static void hk_check(JObl *o, IVal *v, int nv) {
                 if (all == 1) r = 1; else if (all < 0) r = -1;
             }
         }
-        if (r < 0) { unknown++; continue; }
+        if (r < 0) { hk_unknown(); continue; }
         checked++;
         if (!strncmp(y->origin, "claim ", 6)) claimchk++;   // a claim stated after its join
         if (!strncmp(y->origin, "contract ", 9)) contractchk++;   // a callee's return claim
@@ -430,12 +445,12 @@ static void hk_claim(JObl *o, IVal *v, int nv, const char *where, long long *goa
     // not a fact, so where it fails in the run nothing of it is checked, its hypotheses included
     if (o->guarded) {
         __int128 gv;
-        if (!hk_var(o, o->gvar, v, nv, &gv)) { unknown++; return; }
+        if (!hk_var(o, o->gvar, v, nv, &gv)) { hk_unknown(); return; }
         if (gv < o->gmin) return;
     }
     hk_check(o, v, nv);
     int r = hk_cons(o, &o->vc.goal, v, nv);
-    if (r < 0) { unknown++; return; }
+    if (r < 0) { hk_unknown(); return; }
     (*goals)++;
     if (r == 1) return;
     falsec++;
@@ -914,10 +929,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "SUMMARY obligations=%lld reached=%lld hyps-checked=%lld false=%lld not-evaluable=%lld premises=%lld status=%d"
                 " claims=%lld claims-dropped=%lld claim-obligations=%lld edges=%lld claim-hyps-checked=%lld claim-goals-checked=%lld"
                " returns=%lld return-goals-checked=%lld contract-hyps-checked=%lld entry-snapshots=%lld"
-               " rankings=%lld refused-rankings=%lld minmax-evaluated=%lld rank-edges=%lld rank-hyps-checked=%lld\n",
+               " rankings=%lld refused-rankings=%lld minmax-evaluated=%lld rank-edges=%lld rank-hyps-checked=%lld"
+               " not-evaluable-by=result:%lld,dead:%lld,unsnapped:%lld,missed:%lld,not-int:%lld,other:%lld\n",
                (long long)nhk, reached, checked, falsec, unknown, premises, st, F.kept, F.dropped, (long long)nhe, edges,
                claimchk, claimgoals, posts, postgoals, contractchk, snaps, ranks ? (long long)F.nrk : -1LL, refusedrk, mmevals,
-               rankedges, rankchk);
+               rankedges, rankchk, unknown_by[HKW_RESULT], unknown_by[HKW_DEAD], unknown_by[HKW_UNSNAPPED],
+               unknown_by[HKW_MISSED], unknown_by[HKW_NOTINT], unknown_by[HKW_OTHER]);
         if (falsec) rc = 3;
     } else if (claims) printf("# claims proposed %lld, kept %lld, dropped %lld\n", F.proposed, F.kept, F.dropped);
     if (cover) printf("COVER\tchecks %lld\tstated %lld\toutside %lld\tuncovered %lld\n", cv_checks, cv_cov, cv_cov_out, cv_unc);
