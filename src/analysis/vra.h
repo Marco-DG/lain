@@ -6098,7 +6098,17 @@ static Vra *vra_analyze(IrFunc *f) {
     // checks, so a non-fixpoint here is a miscompile waiting to happen.
     #define VRA_FIXPOINT_BOUND 4096
     bool changed=true; int sweeps=0;
+    // ★ A BLOCK WHOSE IN-STATE DID NOT CHANGE IS NOT VISITED AGAIN. Each sweep reprocessed every
+    // reached block and joined into every successor, though a block's out-states are a function of
+    // its in-state alone (the element ranges are fixed within a pass): its successors had absorbed
+    // them already, and in-states only grow within a pass, so the join and the widening changed
+    // nothing. The fixpoint is the same, state for state. Handwriting's lexer_state_machine.ln:
+    // `lex`, 133 octagon dimensions and 71 blocks, made 7,024 joins in 3.2 s. NULL: every block, as
+    // before (no memory for the flags).
+    uint8_t *dirty = NULL;
     if (V->checking) { vra_check_rebuild(V, f, dim); vra_check_elements(V, dim); changed = false; goto vra_fixpoint_done; }
+    dirty = calloc((size_t)(nb > 0 ? nb : 1), 1);
+    if (dirty) dirty[f->entry->id] = 1;
     // ★ TWO PASSES, AND EXACTLY TWO (C14). Pass 0 runs with element ranges seeded from
     // constants and copies only. Then the seeding runs AGAIN against pass 0's converged state,
     // which can see what a loop fill or a comprehension actually stores — information that did
@@ -6133,6 +6143,7 @@ static Vra *vra_analyze(IrFunc *f) {
         for (int i=0;i<nb;i++) V->reached[i]=false;
         vra_seed_entry(V, f, dim);
         V->reached[f->entry->id]=true;
+        if (dirty) { memset(dirty, 0, (size_t)nb); dirty[f->entry->id] = 1; }
         changed=true; sweeps=0;
     }
     while (changed) {
@@ -6145,6 +6156,8 @@ static Vra *vra_analyze(IrFunc *f) {
         changed=false;
         for (IrBlock *b=f->blocks; b; b=b->next) {
             if (!V->reached[b->id]) continue;
+            if (dirty && !dirty[b->id]) continue;            // its in-state is the one last visited
+            if (dirty) dirty[b->id] = 0;
             // ★ A copy of a closed matrix is closed. Each block's in-state was re-closed here, and
             // each edge's copy of W below, although most of them were copies of a matrix closed a
             // moment before: 70% of the closures that followed a copy or a join were such
@@ -6161,7 +6174,7 @@ static Vra *vra_analyze(IrFunc *f) {
                 memcpy(T_m, W_m, V->dsz*8); T.nvar=V->noct; T.dim=dim; oct_set_clean(&T, W.clean);
                 if (guarded){ vra_refine_guard(V,&T,cond,k==0); oct_close(&T); }
                 if (oct_is_bottom(&T)) continue;
-                if (!V->reached[s->id]) { vra_in_store(V, s->id, T_m); V->inclosed[s->id]=T.clean; V->reached[s->id]=true; changed=true; continue; }
+                if (!V->reached[s->id]) { vra_in_store(V, s->id, T_m); V->inclosed[s->id]=T.clean; V->reached[s->id]=true; changed=true; if (dirty) dirty[s->id] = 1; continue; }
                 vra_in_load(V, s->id, I_m);
                 Octagon In={ .nvar = V->noct, .dim = dim, .m = I_m };
                 oct_join(&J,&In,&T);
@@ -6169,12 +6182,13 @@ static Vra *vra_analyze(IrFunc *f) {
                 // unary entries stay even). A widened one is not.
                 bool jclosed = V->inclosed[s->id] && T.clean;
                 if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); oct_set_clean(&J, false); jclosed=false; }
-                if (!oct_leq(&J,&In)){ vra_in_store(V, s->id, J_m); V->inclosed[s->id]=jclosed; changed=true; }
+                if (!oct_leq(&J,&In)){ vra_in_store(V, s->id, J_m); V->inclosed[s->id]=jclosed; changed=true; if (dirty) dirty[s->id] = 1; }
             }
         }
     }
     }   // vpass
     vra_fixpoint_done: ;
+    free(dirty);
     // ★ FAIL CLOSED IF THE FIXPOINT DID NOT CONVERGE. The sweep cap exists so a pathological
     // CFG cannot hang the compiler, but exiting through it leaves a PARTIAL fixpoint — an
     // UNDER-approximation — and every proof discharged against one would be unsound. Nothing
