@@ -40,6 +40,7 @@ typedef struct {
     JGuardClaim *gc; int32_t ngc;        // the last call's guarded return claims (malloc'd; the caller frees)
     bool oom;                            // the last call returned no claims because memory ran out
     JRank *rk; int32_t nrk;              // the last call's ranking claims (malloc'd; the caller frees)
+    const char **rkstage;                // with fd_track_stages: the stage that ranked each (a label)
     struct FdMemo *memo;                 // during a call: the solver's answers by VC (fd_implied)
 } JFinder;
 
@@ -1493,6 +1494,26 @@ static bool fd_in_arena(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out,
     free(arena);
     return got;
 }
+// jvc --rank-stages: which stage of fd_rank's cascade ranked a loop or a recursion, a label no
+// decision reads. Tracked only when asked (fd_track_stages); fd_stage is the last success's.
+static bool fd_track_stages = false;
+static const char *fd_stage = "?";
+static const char *fd_stage_in_pass(int pass, const char *s) {
+    static const char *const t[4][3] = {
+        { "pass0 linear", "pass0 lex", "pass0 lex-bounded" }, { "pass1 linear", "pass1 lex", "pass1 lex-bounded" },
+        { "pass2 linear", "pass2 lex", "pass2 lex-bounded" }, { "pass3 linear", "pass3 lex", "pass3 lex-bounded" } };
+    int k = !strcmp(s, "linear") ? 0 : !strcmp(s, "lex") ? 1 : 2;
+    return pass >= 0 && pass < 4 ? t[pass][k] : s;
+}
+// F->rk just grew by one (or by m, the last m): their labels
+static bool fd_stage_note(JFinder *F, int32_t m, const char *s) {
+    if (!fd_track_stages) return true;
+    const char **x = realloc(F->rkstage, sizeof *x * (size_t)(F->nrk ? F->nrk : 1));
+    if (!x) return false;
+    F->rkstage = x;
+    for (int32_t i = F->nrk - m; i < F->nrk; i++) F->rkstage[i] = s;
+    return true;
+}
 static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (fd_rank_on(F, f, H, L, out)) return true;
     int32_t np = L->npaths;
@@ -1579,14 +1600,15 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         for (int32_t z = 0; z < L->npairs; z++) if (on[z]) { V.pkey[nn] = L->pkey[z]; V.ptk[nn] = L->ptk[z]; V.pre[nn] = L->pre[z]; V.post[nn] = L->post[z]; nn++; }
         V.npairs = nn; V.npk = pass == 3 ? nstep : 1;
         bool got = fd_rank_on(F, f, H, &V, out);
-        if (got) return true;
+        if (got) { fd_stage = fd_stage_in_pass(pass, fd_stage); return true; }
     }
-    if (fd_rank_max(F, f, H, L, step, out)) return true;   // no tuple: a max component (c36)
+    if (fd_rank_max(F, f, H, L, step, out)) { fd_stage = "max"; return true; }   // no tuple: a max component (c36)
     if (fd_no_templates) return false;                     // inside a template: its search only
-    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_regions)) return true;   // nor a max: a tuple per region (c38)
-    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_absgrow)) return true;   // nor regions: |v| + |w| growing (c41)
-    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_split)) return true;     // a recursion split by a parameter (c43)
-    return !F->oom && fd_rank_affmax(F, f, H, L, out);                            // or a max of two affine rows (c42)
+    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_regions)) { fd_stage = "regions"; return true; }   // nor a max: a tuple per region (c38)
+    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_absgrow)) { fd_stage = "absgrow"; return true; }   // nor regions: |v| + |w| growing (c41)
+    if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_split)) { fd_stage = "split"; return true; }       // a recursion split by a parameter (c43)
+    if (!F->oom && fd_rank_affmax(F, f, H, L, out)) { fd_stage = "affmax"; return true; }                 // or a max of two affine rows (c42)
+    return false;
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);
@@ -1607,6 +1629,7 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
         }
     }
     if (R1.k == LIA_RANK_FOUND) {
+        fd_stage = "linear";
         coef[0] = R1.coef; c0[0] = R1.c0; ncomp = 1;
         for (int32_t e = 0; e < L->nedges; e++) fall_of_edge[e] = 0;
     } else {
@@ -1619,8 +1642,11 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
                 const JInt *x = i < L->npairs ? &R2.coef[j][i] : &R2.c0[j];
                 fits = fd_i128(x, &v) && v <= ((__int128)1 << 66) && v >= -((__int128)1 << 66);
             }
-        if (R2.k == LIA_RANK_FOUND && !fits)
+        fd_stage = "lex";
+        if (R2.k == LIA_RANK_FOUND && !fits) {
             R2 = lia_rank_lex_bounded(L->paths, L->npaths, L->pre, L->post, L->npairs, (int64_t)1 << 20, F->lim, F->work, F->worksz);
+            fd_stage = "lex-bounded";
+        }
         if (R2.k != LIA_RANK_FOUND || R2.ncomp > JRANK_MAXC) return false;
         ncomp = R2.ncomp;
         for (int32_t j = 0; j < ncomp; j++) { coef[j] = R2.coef[j]; c0[j] = R2.c0[j]; }
@@ -3897,6 +3923,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
     *ncl = 0;
     F->oom = false;
     F->rk = NULL; F->nrk = 0;                                // the caller frees the last call's
+    free(F->rkstage); F->rkstage = NULL;                     // ...and this its labels (fd_track_stages)
     F->gc = NULL; F->ngc = 0;
     for (int round = 0; round < 3; round++) {
         if (nv > ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)nv); if (!x) goto oom; cl = x; ccl = nv; }
@@ -3986,19 +4013,21 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             FdLoop L; JRank r;
             bool built = fd_loop_build(F, f, b->id, as, nv, &L);
             bool got = built && fd_rank(F, f, b->id, &L, &r);
+            const char *stage = fd_stage;
             if (!built && L.dead && L.nedges > 0 && L.nedges <= JRANK_MAXE) {
                 // no back edge can be taken (a constant guard, c2): the constant measure 0, which
                 // falls on every edge only because none runs; the judge owes it as any other
                 memset(&r, 0, sizeof r);
                 r.blk = b->id; r.fn = f; r.ncomp = 1; r.nedge = L.nedges;
                 for (int32_t e = 0; e < L.nedges; e++) { r.from[e] = L.edges[e]; r.fall[e] = 0; }
-                got = true;
+                got = true; stage = "dead";
             }
             free(L.mem);
             if (!got) continue;
             JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
             if (!x) { ir_cg_free(&CG0); goto oom; }
             F->rk = x; F->rk[F->nrk++] = r;
+            if (!fd_stage_note(F, 1, stage)) { ir_cg_free(&CG0); goto oom; }
         }
         // ...and a measure for its recursion, if it has one to rank: one component over its
         // parameters at entry, falling at every self-call (the judge owes rec.fall and rec.bound)
@@ -4012,6 +4041,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + 1));
         if (!x) { ir_cg_free(&CG0); goto oom; }
         F->rk = x; F->rk[F->nrk++] = r;
+        if (!fd_stage_note(F, 1, fd_stage)) { ir_cg_free(&CG0); goto oom; }
     }
     ir_cg_free(&CG0);
     // ...and a cycle of several functions, jointly (fd_rank_cycle), over the module's components
@@ -4035,13 +4065,14 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
                 for (int32_t r = 0; r < F->nrk; r++) {
                     bool mine = false;
                     for (int32_t i = 0; i < m; i++) mine |= F->rk[r].blk == JRANK_ENTRY && F->rk[r].fn == memb[i];
-                    if (!mine) F->rk[w++] = F->rk[r];
+                    if (!mine) { if (F->rkstage) F->rkstage[w] = F->rkstage[r]; F->rk[w++] = F->rk[r]; }
                 }
                 F->nrk = w;
                 JRank *x = realloc(F->rk, sizeof *x * (size_t)(F->nrk + m));
                 if (!x) { free(done); ir_cg_free(&G); goto oom; }
                 F->rk = x;
                 for (int32_t i = 0; i < m; i++) F->rk[F->nrk++] = rr[i];
+                if (!fd_stage_note(F, m, "cycle")) { free(done); ir_cg_free(&G); goto oom; }
             }
             free(done);
         }

@@ -29,6 +29,10 @@
 //                               repeats while the same call is running: `witness <fn> recursion
 //                               <param> = <v> ...: HANG, <g> called again`, else `no witness <fn>
 //                               recursion`. Only these lines are printed
+//   --rank-stages               with --judge: after the judge, one `# rank-stage <fn> bb<H>|entry <stage>`
+//                               line per ranking the finder proposed, naming the stage of its cascade
+//                               that found it (linear, lex, lex-bounded, passN ..., max, regions,
+//                               absgrow, split, affmax, dead, cycle): a census of what ranks what
 //   --cover                     each of VRA's checks (termination aside) beside an obligation of
 //                               its class at its instruction (Main Compiler Work's census): one
 //                               `UNCOVERED` line for a check the judge owes nothing for, then a
@@ -648,6 +652,7 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--judge-corrupt")) judge = corrupt = true;
         if (!strcmp(argv[k], "--cover")) cover = true;
         if (!strcmp(argv[k], "--witness")) witness = true;
+        if (!strcmp(argv[k], "--rank-stages")) fd_track_stages = true;
         if (!strncmp(argv[k], "--finder-work=", 14)) meter_cap = strtoull(argv[k] + 14, NULL, 10);   // tests: the meter's cap
     }
     Arena aa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -787,6 +792,11 @@ int main(int argc, char **argv) {
         if (!judge_module(irmod, &lim, &calls, jrec_print, NULL, &jm, err, sizeof err)) { fprintf(stderr, "judge_module: %s\n", err); return 1; }
         printf("# judge proved=%lld not-implied=%lld outside=%lld budget=%lld capacity=%lld solver-bug=%lld uncertified=%lld refused=%lld no-claims=%lld\n",
                jrec_n[0], jrec_n[1], jrec_n[2], jrec_n[3], jrec_n[4], jrec_n[5], jrec_n[6], jrec_n[7], jrec_n[8]);
+        for (int32_t k = 0; fd_track_stages && F.rkstage && k < F.nrk; k++) {
+            const IrName *nm = F.rk[k].fn ? F.rk[k].fn->name : NULL;
+            if (F.rk[k].blk == JRANK_ENTRY) printf("# rank-stage %.*s entry %s\n", nm ? (int)nm->length : 1, nm ? nm->name : "?", F.rkstage[k]);
+            else printf("# rank-stage %.*s bb%d %s\n", nm ? (int)nm->length : 1, nm ? nm->name : "?", (int)F.rk[k].blk, F.rkstage[k]);
+        }
         printf("# finder work=%llu out=%d\n", (unsigned long long)F.meter, (int)F.meter_out);
         free(buf); free(hbuf); free(work);
         return jrec_n[JREC_SOLVER_BUG] || jrec_n[JREC_UNCERTIFIED] || jrec_n[JREC_REFUSED] || jrec_n[JREC_NO_CLAIMS] ? 1 : 0;
