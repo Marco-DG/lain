@@ -17,10 +17,16 @@
 #include "analysis/report.h"
 #include "frontends/lain/static_eval.h"
 
+// Static evaluation runs as main.c runs it under the judge, the compiler's default: DIVERGE from the
+// effect row, and VRA's verdict on what it runs not reported there (effects.h, report.h); a driver
+// that reports VRA's checks reports that function's with the others.
 static IrFunc *drv_lower_module(DeclList *prog, const char *path, Arena *ia) {
     static Arena ea;
     ea = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE * 4096);
-    if (ir_static_eval_module(prog, path, &ea)) { fprintf(stderr, "static evaluation failed\n"); exit(1); }
+    ir_effects_row_only = ir_report_numeric_later = true;
+    int se = ir_static_eval_module(prog, path, &ea);
+    ir_effects_row_only = ir_report_numeric_later = false;
+    if (se) { fprintf(stderr, "static evaluation failed\n"); exit(1); }
     return ir_lower_module(prog, ia);
 }
 #endif

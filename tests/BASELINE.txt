@@ -101,6 +101,11 @@ ty=Slice_u8 scalar
 ### tests/declarations/local_array_constant_length_pass.ln
 rc=0
 out=
+### tests/declarations/module_const_call_judge_proves_pass.ln
+rc=0
+out=0
+at=const 2
+ty=Slice_u8 scalar
 ### tests/declarations/single_line_comma_decl_pass.ln
 rc=10
 out=

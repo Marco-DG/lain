@@ -337,6 +337,11 @@ static int ir_report_check(const char *file, Vra *V, VraCheck *c) {
 // running total's numbers, the range a value lands in) where VRA has a check at the same place: the
 // judge decides whether anything is reported, VRA's record only says it in the same words.
 static int (*ir_report_numeric_hook)(IrFunc *f, const char *file, Vra *V) = NULL;
+// ...and while static evaluation analyses a function it is about to run, under the judge: its numeric
+// and termination checks are not reported here, the judge decides them with the module, after.
+// Otherwise VRA decided them: `K u32 = lexi(3, 4)` was E011 for a loop the judge proves
+// (Documentation, 2026-10-26). VRA still runs, for the borrow pass's disjointness queries.
+static bool ir_report_numeric_later = false;
 // ...and when set, VRA's analysis of f made before (the judge's run reads its header states; the
 // judge decides nothing here from it), handed over once, NULL when there is none: run again, the
 // same analysis of the same IR cost the judge's compiles twice VRA's time (Handwriting's lexer,
@@ -426,6 +431,7 @@ static int ir_report_findings(IrFunc *f, IrFunc *mod, const char *file, bool num
     borrow_free(B);
 
     if (!numeric) return n;   // NOT judged: the numeric obligations were never reported
+    if (ir_report_numeric_later) { vra_free(V); return n; }   // nor here: the judge's, after (not judged yet)
     if (ir_report_numeric_hook) {               // the judge decides (--judge=authority)
         n += ir_report_numeric_hook(f, file, V);
         vra_free(V);

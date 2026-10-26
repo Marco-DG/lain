@@ -1,0 +1,18 @@
+// EXPECT: [E011]
+// The twin of module_const_call_judge_proves_pass.ln with a loop no measure ranks (Collatz):
+// static evaluation computes K = steps(27) without trouble, but that is one input, and the judge,
+// deciding `steps` with the module, finds no measure. Running a function at compile time never
+// stands in for its proof.
+func steps(n0 u32) u32 {
+    var n = n0
+    var k u32 = 0
+    while n > 1 {
+        if n % 2 == 0 { n = n / 2 } else { n = 3 *% n +% 1 }
+        k = k +% 1
+    }
+    return k
+}
+K u32 = steps(27)
+func main() i32 {
+    return K as i32
+}

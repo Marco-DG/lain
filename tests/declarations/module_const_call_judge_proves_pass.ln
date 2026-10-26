@@ -1,0 +1,25 @@
+// A constant computed by a call whose loop only the judge proves: `lexi` lowers b, and when b is 0
+// lowers a and resets b, so <a, b> falls lexicographically. Static evaluation used to ask VRA about
+// every function it runs, before the judge ever ran, and VRA's E011 refused the program
+// (Documentation, 2026-10-26). Under the judge it asks for no numeric verdict: the judge decides
+// `lexi` with the module, as any function. lexi(3, 4) is 0.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func lexi(a0 u32, b0 u32) u32 {
+    var a = a0
+    var b = b0
+    while a > 0 {
+        if b > 0 {
+            b = b - 1
+        } else {
+            a = a - 1
+            b = 10
+        }
+    }
+    return a
+}
+K u32 = lexi(3, 4)
+func main() i32 effects io {
+    libc_printf("%u\n", K)
+    return 0
+}

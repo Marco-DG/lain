@@ -245,7 +245,13 @@ int main(int argc, char **argv) {
         // asks for it (effects.h, ir_effects_row_only)
         if (args.judge_authority) ir_effects_row_only = true;
         { static Arena se_arena; se_arena = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
-          if (ir_static_eval_module(program, args.filename, &se_arena)) { sema_destroy(); return 1; } }
+          // under the judge, what static evaluation runs is the judge's to decide, with the module:
+          // a run from one input that traps or does not end refuses it anyway, and one that ends
+          // gives the constant, while the judge's verdict on the function stands (report.h)
+          ir_report_numeric_later = args.judge_authority;
+          int se = ir_static_eval_module(program, args.filename, &se_arena);
+          ir_report_numeric_later = false;
+          if (se) { sema_destroy(); return 1; } }
         IrFunc *mod = ir_lower_module(program, &ir_arena);
         ir_mod = mod;
         // How each sum is represented, from the one decision (layout.h), before any analysis:

@@ -671,8 +671,13 @@ int main(int argc, char **argv) {
     // A module constant whose initialiser calls a function is computed now and lowered as the
     // literal it is, as the compiler does it (main.c, DECIDE-W step 2): the IR judged is the IR
     // compiled. Without it the initialiser ran in `main`, with obligations the program never has.
+    // It runs as main.c runs it under the judge: DIVERGE from the effect row, and VRA's verdict on
+    // what it runs not reported, the judge's to decide with the module (effects.h, report.h).
     Arena ea = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
-    if (ir_static_eval_module(prog, path, &ea)) { fprintf(stderr, "static evaluation failed\n"); return 1; }
+    ir_effects_row_only = ir_report_numeric_later = true;
+    int se = ir_static_eval_module(prog, path, &ea);
+    ir_effects_row_only = ir_report_numeric_later = false;
+    if (se) { fprintf(stderr, "static evaluation failed\n"); return 1; }
     IrFunc *irmod = ir_lower_module(prog, &ia);
     static IrCallGraph drv_cg;                                 // the module's call graph, built once (recursion)
     if (!ir_cg_build(&drv_cg, irmod)) { fprintf(stderr, "out of memory building the call graph\n"); return 1; }
