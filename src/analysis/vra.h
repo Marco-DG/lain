@@ -6105,10 +6105,17 @@ static Vra *vra_analyze(IrFunc *f) {
     // nothing. The fixpoint is the same, state for state. Handwriting's lexer_state_machine.ln:
     // `lex`, 133 octagon dimensions and 71 blocks, made 7,024 joins in 3.2 s. NULL: every block, as
     // before (no memory for the flags).
-    uint8_t *dirty = NULL;
+    uint8_t *dirty = NULL; int *climbs = NULL;
     if (V->checking) { vra_check_rebuild(V, f, dim); vra_check_elements(V, dim); changed = false; goto vra_fixpoint_done; }
     dirty = calloc((size_t)(nb > 0 ? nb : 1), 1);
     if (dirty) dirty[f->entry->id] = 1;
+    // ★ A HEADER CLIMBS THE LADDER A BOUNDED NUMBER OF TIMES. Each widening at a header lifts a
+    // growing bound to the next threshold above it, one rung a sweep, and a long loop body pays a
+    // whole sweep per rung: `lex` (lexer_state_machine.ln) made 6,105 joins, 6 s. After
+    // VRA_WIDEN_CLIMBS widenings at one header it widens without thresholds, so what still grows goes
+    // to its bound's top at once. Termination is the plain widening's.
+    #define VRA_WIDEN_CLIMBS 16
+    climbs = calloc((size_t)(nb > 0 ? nb : 1), sizeof(int));
     // ★ TWO PASSES, AND EXACTLY TWO (C14). Pass 0 runs with element ranges seeded from
     // constants and copies only. Then the seeding runs AGAIN against pass 0's converged state,
     // which can see what a loop fill or a comprehension actually stores — information that did
@@ -6181,14 +6188,15 @@ static Vra *vra_analyze(IrFunc *f) {
                 // The pointwise max of two tightly closed octagons is tightly closed (Miné; the
                 // unary entries stay even). A widened one is not.
                 bool jclosed = V->inclosed[s->id] && T.clean;
-                if (s->is_loop_header){ oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,nthr); memcpy(J_m,D_m,V->dsz*8); oct_set_clean(&J, false); jclosed=false; }
+                if (s->is_loop_header){ int lt = climbs && climbs[s->id]++ >= VRA_WIDEN_CLIMBS ? 0 : nthr;
+                                        oct_widen_thr(&D,&In,&J,loopmod[s->id],thr,lt); memcpy(J_m,D_m,V->dsz*8); oct_set_clean(&J, false); jclosed=false; }
                 if (!oct_leq(&J,&In)){ vra_in_store(V, s->id, J_m); V->inclosed[s->id]=jclosed; changed=true; if (dirty) dirty[s->id] = 1; }
             }
         }
     }
     }   // vpass
     vra_fixpoint_done: ;
-    free(dirty);
+    free(dirty); free(climbs);
     // ★ FAIL CLOSED IF THE FIXPOINT DID NOT CONVERGE. The sweep cap exists so a pathological
     // CFG cannot hang the compiler, but exiting through it leaves a PARTIAL fixpoint — an
     // UNDER-approximation — and every proof discharged against one would be unsound. Nothing
