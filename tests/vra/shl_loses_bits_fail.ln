@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// EXPECT-TEXT: unsigned left shift may lose bits
+// `x << 63` keeps only x's lowest bit: for any x past 1 a bit is lost, which a checked `<<` owes not to
+// happen. The judge's record there is a `narrow` one (the result fits u64), and the message says so.
+// It read "shift amount is not provably within the operand's width", VRA's words for a different
+// check at the same instruction, though 63 is within a u64's width (TCW, 2026-10-26).
+func top(x u64) u64 {
+    return x << 63
+}
+func main() i32 {
+    var a u64 = top(1)
+    return 0
+}

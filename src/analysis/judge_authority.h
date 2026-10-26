@@ -689,6 +689,13 @@ static int judge_authority_report(IrFunc *f, const char *file, Vra *V) {
             if (c.kind == VRA_TERMINATION && !c.recursion && !tw->ok) { /* VRA's witness and its site */ }
             else if (c.kind == VRA_TERMINATION && !c.recursion) { d.wit_counter = NULL; d.wit_n = 0; }
             c = d;
+            // ...but the CLASS is the judge's record's. A `narrow` record at a left shift is bits lost
+            // (4, or 2 signed), never the shift amount VRA's check there may be about: `(1 as u64)
+            // << 63` read "shift amount is not provably within the operand's width" (TCW, 2026-10-26).
+            if (!strncmp(q->kind, "narrow", 6)) {
+                const IrType *rt = q->at && q->at->result ? q->at->result->type : NULL;
+                c.shift = q->at && q->at->op == IR_SHL ? (rt && rt->kind == IRT_INT && rt->is_signed ? 2 : 4) : (d.shift == 1 ? 0 : d.shift);
+            }
         }
         if (c.kind == VRA_TERMINATION && c.recursion)    // PE.12 w5: the function's one recursion E011
             for (int32_t w = 0; w < jau_nw && !c.wit_input; w++)
