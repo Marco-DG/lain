@@ -175,8 +175,8 @@ int main(void) {
     }
 
     // 10. INTEGER TIGHTNESS. Mine's Definition 3 asks that every m[i][bar i] be even;
-    //     nothing in octagon.h evens them, and it is tightly closed anyway because the
-    //     strong step at i = bar j reads the same entry twice: floor(c/2)+floor(c/2),
+    //     oct_tighten_unary evens them at the end of every closure (2x <= c is x <= floor(c/2)),
+    //     and the strong step at i = bar j reads the same entry twice: floor(c/2)+floor(c/2),
     //     which for an odd c is strictly smaller, and even.
     {
         Octagon T={0}; T.m=bufA; oct_init_top(&T, NV, bufA);

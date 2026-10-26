@@ -192,17 +192,19 @@ static void oct_add_negsum_le(Octagon *o, int a, int b, int64_t c){ oct_tighten(
 // programs are small. Restricting the loops to the active set is exact, not approximate.
 static int *oct_active_scratch = NULL; static int oct_active_cap = 0;
 
-// INCREMENTAL CLOSURE of a closed matrix after the pending tightenings (Bagnara, Hill, Zaffanella,
-// "An improved tight closure algorithm for integer octagonal constraints", 2008). Each pending
-// entry is the edge i→j of weight c together with its coherent twin bar j→bar i. The matrix was
-// closed without them, so a shortest path uses each at most once, and
+// INCREMENTAL CLOSURE of a closed matrix after the pending tightenings: IncClose (Chawdhary, Robbins
+// and King, "Simple and efficient algorithms for octagons", APLAS 2014), whose theorem is for ONE
+// new constraint; applying it to the pending edges one after another (up to 16) rests on our own
+// argument, below. Each pending entry is the edge i→j of weight c together with its coherent twin
+// bar j→bar i. The matrix was closed without them, so a shortest path uses each at most once, and
 //   a ⇝ j through a new edge:     P1[a] = min(m[a][i] + c,  m[a][bar j] + c + m[bar i][i] + c)
 //   a ⇝ bar i through a new edge: P2[a] = min(m[a][bar j] + c,  m[a][i] + c + m[j][bar j] + c)
 //   m[a][b] = min(m[a][b], P1[a] + m[j][b], P2[a] + m[bar i][b])
 // all read before the edge's update. Processing the edges one after another is exact even though
 // the later ones are still in the matrix raw: each step's matrix is sound and at least as tight
 // as the closure so far. The shortest-path closure is then tightened and strengthened by the SAME
-// pass as the full closure, which is Bagnara's tight closure: the two agree entry for entry on a
+// pass as the full closure, which is Bagnara, Hill and Zaffanella's tight closure (2008): the two
+// agree entry for entry on a
 // satisfiable octagon (src/tools/test_octagon.c checks it on random ones). Every entry written
 // is a real path's length, so the result is sound whatever the inputs.
 // It returns false, the matrix restored, and the caller closes in full, in two cases:

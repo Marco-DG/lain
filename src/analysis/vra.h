@@ -6065,9 +6065,9 @@ static Vra *vra_analyze(IrFunc *f) {
         loopmod[H->id]=mod;
     }
 
-    // ★ THE THRESHOLD LADDER: every integer constant the function itself mentions, at both DBM
-    // scalings (a unary bound `v ≤ c` is stored doubled, a difference `v−w ≤ c` is not), plus
-    // the type maxima the guards are written against. Ascending and deduplicated, so the
+    // ★ THE THRESHOLD LADDER: every non-negative integer constant the function itself mentions, at
+    // both DBM scalings (a unary bound `v ≤ c` is stored doubled, a difference `v−w ≤ c` is not).
+    // Type maxima are not added: a bound past the ladder goes to ⊤. Ascending and deduplicated, so the
     // widening can climb it. Capped, because a program with hundreds of distinct constants
     // would otherwise pay for a ladder it does not need.
     #define VRA_MAX_THR 96

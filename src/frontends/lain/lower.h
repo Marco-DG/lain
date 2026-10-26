@@ -1245,7 +1245,7 @@ static void ir_lower_return_ensures(LowerCtx *c, Decl *callee, IrValue *v, IrIns
         if (rv && (!rv->type || rv->type->kind != IRT_INT)) rv = NULL;
         IrCmp cmp;
         if (rv && ir_tok_cmp(con->as.binary_expr.op, v->type->is_signed, &cmp)) {
-            // A Lain callee PROVES its return refinement (E012 at each return); an extern's is
+            // A Lain callee PROVES its return refinement (E086 at each return); an extern's is
             // believed, so the fact is the programmer's word, not the compiler's.
             IrValue *cv = ir_icmp(c->f, c->cur, cmp, v, rv);
             if (callee->as.function_decl.body) ir_assume(c->f, c->cur, cv);
