@@ -4869,4 +4869,22 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
     return head;
 }
 
+// A function written in an IMPORTED module reports against that module's file (I.98), and its
+// module is a boundary the judge's facts do not cross (I.181: jg_same_module, fd_same_module): its
+// module path `a.b` is the file `a/b.ln`, relative to where the compile runs, which is where the
+// module was loaded from. Once, for the compiler and judge_vc_driver, which left every
+// src_file NULL, so it proved across the boundary what the compiler refuses, and judge_gate checked
+// a configuration the compiler does not compile (Documentation, 2026-10-26).
+static void ir_mark_imported(IrFunc *mod, const char *modname) {
+    for (IrFunc *f = mod; f; f = f->next) {
+        Decl *sd = (Decl *)f->src_decl;
+        if (!sd || !sd->defining_module || strcmp(sd->defining_module, modname) == 0) continue;
+        size_t ml = strlen(sd->defining_module);
+        char *pf = malloc(ml + 4);
+        if (!pf) continue;
+        for (size_t k = 0; k < ml; k++) pf[k] = sd->defining_module[k] == '.' ? '/' : sd->defining_module[k];
+        memcpy(pf + ml, ".ln", 4);
+        f->src_file = pf;
+    }
+}
 #endif // LAIN_IR_LOWER_H

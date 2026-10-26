@@ -272,16 +272,7 @@ int main(int argc, char **argv) {
         // A function written in an IMPORTED module reports against that module's file (I.98): its
         // module path `a.b` is the file `a/b.ln`, relative to where the compile runs, which is
         // where the module was loaded from.
-        for (IrFunc *f = mod; f; f = f->next) {
-            Decl *sd = (Decl *)f->src_decl;
-            if (!sd || !sd->defining_module || strcmp(sd->defining_module, modname) == 0) continue;
-            size_t ml = strlen(sd->defining_module);
-            char *pf = malloc(ml + 4);
-            if (!pf) continue;
-            for (size_t k = 0; k < ml; k++) pf[k] = sd->defining_module[k] == '.' ? '/' : sd->defining_module[k];
-            memcpy(pf + ml, ".ln", 4);
-            f->src_file = pf;
-        }
+        ir_mark_imported(mod, modname);
         if (ir_emit_refuse_opaque(mod, args.filename)) { sema_destroy(); return 1; }
         int found = 0;
         // --judge=authority (PE.10): the judge runs once on the module, and its records, not VRA's

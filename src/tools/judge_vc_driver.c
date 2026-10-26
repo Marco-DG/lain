@@ -679,6 +679,7 @@ int main(int argc, char **argv) {
     ir_effects_row_only = ir_report_numeric_later = false;
     if (se) { fprintf(stderr, "static evaluation failed\n"); return 1; }
     IrFunc *irmod = ir_lower_module(prog, &ia);
+    ir_mark_imported(irmod, mod);                              // the module boundary, as main.c (I.181)
     static IrCallGraph drv_cg;                                 // the module's call graph, built once (recursion)
     if (!ir_cg_build(&drv_cg, irmod)) { fprintf(stderr, "out of memory building the call graph\n"); return 1; }
     vra_mod = irmod;
