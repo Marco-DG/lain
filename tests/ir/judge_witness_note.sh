@@ -197,6 +197,33 @@ for f in collatz_rec walk1; do
     echo "$out" | grep -q '^\[E011\]' || { echo "$f: no E011"; echo "$out"; exit 1; }
     echo "$out" | grep -qE 'never (ends|returns)' && { echo "$f: a note for a recursion that ends:"; echo "$out"; exit 1; }
 done
+# The period and stem are the RUN's: the finder's proposal assumed step(5) returns 5 (an unclaimed
+# call), and the note said "after every lap" for y alternating 5, 6 (Documentation, 2026-10-26).
+# From g(1), y climbs to 5 by the fifth lap, then cycles every two (three) laps.
+for c in '2|6|y = 5 comes back every two laps, from the fifth lap on' '3|7|y = 5 comes back every three laps, from the fifth lap on'; do
+    p=${c%%|*}; r=${c#*|}; top=${r%%|*}; want_tail=${r#*|}
+    cat > "$D/cycle$p.ln" <<LN
+func step(x i32) i32 {
+    if x == $top {
+        return 5
+    }
+    return x + 1
+}
+func g(y0 i32) i32 {
+    var y = y0
+    while y > 0 {
+        y = step(y)
+    }
+    return y
+}
+func main() i32 {
+    return g(1)
+}
+LN
+    out=$(cd "$D" && "$ROOT/lain" cycle$p.ln -o cycle$p.c 2>&1) && { echo "cycle$p: accepted"; exit 1; }
+    want="       this loop never ends for g(1): at line 9, $want_tail"
+    echo "$out" | grep -qxF "$want" || { echo "cycle$p: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
+done
 out=$(cd "$D" && "$ROOT/lain" extern.ln -o extern.c 2>&1) && { echo "extern: accepted"; exit 1; }
 want='       this loop never ends if nondet() returns 1 every time: at line 4, x = 1 comes back after every lap'
 echo "$out" | grep -qxF "$want" || { echo "extern: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }

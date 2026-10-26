@@ -455,8 +455,15 @@ static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, con
                         nl++;
                     }
             free(lap);
-            const char *period = cw->period == 1 ? "after every lap" : "every two laps";
-            const char *stem = cw->stem == 1 ? ", from the second lap on" : "";
+            // the run's repeat (iw_cyc), not the proposal's shape (cw->stem, cw->period)
+            static const char *const nth[] = { "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth" };
+            static const char *const num[] = { "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten" };
+            char period[40], stem[48] = "";
+            if (iw_cyc.period == 1) snprintf(period, sizeof period, "after every lap");
+            else if (iw_cyc.period <= 10) snprintf(period, sizeof period, "every %s laps", num[iw_cyc.period]);
+            else snprintf(period, sizeof period, "every %d laps", iw_cyc.period);
+            if (iw_cyc.stem >= 1 && iw_cyc.stem < 10) snprintf(stem, sizeof stem, ", from the %s lap on", nth[iw_cyc.stem]);
+            else if (iw_cyc.stem >= 10) snprintf(stem, sizeof stem, ", from lap %d on", iw_cyc.stem + 1);
             isize ln = 0, cl0 = 0; jau_site(f, q, true, &ln, &cl0);
             char head[200];
             jau_put(head, sizeof head, "this loop never ends%s%s%s", call, zero, tape);

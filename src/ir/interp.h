@@ -79,6 +79,37 @@ typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size
                  const uint8_t *lap; int32_t nlap;            // lap[id]: lap_only.h's, left out of the state
                  // w5 (header < 0): the calls in progress, each one's state (iw_call_push)
                  bool rec; char **cs; size_t *cslen; uint64_t *cshash; IrFunc **csf; int ncs, ccs; size_t csbytes; } IWit;
+// Values dead at the entry of every block: an instruction's result whose every use is in its own
+// block, after it (no phi reads it: a phi is at a block's head). Any path from a block's entry to such
+// a use runs through the definition first, so what the value held at a header never reaches the
+// future, and a snapshot leaves it out (marked 3 in w.lap). Kept in, an earlier lap's temporaries made
+// the state on arrival differ from the same state one lap later, and every repeat read a lap late:
+// Zune's note said "from the second lap on" for days = 366, which comes back after every lap.
+static void iw_mark_dead(IrFunc *f, uint8_t *mark, int32_t n) {
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (!i->result || i->result->id < 0 || i->result->id >= n || mark[i->result->id]) continue;
+            int32_t id = i->result->id;
+            bool local = true;
+            for (IrBlock *c = f->blocks; c && local; c = c->next) {
+                for (IrInstr *p = c->phis; p && local; p = p->next)
+                    for (IrPhiArg *a = p->phi_args; a && local; a = a->next) if (a->value && a->value->id == id) local = false;
+                bool after = false;                         // in b: past the definition
+                for (IrInstr *u = c->instrs; u && local; u = u->next) {
+                    if (u == i) { after = true; continue; }
+                    for (int k = 0; k < u->n_operands && local; k++)
+                        if (u->operands[k] && u->operands[k]->id == id && (c != b || !after)) local = false;
+                }
+                if (c->term.cond && c->term.cond->id == id && c != b) local = false;
+            }
+            if (local) mark[id] = 3;
+        }
+}
+// the repeat a loop witness's run found, read by the caller after IW_HANG: the state at header visit
+// `stem` (0: on arrival) came back at visit stem + period. The note says these, not the proposal's
+// shape: the finder's model may assume what an unclaimed call returns (step(5) = 5 where it is 6, so
+// y alternates 5, 6 and the proposal's period 1 was false; Documentation, 2026-10-26).
+static struct { int stem, period; } iw_cyc;
 // the call a recursion witness's run found made again, read by the caller after IW_HANG
 static struct { IrFunc *f, *caller; IrInstr *at; int n; uint64_t arg[16]; uint8_t isint[16]; } iw_rep;
 // PE.12 w6: an INPUT TAPE. An extern whose parameters and result are all integers or bools is
@@ -1275,6 +1306,7 @@ static void iw_visit(IFrame *fr) {
                          v->p.o->root.k == IV_AGG && v->p.p[0] < v->p.o->root.n) c = &v->p.o->root.e[v->p.p[0]];
                 if (c && c->k == IV_INT) { ii_wit->kval[q] = c->i; ii_wit->kgot[q] = 1; }
             }
+            iw_cyc.stem = k; iw_cyc.period = ii_wit->laps - k;
             free(s.b); ii_wit->status = 1; ii_stop(95);
         }
     if (ii_wit->laps == ii_wit->maxlaps) { free(s.b); ii_wit->status = 5; ii_stop(95); }   // IW_LAPS
@@ -1507,6 +1539,7 @@ static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __
     const IrBlock *hb = NULL;
     for (const IrBlock *b = f->blocks; b && !hb; b = b->next) if (b->id == header) hb = b;
     if (ir_lap_only(f, hb, lap)) { w.lap = lap; w.nlap = nlap; }
+    if (hb) { iw_mark_dead(f, lap, nlap); w.lap = lap; w.nlap = nlap; }
     bool quiet = ii_quiet; ii_quiet = true;
     ist = &s;
     { char base; ii_stack_enter((uintptr_t)&base); }
