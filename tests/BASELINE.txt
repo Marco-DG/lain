@@ -1636,6 +1636,10 @@ at=const 2
 at=nonnull 2
 ty=Slice_u8 scalar
 ty=SystemTime struct
+### tests/trust/count_up_past_2_31_pass.ln
+rc=0
+out=2147483649 30000000000
+ty=Slice_u8 scalar
 ### tests/trust/ctz_popcount_range_pass.ln
 rc=0
 out=10 25 18 33 12

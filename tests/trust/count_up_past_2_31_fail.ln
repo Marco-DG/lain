@@ -1,0 +1,10 @@
+// EXPECT: [E011]
+// The twin of count_up_past_2_31_pass.ln: the bound is the same constant past 2^31, but the loop
+// never moves i. The bound's definition is now in the finder's paths, and still no ranking holds.
+func main() i32 {
+    var i i64 = 0
+    while i < 2147483649 {
+        i = i + 0
+    }
+    return 0
+}

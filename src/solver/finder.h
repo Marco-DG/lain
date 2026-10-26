@@ -407,12 +407,21 @@ static bool fd_map_cons(FdLoop *L, const JCons *c, const int32_t *map, JCons *ou
 // COEFFICIENT may reach 2^32: an i32 threshold return claim, (2^31 + 1)*ret - i <= 2^31, is what
 // NestedRecursion's measure rests on (the inner call's argument at most 0), while a u32 bound's
 // constant 2^32 - 1 stays out.
+// A constant the PROGRAM names is kept further, to 2^62: it reaches a path as its value's
+// definition, `v = 2147483649`, one term of coefficient 1. Dropped with the bounds, `while i <
+// 2147483649 { i = i + 1 }` over an i64 kept the test `i - v <= -1` and lost what v is, so no
+// ranking existed, though 2147483648 - i is one (TCW, 2026-10-25: 2^31 accepted, 2^31 + 1 refused).
+// One such constant beside small ones stays well inside 128 bits; a system that does not lands in
+// CAPACITY, which lia_rank answers with its sample search.
 #define FD_BIGC ((LSi)1 << 31)
 #define FD_BIGK ((LSi)1 << 32)
+#define FD_BIGD ((LSi)1 << 62)
 static bool fd_small(const JCons *c) {
     LSol N; memset(&N, 0, sizeof N);
     LSi r = ls_from_j(&N, &c->rhs);
-    if (N.cap || r > FD_BIGC || r < -FD_BIGC) return false;
+    bool def = c->op == J_EQ && c->nt == 1 && !N.cap;          // v = constant
+    if (def) { LSi a = ls_from_j(&N, &c->t[0].coef); def = !N.cap && (a == 1 || a == -1); }
+    if (N.cap || ((r > FD_BIGC || r < -FD_BIGC) && !(def && r <= FD_BIGD && r >= -FD_BIGD))) return false;
     for (int32_t i = 0; i < c->nt; i++) {
         LSi a = ls_from_j(&N, &c->t[i].coef);
         if (N.cap || a > FD_BIGK || a < -FD_BIGK) return false;
