@@ -3339,9 +3339,19 @@ static void eff_visit_expr(Expr *e) {
                 // ("diverge enters this function's row and every caller must acknowledge it").
                 // Only the WRITTEN row is charged, not the inferred one: a total callee's own loops
                 // are proven by the engine, whatever the effect inference says about them.
+                // ...and the written `diverge` ENTERS the row, not only the flag that keeps it there.
+                // The row above is the callee's INFERRED one, and the front end's scan of its loops is
+                // no verdict: `while i < n { if i == 3 { continue } i = i + 1 }` read as bounded (the
+                // scan does not see `continue`), so `diverge` never reached the caller's row, the flag
+                // had nothing to keep, and a `func` calling it was accepted and hung (Documentation,
+                // 2026-10-26). A callee whose loop does end is charged too: its row is its contract,
+                // and nothing checks a function that declares `diverge` (a pointer's call charges
+                // its arrow's row the same way, above).
                 if (callee->decl->kind == DECL_FUNCTION && callee->decl->as.function_decl.effects_declared &&
-                    (callee->decl->as.function_decl.effects_bound & EFFECT_DIVERGE))
+                    (callee->decl->as.function_decl.effects_bound & EFFECT_DIVERGE)) {
                     g_eff_opaque_div = true;
+                    g_eff_acc |= EFFECT_DIVERGE;
+                }
             }
             eff_visit_expr(callee);
             for (ExprList *a = e->as.call_expr.args; a; a = a->next) eff_visit_expr(a->expr);

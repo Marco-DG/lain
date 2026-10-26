@@ -1,0 +1,18 @@
+// A callee's written `diverge`, acknowledged by each caller in turn (spec 12): `total` and `main` say
+// `effects diverge`, so the program is accepted and runs (hang(10) ends: 10).
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+func hang(n u32) u32 effects diverge {
+    var i u32 = 0
+    while i < n {
+        i = i + 1
+    }
+    return i
+}
+func total(n u32) u32 effects diverge {
+    return hang(n)
+}
+func main() i32 effects io, diverge {
+    libc_printf("%u\n", total(10))
+    return 0
+}

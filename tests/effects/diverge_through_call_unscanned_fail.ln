@@ -1,0 +1,22 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: `func` 'total' has an unacknowledged effect (diverge)
+// `hang` declares `effects diverge`, so nothing checks that it ends, and from n = 10 it does not: the
+// `continue` at i = 3 skips the step. The front end's scan of the loop does not see `continue` and read
+// it as bounded, so `diverge` never reached `total`'s row, and `total`, a `func` with no row, was
+// accepted and hung (Documentation, 2026-10-26). A callee's written `diverge` enters the caller's row
+// whatever the scan says.
+func hang(n u32) u32 effects diverge {
+    var i u32 = 0
+    while i < n {
+        if i == 3 { continue }
+        i = i + 1
+    }
+    return i
+}
+func total(n u32) u32 {
+    return hang(n)
+}
+func main() i32 {
+    var x u32 = total(10)
+    return 0
+}

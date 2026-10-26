@@ -1,0 +1,19 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: `func` 'total' has an unacknowledged effect (diverge)
+// The twin of diverge_through_call_unscanned_fail.ln whose loop does end. `hang`'s row says `diverge`,
+// and that row is its contract: nothing checks a function that declares `diverge`, so a caller cannot
+// rely on it ending, and `total` must acknowledge it as for any other callee whose row names it.
+func hang(n u32) u32 effects diverge {
+    var i u32 = 0
+    while i < n {
+        i = i + 1
+    }
+    return i
+}
+func total(n u32) u32 {
+    return hang(n)
+}
+func main() i32 {
+    var x u32 = total(10)
+    return 0
+}

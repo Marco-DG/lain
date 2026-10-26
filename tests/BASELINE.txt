@@ -138,6 +138,10 @@ ty=Slice_u8 scalar
 rc=0
 out=
 ty=Slice_u8 scalar
+### tests/effects/diverge_through_call_acknowledged_pass.ln
+rc=0
+out=10
+ty=Slice_u8 scalar
 ### tests/effects/effects_bound_honest_pass.ln
 rc=0
 out=
