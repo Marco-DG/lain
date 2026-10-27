@@ -339,7 +339,7 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) 
 #define FD_MAXFLAT 32
 #define FD_MAXEDGES 64                      // a recursion cycle's calls, ranked jointly (fd_rank_cycle)
 typedef struct { JCons c; int32_t *v; } FdCons;              // a constraint over a raw path's variables
-typedef struct { bool disj, claim, upto; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size; claim: a kept claim's; upto: a guarded EACH claim's cases
+typedef struct { bool disj, claim, upto, wrap; FdCons c; FdCons *dc; int32_t *dn; int32_t nd; } FdHyp;   // dn[k]: disjunct k's size; claim: a kept claim's; upto: a guarded EACH claim's cases; wrap: a wrapping operation's cases
 typedef struct { int32_t nv, *val, nh; FdHyp *h; int32_t from, *pre, *post; } FdRaw;
 typedef struct {
     char *mem, *cur, *end;
@@ -357,6 +357,8 @@ typedef struct {
                                             // pairs are renumbered
     bool dead;                              // every flattened path the solver refuted: no trip can
                                             // run, and a constant measure falls on every one (c2)
+    uint8_t *wrapped;                       // per path: some wrapping operation took a case past its
+                                            // type (fd_karr_candidates); NULL on subset loops
 } FdLoop;
 static void *fd_bump(FdLoop *L, size_t n) {
     uintptr_t at = ((uintptr_t)L->cur + 15u) & ~(uintptr_t)15u;
@@ -545,6 +547,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             // interface with the Secondary Compiler Worker, the whole form matched
             size_t ol = hy->origin ? strlen(hy->origin) : 0;
             o->upto = hy->disj && ol >= 5 && !strncmp(hy->origin, "claim bb", 8) && !strcmp(hy->origin + ol - 5, " upto");
+            o->wrap = hy->disj && ol >= 5 && !strcmp(hy->origin + ol - 5, ".wrap");   // gen.h's `def %vN add.wrap`, ...
             if (!hy->disj) { if (!fd_copy_cons(L, &hy->cons, &o->c)) return false; continue; }
             int32_t tot = 0;
             for (int32_t d = 0; d < hy->ndis; d++) tot += hy->dis[d].nc;
@@ -641,7 +644,8 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
     L->paths = fd_bump(L, sizeof(JVc *) * FD_MAXFLAT);
     L->edge = fd_bump(L, sizeof(int32_t) * FD_MAXFLAT);
     L->full = fd_bump(L, sizeof(JVc *) * FD_MAXFLAT);
-    if (!L->paths || !L->edge || !L->full) return false;
+    L->wrapped = fd_bump(L, FD_MAXFLAT);
+    if (!L->paths || !L->edge || !L->full || !L->wrapped) return false;
     int32_t local = base_local, ndead = 0;
     for (int32_t k = 0; k < nraw; k++) {
         FdRaw *w = &raw[k];
@@ -728,6 +732,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             JHyp *hy = fd_bump(L, sizeof(JHyp) * (size_t)(nh + extra + 1 + 2 * npk));
             if (!vc || !hy) return false;
             int32_t m = 0; rest = ch;
+            bool wraps = false;                              // a wrap's case of k != 0: its equality's constant
             for (int32_t h = 0; h < w->nh; h++) {
                 FdHyp *o = &w->h[h];
                 if (!o->disj) { hy[m].origin = o->claim ? "path claim" : "path"; if (!fd_map_cons(L, &o->c.c, map, &hy[m].cons)) return false; m++; continue; }
@@ -735,7 +740,10 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
                 int32_t pick = rest % o->nd; rest /= o->nd;
                 int32_t z = 0;
                 for (int32_t d = 0; d < pick; d++) z += o->dn[d];
-                for (int32_t c = 0; c < o->dn[pick]; c++) { hy[m].origin = "path case"; if (!fd_map_cons(L, &o->dc[z + c].c, map, &hy[m].cons)) return false; m++; }
+                for (int32_t c = 0; c < o->dn[pick]; c++) {
+                    hy[m].origin = "path case"; if (!fd_map_cons(L, &o->dc[z + c].c, map, &hy[m].cons)) return false; m++;
+                    wraps |= o->wrap && o->dc[z + c].c.op == J_EQ && o->dc[z + c].c.rhs.n != 0;
+                }
             }
             for (int32_t q = 0; q < npk; q++) {               // ...post - v <= 0 and v - post <= 0, v the
                 int32_t at = map[w->post[q]];                // variable its post value was given
@@ -773,7 +781,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             bool dup = false;
             for (int32_t z = 0; z < L->npaths && !dup; z++) dup = L->edge[z] == w->from && fd_same_path(L->paths[z], vc);
             if (dup) continue;
-            L->paths[L->npaths] = vc; L->edge[L->npaths] = w->from; L->npaths++;
+            L->paths[L->npaths] = vc; L->edge[L->npaths] = w->from; L->wrapped[L->npaths] = wraps; L->npaths++;
         }
     }
     L->dead = L->npaths == 0 && ndead > 0;
@@ -1250,7 +1258,7 @@ static bool fd_rank_absgrow(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *
             JRank rt; memset(&rt, 0, sizeof rt);
             if (nres > 0) {
                 FdLoop V = *L;
-                V.paths = resp; V.full = (JVc **)resf; V.edge = rese; V.npaths = nres; V.dead = false;
+                V.paths = resp; V.full = (JVc **)resf; V.edge = rese; V.npaths = nres; V.dead = false; V.wrapped = NULL;
                 fd_no_templates++;
                 bool got = fd_rank(F, f, H, &V, &rt);
                 fd_no_templates--;
@@ -1382,7 +1390,7 @@ static bool fd_rank_split(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *ou
                 continue;
             }
             FdLoop V = *L;
-            V.paths = rp; V.full = (JVc **)rf; V.edge = re; V.npaths = nr; V.dead = false;
+            V.paths = rp; V.full = (JVc **)rf; V.edge = re; V.npaths = nr; V.dead = false; V.wrapped = NULL;
             fd_no_templates++;
             bool got = fd_rank(F, f, H, &V, &rt[k]);
             fd_no_templates--;
@@ -1595,7 +1603,7 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         }
         if (!ok) break;
         FdLoop V = *L; int32_t nn = 0;                       // only the pairs `on` names
-        V.moves = NULL; V.raw = NULL; V.nraw = 0;
+        V.moves = NULL; V.raw = NULL; V.nraw = 0; V.wrapped = NULL;
         V.paths = sl; V.npaths = ns; V.edge = sedge;
         V.pkey = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.ptk = fd_bump(L, (size_t)L->npairs);
         V.pre = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.post = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs);
@@ -3378,7 +3386,14 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
     __int128 *C = ok ? calloc((size_t)cap * (size_t)(K + 1), sizeof *C) : NULL;
     int32_t ncr = 0;
     ok = ok && C;
+    // a path on which a wrapping operation took a case past its type (`y -% z` as y - z - 2^32)
+    // breaks every equality the in-range cases keep (MenloPark's 2y - z = 199 under `-%`), and the
+    // equality is what rules those cases out: so they are left out where some path stays in range.
+    // Houdini checks the candidate on every path.
+    bool plain = false;
+    for (int32_t k = 0; k < L.npaths; k++) plain |= !L.wrapped || !L.wrapped[k];
     for (int32_t k = 0; ok && k < L.npaths; k++) {
+        if (plain && L.wrapped && L.wrapped[k]) continue;
         const JVc *P = L.paths[k];
         int32_t ne = 0;
         for (int32_t h = 0; h < P->nhyps; h++) if (!P->hyps[h].disj && P->hyps[h].cons.op == J_EQ) ne++;
@@ -3447,7 +3462,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
     // the nullspace of C (ncr x K): each free column a basis vector
     bool okall = true;
     if (ok && ncr > 0) {
-        int32_t *piv = malloc(sizeof *piv * (size_t)(K + 1)), *ord = malloc(sizeof *ord * (size_t)K);
+        int32_t *piv = malloc(sizeof *piv * (size_t)(K + 1)), *ord = calloc((size_t)K, sizeof *ord);
         if (!piv || !ord) { free(piv); free(ord); free(C); free(L.mem); F->oom = true; return false; }
         for (int32_t q = 0; q < K; q++) ord[q] = q;
         ok = fd_rref(C, ncr, K + 1, ord, K, piv);

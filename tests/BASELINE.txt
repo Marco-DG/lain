@@ -556,6 +556,10 @@ at=const 2
 rc=0
 out=
 at=const 6
+### tests/functions/wrap_affine_equality_termination_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/functions/wrapping_step_termination_pass.ln
 rc=0
 out=
