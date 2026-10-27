@@ -2060,15 +2060,39 @@ static void jb_wrap_terms(JLT *t, int32_t x, int32_t xa, int32_t xb, IrOp op, in
     if (op == IR_MUL) { t[1].var = my; t[1].c = -mc; return; }
     t[1].var = xa; t[1].c = -1; t[2].var = xb; t[2].c = op == IR_ADD ? -1 : 1;
 }
+// Inside a join's disjunct whose path took no case of a wrapping op (jb_join_wraps splits a path
+// only on the ops its stores are made of; MCW: wise's `(y -% x) > 2` in a loop's guard, aaron3-1's
+// `tx +% z`): one case all the same, as jb_wrapto states a wrapped cast, r - x -+ y + k*M = 0 with
+// r in its type's width and k a fresh integer (`wrapk.%v<id>`, its recipe (x +- y - r) / M; one per
+// VC, the same r and operands wherever it is described). Exact: one k satisfies it for any operands.
+static void jb_wrap_k(JB *B, int32_t x, const IrInstr *d, int32_t id, int32_t xa, int32_t xb, int32_t my, __int128 mc, int nt,
+                      __int128 M, const JRange *rr, const char *origin) {
+    char nm[48]; snprintf(nm, sizeof nm, "wrapk.%%v%d", (int)id);
+    int32_t k = -1;
+    for (int32_t v = 0; v < B->nvars && k < 0; v++) if (B->kind[v] == 3 && !strcmp(B->names[v], nm)) k = v;
+    if (k < 0) {                                               // its recipe: the exact op's value less r, over M
+        JLT r[3];
+        jb_wrap_terms(r, x, xa, xb, d->op, my, mc);
+        for (int i = 0; i < nt; i++) r[i].c = -r[i].c;
+        k = jb_fresh(B, "wrapk", id, r, nt, M);
+        if (B->fail) return;
+    }
+    JLT t[4];
+    jb_wrap_terms(t, x, xa, xb, d->op, my, mc);
+    t[nt].var = k; t[nt].c = M;
+    jb_atom(B, origin, t, nt + 1, J_EQ, 0);                    // r - x -+ y + k*M = 0
+    JLT u[1]; u[0].var = x; u[0].c = 1; jb_atom(B, origin, u, 1, J_LE, rr->hi);
+    u[0].var = x; u[0].c = -1; jb_atom(B, origin, u, 1, J_LE, -rr->lo);
+}
 static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
     JRange rr; __int128 klo, khi, M;
     if (!jg_wrap_ks(B->g, d, &klo, &khi, &M, &rr)) return;
-    bool taken = false;                                        // a case the disjunct's path took
+    bool taken = false, nocase = false;                        // a case the disjunct's path took, or none
     if (B->jS >= 0 && klo != khi) {
         int32_t q = -1;
         for (int32_t i = 0; i < B->nw; i++) if (B->wid[i] == id) q = i;
-        if (q < 0) return;
-        klo = khi = B->wk[q]; taken = true;
+        if (q < 0) nocase = true;
+        else { klo = khi = B->wk[q]; taken = true; }
     }
     int32_t xa = jb_val(B, d->operands[0]), xb = jb_val(B, d->operands[1]);
     const char *origin = jb_str(B, d->op == IR_ADD ? "def %%v%lld add.wrap" : d->op == IR_SUB ? "def %%v%lld sub.wrap" : "def %%v%lld mul.wrap", id, 0, 0);
@@ -2080,6 +2104,7 @@ static void jb_wrap(JB *B, int32_t x, const IrInstr *d, int32_t id) {
         if (!k0 && !jg_const_of(B->g, d->operands[1], &mc)) return;
         my = k0 ? xb : xa; nt = 2;
     }
+    if (nocase) { jb_wrap_k(B, x, d, id, xa, xb, my, mc, nt, M, &rr, origin); return; }
     jb_wrap_terms(t, x, xa, xb, d->op, my, mc);
     if (klo == khi) {                                          // one case: exact
         jb_atom(B, origin, t, nt, J_EQ, -klo * M);

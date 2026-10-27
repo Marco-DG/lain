@@ -5454,6 +5454,33 @@ int main(void) {
         }
     }
     printf("  a guarded claim with a `when`: stated where its PRE version is, an unnamed part for its bound\n");
+    // 95. a wrapping op on a join's path that the path's stores are not made of (MCW: wise's
+    // `(y -% x) > 2` in a loop's guard): s = 1 where x > 2, else w = y -% x, s = 2 where w > 2, else
+    // 3; 100 / s past the join. Each of the two paths through w holds w's definition inside its
+    // disjunct as one case, w - y + x + k*2^32 = 0 with k fresh (`wrapk`, one variable for both) and
+    // w within i32; before, w had its type alone there (jb_join_wraps splits a path only on what its
+    // stores are made of)
+    {   IrFunc *f = ir_func_new(&A, nm("w95"), i32t, IR_FUNC_PURE);
+        IrValue *x = ir_add_param(f, i32t, nm("x")), *y = ir_add_param(f, i32t, nm("y"));
+        IrBlock *b0 = f->entry, *bA = ir_new_block(f), *bB = ir_new_block(f), *bC = ir_new_block(f), *bD = ir_new_block(f), *bJ = ir_new_block(f);
+        IrValue *s = ir_alloca(f, b0, i32t);
+        ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_SGT, x, ir_const_int(f, b0, 2, i32t)), bA, bB);
+        ir_store(f, bA, s, ir_const_int(f, bA, 1, i32t)); ir_set_br(bA, bJ);
+        IrInstr *w = ir_instr(f, IR_SUB, i32t, 2); w->operands[0] = y; w->operands[1] = x; w->wrap = IR_WRAP_MODULAR; ir_emit(bB, w);
+        ir_set_br_cond(bB, ir_icmp(f, bB, IR_CMP_SGT, w->result, ir_const_int(f, bB, 2, i32t)), bC, bD);
+        ir_store(f, bC, s, ir_const_int(f, bC, 2, i32t)); ir_set_br(bC, bJ);
+        ir_store(f, bD, s, ir_const_int(f, bD, 3, i32t)); ir_set_br(bD, bJ);
+        IrValue *qd = ir_binop(f, bJ, IR_SDIV, ir_const_int(f, bJ, 100, i32t), ir_load(f, bJ, s, i32t), i32t);
+        ir_set_ret(bJ, qd);
+        char *t = gen_text(f), key[48], wk[64], de[64];
+        snprintf(key, sizeof key, "bb%d.%d divzero", bJ->id, idx_of(bJ, qd));
+        const char *v = t ? vc_of(t, key) : "";
+        snprintf(wk, sizeof wk, "  var wrapk.%%v%d\n", w->result->id);
+        snprintf(de, sizeof de, " + 4294967296*wrapk.%%v%d = 0 ,", w->result->id);   // k's sign pinned
+        CHECK(strstr(v, wk) && strstr(v, "join bb") && count(v, de) == 2, "95: w's one case in both disjuncts through it:\n%s", v);
+        free(t);
+    }
+    printf("  a wrapping op on a join's path its stores are not made of: one case, its k fresh\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

@@ -378,6 +378,17 @@ static int hk_cons(JObl *o, const JCons *c, IVal *v, int nv) {
     __int128 r = hk_jint(&c->rhs);
     return c->op == J_LE ? s <= r : c->op == J_EQ ? s == r : s != r;
 }
+// A disjunct, a conjunction: 0 where one conjunct is false, whatever the others (one a past join's
+// version cannot be read, s28's probe), 1 where every one is true, else -1 (not evaluable).
+static int hk_conj(JObl *o, const JConj *cj, IVal *v, int nv) {
+    int all = 1;
+    for (int c = 0; c < cj->nc; c++) {
+        int t = hk_cons(o, &cj->c[c], v, nv);
+        if (t == 0) return 0;
+        if (t < 0) all = -1;
+    }
+    return all;
+}
 // The predecessor each block was last entered from, per frame (keyed by the frame's values), from
 // the interpreter's own transitions: an R7 join's hypothesis is the disjunct of the path taken.
 typedef struct { const IVal *v; int32_t blk, pred; } HkLast;
@@ -408,15 +419,13 @@ static void hk_check(JObl *o, IVal *v, int nv) {
             r = 0;                                           // disjuncts holds (a path through an inner
             for (int d = dk; d < y->ndis && r != 1; d++) {   // join or a split condition is several)
                 if (o->hpred[k][d] != tp) continue;
-                int all = 1;
-                for (int c = 0; c < y->dis[d].nc && all == 1; c++) { int t = hk_cons(o, &y->dis[d].c[c], v, nv); all = t == 1 ? 1 : t; }
+                int all = hk_conj(o, &y->dis[d], v, nv);
                 if (all == 1) r = 1; else if (all < 0) r = -1;
             }
         } else {
             r = 0;
             for (int d = 0; d < y->ndis && r != 1; d++) {
-                int all = 1;
-                for (int c = 0; c < y->dis[d].nc && all == 1; c++) { int t = hk_cons(o, &y->dis[d].c[c], v, nv); all = t == 1 ? 1 : t; }
+                int all = hk_conj(o, &y->dis[d], v, nv);
                 if (all == 1) r = 1; else if (all < 0) r = -1;
             }
         }
