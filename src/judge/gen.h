@@ -9,7 +9,8 @@
 //     MAKE_SLICE's length; DIV and REM by a constant (x = c*q + m, truncating), LSHR and ASHR by a
 //     constant (floored), SHL by a constant, AND with a constant, the bit counts' ranges; SIZEOF
 //     and ALIGNOF of a type whose C spelling has an exact size (layout.h's fixed-size path only,
-//     never an ABI layout);
+//     never an ABI layout); ICMP, 1 where the comparison holds and 0 where it does not, one
+//     disjunct per case of each side (jb_cmp_def; not inside a join's disjunct);
 //   - every integer value's TYPE range, refinement included, as the interpreter's landing and
 //     settling guarantee it; never for a value whose own obligation is being stated, since that
 //     range is the obligation's conclusion;
@@ -1319,6 +1320,7 @@ static bool jg_const_at(JG *g, IrValue *v, __int128 *c, int depth) {
 static bool jg_const_of(JG *g, IrValue *v, __int128 *c) { return jg_const_at(g, v, c, 0); }
 static bool jg_mul_ok(__int128 a, __int128 b, __int128 *out);
 static IrInstr *jg_cond_cmp(JG *g, IrValue *cv);
+static void jb_cmp_def(JB *B, int32_t x, IrInstr *ic, int32_t id);
 static IrValue *jg_param_value(const IrFunc *h, int32_t key);
 // A REFINEMENT as its lowering states it: an ASSUME comparing v with a constant in the run of
 // constants, comparisons and assumes from i on. A parameter's is the entry block's PROLOGUE, which
@@ -2676,6 +2678,7 @@ static void jb_state(JB *B, int32_t x) {
             }
             break;
         }
+        case IR_ICMP: jb_cmp_def(B, x, d, id); break;          // a comparison's value
         // bit counts: POPCOUNT in [0, w]; CTZ and CLZ in [0, w - 1], their argument owed nonzero
         case IR_POPCOUNT: case IR_CTZ: case IR_CLZ: {
             if (d->n_operands < 1 || !d->operands[0]->type || d->operands[0]->type->kind != IRT_INT) break;
@@ -2874,6 +2877,75 @@ static int jg_cond_ncases(JG *g, IrValue *cv, bool truth) {
     IrCmp c = ic->aux.cmp;
     return (truth && c == IR_CMP_NE) || (!truth && c == IR_CMP_EQ) ? 2 : 1;
 }
+// Case `cas` of comparison ic, true or false, over the variables va and vb of its operands, as the
+// conjuncts c[0, n) of a disjunct, n returned (0 where it is not stated): jb_cmpk's facts, one case
+// of them, jg_cond_ncases in all. An unsigned predicate split on its signed operands: each one's
+// sign by the bits of cas, then the order as uint64 compares them; a `!=` side cas (0: a < b, 1:
+// a > b); any other predicate its one constraint.
+static int jb_cmp_conj(JB *B, IrInstr *ic, int32_t va, int32_t vb, bool truth, int cas, JCons *c) {
+    IrCmp p = ic->aux.cmp;
+    int sk[2], ns = jg_cmp_split(B->g, ic, sk), n = 0;
+    JLT u[2];
+    if (ns < 0) return 0;
+    if (ns) {
+        if (!truth) p = p == IR_CMP_ULT ? IR_CMP_UGE : p == IR_CMP_ULE ? IR_CMP_UGT : p == IR_CMP_UGT ? IR_CMP_ULE : IR_CMP_ULT;
+        __int128 sh[2] = { 0, 0 };                             // what each operand gains as a uint64
+        for (int q = 0; q < ns; q++) {
+            bool neg = (cas >> q) & 1;
+            u[0].var = sk[q] ? vb : va; u[0].c = neg ? 1 : -1;
+            if (!jb_cons(B, u, 1, J_LE, neg ? -1 : 0, &c[n++])) return 0;
+            if (neg) sh[sk[q]] = (__int128)1 << 64;
+        }
+        __int128 k0 = sh[1] - sh[0];
+        bool less = p == IR_CMP_ULT || p == IR_CMP_ULE, strict = p == IR_CMP_ULT || p == IR_CMP_UGT;
+        u[0].var = va; u[0].c = less ? 1 : -1; u[1].var = vb; u[1].c = less ? -1 : 1;
+        return jb_cons(B, u, 2, J_LE, (less ? k0 : -k0) - (strict ? 1 : 0), &c[n++]) ? n : 0;
+    }
+    if (!truth) switch (p) {
+        case IR_CMP_EQ: p = IR_CMP_NE; break;  case IR_CMP_NE: p = IR_CMP_EQ; break;
+        case IR_CMP_SLT: case IR_CMP_ULT: p = IR_CMP_SGE; break;
+        case IR_CMP_SLE: case IR_CMP_ULE: p = IR_CMP_SGT; break;
+        case IR_CMP_SGT: case IR_CMP_UGT: p = IR_CMP_SLE; break;
+        default: p = IR_CMP_SLT; break;
+    }
+    bool lt = p == IR_CMP_SLT || p == IR_CMP_ULT || p == IR_CMP_SLE || p == IR_CMP_ULE || p == IR_CMP_EQ || (p == IR_CMP_NE && cas == 0);
+    bool strict = p == IR_CMP_SLT || p == IR_CMP_ULT || p == IR_CMP_SGT || p == IR_CMP_UGT || p == IR_CMP_NE;
+    u[0].var = va; u[0].c = lt ? 1 : -1; u[1].var = vb; u[1].c = lt ? -1 : 1;
+    return jb_cons(B, u, 2, p == IR_CMP_EQ ? J_EQ : J_LE, strict ? -1 : 0, &c[0]) ? 1 : 0;
+}
+// A comparison's VALUE, where it is used other than as a branch's condition (MCW: `ok = y <= M`,
+// then `if ok`): 1 where it holds and 0 where it does not,
+// `or { x = 1 , a <= b | x = 0 , a >= b + 1 }`, one disjunct per case of each side (jb_cmp_conj);
+// fixed where the IR fixes it (jg_cond_value). A branch on the comparison itself states its
+// operands' case without it (jb_cmpk); nothing inside a disjunct (it cannot hold a disjunction).
+static void jb_cmp_def(JB *B, int32_t x, IrInstr *ic, int32_t id) {
+    JG *g = B->g;
+    const char *o = jb_str(B, "def %%v%lld icmp", id, 0, 0);
+    int k = jg_cond_value(g, ic->result);
+    if (k >= 0) { jb_defk(B, x, NULL, 0, k, o); return; }
+    int sk[2];
+    if (B->jS >= 0 || ic->n_operands < 2 || !jg_is_int(ic->operands[0]->type) || !jg_is_int(ic->operands[1]->type) ||
+        jg_cmp_split(g, ic, sk) < 0) return;
+    int32_t va = jb_val(B, ic->operands[0]), vb = jb_val(B, ic->operands[1]);
+    JCons c[8][4]; int nc[8], nd = 0;                        // at most 2^2 cases a side, 3 conjuncts each
+    for (int s = 1; s >= 0; s--)
+        for (int q = 0; q < jg_cond_ncases(g, ic->result, s); q++, nd++) {
+            JLT t[1]; t[0].var = x; t[0].c = 1;
+            if (!jb_cons(B, t, 1, J_EQ, s, &c[nd][0])) return;
+            int n = jb_cmp_conj(B, ic, va, vb, s, q, &c[nd][1]);
+            if (!n) return;
+            nc[nd] = n + 1;
+        }
+    JHyp *h = jb_hyp(B, o);
+    if (!h || B->fail) return;
+    h->disj = true; h->ndis = nd;
+    if (!(h->dis = JG_NEW(g, JConj, nd))) { B->fail = true; return; }
+    for (int q = 0; q < nd; q++) {
+        if (!(h->dis[q].c = JG_NEW(g, JCons, nc[q]))) { B->fail = true; return; }
+        h->dis[q].nc = nc[q];
+        memcpy(h->dis[q].c, c[q], sizeof *c[q] * (size_t)nc[q]);
+    }
+}
 static bool jb_condk(JB *B, IrValue *cv, bool truth, const char *origin, int cas);
 static bool jb_cond(JB *B, IrValue *cv, bool truth, const char *origin) { return jb_condk(B, cv, truth, origin, -1); }
 static bool jb_condk(JB *B, IrValue *cv, bool truth, const char *origin, int cas) {
@@ -2927,11 +2999,21 @@ static bool jb_has(JB *B, IrValue *v) {
 static void jb_drain(JB *B) { while (B->qh < B->qt && !B->fail) jb_state(B, B->queue[B->qh++]); }
 // Is a condition's operand about the VC: in it, or computed exactly from what is (a guard on one
 // `i + j` and an index computing `i + j` again are two SSA values with the same operands), or a
-// quotient or remainder, whose statement names its dividend (`i < n / 2` and a goal on n)? Depth 3.
+// quotient or remainder, whose statement names its dividend (`i < n / 2` and a goal on n), or a
+// bool a comparison made, read back from the cell an exact store put it in (`ok = y <= M; if ok`:
+// jb_cmp_def states its value)? Depth 3.
 static bool jb_rel(JB *B, IrValue *v, int depth) {
     if (jb_has(B, v)) return true;
     if (depth <= 0 || !v || v->id < 0 || v->id >= B->g->nv) return false;
     IrInstr *d = B->g->def[v->id];
+    if (v->type && v->type->kind == IRT_BOOL) {
+        IrValue *w = v;
+        const JVer *ver = B->g->loadver[v->id] >= 0 ? &B->g->ver[B->g->loadver[v->id]] : NULL;
+        if (ver && ver->kind == JV_STORE && jg_store_exact(ver) && ver->stored) w = ver->stored;
+        IrInstr *ic = jg_cond_cmp(B->g, w);
+        if (ic && jg_cond_value(B->g, w) >= 0) return true;   // fixed: about every VC, as jb_facts has it
+        if (ic && ic->n_operands >= 2) return jb_rel(B, ic->operands[0], depth - 1) || jb_rel(B, ic->operands[1], depth - 1);
+    }
     if (!d || !(d->op == IR_ADD || d->op == IR_SUB || d->op == IR_NEG || d->op == IR_MUL || d->op == IR_CAST ||
                 d->op == IR_SDIV || d->op == IR_UDIV || d->op == IR_SREM || d->op == IR_UREM)) return false;
     for (int k = 0; k < d->n_operands; k++) if (jb_rel(B, d->operands[k], depth - 1)) return true;

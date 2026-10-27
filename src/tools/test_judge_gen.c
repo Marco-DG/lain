@@ -5236,6 +5236,76 @@ int main(void) {
         free(t); gen_mod = NULL;
     }
     printf("  a counter: its floor stated at its loop's header, its ranking owed where each trip steps it\n");
+    // 92. a comparison's VALUE (MCW: `ok = y <= M; if ok { y + 1 }`): c = icmp y, k stored in a
+    // bool cell, the branch on a load of it, then 100 / y (its divzero owed past the branch).
+    // (0) y <=s k: `or { c = 1 , y - k <= 0 | c = 0 , k - y <= -1 }` in that VC, beside the guard
+    // on the cell's version; (1) y != k: three disjuncts (a `!=` is two cases); (2) y <u n of an
+    // i64 y, split on its sign: four, as uint64 compares; (3) 3 <= 5, two constants: c = 1;
+    // (4) the branch on c itself: no def, the comparison its own fact; (5) a store of true
+    // between: the version read is not c's, neither guard nor def; (6) c made and stored on one
+    // arm of a branch, the join's version cast and divided by: c is local to that arm's disjunct,
+    // which holds no disjunction, so its def is stated nowhere
+    for (int c = 0; c < 7; c++) {
+        IrType *T = c == 2 ? i64t : i32t;
+        IrFunc *f = ir_func_new(&A, nm("cmp92"), T, IR_FUNC_PURE);
+        IrValue *y = ir_add_param(f, T, nm("y")), *n = ir_add_param(f, u64t, nm("n")), *fl = ir_add_param(f, boolt, nm("f"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f);
+        IrValue *cell = ir_alloca(f, b0, boolt);
+        if (c == 6) {                                        // b0: if f { ok = y <= k } else { ok = false }
+            IrBlock *bj = ir_new_block(f);
+            ir_set_br_cond(b0, fl, b1, b2);
+            IrValue *cv = ir_icmp(f, b1, IR_CMP_SLE, y, ir_const_int(f, b1, 1000, T));
+            ir_store(f, b1, cell, cv); ir_set_br(b1, bj);
+            ir_store(f, b2, cell, ir_const_int(f, b2, 0, boolt)); ir_set_br(b2, bj);
+            IrInstr *ci = ir_instr(f, IR_CAST, T, 1); ci->operands[0] = ir_load(f, bj, cell, boolt); ir_emit(bj, ci);
+            IrValue *qd = ir_binop(f, bj, IR_SDIV, ir_const_int(f, bj, 100, T), ci->result, T);
+            ir_set_ret(bj, qd);
+            char *t = gen_text(f), key[48];
+            snprintf(key, sizeof key, "bb%d.%d divzero", bj->id, idx_of(bj, qd));
+            const char *v = t ? vc_of(t, key) : "";
+            CHECK(*v && strstr(v, "join bb") && !strstr(v, " icmp : "), "92 case 6: a join, no def:\n%s", v);
+            free(t);
+            continue;
+        }
+        IrValue *a = c == 3 ? ir_const_int(f, b0, 3, T) : y, *k = c == 2 ? n : ir_const_int(f, b0, c == 3 ? 5 : 1000, T);
+        IrValue *cv = ir_icmp(f, b0, c == 1 ? IR_CMP_NE : c == 2 ? IR_CMP_ULT : IR_CMP_SLE, a, k);
+        ir_store(f, b0, cell, cv);
+        if (c == 5) ir_store(f, b0, cell, ir_const_int(f, b0, 1, boolt));
+        ir_set_br_cond(b0, c == 4 ? cv : ir_load(f, b0, cell, boolt), b1, b2);
+        ir_set_ret(b1, ir_binop(f, b1, IR_SDIV, ir_const_int(f, b1, 100, T), y, T));
+        ir_set_ret(b2, ir_const_int(f, b2, 0, T));
+        char *t = gen_text(f), key[48];
+        const char *v = vc_of(t ? t : "", "divzero");
+        snprintf(key, sizeof key, "def %%v%d icmp : ", cv->id);
+        const char *l = strstr(v, key), *e = l ? strchr(l, '\n') : NULL;
+        int bars = 0;
+        for (const char *q = l; q && e && (q = strstr(q, " | ")) && q < e; q++) bars++;
+        if (c == 0) {
+            char w[160];
+            snprintf(w, sizeof w, "%sor { 1*%%v%d = 1 , 1*%%v%d + -1*%%v%d <= 0 | 1*%%v%d = 0 , -1*%%v%d + 1*%%v%d <= -1 }\n",
+                     key, cv->id, y->id, k->id, cv->id, y->id, k->id);
+            CHECK(strstr(v, w) && strstr(v, "guard bb0->bb1"), "92 case 0: %s\n%s", w, v);
+        } else if (c == 1) {                                 // y < k or y > k where c = 1, y = k where 0
+            char w[240];
+            snprintf(w, sizeof w, "%sor { 1*%%v%d = 1 , 1*%%v%d + -1*%%v%d <= -1 | 1*%%v%d = 1 , -1*%%v%d + 1*%%v%d <= -1 | "
+                     "1*%%v%d = 0 , 1*%%v%d + -1*%%v%d = 0 }\n", key, cv->id, y->id, k->id, cv->id, y->id, k->id, cv->id, y->id, k->id);
+            CHECK(l && bars == 2 && strstr(v, w), "92 case 1: %s\n%s", w, v);
+        }
+        else if (c == 2) {                                   // y >= 0 and y < n, or y <= -1 and y + 2^64 < n
+            char w[400]; int C = cv->id, Y = y->id, N = n->id;
+            snprintf(w, sizeof w, "%sor { 1*%%v%d = 1 , -1*%%v%d <= 0 , 1*%%v%d + -1*%%v%d <= -1 | 1*%%v%d = 1 , 1*%%v%d <= -1 , "
+                     "1*%%v%d + -1*%%v%d <= -18446744073709551617 | 1*%%v%d = 0 , -1*%%v%d <= 0 , -1*%%v%d + 1*%%v%d <= 0 | "
+                     "1*%%v%d = 0 , 1*%%v%d <= -1 , -1*%%v%d + 1*%%v%d <= 18446744073709551616 }\n",
+                     key, C, Y, Y, N, C, Y, Y, N, C, Y, Y, N, C, Y, Y, N);
+            CHECK(l && bars == 3 && strstr(v, w), "92 case 2: %s\n%s", w, v);
+        }
+        else if (c == 3) {
+            char w[96]; snprintf(w, sizeof w, "%s1*%%v%d = 1\n", key, cv->id);
+            CHECK(strstr(v, w) != NULL, "92 case 3: %s\n%s", w, v);
+        } else CHECK(*v && !strstr(v, " icmp : ") && (c == 4 ? !!strstr(v, "guard bb0->bb1") : !strstr(v, "guard")), "92 case %d:\n%s", c, v);
+        free(t);
+    }
+    printf("  a comparison's value, stored and tested later: 1 where it holds, 0 where it does not\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

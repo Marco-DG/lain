@@ -2015,6 +2015,10 @@ at=const 4
 rc=0
 out=
 at=const 2
+### tests/trust/judge_stored_cmp_pass.ln
+rc=0
+out=
+at=const 14
 ### tests/trust/judge_wrap_facts_pass.ln
 rc=0
 out=

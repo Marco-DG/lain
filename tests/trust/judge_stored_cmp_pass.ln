@@ -1,0 +1,60 @@
+// The proof engine's judge states a comparison's VALUE where it is stored and tested later (MCW's
+// repro): `ok = y <= 2147483646`, then `if ok { return y + 1 }`. ok's cell holds the comparison,
+// the branch states the cell is 1, and the comparison's definition (1 where it holds, 0 where it
+// does not) gives y <= 2147483646 there. Before, only a branch on the comparison itself stated it,
+// and `y + 1` was E086. Also the false side (`if !ok`, `else`), `!=` and `==` (two cases on one
+// side), and writes to another variable between the test and the use. judge_gate requires every VC
+// of this program implied, with and without the finder.
+func inc(y0 i32) i32 {
+    var y = y0
+    ok = y <= 2147483646
+    if ok { return y + 1 }
+    return 0
+}
+func inc_not(y0 i32) i32 {
+    var y = y0
+    ok = y <= 2147483646
+    if !ok { return 0 }
+    return y + 1
+}
+func inc_else(y0 i32) i32 {
+    var y = y0
+    big = y > 2147483646
+    if big { return 0 } else { return y + 1 }
+}
+func inc_ne(y0 i32) i32 {
+    var y = y0
+    ok = y != 2147483647
+    if ok { return y + 1 }
+    return 0
+}
+func inc_eq(y0 i32) i32 {
+    var y = y0
+    at = y == 2147483647
+    if at { return 0 }
+    return y + 1
+}
+func scale(y0 i32) i32 {
+    var y = y0
+    five = y == 5
+    if five { return y * 400000000 }
+    return 0
+}
+func later(y0 i32) i32 {
+    var y = y0
+    ok = y <= 2147483646
+    var z = 3
+    z = z + 1
+    if ok { return y + z - 3 }
+    return 0
+}
+func main() i32 {
+    if inc(3) != 4 or inc(2147483647) != 0 { return 1 }
+    if inc_not(3) != 4 or inc_not(2147483647) != 0 { return 2 }
+    if inc_else(3) != 4 or inc_else(2147483647) != 0 { return 3 }
+    if inc_ne(3) != 4 or inc_ne(2147483647) != 0 { return 4 }
+    if inc_eq(3) != 4 or inc_eq(2147483647) != 0 { return 5 }
+    if scale(5) != 2000000000 or scale(6) != 0 { return 6 }
+    if later(3) != 4 or later(2147483647) != 0 { return 7 }
+    return 0
+}
