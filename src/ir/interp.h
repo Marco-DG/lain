@@ -79,31 +79,132 @@ typedef struct { IrFunc *f; int32_t header; int laps, maxlaps; char **snap; size
                  const uint8_t *lap; int32_t nlap;            // lap[id]: lap_only.h's, left out of the state
                  // w5 (header < 0): the calls in progress, each one's state (iw_call_push)
                  bool rec; char **cs; size_t *cslen; uint64_t *cshash; IrFunc **csf; int ncs, ccs; size_t csbytes; } IWit;
-// Values dead at the entry of every block: an instruction's result whose every use is in its own
-// block, after it (no phi reads it: a phi is at a block's head). Any path from a block's entry to such
-// a use runs through the definition first, so what the value held at a header never reaches the
-// future, and a snapshot leaves it out (marked 3 in w.lap). Kept in, an earlier lap's temporaries made
-// the state on arrival differ from the same state one lap later, and every repeat read a lap late:
-// Zune's note said "from the second lap on" for days = 366, which comes back after every lap.
-static void iw_mark_dead(IrFunc *f, uint8_t *mark, int32_t n) {
-    for (IrBlock *b = f->blocks; b; b = b->next)
-        for (IrInstr *i = b->instrs; i; i = i->next) {
-            if (!i->result || i->result->id < 0 || i->result->id >= n || mark[i->result->id]) continue;
-            int32_t id = i->result->id;
-            bool local = true;
-            for (IrBlock *c = f->blocks; c && local; c = c->next) {
-                for (IrInstr *p = c->phis; p && local; p = p->next)
-                    for (IrPhiArg *a = p->phi_args; a && local; a = a->next) if (a->value && a->value->id == id) local = false;
-                bool after = false;                         // in b: past the definition
-                for (IrInstr *u = c->instrs; u && local; u = u->next) {
-                    if (u == i) { after = true; continue; }
-                    for (int k = 0; k < u->n_operands && local; k++)
-                        if (u->operands[k] && u->operands[k]->id == id && (c != b || !after)) local = false;
-                }
-                if (c->term.cond && c->term.cond->id == id && c != b) local = false;
+// b's successor q (0, 1, ...), NULL past the last: the target, the else target, each case's
+static IrBlock *iw_succ(const IrBlock *b, int q) {
+    if (q == 0) return b->term.kind == IR_TERM_BR || b->term.kind == IR_TERM_BR_COND || b->term.kind == IR_TERM_SWITCH ? b->term.a : NULL;
+    if (b->term.kind == IR_TERM_BR_COND) return q == 1 ? b->term.b : NULL;
+    IrSwitchCase *c = b->term.kind == IR_TERM_SWITCH ? b->term.cases : NULL;
+    for (int k = 1; c && k < q; k++) c = c->next;
+    return c ? c->target : NULL;
+}
+// whether value id is one of block b's phi results
+static bool iw_is_phi(const IrBlock *b, int32_t id) {
+    for (IrInstr *p = b->phis; p; p = p->next) if (p->result && p->result->id == id) return true;
+    return false;
+}
+// Values dead at the loop's header hb: not live on entry to it, so what one held there never
+// reaches the future (its slot is written again before any read), and a snapshot leaves it out
+// (marked 3 in w.lap). Kept in, an earlier lap's temporaries made the state on arrival differ from
+// the same state one lap later, and every repeat read a lap late: Zune's note said "from the second
+// lap on" for days = 366, which comes back after every lap; and a checked `x -? y`, whose result is
+// stored in the block after its overflow test, did the same (Documentation, ch4 finding 6). Backward
+// liveness over the blocks: an operand or a terminator's value is a use in its block, a phi's
+// argument a use at the end of its predecessor, and a result (an instruction's, a phi's) is defined
+// in its block; a value used where it is not defined is live on that block's entry. hb's own phis
+// are its state on arrival and stay. Nothing is marked when the scratch cannot be had.
+static void iw_mark_dead(IrFunc *f, const IrBlock *hb, uint8_t *mark, int32_t n) {
+    int32_t nb = 0, maxid = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next) { nb++; if (b->id > maxid) maxid = b->id; }
+    size_t W = ((size_t)n + 63) / 64;
+    uint64_t *live = calloc((size_t)nb * W, sizeof *live), *out = calloc(W, sizeof *out);
+    int32_t *def = malloc(sizeof *def * (size_t)n), *at = malloc(sizeof *at * (size_t)(maxid + 1));
+    IrBlock **bl = malloc(sizeof *bl * (size_t)nb);
+    if (!live || !out || !def || !at || !bl) { free(live); free(out); free(def); free(at); free(bl); return; }
+    #define IW_SET(s, v) ((s)[(size_t)(v) / 64] |= (uint64_t)1 << ((size_t)(v) % 64))
+    #define IW_HAS(s, v) (((s)[(size_t)(v) / 64] >> ((size_t)(v) % 64)) & 1)
+    for (int32_t v = 0; v < n; v++) def[v] = -1;
+    int32_t k = 0;
+    for (IrBlock *b = f->blocks; b; b = b->next, k++) {
+        bl[k] = b; at[b->id] = k;
+        for (IrInstr *p = b->phis; p; p = p->next) if (p->result && p->result->id >= 0 && p->result->id < n) def[p->result->id] = k;
+        for (IrInstr *i = b->instrs; i; i = i->next) if (i->result && i->result->id >= 0 && i->result->id < n) def[i->result->id] = k;
+    }
+    for (bool grew = true; grew; ) {
+        grew = false;
+        for (k = nb - 1; k >= 0; k--) {
+            IrBlock *b = bl[k];
+            memset(out, 0, W * sizeof *out);
+            for (int q = 0; ; q++) {                         // live out: each successor's live-in, and its
+                IrBlock *s = iw_succ(b, q);                  // phis' arguments from b
+                if (!s) break;
+                if (!s || s->id < 0 || s->id > maxid) continue;
+                for (size_t w = 0; w < W; w++) out[w] |= live[(size_t)at[s->id] * W + w];
+                for (IrInstr *p = s->phis; p; p = p->next)
+                    for (IrPhiArg *a = p->phi_args; a; a = a->next)
+                        if (a->pred == b && a->value && a->value->id >= 0 && a->value->id < n) IW_SET(out, a->value->id);
             }
-            if (local) mark[id] = 3;
+            for (int32_t v = 0; v < n; v++) if (IW_HAS(out, v) && def[v] == k) out[(size_t)v / 64] &= ~((uint64_t)1 << ((size_t)v % 64));
+            for (IrInstr *i = b->instrs; i; i = i->next)    // uses here of values defined elsewhere
+                for (int q = 0; q < i->n_operands; q++)
+                    if (i->operands[q] && i->operands[q]->id >= 0 && i->operands[q]->id < n && def[i->operands[q]->id] != k) IW_SET(out, i->operands[q]->id);
+            if (b->term.cond && b->term.cond->id >= 0 && b->term.cond->id < n && def[b->term.cond->id] != k) IW_SET(out, b->term.cond->id);
+            uint64_t *li = &live[(size_t)k * W];
+            for (size_t w = 0; w < W; w++) if ((li[w] | out[w]) != li[w]) { li[w] |= out[w]; grew = true; }
         }
+    }
+    if (hb && hb->id >= 0 && hb->id <= maxid) {
+        const uint64_t *lh = &live[(size_t)at[hb->id] * W];
+        int32_t h = at[hb->id];
+        for (int32_t v = 0; v < n; v++) if (!mark[v] && !IW_HAS(lh, v) && !(def[v] == h && iw_is_phi(hb, v))) mark[v] = 3;
+        // ...and the CELLS dead there: a scalar local whose address only loads and stores take, and
+        // which every path of the loop's region (lap_only.h's: the blocks the header reaches that
+        // reach it again) stores before it loads (Rotation180's `oldx = x`, first thing each lap). A
+        // run that repeats never leaves the region, so what such a cell held at the header is never
+        // read, and on arrival it held nothing yet.
+        uint8_t *fw = calloc((size_t)nb, 1), *bw = calloc((size_t)nb, 1), *rd = calloc((size_t)nb, 1);
+        int32_t *stk = malloc(sizeof *stk * (size_t)nb);
+        if (fw && bw && rd && stk) {
+            int32_t sp = 0;
+            fw[h] = 1; stk[sp++] = h;
+            while (sp) {
+                IrBlock *b = bl[stk[--sp]], *s;
+                for (int q = 0; (s = iw_succ(b, q)); q++)
+                    if (s->id >= 0 && s->id <= maxid && !fw[at[s->id]]) { fw[at[s->id]] = 1; stk[sp++] = at[s->id]; }
+            }
+            bw[h] = 1; stk[sp++] = h;
+            while (sp) {
+                IrBlock *b = bl[stk[--sp]];
+                for (IrEdge *e = b->preds; e; e = e->next)
+                    if (e->block && e->block->id >= 0 && e->block->id <= maxid && !bw[at[e->block->id]]) { bw[at[e->block->id]] = 1; stk[sp++] = at[e->block->id]; }
+            }
+            for (IrBlock *ab = f->blocks; ab; ab = ab->next)
+                for (IrInstr *a = ab->instrs; a; a = a->next) {
+                    if (a->op != IR_ALLOCA || !a->result || a->result->id < 0 || a->result->id >= n || mark[a->result->id] ||
+                        !a->aux.alloca_ty || (a->aux.alloca_ty->kind != IRT_INT && a->aux.alloca_ty->kind != IRT_BOOL)) continue;
+                    const IrValue *av = a->result;
+                    bool esc = false;                        // its address only a load's or a store's
+                    for (IrBlock *c = f->blocks; c && !esc; c = c->next) {
+                        for (IrInstr *p = c->phis; p && !esc; p = p->next)
+                            for (IrPhiArg *pa = p->phi_args; pa && !esc; pa = pa->next) esc = pa->value == av;
+                        for (IrInstr *u = c->instrs; u && !esc; u = u->next)
+                            for (int q = 0; q < u->n_operands && !esc; q++)
+                                esc = u->operands[q] == av && !(q == 0 && (u->op == IR_LOAD || u->op == IR_STORE));
+                        esc = esc || c->term.cond == av;
+                    }
+                    if (esc) continue;
+                    memset(rd, 0, (size_t)nb);               // rd: a load may come before a store from the block's entry
+                    for (bool grew = true; grew; ) {
+                        grew = false;
+                        for (int32_t q = 0; q < nb; q++) {
+                            if (!fw[q] || !bw[q] || rd[q]) continue;
+                            int first = 0;                   // 1: a load first, 2: a store first
+                            for (IrInstr *u = bl[q]->instrs; u && !first; u = u->next)
+                                if (u->n_operands >= 1 && u->operands[0] == av) first = u->op == IR_LOAD ? 1 : u->op == IR_STORE ? 2 : 0;
+                            bool r = first == 1;
+                            IrBlock *s;
+                            for (int k2 = 0; !first && !r && (s = iw_succ(bl[q], k2)); k2++)
+                                r = s->id >= 0 && s->id <= maxid && fw[at[s->id]] && bw[at[s->id]] && rd[at[s->id]];
+                            if (r) { rd[q] = 1; grew = true; }
+                        }
+                    }
+                    if (!rd[h]) mark[av->id] = 3;
+                }
+        }
+        free(fw); free(bw); free(rd); free(stk);
+    }
+    #undef IW_SET
+    #undef IW_HAS
+    free(live); free(out); free(def); free(at); free(bl);
 }
 // the repeat a loop witness's run found, read by the caller after IW_HANG: the state at header visit
 // `stem` (0: on arrival) came back at visit stem + period. The note says these, not the proposal's
@@ -1539,7 +1640,7 @@ static int ir_interpret_witness(IrFunc *f, IrFunc *mod, int32_t header, const __
     const IrBlock *hb = NULL;
     for (const IrBlock *b = f->blocks; b && !hb; b = b->next) if (b->id == header) hb = b;
     if (ir_lap_only(f, hb, lap)) { w.lap = lap; w.nlap = nlap; }
-    if (hb) { iw_mark_dead(f, lap, nlap); w.lap = lap; w.nlap = nlap; }
+    if (hb) { iw_mark_dead(f, hb, lap, nlap); w.lap = lap; w.nlap = nlap; }
     bool quiet = ii_quiet; ii_quiet = true;
     ist = &s;
     { char base; ii_stack_enter((uintptr_t)&base); }

@@ -10,6 +10,10 @@
 # the loop depends on (src/ir/lap_only.h) is left out of the repeated state, and the note says it changes.
 # A recursion's E011 (w5) names an input on which a call is made while the same call is still
 # running: the call made again by its arguments, or, when one is not an integer, by its name.
+# A value or a cell dead at the header (not live on entry: its slot is written again before any read)
+# is no part of the state: a checked `x -? y` stored in the block after its overflow test, and a
+# temporary cell the lap writes first (`oldx = x`), each made the repeat read one lap late, "from the
+# second lap on", and the cell was named as state (Documentation, ch4 finding 6).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 D="$(mktemp -d)"; trap 'rm -rf "${D:?}"' EXIT
@@ -252,4 +256,38 @@ func main() i32 {
 LN
 out=$(cd "$D" && "$ROOT/lain" pure.ln -o pure.c 2>&1) && { echo "pure: accepted"; exit 1; }
 echo "$out" | grep -qE 'never (ends|returns)' && { echo "pure: a note resting on a pure extern:"; echo "$out"; exit 1; }
+cat > "$D/checked.ln" <<'LN'
+func task(x0 i32, y0 i32) i32 effects raises {
+    var x i32 = x0
+    if y0 >= 0 {
+        while x >= 0 {
+            x = x -? y0 else panic("overflow")
+        }
+    }
+    return 0
+}
+func main() i32 effects raises { return task(5, 1) }
+LN
+out=$(cd "$D" && "$ROOT/lain" checked.ln -o checked.c 2>&1) && { echo "checked: accepted"; exit 1; }
+want='       this loop never ends for task(0, 0): at line 4, x = 0 comes back after every lap'
+echo "$out" | grep -qxF "$want" || { echo "checked: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
+cat > "$D/rotate.ln" <<'LN'
+func spin(x0 i32, y0 i32) i32 {
+    var oldx i32
+    var x i32 = x0
+    var y i32 = y0
+    if !(x >= -2147483647) { return 0 }
+    if !(y >= -2147483647) { return 0 }
+    while 1 != 0 {
+        oldx = x
+        x = -y
+        y = oldx
+    }
+    return 0
+}
+func main() i32 { return spin(1, 2) }
+LN
+out=$(cd "$D" && "$ROOT/lain" rotate.ln -o rotate.c 2>&1) && { echo "rotate: accepted"; exit 1; }
+want='       this loop never ends for spin(0, 0): at line 7, x = 0 and y = 0 come back after every lap'
+echo "$out" | grep -qxF "$want" || { echo "rotate: the note is not"; echo "$want"; echo "-- got:"; echo "$out"; exit 1; }
 exit 0
