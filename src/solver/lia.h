@@ -12,7 +12,11 @@
 //     can move. When none can, the violated row IS the refutation: its coefficients over the
 //     slacks at their bounds are the Farkas multipliers, and the certificate is `lin` then `close`.
 //   - Over the integers, the gcd test (`lin` then `rnd`) on each constraint as it enters, and
-//     branch and bound (`split`) on the first variable whose value is not an integer.
+//     branch and bound (`split`) on the first variable whose value is not an integer. Before a
+//     split, the node's equalities are tested for an integer solution (lia_core.h's ls_dioph: the
+//     variables its bounds fix put at their values, unit pivots, then the gcd test on each
+//     combination); and a VC the search stops on its budget, if its equalities hold a residue
+//     (r in x = 2q + r), is searched again with residues split first (ls_solve).
 //   - A disjunctive hypothesis is split (`case`) only when the integer model in hand violates it.
 //
 // Every variable of the VC is unbounded unless a hypothesis bounds it (A3), so the simplex keeps
@@ -48,6 +52,8 @@ typedef struct {
     bool out;                   // a budget counter reached its limit
     JWork used, limit;
     int32_t nf, ns;             // the f and s numbers given so far
+    int32_t rsplit;             // residue splits on the branch searched (lia_core.h's ls_dioph)
+    bool residue;               // ...and whether to split residues first (ls_solve's second search)
     int32_t nv;                 // the VC's variables
     const uint8_t *on;          // the hypotheses in play, by index (NULL: all): the sliced retry's
     bool cone;                  // lia_cone's search: a rational model is scaled, never split

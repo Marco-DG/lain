@@ -24,6 +24,10 @@ byte for byte the 128-bit search's wherever that one finishes (`solve_vc --wide`
 coefficients near 2^60, where the retry answers, by this kernel and brute force.
 lia_cone (lia.h, s2: a system closed under scaling, by one rational search) is checked with
 `solve_vc --cone`, on worked shapes and seeded random systems, every answer by this kernel.
+The DIOPHANTINE STEP (lia_core.h's ls_dioph: equalities with no integer solution, refuted before a
+split) is checked on worked shapes and on two seeded sets of parity-shaped VCs (coefficients of 2
+and 3, residues of small domains), one boxed (brute force) and one not, and its answers at both
+widths alike.
 The SLICED RETRY (lia.h, PE.13) is checked on solver_capacity/: VCs whose whole search stops on
 CAPACITY. A certificate from a slice must pass this kernel against the WHOLE VC, and where no slice
 holds the proof the answer must stay CAPACITY, never a model of a slice.
@@ -43,6 +47,25 @@ def gen_cons(rng, nv, ops):
     vs = sorted(rng.sample(range(nv), k))
     terms = {v: rng.choice([c for c in range(-4, 5) if c]) for v in vs}
     return (terms, rng.choice(ops), rng.randint(-8, 8))
+
+def gen_parity_vc(rng, idx, bounded, B):
+    # equalities whose integer solutions a coefficient of 2 or 3 thins out (x = 2q + r, a residue of
+    # a small domain), beside unit inequalities: the shapes lia_core.h's Diophantine step decides,
+    # which the uniform sets draw rarely
+    nv = rng.randint(4, 5)
+    names = [f"x{i}" for i in range(nv)]
+    hyps = []
+    for v in range(nv):
+        if bounded: hyps += [("type", ({v: -1}, "<=", B)), ("type", ({v: 1}, "<=", B))]
+    if not bounded:
+        for v in rng.sample(range(nv), rng.randint(0, 2)): hyps += [("def", ({v: 1}, "<=", 1)), ("def", ({v: -1}, "<=", 0))]
+    pick = lambda k: {v: rng.choice([1, -1, 2, -2, 3, -3, 1, -1]) for v in rng.sample(range(nv), k)}
+    for _ in range(rng.randint(1, 3)): hyps.append(("def", (pick(rng.randint(2, 3)), "=", rng.randint(-3, 3))))
+    for _ in range(rng.randint(0, 3)):
+        hyps.append(("guard", ({v: rng.choice([1, -1]) for v in rng.sample(range(nv), 2)}, "<=", rng.randint(-2, 2))))
+    if rng.random() < 0.3: hyps.append(("path", [[(pick(1), "<=", rng.randint(-1, 1))], [(pick(2), "=", rng.randint(-2, 2))]]))
+    goal = ({}, "<=", -1) if rng.random() < 0.5 else (pick(2), "<=", rng.randint(-2, 2))
+    return {"id": f"p{idx} 0 bb0.0 parity 0", "names": names, "hyps": hyps, "goal": goal}
 
 def gen_vc(rng, idx, bounded, B):
     nv = rng.randint(1, 4)
@@ -207,6 +230,24 @@ WORKED = [
                                             ("guard", ({0: 1, 1: -1}, "<=", 0))], ({0: 1, 1: -1}, "<=", -1)),
     ("divisor", "cert", ["y"], [("path", [[({0: 1}, "<=", -1)], [({0: -1}, "<=", -1)]])], ({0: 1}, "!=", 0)),
     ("strip", "model", ["x", "y"], [("def", ({0: 3, 1: 3}, "<=", 4)), ("def", ({0: -3, 1: -3}, "<=", -2))], ({}, "<=", -1)),
+    # the Diophantine step (lia_core.h): equalities with no integer solution together, which a split
+    # on an unbounded quotient never refutes. x = 2q, y = 2p + 1, y = x + 2;
+    ("parity_chain", "cert", ["x", "q", "y", "p"], [("def", ({0: 1, 1: -2}, "=", 0)), ("def", ({2: 1, 3: -2}, "=", 1)),
+                                                    ("path", ({0: -1, 2: 1}, "=", 2))], ({}, "<=", -1)),
+    # a remainder fixed at 1 only through a constant's equality (t >= c + 1, c = 0, t <= 1);
+    ("parity_fixed", "cert", ["x", "q", "p", "t", "c"], [("def", ({0: 1, 1: -2}, "=", 0)), ("def", ({0: 1, 2: -2, 3: -1}, "=", 0)),
+                                                         ("def", ({4: 1}, "=", 0)), ("guard", ({3: -1, 4: 1}, "<=", -1)),
+                                                         ("rem", ({3: 1}, "<=", 1))], ({}, "<=", -1)),
+    # Kroening's odd path: x odd makes its residue r 1 (a split on r, its domain [0, 1]), r <= u
+    # makes u 1, and y = x - 1 is even;
+    ("residue_odd", "cert", ["x", "q", "r", "p", "y", "s", "u"],
+     [("def", ({0: 1, 1: -2, 2: -1}, "=", 0)), ("def", ({2: -1}, "<=", 0)), ("def", ({2: 1}, "<=", 1)),
+      ("path", ({0: 1, 3: -2}, "=", 1)), ("path", ({0: -1, 4: 1}, "=", -1)),
+      ("def", ({4: 1, 5: -2, 6: -1}, "=", 0)), ("def", ({6: -1}, "<=", 0)), ("def", ({6: 1}, "<=", 1)),
+      ("premise", ({2: 1, 6: -1}, "<=", 0))], ({}, "<=", -1)),
+    # and the same chain with y even: satisfiable, a model
+    ("parity_sat", "model", ["x", "q", "y", "p"], [("def", ({0: 1, 1: -2}, "=", 0)), ("def", ({2: 1, 3: -2}, "=", 0)),
+                                                   ("path", ({0: -1, 2: 1}, "=", 2))], ({}, "<=", -1)),
 ]
 
 LIMITS = ["40000", "512", "512"]     # pivots, nodes, leaves; the seeds below need 6534, 155, 27
@@ -349,9 +390,10 @@ def run_wide_property(exe):
     # pivots: the wide search is about ten times slower, and a budget stop must match too.
     rc = 0
     lim = ["4000", "512", "512"]
-    for seed, mode in ((1, "bounded"), (2, "bounded"), (3, "free")):
+    for seed, mode in ((1, "bounded"), (2, "bounded"), (3, "free"), (5, "parity bounded"), (6, "parity free")):
         rng = random.Random(seed)
-        vcs = [gen_vc(rng, i, mode == "bounded", 4) for i in range(1000)]
+        par = mode.startswith("parity")
+        vcs = [(gen_parity_vc(rng, i, mode.endswith("bounded"), 2) if par else gen_vc(rng, i, mode == "bounded", 4)) for i in range(400 if par else 1000)]
         r1, a = answers(exe, vcs, None, lim); r2, b = answers(exe, vcs, "--wide", lim)
         if r1 or r2 or len(a) != len(vcs) or len(b) != len(vcs):
             print(f"  WRONG: seed {seed}: exits {r1} {r2}, {len(a)} and {len(b)} answers of {len(vcs)}"); rc = 1; continue
@@ -614,6 +656,10 @@ def main():
         rng = random.Random(seed)
         print(f"seed {seed}, 1000 VCs, {mode}:")
         rc |= run(exe, [gen_vc(rng, i, mode == "bounded", 4) for i in range(1000)], mode == "bounded", 4)
+    for seed, mode in ((5, "bounded"), (6, "free")):
+        rng = random.Random(seed)
+        print(f"seed {seed}, 400 parity-shaped VCs (the Diophantine step), {mode}:")
+        rc |= run(exe, [gen_parity_vc(rng, i, mode == "bounded", 2) for i in range(400)], mode == "bounded", 2)
     rng = random.Random(4)
     print("seed 4, 500 VCs, bounded, maximized:")
     rc |= run_max(exe, [gen_vc(rng, i, True, 4) for i in range(500)], 4)
