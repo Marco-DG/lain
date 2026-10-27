@@ -310,12 +310,55 @@ int main(void) {
     s.rank[1].nle = 1; s.rank[1].le_blk[0] = cbk[1]->id; s.rank[1].le_idx[0] = cci[1];
     snprintf(rf, sizeof rf, "proved bb%d.%d rec.le", cbk[1]->id, cci[1]);
     CHECK(run(cf[0], &s, true, sizeof region, err), "judges: %s", err);
-    CHECK(strstr(recs, rf) && nrec[JREC_PROVED] == 10 &&
+    CHECK(strstr(recs, rf) && nrec[JREC_PROVED] == 9 &&                    // b -> c owes no rec.bound (s24)
           nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] + nrec[JREC_REFUSED] == 0, "b -> c listed: the cut holds, all proved:\n%s", recs);
     for (int w = 0; w < 3; w += 2) { s.rank[w].nle = 1; s.rank[w].le_blk[0] = cbk[w]->id; s.rank[w].le_idx[0] = cci[w]; }
     CHECK(run(cf[0], &s, true, sizeof region, err), "judges: %s", err);
     CHECK(nrec[JREC_REFUSED] == 3 && nrec[JREC_PROVED] == 0 && strstr(recs, "close a cycle"), "every call listed: the three refused:\n%s", recs);
     s.propose = P_NONE; s.nrank = 0;
+
+    // A DEPTH GUARD (s24, TCW's B3, calc.ln's recursive descent), all u32: p(d) returns 0 where
+    // d > 64, else e(d + 1); e(d) returns t(d); t(d) returns p(d). The measure 65 - d of each falls
+    // at p -> e, where d <= 64 keeps it >= 0, and is listed at e -> t and t -> p, where it does not
+    // rise and may be negative (e entered at d = 1000 from outside). (0) rec.fall and rec.bound at
+    // p -> e and rec.le at the other two: all proved, no bound owed where it is listed; (1) p -> e
+    // listed too: the three calls close a cycle, refused
+    for (int c = 0; c < 2; c++) {
+        IrFunc *dp = ir_func_new(&A, nm("dp"), u32t, IR_FUNC_PURE), *de = ir_func_new(&A, nm("de"), u32t, IR_FUNC_PURE),
+               *dt = ir_func_new(&A, nm("dt"), u32t, IR_FUNC_PURE);
+        IrFunc *df3[3] = { dp, de, dt }; const char *dto[3] = { "de", "dt", "dp" };
+        IrValue *dd[3]; IrBlock *dbk[3]; int dci[3];
+        for (int w = 0; w < 3; w++) {
+            IrFunc *h = df3[w];
+            dd[w] = ir_add_param(h, u32t, nm("d"));
+            IrValue *arg = dd[w]; IrBlock *at = h->entry;
+            if (w == 0) {                                                  // p: d > 64 returns, else d + 1
+                IrBlock *h1 = ir_new_block(h), *h2 = ir_new_block(h);
+                ir_set_br_cond(h->entry, ir_icmp(h, h->entry, IR_CMP_UGT, dd[w], ir_const_int(h, h->entry, 64, u32t)), h1, h2);
+                ir_set_ret(h1, ir_const_int(h, h1, 0, u32t));
+                arg = ir_binop(h, h2, IR_ADD, dd[w], ir_const_int(h, h2, 1, u32t), u32t); at = h2;
+            }
+            dci[w] = 0; for (IrInstr *i = at->instrs; i; i = i->next) dci[w]++;
+            IrInstr *cl3 = ir_instr(h, IR_CALL, u32t, 1); cl3->aux.callee = nm(dto[w]); cl3->operands[0] = arg; ir_emit(at, cl3);
+            ir_set_ret(at, cl3->result); dbk[w] = at;
+            ir_finalize_cfg(h);
+        }
+        dp->next = de; de->next = dt;
+        s.propose = P_RANK; s.nrank = 3;
+        memset(s.rank, 0, sizeof s.rank);
+        for (int w = 0; w < 3; w++) {
+            s.rank[w].blk = JRANK_ENTRY; s.rank[w].fn = df3[w]; s.rank[w].ncomp = 1; s.rank[w].nt = 1;
+            s.rank[w].key[0] = dd[w]->id; s.rank[w].coef[0][0] = -1; s.rank[w].c0[0] = 65;              // 65 - d
+            if (w > 0 || c == 1) { s.rank[w].nle = 1; s.rank[w].le_blk[0] = dbk[w]->id; s.rank[w].le_idx[0] = dci[w]; }
+        }
+        CHECK(run(dp, &s, true, sizeof region, err), "judges: %s", err);
+        char pf[48], pb[48]; snprintf(pf, sizeof pf, "proved bb%d.%d rec.fall", dbk[0]->id, dci[0]); snprintf(pb, sizeof pb, "proved bb%d.%d rec.bound", dbk[0]->id, dci[0]);
+        if (c == 0) CHECK(strstr(recs, pf) && strstr(recs, pb) && count_in(recs, "rec.le") == 2 && count_in(recs, "rec.bound") == 1 &&
+                          nrec[JREC_NOT_IMPLIED] + nrec[JREC_OUTSIDE] + nrec[JREC_REFUSED] + nrec[JREC_UNCERTIFIED] == 0,
+                          "depth guard: rec.fall and rec.bound at p -> e, rec.le at the others, all proved:\n%s", recs);
+        else CHECK(nrec[JREC_REFUSED] == 3 && strstr(recs, "close a cycle"), "every call listed: refused:\n%s", recs);
+        s.propose = P_NONE; s.nrank = 0;
+    }
 
     // a FIXED condition: `x = n; while 0 != 0 { x = x + 1 }` with i32 x. The body is never entered,
     // so x + 1's narrow.hi is proved (before, not implied at x = 2^31 - 1), and a constant ranking

@@ -4775,13 +4775,18 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
 // `decreasing`. Its measure is a ranking claim at its ENTRY (JRANK_ENTRY): one component over its
 // integer parameters, or their slices' lengths, as it was entered. At each call that may reach a
 // function of its component, under the facts at the call: the callee's measure at the call's
-// arguments falls below the caller's at entry (`rec.fall`), or at a call the caller's measure lists
-// does not rise above it (`rec.le`), and the caller's is non-negative (`rec.bound`). The listed
-// calls of the whole component close no cycle (jg_rec_cut), so every cycle of calls falls at one
-// call at least: spec 12's constraint (`a -> b(n - 1) -> c(n) -> a`, only b -> c listed). Then a
-// chain of activations in the component, |component| calls long, lowers a measure bounded below,
-// read in Z as every fact is. A self-recursion's measure may have several rows (c42): a tuple, a
-// MAX or MIN of rows among its components, every call FREE and owing the lexicographic decrease
+// arguments falls below the caller's at entry (`rec.fall`) and the caller's is non-negative
+// (`rec.bound`), or at a call the caller's measure lists it does not rise above it (`rec.le`). The
+// listed calls of the whole component close no cycle (jg_rec_cut), so every cycle of calls falls at
+// one call at least: spec 12's constraint (`a -> b(n - 1) -> c(n) -> a`, only b -> c listed). Then
+// along a chain of activations in the component the measure never rises, and at each falling call
+// it is at least 0 and drops by 1 or more: the values at the falling calls, which an endless chain
+// meets endlessly, would be an endless decreasing sequence of naturals, read in Z as every fact is.
+// A listed call owes no bound (s24, TCW's B3: calc's depth guard `65 - depth` is negative at the
+// listed calls where depth passed 64): max(0, m + 1) is then a measure of spec 12's own form, at
+// least 0 at every call, falling at each falling call and not rising at the others. A
+// self-recursion's measure may have several rows (c42): a tuple, a MAX or MIN of rows among its
+// components, every call FREE and owing the lexicographic decrease
 // (`rec.lex`, jgk_rec_lex); or regions (c43), owing c38's `rec.cover`, `rec.region` and `rec.lex`
 // at each call; refused in a mutual recursion (v1). A
 // call through a pointer that may close the cycle, or a member with no measure, is `outside` there.
@@ -5154,8 +5159,8 @@ static bool jg_rec_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk, co
                     }
                     continue;
                 }
-                for (int w = 0; w < 2; w++) {                     // rec.bound is the caller's alone: once
-                    if (w == 1 && tq > 0) continue;
+                for (int w = 0; w < 2; w++) {                     // rec.bound is the caller's alone: once,
+                    if (w == 1 && (tq > 0 || le)) continue;        // and only where it falls (s24)
                     JRecArg a = { r, rt, g->f, t, w == 1 ? 1 : le ? 2 : 0 };
                     if (!jg_goal(g, L, i, b->id, k, -1, w == 1 ? "rec.bound" : le ? "rec.le" : "rec.fall", w == 1 ? 0 : tq, jgk_rec, &a)) return false;
                 }

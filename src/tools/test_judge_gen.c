@@ -1652,8 +1652,8 @@ int main(void) {
         t = gen_with(fb, NULL, 0, JGEN_ALL, NULL);
         snprintf(why, sizeof why, "%s rec.le 0", AT(4));
         const char *vl = t ? vc_of(t, why) : "", *g = strstr(vl, "goal ");
-        CHECK(g && !strncmp(g, "goal 0 <= 0\n", 12) && !strstr(t, "rec.fall") && strstr(t, "rec.bound"),
-              "b -> c listed: rec.le, n - n <= 0, and rec.bound:\n%s", t ? t : "");
+        CHECK(g && !strncmp(g, "goal 0 <= 0\n", 12) && !strstr(t, "rec.fall") && !strstr(t, "rec.bound"),
+              "b -> c listed: rec.le, n - n <= 0, and no rec.bound (s24: owed where it falls):\n%s", t ? t : "");
         free(t);
         for (int w = 0; w < 2; w++) {
             t = gen_with(w ? fc : fa, NULL, 0, JGEN_ALL, NULL);

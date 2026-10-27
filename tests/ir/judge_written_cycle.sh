@@ -33,10 +33,12 @@ echo "$out" | grep -qF ': recursion at line 11: `n` decreases at every call that
     || { echo "f2's measure, falling at its call, is not printed as such:"; echo "$out" | grep measure; exit 1; }
 
 # off the finder's meter: with its work cap spent at once (judge_vc_driver --finder-work=1), the
-# cycle, which the finder reaches last, is still checked call by call and every rec.* is proved
+# cycle, which the finder reaches last, is still checked call by call and every rec.* is proved:
+# rec.le at the two listed calls, rec.fall and rec.bound at the one where n falls (s24: a listed
+# call owes no bound)
 gcc -std=c99 -O2 -w -o "$T/jvc" "$ROOT/src/tools/judge_vc_driver.c" -I "$ROOT/src" || { echo "judge_vc_driver does not build"; exit 1; }
 rec=$(cd "$T" && "$T/jvc" w3.ln --judge --finder-work=1 2>&1 | grep -E '^v1 [^ ]+ [^ ]+ [^ ]+ rec\.')
-[ "$(echo "$rec" | grep -c ' proved ')" -eq 6 ] && [ "$(echo "$rec" | wc -l)" -eq 6 ] \
+[ "$(echo "$rec" | grep -c ' proved ')" -eq 4 ] && [ "$(echo "$rec" | wc -l)" -eq 4 ] \
     || { echo "with the finder's meter spent, the written cycle is not proved:"; echo "$rec"; exit 1; }
 
 cyc w17 17 'n - 1'
