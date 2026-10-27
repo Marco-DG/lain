@@ -3892,6 +3892,10 @@ rc=0
 out=
 at=nonnull 6
 ty=L struct
+### tests/vra/sum_guard_invariant_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/vra/two_pointer_reverse_pass.ln
 rc=5
 out=

@@ -1,0 +1,21 @@
+// A sum the program tests before its loop is the loop's invariant: x + y <= 0 on entry, and a trip
+// keeps it (x' + y' = 2(x + y) - 1), which keeps x <= 65535 (x' = x + (x + y)), so `x + x` cannot
+// overflow (PE.11's Singapore-2, in a counted loop so that y's floor is the lap count's).
+func shrink(x0 i32, y0 i32) i32 {
+    if !((-65535 <= x0) and (x0 <= 65535)) { return 0 }
+    if !((-65535 <= y0) and (y0 <= 65535)) { return 0 }
+    var x i32 = x0
+    var y i32 = y0
+    if (x + y) <= 0 {
+        for k in 0..100 {
+            if x > 0 {
+                x = (x + x) + y
+                y = y - 1
+            }
+        }
+    }
+    return x
+}
+func main() i32 {
+    return shrink(5, -5) +% 6
+}

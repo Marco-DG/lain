@@ -3548,6 +3548,56 @@ static bool fd_entry_candidates(JFinder *F, IrFunc *f, const JClaim *as, int32_t
     free(sl);
     return okall;
 }
+// A SUM the program computes (PE.11's Singapore-2: `if (x + y) <= 0` before `while x > 0 { x = (x
+// + x) + y; y = y - 1 }`): per header and pair of its integer versions that an IR_ADD of the
+// function reads (each through its load), the sum against its greatest value on the loop's entry
+// edge, and its negation against its least, for Houdini to keep the inductive ones. Here
+// x + y <= 0 (x' + y' = 2(x + y) - 1), which then keeps x <= 65535 (x' = x + (x + y)). The
+// header's own pair candidates are differences, and VRA's octagon loses the sum at `x = 2x + y`.
+// Only the sums the program writes: a sum for every pair at every header was f68's cost.
+static bool fd_sum_entry_candidates(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    char err[200];
+    JSlot *s0 = NULL; int32_t ns = 0;
+    if (!F->gen->slots(F->gen->ctx, f, &s0, &ns, err, sizeof err) || ns == 0) return true;
+    JSlot *sl = malloc(sizeof *sl * (size_t)ns);
+    if (!sl) { F->oom = true; return false; }
+    memcpy(sl, s0, sizeof *sl * (size_t)ns);
+    int32_t done[64][3], ndone = 0;                          // (header, cell, cell): asked once
+    bool okall = true;
+    for (IrBlock *b = f->blocks; b && okall; b = b->next)
+        for (IrInstr *i = b->instrs; i && okall; i = i->next) {
+            if (i->op != IR_ADD || i->n_operands < 2) continue;
+            int32_t ck[2] = { -1, -1 };                      // the cell each operand loads, below its casts
+            for (int k = 0; k < 2; k++)
+                for (IrValue *v = i->operands[k]; v; ) {
+                    IrInstr *d = fd_def_in(f, v);
+                    if (d && d->op == IR_LOAD && d->n_operands >= 1 && d->operands[0]) { ck[k] = d->operands[0]->id; break; }
+                    v = d && d->op == IR_CAST && d->n_operands >= 1 ? d->operands[0] : NULL;
+                }
+            if (ck[0] < 0 || ck[1] < 0 || ck[0] == ck[1]) continue;
+            int32_t k0 = ck[0] < ck[1] ? ck[0] : ck[1], k1 = ck[0] < ck[1] ? ck[1] : ck[0];
+            for (int32_t g = 0; g < ns && okall; g++) {      // each header with both as its versions
+                if (!sl[g].head || sl[g].key != k0 || !fd_is_int(sl[g].type)) continue;
+                bool other = false, seen = false;
+                for (int32_t h = 0; h < ns && !other; h++) other = sl[h].head && sl[h].blk == sl[g].blk && sl[h].key == k1 && fd_is_int(sl[h].type);
+                for (int32_t q = 0; q < ndone && !seen; q++) seen = done[q][0] == sl[g].blk && done[q][1] == k0 && done[q][2] == k1;
+                if (!other || seen || ndone == 64) continue;
+                done[ndone][0] = sl[g].blk; done[ndone][1] = k0; done[ndone][2] = k1; ndone++;
+                JClaim c; memset(&c, 0, sizeof c);
+                c.blk = sl[g].blk; c.fn = f; c.nt = 2;
+                c.key[0] = k0; c.tk[0] = JTERM_VALUE; c.coef[0] = 1;
+                c.key[1] = k1; c.tk[1] = JTERM_VALUE; c.coef[1] = 1;
+                JClaim neg = c; neg.coef[0] = neg.coef[1] = -1;
+                __int128 hi, lo;
+                bool bh = fd_entry_max(F, f, as, nv, &c, &hi), bl = !F->oom && fd_entry_max(F, f, as, nv, &neg, &lo);
+                if (F->oom) { okall = false; break; }
+                if (bh) { c.rhs = hi; okall = fd_push_claim(F, &c, as, nv, cl, nc, ccl); }
+                if (okall && bl) { neg.rhs = lo; okall = fd_push_claim(F, &neg, as, nv, cl, nc, ccl); }
+            }
+        }
+    free(sl);
+    return okall;
+}
 static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     char err[200];
     int32_t keys[64]; uint8_t tk[64], kind[64]; int32_t nk = 0;
@@ -4081,6 +4131,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             if (round == 1 && !fd_rate_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_entry_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
+            if (!fd_sum_entry_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
             for (IrBlock *kb = f->blocks; kb; kb = kb->next)
                 if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, &cl, &nc, &ccl)) goto oom;
             fd_nest_free(&N);
