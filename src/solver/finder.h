@@ -3059,40 +3059,59 @@ static bool fd_rank_cycle(JFinder *F, IrFunc **mem, int32_t m, const JClaim *cl,
             ls_meter_on = mon;
         } else {
             // the first round of the lexicographic search: rises on no call, >= 0 before each, falls
-            // on most
+            // on most. When it finds none, each call in turn (`only`) is the only one that may fall,
+            // bounded there, and the others owe only that the measure not rise, with no bound (spec
+            // 12's cut: such a call is listed, rec.le). calc.ln's primary -> expr -> term -> primary
+            // raises `depth` once a round, at primary's call `expr(var p, depth + 1)` under `depth <=
+            // 64`, and passes it on unchanged at the others, where nothing bounds it: no measure was
+            // bounded before every call, and 65 - depth falls at the one call and rises at none
+            // (TCW's real_programs, B3). Whether the unlowered calls close a cycle is checked below.
             bool on[FD_MAXFLAT];
             for (int32_t k = 0; k < L->npaths; k++) on[k] = true;
-            int32_t *dl = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)L->npaths);
-            JVc lp;
-            if (!dl || !rk_build(L->paths, L->npaths, on, L->pre, L->post, L->npairs, true, 0, &cur, end, &lp, dl)) goto out;
-            if (nw) {                                        // the written members' rows, fixed: c_q = w_q,
-                JHyp *hx = (JHyp *)rk_bump(&cur, end, sizeof(JHyp) * (size_t)(lp.nhyps + NP));   // and
-                JTerm *tx = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)(2 * NP));     // indicator
-                if (!hx || !tx) goto out;                                                      // + c0 = w0
-                memcpy(hx, lp.hyps, sizeof(JHyp) * (size_t)lp.nhyps);
-                int32_t nh = lp.nhyps, ntx = 0;
-                for (int32_t i = 0; i < m; i++) {
-                    if (!wr[i]) continue;
-                    for (int32_t q = sbase[i]; q <= sbase[i] + ns[i]; q++) {
-                        bool ind = q == sbase[i] + ns[i];      // past the slots: the indicator's row
-                        JHyp *h = &hx[nh++]; memset(h, 0, sizeof *h);
-                        h->origin = "written measure"; h->cons.op = J_EQ; h->cons.t = &tx[ntx];
-                        tx[ntx].var = ind ? nslot + i : q; fd_jint(&tx[ntx].coef, 1); ntx++; h->cons.nt = 1;
-                        if (ind) { tx[ntx].var = L->npairs; fd_jint(&tx[ntx].coef, 1); ntx++; h->cons.nt = 2; }
-                        fd_jint(&h->cons.rhs, ind ? w0[i] : wc[q]);
+            uint8_t unb[FD_MAXFLAT];
+            char *mark = cur;
+            bool found = false;
+            for (int32_t only = -1; only < nc && only < 16 && !found; only++) {
+                cur = mark;
+                for (int32_t k = 0; k < L->npaths; k++) unb[k] = only >= 0 && L->edge[k] != only;
+                int32_t *dl = (int32_t *)rk_bump(&cur, end, sizeof(int32_t) * (size_t)L->npaths);
+                JVc lp;
+                rk_unbounded = only >= 0 ? unb : NULL;
+                bool built = dl && rk_build(L->paths, L->npaths, on, L->pre, L->post, L->npairs, true, 0, &cur, end, &lp, dl);
+                rk_unbounded = NULL;
+                if (!built) goto out;
+                if (nw) {                                        // the written members' rows, fixed: c_q = w_q,
+                    JHyp *hx = (JHyp *)rk_bump(&cur, end, sizeof(JHyp) * (size_t)(lp.nhyps + NP));   // and
+                    JTerm *tx = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)(2 * NP));     // indicator
+                    if (!hx || !tx) goto out;                                                      // + c0 = w0
+                    memcpy(hx, lp.hyps, sizeof(JHyp) * (size_t)lp.nhyps);
+                    int32_t nh = lp.nhyps, ntx = 0;
+                    for (int32_t i = 0; i < m; i++) {
+                        if (!wr[i]) continue;
+                        for (int32_t q = sbase[i]; q <= sbase[i] + ns[i]; q++) {
+                            bool ind = q == sbase[i] + ns[i];      // past the slots: the indicator's row
+                            JHyp *h = &hx[nh++]; memset(h, 0, sizeof *h);
+                            h->origin = "written measure"; h->cons.op = J_EQ; h->cons.t = &tx[ntx];
+                            tx[ntx].var = ind ? nslot + i : q; fd_jint(&tx[ntx].coef, 1); ntx++; h->cons.nt = 1;
+                            if (ind) { tx[ntx].var = L->npairs; fd_jint(&tx[ntx].coef, 1); ntx++; h->cons.nt = 2; }
+                            fd_jint(&h->cons.rhs, ind ? w0[i] : wc[q]);
+                        }
                     }
+                    lp.hyps = hx; lp.nhyps = nh;
                 }
-                lp.hyps = hx; lp.nhyps = nh;
+                JTerm *obj = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)L->npaths);
+                if (!obj) goto out;
+                int32_t nt = 0;
+                for (int32_t k = 0; k < L->npaths; k++) if (dl[k] >= 0) { obj[nt].var = dl[k]; fd_jint(&obj[nt].coef, 1); nt++; }
+                LMax X = lia_maximize(&lp, obj, nt, F->lim, cur, (size_t)((char *)F->work + F->worksz - cur));
+                if (X.k != LIA_MAX_BOUND || X.b.n == 0) continue;
+                // a call is strict when every flattened path of it falls
+                for (int32_t c = 0; c < nc; c++) strict[c] = true;
+                for (int32_t k = 0; k < L->npaths; k++) if (X.model.val[dl[k]].n == 0) strict[L->edge[k]] = false;
+                for (int32_t q = 0; q <= NP; q++) if (!fd_i128(&X.model.val[q], &cf[q])) goto out;
+                found = true;
             }
-            JTerm *obj = (JTerm *)rk_bump(&cur, end, sizeof(JTerm) * (size_t)L->npaths);
-            if (!obj) goto out;
-            int32_t nt = 0;
-            for (int32_t k = 0; k < L->npaths; k++) if (dl[k] >= 0) { obj[nt].var = dl[k]; fd_jint(&obj[nt].coef, 1); nt++; }
-            LMax X = lia_maximize(&lp, obj, nt, F->lim, cur, (size_t)((char *)F->work + F->worksz - cur));
-            if (X.k != LIA_MAX_BOUND || X.b.n == 0) goto out;
-            // a call is strict when every flattened path of it falls
-            for (int32_t k = 0; k < L->npaths; k++) if (X.model.val[dl[k]].n == 0) strict[L->edge[k]] = false;
-            for (int32_t q = 0; q <= NP; q++) if (!fd_i128(&X.model.val[q], &cf[q])) goto out;
+            if (!found) goto out;
         }
         // the calls left unlowered must close no cycle among the members (a self-call is one)
         int32_t indeg[FD_CYC_MAXM]; bool gone[FD_CYC_MAXM];

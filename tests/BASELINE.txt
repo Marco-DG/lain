@@ -495,6 +495,10 @@ ty=Slice_u8 scalar
 rc=0
 out=
 at=const 2
+### tests/functions/recursion_depth_guard_cycle_pass.ln
+rc=0
+out=
+at=const 6
 ### tests/functions/recursion_diff_measure_pass.ln
 rc=3
 out=

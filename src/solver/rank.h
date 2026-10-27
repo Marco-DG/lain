@@ -59,6 +59,11 @@ static const JInt *rk_coef(const JCons *row, int32_t v) {
 // k must fall by at least delta_k, 0 <= delta_k <= 1, one more variable per path (its id in
 // dl_out[k], -1 for a path not in play); without it every path falls by at least 1. Variables: c_0..c_{npairs-1},
 // c0, then per path its mu rows, its nu rows and (with `delta`) its delta. False: out of room.
+// Per path, when set: the path owes no bound and does not fall (its delta is 0), only that the
+// function not rise on it. fd_rank_cycle's cut search sets it around one call: under spec 12's cut a
+// call that only keeps the measure from rising (rec.le) owes no bound, and a depth passed on unchanged
+// (`term(var p, depth)`) bounds nothing there. NULL: every path bounded, as before.
+static const uint8_t *rk_unbounded = NULL;
 static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, const int32_t *pre,
                      const int32_t *post, int32_t npairs, bool delta, int64_t cbound, char **cur, char *end,
                      JVc *lp, int32_t *dl_out) {
@@ -110,6 +115,7 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
         const JVc *P = paths[k];
         int32_t tcap = P->nhyps;
         for (int pass = 0; pass < 2; pass++) {              // 0: the decrease (mu), 1: the bound (nu)
+            if (pass == 1 && rk_unbounded && rk_unbounded[k]) break;   // no bound owed on this path
             int32_t base = pass == 0 ? mu0[k] : nu0[k];
             for (int32_t v = 0; v < nv; v++) {               // sum_r M[r][v] y_r  +  sum_i s_i c_i  =  0
                 char *undo = *cur;                           // an equation with no term gives its room back:
@@ -143,7 +149,7 @@ static bool rk_build(const JVc *const *paths, int32_t npaths, const bool *on, co
         if (delta) {                                         // 0 <= delta_k <= 1
             JInt one, m1; rk_int(&one, 1); rk_int(&m1, -1);
             RK_NEW(J_LE, 0); RK_TERM(dl[k], &m1); RK_DONE();
-            RK_NEW(J_LE, 1); RK_TERM(dl[k], &one); RK_DONE();
+            RK_NEW(J_LE, rk_unbounded && rk_unbounded[k] ? 0 : 1); RK_TERM(dl[k], &one); RK_DONE();   // unbounded: 0
         }
     }
     if (cbound > 0) {                                        // |c_i| <= cbound (lia_rank_lex_bounded)

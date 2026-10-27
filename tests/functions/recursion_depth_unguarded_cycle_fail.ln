@@ -1,0 +1,19 @@
+// EXPECT: [E011]
+// The same cycle without its guard: primary calls expr again whatever the depth, so the cycle never
+// ends for n = 7, and no call of it can carry the measure's bound.
+func primary(n u32, depth u32) u32 {
+    if n == 7 {
+        var r u32 = expr(n, depth +% 1)
+        if r > 9 { return 1 }
+    }
+    return 0
+}
+func term(n u32, depth u32) u32 {
+    return primary(n, depth)
+}
+func expr(n u32, depth u32) u32 {
+    return term(n, depth)
+}
+func main() i32 {
+    return expr(3, 0) as% i32
+}

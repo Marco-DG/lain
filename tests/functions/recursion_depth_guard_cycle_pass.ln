@@ -1,0 +1,18 @@
+// A cycle of three functions bounded by a depth guard (TCW's calc.ln): primary -> expr -> term ->
+// primary raises `depth` once a round, and primary returns when depth > 64. Only primary's call,
+// made after its guard, owes the measure's bound; term and expr pass `depth` on unchanged and owe
+// only that the measure not rise there (spec 12's cut).
+func primary(n u32, depth u32) u32 {
+    if depth > 64 { return 0 }
+    if n == 7 { return expr(n, depth + 1) }
+    return n
+}
+func term(n u32, depth u32) u32 {
+    return primary(n, depth)
+}
+func expr(n u32, depth u32) u32 {
+    return term(n, depth)
+}
+func main() i32 {
+    return expr(7, 0) as% i32
+}
