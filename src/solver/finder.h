@@ -3651,6 +3651,78 @@ static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const
     }
     return true;
 }
+// A RATE (TCW's real programs, isqrt.ln's `main`: `bad` grows by at most 2 a lap of `for k in
+// 0..2000`, so `bad + 1` fits): per header, a counter j whose step is one constant of one sign on
+// every back-edge path, bounded the way it steps by a verified claim (k <= 2000), against each
+// version t that no verified claim bounds near its range (|bound| <= 2^24) on either side: if t's
+// step is bounded on every path, L*t - c*j never rises (rank.h's lia_relations), so it stays at most
+// its greatest value on the loop's entry, `bad - 2*k <= 0`. A candidate only, from the second round
+// (the counter's bound is the first's). lia_relations asks two maximizations per pair and path, so
+// it is asked of those pairs alone, and only where both kinds exist: a sum for every pair at every
+// header (f68) cost +248% finder work on the trap leg.
+#define FD_RATE_NEAR ((__int128)1 << 24)
+// Whether f stores into cell `key` a checked `+` or `-` that reads it (`bad = bad + 1`): an
+// accumulator whose step owes that it fit. A `+%` wraps by its mode and owes nothing, nor does a
+// trap leg's `+?` (it panics past the type): a rate claim there bounds nothing anyone is owed.
+static bool fd_checked_accumulator(IrFunc *f, int32_t key) {
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op != IR_STORE || i->n_operands < 2 || !i->operands[0] || i->operands[0]->id != key) continue;
+            IrInstr *d = fd_def_in(f, i->operands[1]);
+            if (d && (d->op == IR_ADD || d->op == IR_SUB) && d->wrap == IR_WRAP_CHECK && d->n_operands >= 2 &&
+                (fd_reads_cell(f, d->operands[0], key, NULL) || fd_reads_cell(f, d->operands[1], key, NULL))) return true;
+        }
+    return false;
+}
+static bool fd_rate_candidates(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
+    for (IrBlock *h = f->blocks; h; h = h->next) {
+        if (!h->is_loop_header) continue;
+        FdLoop L;
+        if (!fd_loop_build(F, f, h->id, as, nv, &L)) { free(L.mem); if (F->oom) return false; continue; }
+        int32_t sel[16], ns = 0, ncount = 0, nfree = 0;      // the pairs asked: a counter, the free versions
+        int8_t role[16];
+        for (int32_t v = 0; v < L.npk && L.npk <= 16 && L.npaths <= 8; v++) {
+            if (L.ptk[v] != JTERM_VALUE || !L.moves || !L.moves[v]) continue;
+            __int128 U, D;                                   // the verified bounds first: no search
+            bool hu = fd_tight1(as, nv, f, h->id, L.pkey[v], 1, &U), hd = fd_tight1(as, nv, f, h->id, L.pkey[v], -1, &D);
+            if ((!(hu && U <= FD_RATE_NEAR && U >= -FD_RATE_NEAR) || !(hd && D <= FD_RATE_NEAR && D >= -FD_RATE_NEAR)) &&
+                fd_checked_accumulator(f, L.pkey[v])) {
+                sel[ns] = v; role[ns++] = 0; nfree++;
+            }
+            if (ncount || !nfree || (!hu && !hd)) continue;  // one counter, once an accumulator is free
+            int64_t d0 = 0; bool cst = true;                 // one constant step of one sign
+            for (int32_t k = 0; k < L.npaths && cst; k++) {
+                int64_t lo, hi;
+                cst = rk_delta_sliced(L.paths[k], L.pre[v], L.post[v], slim, F->work, F->worksz, &lo, &hi) && lo == hi && lo != 0 &&
+                      (!d0 || (lo > 0) == (d0 > 0));
+                d0 = lo;
+            }
+            if (!cst || !(d0 > 0 ? hu : hd)) continue;      // bounded the way it steps
+            if (ns && sel[ns - 1] == v) { role[ns - 1] = 1; nfree--; } else sel[ns++] = v, role[ns - 1] = 1;
+            ncount++;
+        }
+        LRel rel[32]; int32_t spre[16], spost[16], nr = 0;
+        for (int32_t q = 0; q < ns; q++) { spre[q] = L.pre[sel[q]]; spost[q] = L.post[sel[q]]; }
+        if (ncount > 0 && nfree > 0) nr = lia_relations(L.paths, L.npaths, spre, spost, ns, slim, F->work, F->worksz, rel, 32);
+        for (int32_t q = 0; q < nr; q++) {
+            const LRel *r = &rel[q];
+            if (role[r->j] != 1 || role[r->t] != 0) continue;   // a free version against a bounded counter
+            int32_t t = sel[r->t], j = sel[r->j];
+            __int128 B, K;
+            if (!fd_tight1(as, nv, f, h->id, L.pkey[j], r->cj < 0 ? 1 : -1, &B)) continue;   // j unbounded that way
+            JClaim c; memset(&c, 0, sizeof c);
+            c.blk = h->id; c.fn = f; c.nt = 2;
+            c.key[0] = L.pkey[t]; c.tk[0] = JTERM_VALUE; c.coef[0] = r->ct;
+            c.key[1] = L.pkey[j]; c.tk[1] = JTERM_VALUE; c.coef[1] = r->cj;
+            if (!fd_entry_max(F, f, as, nv, &c, &K)) { if (F->oom) { free(L.mem); return false; } continue; }
+            c.rhs = K;
+            if (!fd_push_claim(F, &c, as, nv, cl, nc, ccl)) { free(L.mem); return false; }
+        }
+        free(L.mem);
+    }
+    return true;
+}
 // The same for a SUM of two versions (Euclid's `t = b; b = a % b; a = t`: neither a nor b is
 // monotone, a + b never rises, since a % b <= a): per header with at most FD_SUMV moving versions
 // that have their ENTRY pairs, each pair whose sum never rises (or never falls) on any back-edge
@@ -3991,6 +4063,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             if (round > 0 && !fd_nested_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (round > 0 && !fd_monotone_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (round > 0 && !fd_sum_monotone_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
+            if (round == 1 && !fd_rate_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
             if (!fd_entry_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
             for (IrBlock *kb = f->blocks; kb; kb = kb->next)

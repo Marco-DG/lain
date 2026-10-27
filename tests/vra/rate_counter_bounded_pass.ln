@@ -1,0 +1,10 @@
+// A count bounded by the laps: `bad` grows by at most 2 a lap of a loop of 2000 laps, so
+// `bad - 2*k <= 0` holds at the loop's header and `bad + 1` fits in an i32 (TCW's isqrt.ln).
+func main() i32 {
+    var bad = 0
+    for k in 0..2000 {
+        if k % 3 == 0 { bad = bad + 1 }
+        if k % 5 == 0 { bad = bad + 1 }
+    }
+    return bad -% 1067
+}

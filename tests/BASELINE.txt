@@ -3725,6 +3725,9 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
+### tests/vra/rate_counter_bounded_pass.ln
+rc=0
+out=
 ### tests/vra/ref_binding_precise_pass.ln
 rc=4
 out=

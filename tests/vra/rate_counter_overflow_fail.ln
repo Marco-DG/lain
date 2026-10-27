@@ -1,0 +1,10 @@
+// EXPECT: [E086]
+// The same rate, past the type: 40000 a lap for 70000 laps is 2.8e9, more than an i32 holds, so
+// `s + 40000` may overflow and is refused.
+func main() i32 {
+    var s i32 = 0
+    for k in 0..70000 {
+        s = s + 40000
+    }
+    return s -% s
+}
