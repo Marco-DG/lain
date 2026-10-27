@@ -38,6 +38,9 @@
 //     `lo <= i`, lo the value stored on the loop's one entry edge, where every write the loop makes
 //     to the cell is a checked step up (jg_counter). Where no ranking is proposed for a loop whose
 //     header tests `i < hi` of such a counter, each trip stepping it, `hi - i` is OWED, a ranking.
+//   - in a loop RANKING's VCs, a MOD term's residue (s27): x floor-mod k as fresh q and r, x - k*q - r
+//     = 0 and 0 <= r <= k - 1 (`def mod k`), one pair per x and k a VC. One (q, r) satisfies them,
+//     so r only names the residue; the ranking itself is owed, never a fact.
 // Why these hold. An SSA value's definition holds wherever the definition dominates: if an
 // operand's definition ran again after the value's and before the point, there would be a path
 // from the entry to the point that avoids the value's definition. The same argument covers a
@@ -85,14 +88,15 @@
 // one side of a trip, c41), mmf NULL where mm is 0; or, with wbits 1..64, the linear value WRAPPED
 // into wbits bits, signed where wsgn, as it_wrap narrows it (a return's landed value, s8). The
 // generator states its facts; the recipe only says which value they are about (the remainder of
-// x / c is x - c*q).
+// x / c is x - c*q). With fdiv, the division is the FLOOR of that quotient (den > 0), a residue's
+// quotient (JTERM_MOD, s27): not exact, so read apart.
 // A form k: sum over i < fn[k] of fcoef[k][i] * fvar[k][i], plus fc0[k]; nf forms, 1 .. JRANK_MAXC.
 typedef struct {
     int32_t nf; uint8_t fn[JRANK_MAXC]; int32_t fvar[JRANK_MAXC][JRANK_MAXT];
     __int128 fcoef[JRANK_MAXC][JRANK_MAXT], fc0[JRANK_MAXC];
 } JMinMax;
 typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int32_t fval; int8_t mm; const JMinMax *mmf;
-                 int8_t wbits; bool wsgn; } JRecipe;
+                 int8_t wbits; bool wsgn; bool fdiv; } JRecipe;
 
 // A claim at a cut point, `sum(coef * term) <= rhs`, over one to four terms by value id: a cell's
 // ALLOCA id is the version the cell has as block `blk` is entered, any other id that integer value.
@@ -1256,7 +1260,7 @@ static int32_t jb_fresh(JB *B, const char *what, int32_t id, const JLT *t, int n
     JRecipe *r = JG_NEW(B->g, JRecipe, 1);
     if (!s || !r) { B->fail = true; return 0; }
     strcpy(s, nm);
-    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL; r->wbits = 0; r->wsgn = false;
+    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL; r->wbits = 0; r->wsgn = false; r->fdiv = false;
     for (int i = 0; i < n; i++) { r->var[i] = t[i].var; r->coef[i] = t[i].c; }
     int32_t x = jb_newvar(B, s, 3, id, NULL);
     B->qt--;                                                   // nothing to state for it
@@ -1879,8 +1883,45 @@ static bool jg_head_ok(JG *g, int32_t b, int32_t key) {
     int32_t H = jg_head_of(g, b);
     return H >= 0 && g->instate[(size_t)H * (size_t)g->ncells + (size_t)g->cell[key]] >= 0;
 }
-static int32_t jb_cterm(JB *B, int32_t key, uint8_t tk, const int32_t *row, int32_t H) {
+// Can a MOD term over `key` be stated in a ranking at loop header H (s27): an integer cell with a
+// version at H and at the end of each edge into it (jb_cterm's pre and post: a ranking reads the
+// back edges, paths_mod every edge), an address naming it.
+static bool jg_mod_ok(JG *g, int32_t H, int32_t key) {
+    if (key < 0 || key >= g->nv || g->cell[key] < 0 || !jg_loop_header(g, H)) return false;
+    int32_t c = g->cell[key];
+    if (g->csyn[c] || !g->cty[c] || g->cty[c]->kind != IRT_INT || g->instate[(size_t)H * (size_t)g->ncells + (size_t)c] < 0) return false;
+    for (IrEdge *pe = g->blk[H]->preds; pe; pe = pe->next)
+        if (g->rpoix[pe->block->id] >= 0 && g->outstate[(size_t)pe->block->id * (size_t)g->ncells + (size_t)c] < 0) return false;
+    return true;
+}
+// A RESIDUE (JTERM_MOD, s27): version variable x floor-mod k, the r of x = k*q + r, 0 <= r <= k - 1,
+// q and r fresh (`mod<k>.q.<x>`, `mod<k>.r.<x>`) and defined exactly by those facts (origin `def mod
+// <k>`): one (q, r) per x, so r only names x's residue. One pair per x and k a VC: a path that
+// leaves the cell as it was names one r for pre and post. Their recipes: q the floor of x / k, r
+// x - k*q. VC-wide only: a ranking's VCs and the paths are built at the top level.
+static int32_t jb_mod(JB *B, int32_t x, int32_t k) {
     JG *g = B->g;
+    char nq[160], nr[160];
+    snprintf(nq, sizeof nq, "mod%d.q.%s", (int)k, B->names[x]); snprintf(nr, sizeof nr, "mod%d.r.%s", (int)k, B->names[x]);
+    for (int32_t v = 0; v < B->nvars; v++) if (B->kind[v] == 3 && !strcmp(B->names[v], nr)) return v;
+    int32_t key = B->kind[x] == 1 ? g->cellv[g->ver[B->key[x]].cell]->id : B->key[x];   // a value id, as a harness reads it
+    char *sq = JG_NEW(g, char, strlen(nq) + 1), *sr = JG_NEW(g, char, strlen(nr) + 1);
+    JRecipe *rq = JG_NEW(g, JRecipe, 1), *rr = JG_NEW(g, JRecipe, 1);
+    if (!sq || !sr || !rq || !rr || B->jS >= 0) { B->fail = true; return 0; }
+    memset(rq, 0, sizeof *rq); memset(rr, 0, sizeof *rr);
+    strcpy(sq, nq); strcpy(sr, nr);
+    int32_t q = jb_newvar(B, sq, 3, key, NULL); B->qt--;      // nothing to state for either
+    int32_t r = jb_newvar(B, sr, 3, key, NULL); B->qt--;
+    if (B->fail) return 0;
+    rq->n = 1; rq->var[0] = x; rq->coef[0] = 1; rq->den = k; rq->fdiv = true; rq->fval = -1;
+    rr->n = 2; rr->var[0] = x; rr->coef[0] = 1; rr->var[1] = q; rr->coef[1] = -k; rr->den = 1; rr->fval = -1;
+    B->vrec[q] = rq; B->vrec[r] = rr;
+    jb_divmod(B, x, q, r, k, false, true, jb_str(B, "def mod %lld", k, 0, 0));
+    return r;
+}
+static int32_t jb_cterm(JB *B, int32_t key, uint8_t tk, const int32_t *row, int32_t H, int32_t arg) {
+    JG *g = B->g;
+    if (tk == JTERM_MOD) return jb_mod(B, jb_term(B, key, JTERM_VALUE, row), arg);   // jg_mod_ok has checked it
     if (tk == JTERM_HEAD)                                      // jg_claims_ok has checked b has one
         return jb_ver(B, g->instate[(size_t)jg_head_of(g, H) * (size_t)g->ncells + (size_t)g->cell[key]]);
     if (tk != JTERM_ENTRY) return jb_term(B, key, tk, row);
@@ -1941,7 +1982,7 @@ static void jb_claims(JB *B, const JVer *v) {
             JLT t[JCLAIM_MAXT]; int n = 0;
             for (int k = 0; k < c->nt; k++) {
                 if (k == gk) continue;
-                t[n].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_cterm(B, c->key[k], c->tk[k], row, c->blk);
+                t[n].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_cterm(B, c->key[k], c->tk[k], row, c->blk, 0);
                 t[n].c = c->coef[k]; n++;
             }
             if (gk < 0) { jb_atom(B, o, t, n, J_LE, c->rhs); continue; }
@@ -4026,7 +4067,7 @@ static bool jg_made_at(JG *g, int32_t blk, int32_t cell) {
     return jv >= 0 && (g->ver[jv].kind == JV_JOIN || g->ver[jv].kind == JV_HEAD) && g->ver[jv].blk == blk;
 }
 // A term's version: the block's (0), the loop's entry edge's (1), the trip's start's (2).
-static int jg_tk_class(uint8_t tk) { return tk == JTERM_ENTRY ? 1 : tk == JTERM_HEAD ? 2 : tk == JTERM_POST ? 3 : tk == JTERM_PRE ? 4 : 0; }
+static int jg_tk_class(uint8_t tk) { return tk == JTERM_ENTRY ? 1 : tk == JTERM_HEAD ? 2 : tk == JTERM_POST ? 3 : tk == JTERM_PRE ? 4 : tk == JTERM_MOD ? 5 : 0; }
 // Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
 // Its terms: one to `max`, no key twice (a sum names each term once), but a cell beside its ENTRY
 // value (`x - entry(x)`: two terms, its version at the block and the one its loop was entered with).
@@ -4066,6 +4107,7 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
     if (!jg_claim_shape(g, c->key, c->tk, c->fld, c->nt, JCLAIM_MAXT)) return false;
     if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
     for (int k = 0; k < c->nt; k++) {
+        if (c->tk[k] == JTERM_MOD) return jg_fail(g, "a claim's MOD term (v1: a loop's ranking only)");
         if (c->key[k] != JKEY_RET) {
             if (c->tk[k] != JTERM_VALUE && c->tk[k] != JTERM_POST && c->tk[k] != JTERM_PRE) return jg_fail(g, "a return claim over a length");
             continue;
@@ -4147,6 +4189,7 @@ static bool jg_claims_ok(JG *g) {
         for (int k = 0; k < c->nt; k++) {
             int32_t key = c->key[k];
             if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
+            if (c->tk[k] == JTERM_MOD) return jg_fail(g, "a claim's MOD term (v1: a loop's ranking only)");
             if (c->tk[k] == JTERM_EACH) {                    // one instance per element cell
                 int32_t ec[JELEM_MAXN], en = jg_each_cells(g, key, ec);
                 if (++each > 1) return jg_fail(g, "a claim of two EACH terms");
@@ -4286,7 +4329,7 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
                 JLT t[JCLAIM_MAXT]; JCons goal; int nt = 0;
                 for (int k = 0; k < c->nt; k++) {
                     if (k == gk) continue;
-                    t[nt].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_cterm(&B, c->key[k], c->tk[k], row, c->blk);
+                    t[nt].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_cterm(&B, c->key[k], c->tk[k], row, c->blk, 0);
                     t[nt].c = c->coef[k]; nt++;
                 }
                 int32_t gv = -1;
@@ -4362,8 +4405,8 @@ static void jb_region_premises(JB *B, const JRank *r, int32_t k, const int32_t *
 static void jb_rank_terms(JB *B, const JRank *r, IrBlock *H, IrBlock *P, int32_t *pre, int32_t *post) {
     JG *g = B->g;
     for (int32_t i = 0; i < r->nt; i++) {
-        pre[i] = jb_cterm(B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells, H->id);
-        post[i] = jb_cterm(B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells, H->id);
+        pre[i] = jb_cterm(B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells, H->id, r->targ[i]);
+        post[i] = jb_cterm(B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells, H->id, r->targ[i]);
     }
 }
 // The MAX (kind 1) or MIN (2) of rows a0 .. a0 + n - 1 over `v` (pre or post), a free edge's
@@ -4749,8 +4792,14 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
         // a CONSTANT one (no terms), written or proposed, falls on no edge that is ever taken: it is
         // how a loop whose back edges are dead (`while false`, a fixed guard) is shown to end
         if (r->nt != 0 && !jg_claim_shape(g, r->key, r->tk, NULL, r->nt, JRANK_MAXT)) return false;
+        for (int32_t i = 0; i < r->nt; i++) {                  // a term's argument: a MOD's k alone (s27)
+            if (r->tk[i] != JTERM_MOD ? r->targ[i] != 0 : r->targ[i] < 2 || r->targ[i] > JTERM_MODMAX)
+                return jg_fail(g, "a ranking claim's term argument out of range, or on a kind that takes none");
+            if (r->tk[i] == JTERM_MOD && !jg_mod_ok(g, H->id, r->key[i]))
+                return jg_fail(g, "a ranking claim's MOD term of no integer cell with a version at its header and back edges");
+        }
         for (int32_t i = 0; i < r->nt; i++)                    // a written measure's: a fixed quotient too
-            if (!jg_term_ok(g, H->id, r->key[i], r->tk[i]) && !(r == &mr && r->tk[i] == JTERM_VALUE && jg_fixed_quot(g, H->id, r->key[i])) &&
+            if (r->tk[i] != JTERM_MOD && !jg_term_ok(g, H->id, r->key[i], r->tk[i]) && !(r == &mr && r->tk[i] == JTERM_VALUE && jg_fixed_quot(g, H->id, r->key[i])) &&
                 !(r->tk[i] == JTERM_ENTRY && jg_entry_ok(g, H->id, r->key[i])))   // ENTRY: fixed in the loop
                 return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
         for (int32_t j = 0; j < r->ncomp; j++) {
@@ -4814,8 +4863,8 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
                     B.to = H->id;
                     int32_t pre[JRANK_MAXT], post[JRANK_MAXT];
                     for (int32_t i = 0; i < r->nt; i++) {
-                        pre[i] = jb_cterm(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells, H->id);
-                        post[i] = jb_cterm(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells, H->id);
+                        pre[i] = jb_cterm(&B, r->key[i], r->tk[i], g->instate + (size_t)H->id * (size_t)g->ncells, H->id, r->targ[i]);
+                        post[i] = jb_cterm(&B, r->key[i], r->tk[i], g->outstate + (size_t)P->id * (size_t)g->ncells, H->id, r->targ[i]);
                     }
                     int32_t last = c0r[j] + cn[j] - 1, a = c0r[j] + q, d = what == 1 ? 1 : 0;
                     JCons goal; bool ok;
@@ -4908,6 +4957,7 @@ static const JRank *jg_entry_rank(JG *g, const JRank *rk, int32_t nrk, const IrF
         bool ok = pk >= 0 && pp && pp->value && jg_term_kind(pp->value->type, r->tk[i]);
         for (int32_t j = 0; ok && j < i; j++) ok = r->key[j] != r->key[i] || r->tk[j] != r->tk[i];
         if (!ok) why = "a recursion's measure is not over its function's parameters";
+        if (!why && r->targ[i] != 0) why = "a recursion's measure's term argument (v1: a MOD term is a loop ranking's only)";
     }
     if (why) { *bad = true; jg_fail(g, why); return NULL; }
     return r;
@@ -5411,6 +5461,7 @@ static bool jgen_term_kinds(JMem *m, IrFunc *f, IrFunc *mod, int32_t blk, const 
         }
         if (tk && tk[i] == JTERM_ENTRY) { if (jg_entry_ok(&g, blk, keys[i])) kind[i] = 1; continue; }   // never made
         if (tk && tk[i] == JTERM_HEAD) { if (jg_head_ok(&g, blk, keys[i])) kind[i] = 1; continue; }     // never made
+        if (tk && tk[i] == JTERM_MOD) { if (jg_mod_ok(&g, blk, keys[i])) kind[i] = 1; continue; }       // a ranking's (s27)
         if (!jg_term_ok(&g, blk, keys[i], tk && tk[i] != JTERM_UPTO ? tk[i] : JTERM_VALUE)) continue;
         kind[i] = 1;
         if (g.cell[keys[i]] < 0) continue;
@@ -5448,14 +5499,50 @@ static bool jg_head_live(JG *g, int32_t H, int32_t c, int32_t v) {
     }
     return false;
 }
+// The MOD pairs a header's paths are offered (paths_mod, s27): per integer cell the loop writes (its
+// version at the header made there) and divides, or takes a remainder of, by a constant k in 2 ..
+// JTERM_MODMAX as read at the header (a load of that version: Kroening's `x % 2`), the cell's
+// residue mod k, each (cell, k) once, at most JPATH_MAXMOD. A loop that tests a residue is the one
+// whose ranking may need it; any other offers none, so its paths cost no fresh variable more.
+enum { JPATH_MAXMOD = 8 };
+static void jg_mod_pairs(JG *g, int32_t header, int32_t *keys, uint8_t *tks, int32_t *args, int32_t *nk, int32_t cap) {
+    const uint8_t *Lh = g->inloop + (size_t)header * (size_t)g->nb;
+    int32_t added = 0;
+    for (int32_t b = 0; b < g->nb && added < JPATH_MAXMOD; b++) {
+        if (!Lh[b] || !g->blk[b]) continue;
+        for (IrInstr *i = g->blk[b]->instrs; i && added < JPATH_MAXMOD && *nk < cap; i = i->next) {
+            if ((i->op != IR_SREM && i->op != IR_UREM && i->op != IR_SDIV && i->op != IR_UDIV) || i->n_operands < 2) continue;
+            IrValue *xv = i->operands[0];
+            __int128 k;
+            if (!xv || xv->id < 0 || xv->id >= g->nv || g->loadver[xv->id] < 0 || !jg_const_of(g, i->operands[1], &k) ||
+                k < 2 || k > JTERM_MODMAX) continue;
+            int32_t v = g->loadver[xv->id], c = g->ver[v].cell;
+            if (g->instate[(size_t)header * (size_t)g->ncells + (size_t)c] != v || g->ver[v].kind != JV_HEAD ||
+                g->ver[v].blk != header || !jg_mod_ok(g, header, g->cellv[c]->id)) continue;
+            bool dup = false;
+            for (int32_t q = 0; q < *nk && !dup; q++) dup = keys[q] == g->cellv[c]->id && tks[q] == JTERM_MOD && args[q] == (int32_t)k;
+            if (dup) continue;
+            keys[*nk] = g->cellv[c]->id; tks[*nk] = JTERM_MOD; args[*nk] = (int32_t)k; (*nk)++; added++;
+        }
+    }
+}
+static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, bool modp, JPaths *out,
+                     char *err, size_t errcap);
+static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out, char *err, size_t errcap) {
+    return jg_paths(m, f, mod, cl, ncl, header, false, out, err, errcap);
+}
+static bool jgen_paths_mod(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out, char *err, size_t errcap) {
+    return jg_paths(m, f, mod, cl, ncl, header, true, out, err, errcap);
+}
 // For whoever proposes ranking functions and loop relations (untrusted; PE.5, PE.7): every edge
 // into loop header `header` as the generator states it with the claims `cl` (on a back edge the
 // header's claims about its previous entry are facts, as for `inv.keep`), and for each version the
 // header makes, its variable at the previous entry (-1 on an edge from before the loop) and the one
 // the edge ends with. The goal of each path's VC is 0 <= 0 and means nothing. `refused` says why a
-// header has no paths; false with `err` when the generator refuses the function.
-static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
-                       char *err, size_t errcap) {
+// header has no paths; false with `err` when the generator refuses the function. With `modp`
+// (paths_mod, s27), the MOD pairs after those (jg_mod_pairs).
+static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, bool modp, JPaths *out,
+                     char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
@@ -5464,12 +5551,12 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
     if (!jg_loop_header(&g, header)) { out->refused = "not a loop header"; return true; }
     IrBlock *H = g.blk[header];
-    int32_t nk = 0, *keys = JG_NEW(&g, int32_t, g.ncells ? 2 * g.ncells : 1);
-    uint8_t *tks = JG_NEW(&g, uint8_t, g.ncells ? 2 * g.ncells : 1);
+    int32_t nk = 0, cap = 2 * g.ncells + (modp ? JPATH_MAXMOD : 0), *keys = JG_NEW(&g, int32_t, cap ? cap : 1), *args = JG_NEW(&g, int32_t, cap ? cap : 1);
+    uint8_t *tks = JG_NEW(&g, uint8_t, cap ? cap : 1);
     int32_t np = 0;
     for (IrEdge *e = H->preds; e; e = e->next) np++;
     JPath *P = JG_NEW(&g, JPath, np ? np : 1);
-    if (!keys || !tks || !P) return jg_fail(&g, "out of memory");
+    if (!keys || !tks || !args || !P) return jg_fail(&g, "out of memory");
     // the header's versions: of every cell the loop writes (its JV_HEAD) whose value a trip uses
     // (jg_head_live: not a temporary every path stores before it reads, c45), and of every cell its
     // blocks only read, whose one version holds on every trip (`while b.len < b.cap`, cap never
@@ -5498,6 +5585,8 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
         if (tks[q] != JTERM_VALUE || jv < 0 || g.ver[jv].blk != header || g.ver[jv].kind != JV_HEAD || !jg_entry_ok(&g, header, keys[q])) continue;
         tks[nk] = JTERM_ENTRY; keys[nk++] = keys[q];
     }
+    for (int32_t q = 0; q < nk; q++) args[q] = 0;
+    if (modp) jg_mod_pairs(&g, header, keys, tks, args, &nk, cap);
     int32_t n = 0;
     for (IrEdge *e = H->preds; e; e = e->next) {
         IrBlock *Pb = e->block;
@@ -5514,9 +5603,9 @@ static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_
         if (B.fail || !pp) return jg_fail(&g, "out of memory");
         for (int32_t k = 0; k < nk; k++) {
             pp[k].key = keys[k];
-            pp[k].post = jb_cterm(&B, keys[k], tks[k], g.outstate + (size_t)Pb->id * (size_t)g.ncells, header);
-            pp[k].pre = back ? jb_cterm(&B, keys[k], tks[k], g.instate + (size_t)header * (size_t)g.ncells, header) : -1;
-            pp[k].tk = tks[k];
+            pp[k].post = jb_cterm(&B, keys[k], tks[k], g.outstate + (size_t)Pb->id * (size_t)g.ncells, header, args[k]);
+            pp[k].pre = back ? jb_cterm(&B, keys[k], tks[k], g.instate + (size_t)header * (size_t)g.ncells, header, args[k]) : -1;
+            pp[k].tk = tks[k]; pp[k].arg = args[k];
         }
         JLT none[1]; JCons goal; JObl o;
         JVc *vc = JG_NEW(&g, JVc, 1);
@@ -5574,7 +5663,7 @@ static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, i
                     uint8_t tk = jg_is_int(p->value->type) ? JTERM_VALUE : p->value->type && p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
                     if (tk > JTERM_LEN) continue;
                     IrValue *av = i->operands[base + pos];
-                    pp[q].key = p->value->id; pp[q].tk = tk;
+                    pp[q].key = p->value->id; pp[q].tk = tk; pp[q].arg = 0;
                     pp[q].post = tk == JTERM_LEN ? jb_len(&B, av) : jb_val(&B, av);
                     pp[q].pre = t == f ? (tk == JTERM_LEN ? jb_len(&B, p->value) : jb_val(&B, p->value)) : -1;
                     q++;
@@ -5584,7 +5673,7 @@ static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, i
                     if (!p->value) continue;
                     uint8_t tk = jg_is_int(p->value->type) ? JTERM_VALUE : p->value->type && p->value->type->kind == IRT_SLICE ? JTERM_LEN : 2;
                     if (tk > JTERM_LEN) continue;
-                    pe[qe].key = p->value->id; pe[qe].tk = tk; pe[qe].post = -1;
+                    pe[qe].key = p->value->id; pe[qe].tk = tk; pe[qe].arg = 0; pe[qe].post = -1;
                     pe[qe].pre = tk == JTERM_LEN ? jb_len(&B, p->value) : jb_val(&B, p->value);
                     qe++;
                 }
@@ -5636,6 +5725,11 @@ static bool jgo_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_paths(&m, f, x->mod, cl, ncl, header, out, err, errcap);
 }
+static bool jgo_paths_mod(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
+                          char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    return jgen_paths_mod(&m, f, x->mod, cl, ncl, header, out, err, errcap);
+}
 static bool jgo_call_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, JPaths *out, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_call_paths(&m, f, x->mod, cl, ncl, out, err, errcap);
@@ -5654,7 +5748,7 @@ static bool jgo_measure(void *ctx, struct IrFunc *f, JRank *out, char *err, uint
 }
 static JudgeGen jgen_offer(JGenOffer *x) {
     JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
-    g.paths = jgo_paths; g.call_paths = jgo_call_paths; g.measure = jgo_measure;
+    g.paths = jgo_paths; g.paths_mod = jgo_paths_mod; g.call_paths = jgo_call_paths; g.measure = jgo_measure;
     return g;
 }
 

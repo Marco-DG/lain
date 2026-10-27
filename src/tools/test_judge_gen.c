@@ -45,7 +45,8 @@ static char *gen_ids(IrFunc *f, char *why) {
     return t;
 }
 // Every MAX or MIN variable's recipe (c41), one line each: "point kind ordinal var mm M:" then each
-// form as " {c0 coef*var ...}"; NULL when refused.
+// form as " {c0 coef*var ...}"; and a residue's (s27, a `mod` variable): "point kind ordinal var
+// floor /den:" or "exact /den:", then " coef*var ..."; NULL when refused.
 static char *gen_recipes(IrFunc *f, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
@@ -54,6 +55,13 @@ static char *gen_recipes(IrFunc *f, char *why) {
     for (int32_t i = 0; i < n; i++)
         for (int32_t x = 0; !o[i].outside && x < o[i].vc.nvars; x++) {
             const JRecipe *r = o[i].vrec ? o[i].vrec[x] : NULL;
+            if (r && !r->mm && !strncmp(o[i].vc.vars[x], "mod", 3) && len + 512 <= cap) {
+                len += (size_t)snprintf(t + len, cap - len, "%s %s %s %s %s /%lld:", o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal,
+                                        o[i].vc.vars[x], r->fdiv ? "floor" : "exact", (long long)r->den);
+                for (int q = 0; q < r->n && q < 4; q++) len += (size_t)snprintf(t + len, cap - len, " %lld*%s", (long long)r->coef[q], o[i].vc.vars[r->var[q]]);
+                len += (size_t)snprintf(t + len, cap - len, "\n");
+                continue;
+            }
             if (!r || !r->mm || len + 512 > cap) continue;
             len += (size_t)snprintf(t + len, cap - len, "%s %s %s %s mm %d:", o[i].vc.id.point, o[i].vc.id.kind, o[i].vc.id.ordinal, o[i].vc.vars[x], r->mm);
             for (int32_t k = 0; r->mmf && k < r->mmf->nf; k++) {
@@ -5201,6 +5209,96 @@ int main(void) {
         free(t); gen_mod = NULL;
     }
     printf("  a 64-bit shift's top bit, stated exactly; a call result's refinement bounds a product of it\n");
+    // 94. a RESIDUE term (s27, JTERM_MOD; Kroening-Sharygina-Tsitovich-Wintersteiger CAV 2010 Fig 1):
+    // `while x < 255 { if x % 2 != 0 { x = x - 1 } else { x = x + 2 } }` over i32, ranked
+    // <mod(x, 2), 255 - x>, both back edges free. (0) each rank.lex VC defines x's residue at the
+    // header and at the edge's end, `def mod 2` (x - 2q - r = 0, 0 <= r <= 1) a side, the residue's
+    // name pinned; the recipes q floor(x / 2), r = x - 2q; paths_mod offers the pair (x, MOD, 2) on
+    // every edge, paths() none, and term_kinds 1 for MOD on x, 0 on the parameter; (1) the even
+    // path leaves x as it was: one residue for pre and post there. Refused: a modulus of 1 and of
+    // 2^20 + 1, an argument on a VALUE term, MOD over the parameter (no cell), the same cell's MOD
+    // twice, MOD in a claim, kind 9 (none)
+    for (int c = 0; c < 2; c++) {
+        IrFunc *f = ir_func_new(&A, nm("kst94"), i32t, IR_FUNC_PURE);
+        IrValue *x0 = ir_add_param(f, i32t, nm("x0"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f), *b5 = ir_new_block(f);
+        IrValue *xc = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, xc, x0); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SLT, ir_load(f, b1, xc, i32t), ir_const_int(f, b1, 255, i32t)), b2, b5);
+        IrValue *m = ir_binop(f, b2, IR_SREM, ir_load(f, b2, xc, i32t), ir_const_int(f, b2, 2, i32t), i32t);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_NE, m, ir_const_int(f, b2, 0, i32t)), b3, b4);
+        ir_store(f, b3, xc, ir_binop(f, b3, IR_SUB, ir_load(f, b3, xc, i32t), ir_const_int(f, b3, 1, i32t), i32t)); ir_set_br(b3, b1);
+        if (c == 0) ir_store(f, b4, xc, ir_binop(f, b4, IR_ADD, ir_load(f, b4, xc, i32t), ir_const_int(f, b4, 2, i32t), i32t));
+        ir_set_br(b4, b1);
+        ir_set_ret(b5, ir_const_int(f, b5, 0, i32t));
+        ir_finalize_cfg(f);
+        JRank r; memset(&r, 0, sizeof r);
+        r.blk = b1->id; r.fn = f; r.ncomp = 2; r.nt = 2;
+        r.key[0] = xc->id; r.tk[0] = JTERM_MOD; r.targ[0] = 2; r.key[1] = xc->id;
+        r.coef[0][0] = 1; r.coef[1][1] = -1; r.c0[1] = 255;                 // <mod(x, 2), 255 - x>
+        r.nedge = 2; r.from[0] = b3->id; r.fall[0] = -1; r.from[1] = b4->id; r.fall[1] = -1;
+        gen_rk = &r; gen_nrk = 1;
+        char *t = gen_text(f), key[48], hn[64], pn[64], w[160], why[200] = "";
+        snprintf(hn, sizeof hn, "mod2.r.%%s%d@head.bb%d", xc->id, b1->id);
+        snprintf(key, sizeof key, "bb%d.%d rank.lex", b3->id, nins(b3));
+        const char *v3 = t ? vc_of(t, key) : "";
+        snprintf(pn, sizeof pn, "mod2.r.%%s%d@bb%d.", xc->id, b3->id);   // the store's version, its index next
+        snprintf(w, sizeof w, "def mod 2 : -1*%s <= 0\n", hn);
+        CHECK(count(v3, "def mod 2 : ") == 6 && strstr(v3, w) && strstr(v3, pn) && strstr(v3, "rank.lex"), "94 case %d: b3's two residues:\n%s", c, v3);
+        snprintf(key, sizeof key, "bb%d.%d rank.lex", b4->id, nins(b4));
+        const char *v4 = t ? vc_of(t, key) : "";
+        CHECK(count(v4, "def mod 2 : ") == (c == 0 ? 6 : 3), "94 case %d: b4's residues (%s):\n%s", c, c ? "one" : "two", v4);
+        free(t);
+        if (c == 0) {
+            char *rc = gen_recipes(f, why), wq[160], wr[200];
+            snprintf(wq, sizeof wq, "mod2.q.%%s%d@head.bb%d floor /2: 1*%%s%d@head.bb%d\n", xc->id, b1->id, xc->id, b1->id);
+            snprintf(wr, sizeof wr, "%s exact /1: 1*%%s%d@head.bb%d -2*mod2.q.%%s%d@head.bb%d\n", hn, xc->id, b1->id, xc->id, b1->id);
+            CHECK(rc && strstr(rc, wq) && strstr(rc, wr), "94: the recipes %s and %s:\n%s", wq, wr, rc ? rc : why);
+            free(rc);
+            for (int mode = 0; mode < 2; mode++) {               // paths_mod offers the pair; paths none
+                JMem mm = jmem_over(region, sizeof region); JPaths P; char err[200];
+                bool ok = mode ? jgen_paths_mod(&mm, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err) : jgen_paths(&mm, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+                int mods = 0;
+                for (int32_t k = 0; ok && k < P.n; k++)
+                    for (int32_t q = 0; q < P.p[k].npairs; q++) {
+                        const JPathPair *pp = &P.p[k].pairs[q];
+                        if (pp->tk != JTERM_MOD) { CHECK(pp->arg == 0, "94: a pair of another kind has no argument"); continue; }
+                        mods++;
+                        CHECK(pp->key == xc->id && pp->arg == 2 && pp->post >= 0 && (pp->pre >= 0) == P.p[k].back &&
+                              !strncmp(P.p[k].vc->vars[pp->post], "mod2.r.", 7), "94: the pair names x's residue (path %d)", k);
+                    }
+                CHECK(ok && P.n == 3 && mods == (mode ? 3 : 0), "94: %s: %d MOD pairs on %d paths", mode ? "paths_mod" : "paths", mods, ok ? P.n : -1);
+            }
+            {   JMem mm = jmem_over(region, sizeof region); char err[200]; uint8_t kind[2]; int32_t keys[2] = { xc->id, x0->id };
+                uint8_t tks[2] = { JTERM_MOD, JTERM_MOD };
+                bool ok = jgen_term_kinds(&mm, f, gen_mod, b1->id, keys, tks, 2, kind, err, sizeof err);
+                CHECK(ok && kind[0] == 1 && kind[1] == 0, "94: term_kinds, MOD on the cell 1, on the parameter 0");
+            }
+            static const char *bad[7] = { "term argument", "term argument", "term argument", "MOD term", "naming one term twice", "a claim's MOD term", "not a cell" };
+            for (int k = 0; k < 7; k++) {
+                JRank b = r; JClaim cl; memset(&cl, 0, sizeof cl);
+                char *tb = NULL; why[0] = 0;
+                if (k == 0) b.targ[0] = 1;
+                if (k == 1) b.targ[0] = (1 << 20) + 1;
+                if (k == 2) b.targ[1] = 3;                              // on the VALUE term
+                if (k == 3) b.key[0] = x0->id;                          // the parameter: no cell
+                if (k == 4) { b.tk[1] = JTERM_MOD; b.targ[1] = 3; }      // x's residue twice
+                if (k == 6) b.tk[1] = 9;                                // no such kind
+                if (k == 5) {
+                    gen_rk = NULL; gen_nrk = 0;
+                    cl.blk = b1->id; cl.fn = f; cl.nt = 1; cl.key[0] = xc->id; cl.tk[0] = JTERM_MOD; cl.coef[0] = 1; cl.rhs = 1;
+                    tb = gen_with(f, &cl, 1, JGEN_ALL, why);
+                } else {
+                    gen_rk = &b; gen_nrk = 1;
+                    tb = gen_with(f, NULL, 0, JGEN_ALL, why);
+                }
+                CHECK(!tb && strstr(why, bad[k]), "94 bad %d: refused (%s): got \"%s\"", k, bad[k], why);
+                free(tb);
+            }
+        }
+        gen_rk = NULL; gen_nrk = 0;
+    }
+    printf("  a residue term: x floor-mod k defined a side in a ranking's VCs, offered by paths_mod alone\n");
     // 91. a COUNTER (s22: spec 13's fact 4, the range of `for i in lo..hi`; spec 12, `for` loops
     // end), with no claims and no ranking proposed: `var i = 2; while i < n { d = i - 2; i = i + k }`
     // over u64, `i - 2`'s narrow.lo owed. (0) k = 1: the floor `counter` stated at i's HEAD version,

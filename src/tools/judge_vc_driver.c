@@ -312,6 +312,12 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
             if (r->var[i] == x || !hk_var(o, r->var[i], v, nv, &y)) return false;
             if (__builtin_mul_overflow(r->coef[i], y, &p) || __builtin_add_overflow(s, p, &s)) return false;
         }
+        if (r->fdiv) {                                 // the FLOOR of the quotient (a residue's, s27)
+            if (r->den <= 0) return false;
+            __int128 q = s / r->den;
+            if (s % r->den && s < 0) q--;
+            *out = q; return true;
+        }
         if (s % r->den) return false;                  // not exact: the recipe does not apply
         s /= r->den;
         if (r->wbits > 0) {                            // wrapped into wbits bits, as it_wrap narrows (s8)
@@ -335,7 +341,8 @@ static __int128 hk_jint(const JInt *x) {             // the generator's constant
 // A fresh variable's recipe as stored (I.197: every field checked, none trusted by construction):
 // mm -1, 0 or 1, its forms present exactly when mm is not 0, and then no float part, 1 ..
 // JRANK_MAXC forms of at most JRANK_MAXT terms each, every term a variable of the VC that is not
-// itself fresh. NULL when it is well formed, else what is wrong.
+// itself fresh; a floor division (fdiv, s27) by a positive den, beside no other kind. NULL when it
+// is well formed, else what is wrong.
 static const char *hk_recipe_bad(const JObl *o, int32_t x) {
     const JRecipe *r = o->vrec ? o->vrec[x] : NULL;
     if (!r) return NULL;
@@ -344,6 +351,7 @@ static const char *hk_recipe_bad(const JObl *o, int32_t x) {
     if ((r->mm != 0) != (r->mmf != NULL)) return "mm and its forms disagree";
     if (r->wbits < 0 || r->wbits > 64) return "a wrap of a width outside 0..64";
     if (r->wbits && (r->mm || r->fval >= 0)) return "a wrap beside a max, a min or a float part";
+    if (r->fdiv && (r->den <= 0 || r->mm || r->fval >= 0 || r->wbits)) return "a floor division by no positive number, or beside another kind";
     if (!r->mm) return NULL;
     const JMinMax *mf = r->mmf;
     if (r->fval >= 0) return "a max or min with a float part";

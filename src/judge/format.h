@@ -106,7 +106,11 @@ enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
 // `var` parameter `key` points to, or its integer field fld[k] (one level; fld -1: the pointee
 // itself), as the function returns (POST) and as it was entered (PRE): `post(q.count) -
 // pre(q.count) + ret = 0`. fld is read for these two kinds only; a producer sets it for them.
-enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4, JTERM_HEAD = 5, JTERM_POST = 6, JTERM_PRE = 7 };
+// JTERM_MOD: in a loop's RANKING claim only (s27), an integer cell's version FLOOR-MOD k, the r of
+// x = k*q + r with 0 <= r <= k - 1 whatever x's sign (not C's `%`): a natural number, so a component
+// may be bounded by it. k is the ranking's targ for the term, 2 .. JTERM_MODMAX.
+enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4, JTERM_HEAD = 5, JTERM_POST = 6, JTERM_PRE = 7,
+       JTERM_MOD = 8, JTERM_MODMAX = 1 << 20 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
                  struct IrFunc *fn; int16_t fld[JCLAIM_MAXT]; } JClaim;
 // A GUARDED return claim (s7): a return claim of `fn`, as a JClaim at JCLAIM_RET (the value returned,
@@ -146,6 +150,7 @@ enum { JRANK_MAXC = 8, JRANK_MAXT = 8, JRANK_MAXE = 8, JRANK_MAXL = 16, JRANK_MA
 typedef struct {
     int32_t blk, ncomp, nt, nedge;
     int32_t key[JRANK_MAXT]; uint8_t tk[JRANK_MAXT];             // as a claim's terms
+    int32_t targ[JRANK_MAXT];                                    // a term's argument: JTERM_MOD's k, else 0
     __int128 coef[JRANK_MAXC][JRANK_MAXT], c0[JRANK_MAXC];
     int32_t from[JRANK_MAXE]; int8_t fall[JRANK_MAXE];
     uint8_t cont[JRANK_MAXC];                                    // row j continues a MAX (1), a MIN (2)
@@ -168,8 +173,9 @@ typedef struct { JVc vc; int32_t claim; } JClaimVc;
 // index (as a recursion measure lists a call), `callee` the function it reaches, `pairs` the
 // callee's parameters (pre: at the caller's entry when the call is a self-call, else -1; post: the
 // argument), and `entry` the caller's own parameters at its entry (pre; post -1). A loop's path has
-// at -1, callee NULL and no entry.
-typedef struct { int32_t key, pre, post; uint8_t tk; } JPathPair;
+// at -1, callee NULL and no entry. `arg` is the term's argument as a ranking's targ (JTERM_MOD's k;
+// 0 for every other kind): only paths_mod offers a MOD pair.
+typedef struct { int32_t key, pre, post; uint8_t tk; int32_t arg; } JPathPair;
 typedef struct {
     const JVc *vc; bool back; int32_t from; const JPathPair *pairs; int32_t npairs;
     int32_t at; const struct IrFunc *callee; const JPathPair *entry; int32_t nentry;
@@ -192,6 +198,12 @@ typedef struct {
     // the edges into loop header `header`, with the claims `cl` as the generator states them
     bool (*paths)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
                   char *err, uint32_t errcap);
+    // the same paths, with a MOD pair (JTERM_MOD, arg k) appended for each integer cell the loop
+    // writes and divides or takes a remainder of by a constant k, as read at the header (s27): its
+    // residue's variable at the previous entry and at the edge's end, defined in the path's VC.
+    // Asked apart, so that no stage that takes every pair of paths() as a term names one
+    bool (*paths_mod)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
+                      char *err, uint32_t errcap);
     // f's calls that may close a recursion cycle through it: per direct one, the facts at the call,
     // and per parameter of the callee its variable at f's entry (when f is the callee) and the
     // argument's at the call
