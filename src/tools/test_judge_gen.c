@@ -1084,8 +1084,9 @@ int main(void) {
         }
     }
     printf("  a vector: a scalar amount and a scalar divisor owed, per-lane ones outside\n");
-    // 31. a loop's termination: `i = 0; while i < n { i = i + 1 }`. With no ranking claim it is
-    // `outside` (a function that may diverge owes nothing); with f = n - i, on the back edge
+    // 31. a loop's termination: `i = 0; while n > i { i = i + 1 }` (`n > i`, so no counter's own
+    // ranking, s22). With no ranking claim it is `outside` (a function that may diverge owes
+    // nothing); with f = n - i, on the back edge
     // `rank.fall` (it falls by 1) and `rank.bound` (it is >= 0 where the trip is taken); a tuple
     // whose second component falls also owes the first `rank.keep`; a claim the generator cannot
     // state, or one that leaves the back edge out, refuses the function
@@ -1095,7 +1096,7 @@ int main(void) {
         IrValue *i = ir_alloca(f, b0, u32t);
         ir_store(f, b0, i, ir_const_int(f, b0, 0, u32t)); ir_set_br(b0, b1);
         IrValue *li = ir_load(f, b1, i, u32t);
-        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULT, li, n), b2, b3);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_UGT, n, li), b2, b3);
         IrValue *li2 = ir_load(f, b2, i, u32t);
         ir_store(f, b2, i, ir_binop(f, b2, IR_ADD, li2, ir_const_int(f, b2, 1, u32t), u32t));
         ir_set_br(b2, b1);
@@ -5179,6 +5180,41 @@ int main(void) {
         free(t); gen_mod = NULL;
     }
     printf("  a 64-bit shift's top bit, stated exactly; a call result's refinement bounds a product of it\n");
+    // 91. a COUNTER (s22: spec 13's fact 4, the range of `for i in lo..hi`; spec 12, `for` loops
+    // end), with no claims and no ranking proposed: `var i = 2; while i < n { d = i - 2; i = i + k }`
+    // over u64, `i - 2`'s narrow.lo owed. (0) k = 1: the floor `counter` stated at i's HEAD version,
+    // the ranking n - i owed (rank.fall); (1) k = 0: the floor, no ranking; (2) the step unchecked:
+    // neither; (3) a store of 7 before the step: neither; (4) `i <= n`: the floor and the ranking;
+    // (5) a back edge that skips the step: the floor, no ranking; (6) over i64, the step `+ -1`:
+    // neither (a step down); (7) a call handed i's address in the loop: neither (it may write i)
+    for (int c = 0; c < 8; c++) {
+        IrType *T = c == 6 ? i64t : u64t;
+        IrFunc *f = ir_func_new(&A, nm("ctr91"), T, IR_FUNC_PURE);
+        IrValue *n = ir_add_param(f, T, nm("n")), *y = ir_add_param(f, T, nm("y"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = c == 5 ? ir_new_block(f) : NULL;
+        IrValue *i = ir_alloca(f, b0, T);
+        ir_store(f, b0, i, ir_const_int(f, b0, 2, T)); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(f, b1, c == 4 ? IR_CMP_ULE : c == 6 ? IR_CMP_SLT : IR_CMP_ULT, ir_load(f, b1, i, T), n), b2, b3);
+        IrValue *d = ir_binop(f, b2, IR_SUB, ir_load(f, b2, i, T), ir_const_int(f, b2, 2, T), T);
+        if (c == 3) ir_store(f, b2, i, ir_const_int(f, b2, 7, T));
+        if (c == 7) mk_call(f, b2, "bump91", i, T);
+        IrBlock *st = b2;
+        if (c == 5) { ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_ULT, d, y), b1, b4); st = b4; }
+        ir_store(f, st, i, ir_binop(f, st, IR_ADD, ir_load(f, st, i, T), ir_const_int(f, st, c == 1 ? 0 : c == 6 ? -1 : 1, T), T));
+        if (c == 2) { IrInstr *a = st->instrs; while (a && a->op != IR_ADD) a = a->next; if (a) a->wrap = IR_WRAP_MODULAR; }   // `+%`
+        ir_set_br(st, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, T));
+        ir_finalize_cfg(f);
+        gen_mod = f;
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48];
+        snprintf(key, sizeof key, "bb%d.%d narrow.lo", b2->id, idx_of(b2, d));
+        const char *vl = t ? vc_of(t, key) : "";
+        bool floor = strstr(vl, "counter ") != NULL, rank = t && strstr(t, " rank.fall ") && !strstr(t, "no ranking function proposed");
+        bool wf = c != 2 && c != 3 && c != 6 && c != 7, wr = c == 0 || c == 4;
+        CHECK(t && floor == wf && rank == wr, "91 case %d: the floor %s, the ranking %s:\n%s", c, wf ? "stated" : "not stated", wr ? "owed" : "not", t ? t : "");
+        free(t); gen_mod = NULL;
+    }
+    printf("  a counter: its floor stated at its loop's header, its ranking owed where each trip steps it\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

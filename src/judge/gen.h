@@ -33,6 +33,10 @@
 //   - a callee's RETURN claim (its contract: `min(a, b) - b <= 0`), at a call to a function of the
 //     same module (I.181), about the call's result and the arguments; owed as `post` at every
 //     return of the callee, about the value returned and the parameters' entry values.
+//   - a COUNTER's floor at its loop's header (s22, spec 13's fact 4, the range of `for i in a..b`):
+//     `lo <= i`, lo the value stored on the loop's one entry edge, where every write the loop makes
+//     to the cell is a checked step up (jg_counter). Where no ranking is proposed for a loop whose
+//     header tests `i < hi` of such a counter, each trip stepping it, `hi - i` is OWED, a ranking.
 // Why these hold. An SSA value's definition holds wherever the definition dominates: if an
 // operand's definition ran again after the value's and before the point, there would be a path
 // from the entry to the point that avoids the value's definition. The same argument covers a
@@ -50,10 +54,15 @@
 // the block, or an SSA value defined in a block that strictly dominates it: neither changes after
 // the block's entry anywhere its version is named. A claim is sound only with its obligations:
 // whoever proposes claims must have every claim's VCs implied, or drop the claim and generate again.
+// A counter's floor holds by induction over the versions its loop makes: the first trip's is the
+// entry store's, lo; each after it a join of versions at least lo, or one of them plus k >= 0 under
+// CHECK (an add that would leave the type traps); lo is made outside the loop: one value in it.
 //
-// Not stated yet, each costing precision only: element cells; a raw pointer's pointee (its loads
-// are fresh variables); a loop invariant no claim proposes, or of five terms or more; another
-// module's callee's contract; an ABI layout's size; a product of two variables (`outside`). The
+// Not stated yet, each costing precision only: the elements of an array of more than JELEM_MAXN
+// integers, or of a slice (a local fixed array of at most JELEM_MAXN has a cell per element); a raw
+// pointer's pointee (its loads are fresh variables); a loop invariant no claim proposes, or of five
+// terms or more; another module's callee's contract; an ABI layout's size; a product of two
+// variables whose corners leave its type (`outside`; within them, its hull is stated). The
 // obligations mirror VRA's final pass for bounds, division, overflow, integer casts, shifts, bit
 // counts, landings (P2.3) and ASSERTs (P2.6), so the two can be compared obligation by obligation.
 //
@@ -229,6 +238,7 @@ typedef struct {
     uint32_t hash;
     const JClaim *cl; int32_t ncl; // claims (untrusted input: each is owed on every edge into its block)
     int32_t *ltwin;                // by LOAD value id: its twin load's id (jg_load_twin), -1 none, -2 not asked
+    int32_t *ctr;                  // by version id: a HEAD version's counter floor's value id (jg_counter), -1 none, -2 not asked
     uint8_t *wneed;                // by value id: a path's stored values and what they are made of (jb_join_wraps)
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases, or an AND whose hull is two
@@ -1796,6 +1806,53 @@ static bool jg_entry_ok(JG *g, int32_t H, int32_t key) {
     int32_t E = jg_entry_pred(g, H);
     return E >= 0 && g->outstate[(size_t)E * (size_t)g->ncells + (size_t)g->cell[key]] >= 0;
 }
+// A COUNTER (spec 13's available fact 4, the range of `for i in lo..hi`; s22): cell c at loop
+// header H, H's HEAD version of it, whose version on H's one entry edge is an exact store of a value
+// lo made outside the loop, and every version of c the loop makes a HEAD or JOIN one or an exact
+// store of a checked `load(c) + k` (either order), k a constant >= 0. Every version of c in the
+// loop is then at least lo: the first trip's is lo, and each after it a join of ones that are, or
+// one of them plus k >= 0 (an add that would leave the type traps). lo, or NULL. With `step`: and
+// the loop's only versions of c are H's own and stores of `load(H's) + k`, k >= 1, one ending each
+// back edge (a `for` loop's step, its body never writing i, E009), so each trip raises c by 1 or more.
+static IrValue *jg_counter(JG *g, int32_t H, int32_t c, bool step) {
+    if (H < 0 || H >= g->nb || !g->blk[H] || c < 0 || c >= g->ncells || !jg_is_int(g->cty[c])) return NULL;
+    int32_t vH = g->instate[(size_t)H * (size_t)g->ncells + (size_t)c], E = jg_entry_pred(g, H);
+    if (vH < 0 || g->ver[vH].kind != JV_HEAD || g->ver[vH].blk != H || E < 0) return NULL;
+    if (!step && g->ctr && g->ctr[vH] != -2) return g->ctr[vH] >= 0 ? jg_value(g, g->ctr[vH]) : NULL;
+    if (!step && !g->ctr) {
+        if (!(g->ctr = JG_NEW(g, int32_t, g->nver))) return NULL;
+        for (int32_t v = 0; v < g->nver; v++) g->ctr[v] = -2;
+    }
+    if (!step) g->ctr[vH] = -1;
+    int32_t vE = g->outstate[(size_t)E * (size_t)g->ncells + (size_t)c];
+    const uint8_t *L = g->inloop + (size_t)H * (size_t)g->nb;
+    IrValue *lo = vE >= 0 && g->ver[vE].kind == JV_STORE && jg_store_exact(&g->ver[vE]) ? g->ver[vE].stored : NULL;
+    if (!lo || lo->id < 0 || lo->id >= g->nv || !jg_is_int(lo->type) || (g->defblk[lo->id] >= 0 && L[g->defblk[lo->id]])) return NULL;
+    for (int32_t v = 0; v < g->nver; v++) {
+        const JVer *w = &g->ver[v];
+        if (w->cell != c || w->blk < 0 || !L[w->blk] || v == vH) continue;
+        if (w->kind == JV_HEAD || w->kind == JV_JOIN) { if (step) return NULL; continue; }
+        if (w->kind != JV_STORE || !jg_store_exact(w) || !w->stored || w->stored->id < 0 || w->stored->id >= g->nv) return NULL;
+        IrInstr *d = g->def[w->stored->id];
+        if (!d || d->op != IR_ADD || d->wrap != IR_WRAP_CHECK || d->unchecked || d->n_operands < 2) return NULL;
+        bool ok = false;
+        for (int q = 0; q < 2 && !ok; q++) {
+            IrValue *a = d->operands[q];
+            IrInstr *ld = a && a->id >= 0 && a->id < g->nv ? g->def[a->id] : NULL;
+            __int128 k;
+            ok = ld && ld->op == IR_LOAD && ld->n_operands >= 1 && ld->operands[0] && ld->operands[0]->id >= 0 && ld->operands[0]->id < g->nv &&
+                 g->cell[ld->operands[0]->id] == c && jg_const_of(g, d->operands[1 - q], &k) && k >= (step ? 1 : 0) &&
+                 (!step || g->loadver[a->id] == vH);
+        }
+        if (!ok) return NULL;
+    }
+    for (IrEdge *pe = g->blk[H]->preds; step && pe; pe = pe->next) {        // each back edge ends with a step
+        int32_t P = pe->block->id, vP = g->rpoix[P] >= 0 && jg_back_edge(g, P, H) ? g->outstate[(size_t)P * (size_t)g->ncells + (size_t)c] : -2;
+        if (vP != -2 && (vP < 0 || g->ver[vP].kind != JV_STORE)) return NULL;
+    }
+    if (!step) g->ctr[vH] = lo->id;
+    return lo;
+}
 // The header a HEAD term at block b names: the innermost natural loop's around b, b's own loop
 // excluded; it dominates b. -1 where b is in no other loop, or where the loops around it do not
 // nest. Its version of a cell is fixed from the trip's start to b: b's every edge but a back edge
@@ -2238,6 +2295,14 @@ static void jb_state(JB *B, int32_t x) {
             }
         }
         if (v->kind == JV_JOIN || v->kind == JV_HEAD) jb_claims(B, v);
+        IrValue *lo = v->kind == JV_HEAD ? jg_counter(g, v->blk, v->cell, false) : NULL;
+        if (lo) {                                              // a counter's floor (s22): lo <= c
+            char o[96]; snprintf(o, sizeof o, "counter %s@head.bb%lld", g->cname[v->cell], (long long)v->blk);
+            char *os = JG_NEW(g, char, strlen(o) + 1);
+            if (!os) { B->fail = true; return; }
+            JLT t[2]; t[0].var = jb_val(B, lo); t[0].c = 1; t[1].var = x; t[1].c = -1;
+            jb_atom(B, strcpy(os, o), t, 2, J_LE, 0);
+        }
         return;
     }
     if (B->kind[x] == 4) {                                     // a slice cell version's length
@@ -4501,6 +4566,35 @@ static bool jg_measure_lin(JG *g, IrBlock *H, IrValue *v, __int128 k, JRank *r, 
         default: return false;
     }
 }
+// A COUNTER's ranking at H (s22): the header tests `load(c) < hi` or `<=` into its loop, c a
+// counter whose every trip raises it (jg_counter's `step`); `hi - c`, plus 1 for `<=`, on every back edge.
+static bool jg_counter_rank(JG *g, IrBlock *H, JRank *r) {
+    if (H->term.kind != IR_TERM_BR_COND || !H->term.cond || H->term.cond->id < 0 || H->term.cond->id >= g->nv) return false;
+    IrInstr *ic = g->def[H->term.cond->id];
+    const uint8_t *L = g->inloop + (size_t)H->id * (size_t)g->nb;
+    if (!ic || ic->op != IR_ICMP || ic->n_operands < 2 || !H->term.a || !H->term.b || !L[H->term.a->id] || L[H->term.b->id]) return false;
+    IrCmp p = ic->aux.cmp;
+    if (p != IR_CMP_SLT && p != IR_CMP_ULT && p != IR_CMP_SLE && p != IR_CMP_ULE) return false;
+    IrValue *iv = ic->operands[0];
+    IrInstr *ld = iv && iv->id >= 0 && iv->id < g->nv ? g->def[iv->id] : NULL;
+    if (!ld || ld->op != IR_LOAD || ld->n_operands < 1 || !ld->operands[0] || ld->operands[0]->id < 0 || ld->operands[0]->id >= g->nv) return false;
+    int32_t c = g->cell[ld->operands[0]->id];
+    if (c < 0 || !jg_counter(g, H->id, c, true)) return false;
+    memset(r, 0, sizeof *r);
+    r->blk = H->id; r->fn = g->f; r->ncomp = 1;
+    if (!jg_measure_lin(g, H, ic->operands[1], 1, r, 0) || !jg_measure_lin(g, H, iv, -1, r, 0)) return false;
+    if (p == IR_CMP_SLE || p == IR_CMP_ULE) r->c0[0] += 1;
+    for (IrEdge *pe = H->preds; pe; pe = pe->next) {
+        int32_t P = pe->block->id;
+        if (g->rpoix[P] < 0 || !jg_back_edge(g, P, H->id)) continue;
+        bool again = false;
+        for (int32_t e = 0; e < r->nedge; e++) again |= r->from[e] == P;
+        if (again) continue;
+        if (r->nedge == JRANK_MAXE) return false;
+        r->from[r->nedge] = P; r->fall[r->nedge] = 0; r->nedge++;
+    }
+    return r->nedge > 0;
+}
 // A loop's termination is owed where VRA owes it (vra.h, D-44): at every loop header, unless the
 // function declares `diverge` and the loop has no written measure. With a ranking claim at the
 // header, on each back edge P -> H at the end of P, the edge's condition and the header's claims
@@ -4544,6 +4638,11 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
             if (!measure) continue;
             r = &mr;                                           // a constant measure (no terms) cannot fall
         }
+        // none proposed: a COUNTER's own (s22, spec 12's `for` loops end), `hi - c` where the header
+        // tests c < hi (`+ 1` for c <= hi) and each trip raises c (jg_counter's `step`), hi read as a
+        // written measure is (jg_measure_lin), so fixed at the header; owed as any ranking claim
+        JRank cr;
+        if (!r && !measure && jg_counter_rank(g, H, &cr)) r = &cr;
         if (!r) { if (!jg_outside(g, L, NULL, H->id, 0, "rank.fall", "no ranking function proposed for this loop")) return false; continue; }
         if (r->ncomp < 1 || r->ncomp > JRANK_MAXC || r->nedge < 0 || r->nedge > JRANK_MAXE)
             return jg_fail(g, "a ranking claim of no components, or of more than it may have");

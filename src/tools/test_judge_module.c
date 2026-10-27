@@ -160,14 +160,15 @@ int main(void) {
     s.propose = P_NONE;
 
     printf("── a loop's termination ──\n");
-    // h(n): i = 0; while i < n { i = i + 1 }. Owed termination: `outside` with no ranking claim,
+    // h(n): i = 0; while n > i { i = i + 1 } (`n > i`: no counter's own ranking, s22). Owed
+    // termination: `outside` with no ranking claim,
     // both VCs proved with n - i, and a ranking claim that rises is not implied, with a model
     IrFunc *h = ir_func_new(&A, nm("h"), u32t, IR_FUNC_PURE);
     IrValue *hn = ir_add_param(h, u32t, nm("n"));
     IrBlock *h0 = h->entry, *h1 = ir_new_block(h), *h2 = ir_new_block(h), *h3 = ir_new_block(h);
     IrValue *hi = ir_alloca(h, h0, u32t);
     ir_store(h, h0, hi, ir_const_int(h, h0, 0, u32t)); ir_set_br(h0, h1);
-    ir_set_br_cond(h1, ir_icmp(h, h1, IR_CMP_ULT, ir_load(h, h1, hi, u32t), hn), h2, h3);
+    ir_set_br_cond(h1, ir_icmp(h, h1, IR_CMP_UGT, hn, ir_load(h, h1, hi, u32t)), h2, h3);
     ir_store(h, h2, hi, ir_binop(h, h2, IR_ADD, ir_load(h, h2, hi, u32t), ir_const_int(h, h2, 1, u32t), u32t));
     ir_set_br(h2, h1);
     ir_set_ret(h3, ir_const_int(h, h3, 0, u32t));
@@ -1557,8 +1558,8 @@ int main(void) {
     // i++; while i < n and k > 7 { i++ } } else { i++ } }`, the three exits joining at the latch b7.
     // The ranking n - i falls only if i at the join exceeds i as the trip began, and where the inner
     // loop leaves by `k > 7` its i says nothing of that. (0) claims head(i) - i <= -1 at the inner
-    // header b4 and at the join b7: every claim and rank VC proved; (1) none: the rank.fall not
-    // implied; (2) head(i) - i <= -2 at the join, false where i rose by one: a hull VC not implied;
+    // header b4 and at the join b7: every claim and rank VC proved; (1) none: proved all the same
+    // since s22, the inner header's counter floor being i as b3 stored it, head(i) + 1; (2) head(i) - i <= -2 at the join, false where i rose by one: a hull VC not implied;
     // (3) a HEAD term at the outer header, which no other loop holds, and (4) at the exit, in no
     // loop: the claims refused
     for (int c = 0; c < 5; c++) {
@@ -1598,7 +1599,8 @@ int main(void) {
         if (c == 0) CHECK(!strstr(recs, "not-implied") && !strstr(recs, "refused") && !strstr(recs, "uncertified") && count_in(recs, " hull") == 3 &&
                           count_in(recs, " inv.entry") == 1 && count_in(recs, " inv.keep") == 1 && count_in(recs, "proved") > 0 &&
                           count_in(recs, "rank.fall") == 2, "case 0: every claim and rank VC proved:\n%s", recs);
-        else if (c == 1) CHECK(strstr(recs, fo) != NULL, "case 1: without the HEAD claims, the outer rank.fall not implied:\n%s", recs);
+        else if (c == 1) CHECK(!strstr(recs, fo) && !strstr(recs, "not-implied") && count_in(recs, "rank.fall") == 2,
+                               "case 1: without the HEAD claims, the outer rank.fall proved by the inner counter's floor:\n%s", recs);
         else if (c == 2) CHECK(hu && nl && hu < nl && !strstr(recs, "refused"), "case 2: head(i) - i <= -2 not implied:\n%s", recs);
         else CHECK(!strstr(recs, "proved") && strstr(recs, "uncertified") && strstr(recs, "refuses the claims") && strstr(recs, "HEAD term"),
                    "case %d: the HEAD term refused:\n%s", c, recs);
