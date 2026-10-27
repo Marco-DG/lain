@@ -3466,6 +3466,7 @@ static bool jgk_slice_n(JB *B, IrInstr *at, void *arg, JCons *goal) {
     (void)arg; JLT t[1]; t[0].var = jb_val(B, at->operands[1]); t[0].c = -1;   // 0 <= n
     return jb_cons(B, t, 1, J_LE, 0, goal);
 }
+static void jg_bound_arg(JG *g, IrInstr *i, JBoundArg *a);
 static bool jgk_objsize(JB *B, IrInstr *at, void *arg, JCons *goal) {
     (void)arg; JLT t[1]; t[0].var = jb_val(B, at->operands[1]); t[0].c = 1;    // n <= MAX_LEN(T)
     // A dynamic local of exactly n integer elements (`var a u8[n]`): the emitter probes its every
@@ -3478,6 +3479,22 @@ static bool jgk_objsize(JB *B, IrInstr *at, void *arg, JCons *goal) {
         d->aux.alloca_ty && d->aux.alloca_ty->kind == IRT_INT) {
         int64_t bytes = ir_int_storage_bits(d->aux.alloca_ty->bits) / 8;
         jb_atom(B, jb_str(B, "premise object %%v%lld", dv->id, 0, 0), t, 1, J_LE, (__int128)INT64_MAX / bytes);
+    }
+    // A checked SUBSLICE (s23: data an ELEM_PTR of base at lo): its start and length within the
+    // base, owed here as bounds.lo and bounds.hi, are PREMISES: where they hold, n <= len(base) - lo,
+    // and the base's length is within its own objsize, which every reader of it is given. Where they
+    // do not, this instruction is refused for its bounds. An unchecked one waives them: not here.
+    if (!at->unchecked && d && d->op == IR_ELEM_PTR && d->n_operands >= 2 && jg_is_int(d->operands[1]->type) && at->result) {
+        JSliceArg sa; sa.lo = d->operands[1]; sa.n = at->operands[1]; jg_bound_arg(B->g, d, &sa.a);
+        if (sa.a.clen >= 0 || sa.a.slice) {
+            const char *o = jb_str(B, "premise subslice %%v%lld", at->result->id, 0, 0);
+            JLT u[3];
+            u[0].var = jb_val(B, sa.lo); u[0].c = -1;
+            jb_atom(B, o, u, 1, J_LE, 0);                      // 0 <= lo
+            u[0].var = jb_val(B, sa.lo); u[0].c = 1; u[1].var = jb_val(B, sa.n); u[1].c = 1;
+            if (sa.a.slice) { u[2].var = jb_len(B, sa.a.slice); u[2].c = -1; jb_atom(B, o, u, 3, J_LE, 0); }
+            else jb_atom(B, o, u, 2, J_LE, (__int128)sa.a.clen); // lo + n <= len(base)
+        }
     }
     return jb_cons(B, t, 1, J_LE, jg_len_max(at->result ? at->result->type : NULL), goal);
 }

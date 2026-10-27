@@ -941,17 +941,28 @@ int main(void) {
     printf("  a bool condition: 1 on its first edge, 0 on the other, and after an assert of it\n");
     // 27. a subslice a[lo..lo+n] is ELEM_PTR(data, lo) and MAKE_SLICE(that, n): its start and its
     // end are owed AT the MAKE_SLICE (where VRA checks the pair), never at the ELEM_PTR, which is
-    // not an access; and objsize, n <= MAX_LEN(u8), which every reader of a length is given
-    {   IrFunc *f = ir_func_new(&A, nm("g27"), u64t, IR_FUNC_PURE);
+    // not an access; and objsize, n <= MAX_LEN(u8), which every reader of a length is given, with
+    // the start and end as its premises (s23: n <= len(a) - lo, where len(a) <= MAX_LEN(u8) is a's
+    // own objsize); in `unsafe`, which waives the start and end, without them
+    for (int un = 0; un < 2; un++) {
+        IrFunc *f = ir_func_new(&A, nm("g27"), u64t, IR_FUNC_PURE);
         IrValue *a = ir_add_param(f, slice_of(u8t), nm("a")), *lo = ir_add_param(f, u64t, nm("lo"));
         IrValue *n = ir_add_param(f, u64t, nm("n"));
         IrBlock *b0 = f->entry;
         IrValue *d = ir_slice_data(f, b0, a, u8t);
         IrValue *p = ir_elem_ptr(f, b0, d, lo, u8t);
         int ms = nins(b0); IrValue *s = ir_make_slice(f, b0, p, n, u8t);
+        if (un) b0->instrs_tail->unchecked = true;
         ir_set_ret(b0, ir_slice_len(f, b0, s));
         char *t = gen_text(f);
         char key[64], want[128], vb[1 << 14];
+        if (un) {
+            snprintf(key, sizeof key, "bb%d.%d objsize 0", b0->id, ms);
+            snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
+            CHECK(*vb && !strstr(vb, "premise subslice") && t && !strstr(t, "bounds."), "unsafe: objsize alone, no premise:\n%s", t ? t : "");
+            free(t);
+            continue;
+        }
         CHECK(t && count(t, "bounds.") == 2, "one start and one end, both at the MAKE_SLICE:\n%s", t ? t : "");
         snprintf(key, sizeof key, "bb%d.%d bounds.lo 0", b0->id, ms);
         snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
@@ -965,8 +976,18 @@ int main(void) {
         snprintf(vb, sizeof vb, "%s", t ? vc_of(t, key) : "");
         snprintf(want, sizeof want, "goal 1*%%v%d <= 9223372036854775807", n->id);
         CHECK(strstr(vb, want), "objsize: n <= MAX_LEN(u8):\n%s", vb);
+        char w1[64], w2[96], w3[32], w4[32], w5[32];                     // the end's terms in any order
+        snprintf(w1, sizeof w1, "premise subslice %%v%d : ", s->id); snprintf(w2, sizeof w2, "premise subslice %%v%d : -1*%%v%d <= 0\n", s->id, lo->id);
+        snprintf(w3, sizeof w3, "1*%%v%d ", lo->id); snprintf(w4, sizeof w4, "1*%%v%d ", n->id); snprintf(w5, sizeof w5, "-1*len(%%v%d) <= 0\n", a->id);
+        const char *e1 = strstr(vb, w1), *e2 = e1 ? strstr(e1 + 1, w1) : NULL, *l2 = e2 ? strchr(e2, '\n') : NULL;
+        bool end = false;
+        for (const char *q = e1; q && !end; q = strstr(q + 1, w1)) {
+            const char *nl = strchr(q, '\n'); char line[256]; snprintf(line, sizeof line, "%.*s", nl ? (int)(nl - q + 1) : 0, q);
+            end = strstr(line, w3) && strstr(line, w4) && strstr(line, w5);
+        }
+        CHECK(e2 && l2 && strstr(vb, w2) && end, "objsize's premises, the start and the end:\n%s", vb);
         free(t);
-        printf("  a subslice: its start and end at the MAKE_SLICE, and objsize\n");
+        printf("  a subslice: its start and end at the MAKE_SLICE, and objsize with them as premises\n");
     }
     // 28. any other data must be an object the lowering made with the slice's length: a string
     // literal (its NUL counted), a local array, a dynamic local of exactly n elements, each owing
