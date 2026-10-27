@@ -1,0 +1,16 @@
+// EXPECT: [E011]
+// The parity step that never ends: an odd x steps down to even and an even x up to odd, so x
+// alternates between two values below 255 for ever. Its residue x mod 2 rises on the even path, so
+// no tuple led by it ranks the loop.
+func flip(x0 i32) i32 {
+    var x i32 = x0
+    while x < 255 {
+        if x % 2 != 0 {
+            x = x - 1
+        } else {
+            x = x + 1
+        }
+    }
+    return x
+}
+func main() i32 { return flip(300) -% 300 }

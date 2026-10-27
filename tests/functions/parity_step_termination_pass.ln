@@ -1,0 +1,17 @@
+// Termination by parity: an odd x steps down once and becomes even, and an even x climbs by 2 to
+// 255 (Kroening, Sharygina, Tsitovich and Wintersteiger, CAV 2010, Fig. 1). No linear function of x
+// falls on both paths; the tuple <x mod 2, 255 - x> does, its first component x's floor-mod 2.
+func climb(x0 i32) i32 {
+    var x i32 = x0
+    while x < 255 {
+        if x % 2 != 0 {
+            x = x - 1
+        } else {
+            x = x + 2
+        }
+    }
+    return x
+}
+func main() i32 {
+    return climb(-7) -% 256
+}

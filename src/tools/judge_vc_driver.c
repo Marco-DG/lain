@@ -32,7 +32,8 @@
 //   --rank-stages               with --judge: after the judge, one `# rank-stage <fn> bb<H>|entry <stage>`
 //                               line per ranking the finder proposed, naming the stage of its cascade
 //                               that found it (linear, lex, lex-bounded, passN ..., max, regions,
-//                               absgrow, split, affmax, dead, cycle): a census of what ranks what
+//                               absgrow, split, affmax, residue, dead, cycle): a census of what
+//                               ranks what
 //   --cover                     each of VRA's checks (termination aside) beside an obligation of
 //                               its class at its instruction (Main Compiler Work's census): one
 //                               `UNCOVERED` line for a check the judge owes nothing for, then a

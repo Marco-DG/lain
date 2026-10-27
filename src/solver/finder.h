@@ -345,6 +345,8 @@ typedef struct {
     char *mem, *cur, *end;
     int32_t npairs, *pkey, *pre, *post;     // in the merged list; pkey: the cell or the value id
     uint8_t *ptk;                           // each pair's term kind (JTERM_LEN: a length)
+    int32_t *parg;                          // and its argument (JTERM_MOD: the modulus k), else 0;
+                                            // NULL on fd_rank's subset loops
     int32_t nv; const char **names;
     const JVc **paths; int32_t npaths, *edge;
     JVc **full;                             // each path before slicing, for a retry on fewer pairs
@@ -511,7 +513,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
     for (int32_t k = 0; k < P.n; k++) if (P.p[k].back) nraw++;
     if (nraw == 0 || nraw > maxedges || nraw > FD_MAXEDGES) return false;
     FdRaw *raw = fd_bump(L, sizeof *raw * (size_t)nraw);
-    int32_t npk = -1, *pk = NULL; uint8_t *pktk = NULL;
+    int32_t npk = -1, *pk = NULL, *pkarg = NULL; uint8_t *pktk = NULL;
     if (!raw) return false;
     int32_t r = 0;
     for (int32_t k = 0; k < P.n; k++) {
@@ -520,8 +522,12 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
         if (npk < 0) {                                       // the header's versions, by key
             npk = pp->npairs; pk = fd_bump(L, sizeof *pk * (size_t)(npk ? npk : 1));
             pktk = fd_bump(L, (size_t)(npk ? npk : 1));
-            if (!pk || !pktk) return false;
-            for (int32_t q = 0; q < npk; q++) { pk[q] = pp->pairs[q].key; pktk[q] = pp->pairs[q].tk; }
+            pkarg = fd_bump(L, sizeof *pkarg * (size_t)(npk ? npk : 1));
+            if (!pk || !pktk || !pkarg) return false;
+            for (int32_t q = 0; q < npk; q++) {
+                pk[q] = pp->pairs[q].key; pktk[q] = pp->pairs[q].tk;
+                pkarg[q] = pp->pairs[q].tk == JTERM_MOD ? pp->pairs[q].arg : 0;
+            }
         } else if (pp->npairs != npk) return false;
         FdRaw *w = &raw[r++];
         const JVc *v = pp->vc;
@@ -533,7 +539,8 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
         if (!w->val || !w->pre || !w->post || !w->h) return false;
         for (int32_t q = 0; q < npk; q++) {
             int32_t at = -1;
-            for (int32_t z = 0; z < pp->npairs; z++) if (pp->pairs[z].key == pk[q] && pp->pairs[z].tk == pktk[q]) at = z;
+            for (int32_t z = 0; z < pp->npairs; z++)
+                if (pp->pairs[z].key == pk[q] && pp->pairs[z].tk == pktk[q] && (pktk[q] != JTERM_MOD || pp->pairs[z].arg == pkarg[q])) at = z;
             if (at < 0 || pp->pairs[at].pre < 0 || pp->pairs[at].post < 0) return false;
             w->pre[q] = pp->pairs[at].pre; w->post[q] = pp->pairs[at].post;
         }
@@ -629,15 +636,16 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
     L->names = fd_bump(L, sizeof(char *) * (size_t)(nv ? nv : 1));
     L->npairs = npk + nshared;
     L->ptk = fd_bump(L, (size_t)(L->npairs ? L->npairs : 1));
+    L->parg = fd_bump(L, sizeof(int32_t) * (size_t)(L->npairs ? L->npairs : 1));
     L->pkey = fd_bump(L, sizeof(int32_t) * (size_t)(L->npairs ? L->npairs : 1));
     L->pre = fd_bump(L, sizeof(int32_t) * (size_t)(L->npairs ? L->npairs : 1));
     L->post = fd_bump(L, sizeof(int32_t) * (size_t)(L->npairs ? L->npairs : 1));
     char *nb = fd_bump(L, (size_t)nv * 16);
-    if (!L->names || !L->pkey || !L->ptk || !L->pre || !L->post || !nb) return false;
+    if (!L->names || !L->pkey || !L->ptk || !L->parg || !L->pre || !L->post || !nb) return false;
     for (int32_t v = 0; v < nv; v++) { snprintf(nb + (size_t)v * 16, 16, "m%d", v); L->names[v] = nb + (size_t)v * 16; }
-    for (int32_t q = 0; q < npk; q++) { L->pkey[q] = pk[q]; L->ptk[q] = pktk[q]; L->pre[q] = 2 * q; L->post[q] = 2 * q + 1; }
+    for (int32_t q = 0; q < npk; q++) { L->pkey[q] = pk[q]; L->ptk[q] = pktk[q]; L->parg[q] = pkarg[q]; L->pre[q] = 2 * q; L->post[q] = 2 * q + 1; }
     for (int32_t q = 0; q < nshared; q++) {
-        L->pkey[npk + q] = vals[q] / 2; L->ptk[npk + q] = (uint8_t)(vals[q] % 2);
+        L->pkey[npk + q] = vals[q] / 2; L->ptk[npk + q] = (uint8_t)(vals[q] % 2); L->parg[npk + q] = 0;
         L->pre[npk + q] = L->post[npk + q] = 2 * npk + q;
     }
     // 4. each path flattened, in the merged variables
@@ -1603,7 +1611,7 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
         }
         if (!ok) break;
         FdLoop V = *L; int32_t nn = 0;                       // only the pairs `on` names
-        V.moves = NULL; V.raw = NULL; V.nraw = 0; V.wrapped = NULL;
+        V.moves = NULL; V.raw = NULL; V.nraw = 0; V.wrapped = NULL; V.parg = NULL;
         V.paths = sl; V.npaths = ns; V.edge = sedge;
         V.pkey = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.ptk = fd_bump(L, (size_t)L->npairs);
         V.pre = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs); V.post = fd_bump(L, sizeof(int32_t) * (size_t)L->npairs);
@@ -1620,6 +1628,84 @@ static bool fd_rank(JFinder *F, IrFunc *f, int32_t H, FdLoop *L, JRank *out) {
     if (!F->oom && fd_in_arena(F, f, H, L, out, fd_rank_split)) { fd_stage = "split"; return true; }       // a recursion split by a parameter (c43)
     if (!F->oom && fd_rank_affmax(F, f, H, L, out)) { fd_stage = "affmax"; return true; }                 // or a max of two affine rows (c42)
     return false;
+}
+// PE.11 (KroeningSharyginaTsitovichWintersteiger-CAV2010-Fig1): a trip that steps a cell by its
+// residue, `if x % 2 != 0 { x = x - 1 } else { x = x + 2 }` (an odd x steps down once, an even one
+// climbs), falls in <mod(x, k), the rest>, where no linear tuple does. gen's paths_mod gives the
+// paths with a pair per residue the loop computes: x's floor-mod k before and after the trip
+// (JTERM_MOD, k in parg). Only this stage asks for them: as any other pair, a residue would be a
+// term of every claim and template, and a claim over one is refused. Each path is split on
+// (r, r') = (c, c'), every c and c' in 0 .. k - 1, and a case is kept only if the solver cannot
+// refute it, over the integers: rationally r is free in [0, k - 1], and a Farkas search reads
+// nothing of it. No kept case may raise r; one that lowers it needs nothing more (r >= 0 bounds
+// it), and the cases that keep it are ranked by the finder's own search (templates off) over the
+// other pairs. Every edge free (rank.lex): the paths of one edge lower different components.
+#define FD_RESIDUE_MAXK 4
+static bool fd_residue_tuple(JFinder *F, IrFunc *f, int32_t H, FdLoop *M, int32_t z, JRank *out) {
+    int32_t k = M->parg[z], np = M->npaths, nres = 0;
+    if (M->nedges > JRANK_MAXE || np == 0 || np * k * k > 64) return false;
+    JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
+    const JVc **resp = fd_bump(M, sizeof(JVc *) * (size_t)(np * k)), **resf = fd_bump(M, sizeof(JVc *) * (size_t)(np * k));
+    int32_t *rese = fd_bump(M, sizeof(int32_t) * (size_t)(np * k));
+    if (!resp || !resf || !rese) return false;
+    for (int32_t p = 0; p < np; p++)
+        for (int32_t c = 0; c < k; c++)
+            for (int32_t c2 = 0; c2 < k; c2++) {
+                JTerm tt[4]; JCons ex[4];                    // r = c and r' = c2, two rows each
+                for (int32_t u = 0; u < 4; u++) { tt[u].var = u < 2 ? M->pre[z] : M->post[z]; fd_jint(&tt[u].coef, u % 2 ? -1 : 1); }
+                ex[0] = fd_cons_of(&tt[0], 1, c); ex[1] = fd_cons_of(&tt[1], 1, -c);
+                ex[2] = fd_cons_of(&tt[2], 1, c2); ex[3] = fd_cons_of(&tt[3], 1, -c2);
+                if (fd_case_holds(F, M->paths[p], ex, 4, NULL, slim)) continue;   // no such case
+                if (F->oom || c2 > c) return false;          // the residue may rise
+                if (c2 < c) continue;                        // it falls: the first component
+                resp[nres] = fd_with_case(M, M->paths[p], ex, 4, tt, 4);
+                resf[nres] = fd_with_case(M, M->full[p], ex, 4, tt, 4);
+                if (!resp[nres] || !resf[nres]) return false;
+                rese[nres++] = M->edge[p];
+            }
+    JRank rt; memset(&rt, 0, sizeof rt);
+    if (nres > 0) {                                          // the rest: the cases that keep r
+        // over M's pairs as numbered (fd_rank reads pair q's variables as 2q and 2q + 1, so none is
+        // dropped or renumbered: that read past its arrays, fuzz_loops seed 3268998), only the edges
+        // a kept case runs on, and no residue among its terms
+        FdLoop V = *M;
+        V.paths = resp; V.full = (JVc **)resf; V.edge = rese; V.npaths = nres; V.dead = false;
+        V.moves = NULL; V.raw = NULL; V.nraw = 0; V.wrapped = NULL; V.nedges = 0;
+        for (int32_t e = 0; e < M->nedges; e++) {
+            bool runs = false;
+            for (int32_t q = 0; q < nres && !runs; q++) runs = rese[q] == M->edges[e];
+            if (runs) V.edges[V.nedges++] = M->edges[e];
+        }
+        fd_no_templates++;
+        bool got = fd_rank(F, f, H, &V, &rt);
+        fd_no_templates--;
+        if (F->oom || !got || rt.nreg || 1 + rt.ncomp > JRANK_MAXC || 1 + rt.nt > JRANK_MAXT || rt.cont[0] != 0) return false;
+        for (int32_t t = 0; t < rt.nt; t++) if (rt.tk[t] == JTERM_MOD) return false;
+    }
+    memset(out, 0, sizeof *out);
+    out->blk = H; out->fn = f; out->nedge = M->nedges; out->ncomp = 1 + rt.ncomp; out->nt = 1 + rt.nt;
+    out->key[0] = M->pkey[z]; out->tk[0] = JTERM_MOD; out->targ[0] = k; out->coef[0][0] = 1;
+    for (int32_t t = 0; t < rt.nt; t++) { out->key[1 + t] = rt.key[t]; out->tk[1 + t] = rt.tk[t]; }
+    for (int32_t e = 0; e < M->nedges; e++) { out->from[e] = M->edges[e]; out->fall[e] = -1; }
+    for (int32_t r = 0; r < rt.ncomp; r++) {
+        out->c0[1 + r] = rt.c0[r]; out->cont[1 + r] = rt.cont[r];
+        for (int32_t t = 0; t < rt.nt; t++) out->coef[1 + r][1 + t] = rt.coef[r][t];
+    }
+    return true;
+}
+// ...the loop's paths with its residues (paths_mod), each residue tried in turn
+static bool fd_rank_residue(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, JRank *out) {
+    if (!F->gen->paths_mod || H == JRANK_ENTRY) return false;
+    char err[200]; JPaths P; FdLoop M; bool got = false;
+    memset(&M, 0, sizeof M);
+    size_t cap = (size_t)1 << 22;
+    if (!(M.mem = malloc(cap))) { F->oom = true; return false; }
+    M.cur = M.mem; M.end = M.mem + cap;
+    if (F->gen->paths_mod(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) && !P.refused && fd_loop_from(F, f, H, &P, &M, JRANK_MAXE))
+        for (int32_t z = 0; z < M.npk && !got && !F->oom; z++)
+            if (M.ptk[z] == JTERM_MOD && M.parg[z] >= 2 && M.parg[z] <= FD_RESIDUE_MAXK) got = fd_residue_tuple(F, f, H, &M, z, out);
+    free(M.mem);
+    return got;
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);
@@ -4181,6 +4267,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             bool built = fd_loop_build(F, f, b->id, as, nv, &L);
             bool got = built && fd_rank(F, f, b->id, &L, &r);
             const char *stage = fd_stage;
+            if (!got && built && !F->oom && fd_rank_residue(F, f, b->id, as, nv, &r)) { got = true; stage = "residue"; }
             if (!built && L.dead && L.nedges > 0 && L.nedges <= JRANK_MAXE) {
                 // no back edge can be taken (a constant guard, c2): the constant measure 0, which
                 // falls on every edge only because none runs; the judge owes it as any other. The

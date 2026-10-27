@@ -172,7 +172,9 @@ static void jau_row(IrFunc *f, const JRank *r, int32_t j, char *b, size_t n) {
         char nm[80], term[120];
         jau_name(f, r->key[t], nm, sizeof nm);
         const char *fmt = r->tk[t] == JTERM_LEN ? "%s.len" : r->tk[t] == JTERM_ENTRY ? "entry(%s)" : "%s";
-        char tn[100]; snprintf(tn, sizeof tn, fmt, nm);
+        char tn[100];
+        if (r->tk[t] == JTERM_MOD) snprintf(tn, sizeof tn, "mod(%s, %d)", nm, (int)r->targ[t]);   // x's floor-mod k
+        else snprintf(tn, sizeof tn, fmt, nm);
         long long a = (long long)(c < 0 ? -c : c);
         if (a == 1) snprintf(term, sizeof term, "%s%s", at ? (c < 0 ? " - " : " + ") : (c < 0 ? "-" : ""), tn);
         else snprintf(term, sizeof term, "%s%lld*%s", at ? (c < 0 ? " - " : " + ") : (c < 0 ? "-" : ""), a, tn);

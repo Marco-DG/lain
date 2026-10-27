@@ -491,6 +491,10 @@ rc=0
 out=
 at=noreturn 2
 ty=Slice_u8 scalar
+### tests/functions/parity_step_termination_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/functions/popcount_shift_termination_pass.ln
 rc=0
 out=
