@@ -33,6 +33,7 @@ static IrType *slice_of(IrType *e) { IrType *t = ir_type_new(&A, IRT_SLICE); t->
 // ir_finalize_cfg adds the edges again on each call).
 static IrFunc *gen_mod = NULL;   // the module the generator looks callees up in (none: every call unknown)
 static const JRank *gen_rk = NULL; static int32_t gen_nrk = 0;   // the ranking claims gen_with owes
+static const JGuardClaim *gen_gc = NULL; static int32_t gen_ngc = 0;   // the guarded claims gen_with is given
 // Every obligation's ID of `f`, one line each, "point kind ordinal" and " outside" for one the
 // generator cannot state (gen_with prints an outside by its reason alone); NULL when refused.
 static char *gen_ids(IrFunc *f, char *why) {
@@ -77,7 +78,7 @@ static char *gen_recipes(IrFunc *f, char *why) {
 static char *gen_with(IrFunc *f, const JClaim *cl, int32_t ncl, int32_t only, char *why) {
     JMem m = jmem_over(region, sizeof region);
     JObl *o; int32_t n; char err[200];
-    if (!jgen_func(&m, f, gen_mod, cl, ncl, NULL, 0, gen_rk, gen_nrk, NULL, only, &o, &n, err, sizeof err)) {
+    if (!jgen_func(&m, f, gen_mod, cl, ncl, gen_gc, gen_ngc, gen_rk, gen_nrk, NULL, only, &o, &n, err, sizeof err)) {
         if (why) strcpy(why, err); else printf("  generator refused: %s\n", err);
         return NULL;
     }
@@ -1307,7 +1308,7 @@ int main(void) {
         bad[1].c.tk[0] = 6; bad[1].why = "not a cell or a value fixed at its block";               // no such kind, on an integer
         memset(&bad[2].c, 0, sizeof bad[2].c);
         bad[2].c.blk = JCLAIM_RET; bad[2].c.fn = f; bad[2].c.nt = 2; bad[2].c.key[0] = JKEY_RET; bad[2].c.coef[0] = 1;
-        bad[2].c.key[1] = xs->id; bad[2].c.tk[1] = JTERM_LEN; bad[2].c.coef[1] = -1; bad[2].why = "a return claim over a length";
+        bad[2].c.key[1] = i->id; bad[2].c.tk[1] = JTERM_LEN; bad[2].c.coef[1] = -1; bad[2].why = "length term is no slice parameter";   // a local's
         for (int k = 0; k < 3; k++) {
             char why[200] = "";
             t = gen_with(f, &bad[k].c, 1, JGEN_ALL, why);
@@ -5086,8 +5087,8 @@ int main(void) {
         char pe[64]; snprintf(pe, sizeof pe, "%%s%d.0@entry", qp->id);
         CHECK(strstr(pv, pe) && strstr(pv, "goal "), "88: take's post VC names q.count's ENTRY version:\n%s", pv);
         free(tt);
-        struct { int what; const char *why; } bad[4] = { { 0, "no var parameter's integer part" }, { 1, "no var parameter's integer part" },
-                                                          { 2, "not about the returned value" }, { 3, "guarded return claim" } };
+        struct { int what; const char *why; } bad[4] = { { 0, "no reference parameter's integer or slice part" }, { 1, "no reference parameter's integer or slice part" },
+                                                          { 2, "not about the returned value" }, { 3, "of no guard" } };
         for (int k = 0; k < 4; k++) {
             char why[200] = "";
             JClaim b = cl[0]; JGuardClaim gc; memset(&gc, 0, sizeof gc);
@@ -5098,7 +5099,7 @@ int main(void) {
             if (bad[k].what == 3) {
                 JMem m = jmem_over(region, sizeof region); JObl *o; int32_t no; char err[200] = "";
                 gc.fn = tf; gc.nt = 3; for (int z = 0; z < 3; z++) { gc.key[z] = cl[0].key[z]; gc.tk[z] = cl[0].tk[z]; gc.coef[z] = cl[0].coef[z]; }
-                gc.ng = 1; gc.gkey[0] = xp->id; gc.gval[0] = 3;
+                gc.ng = 0;                                              // and no `when` (s21): no guard at all
                 bool ok = jgen_func(&m, tf, gen_mod, NULL, 0, &gc, 1, NULL, 0, NULL, JGEN_ALL, &o, &no, err, sizeof err);
                 CHECK(!ok && strstr(err, bad[k].why), "88 bad %d: refused (%s): got \"%s\"", k, bad[k].why, err);
                 continue;
@@ -5404,6 +5405,55 @@ int main(void) {
         free(t);
     }
     printf("  a comparison's value, stored and tested later: 1 where it holds, 0 where it does not\n");
+    // 93. a guarded claim with a `when` (s21, B1: calc's `if peek(p) == 40 { p.pos = p.pos + 1 }`):
+    // peek93(p *P) u8, P { src u8[], pos u64 }, its claim `ret >= 1 -> pre(p.pos) - pre(p.src) <= -1`
+    // (a slice field named by its length); the caller tests r = peek93(p) == 40, then 100 / p.pos,
+    // whose VC names p.pos's version and never r. (0) the caller has no cell for p.src: the claim is
+    // stated where p.pos's version is (it is the call's PRE), len dropped for MAX_LEN: `or { r <= 0
+    // | pos <= 2^63 - 2 }`, once, though r is then described too, beside the guard on r; (1) the
+    // caller reads p.src.len first: the claim with len(p.src)'s version; (2) the call on one arm of
+    // a branch, the division past the join: it dominates nothing there, so the claim is not stated
+    {   IrType *mu64 = ir_type_int(&A, 64, false), *P = ir_type_new(&A, IRT_STRUCT), *su8 = slice_of(u8t);
+        P->n_fields = 2; P->fields = arena_push_many_aligned(&A, IrType*, 2); P->fields[0] = su8; P->fields[1] = mu64;
+        IrType *rp = ir_type_new(&A, IRT_PTR); rp->elem = P;                      // `p P`: a read-only reference
+        IrType *vp = ir_type_new(&A, IRT_PTR); vp->elem = P; vp->ptr_mut = true;   // `var p P`
+        for (int c = 0; c < 3; c++) {
+            IrFunc *pf = ir_func_new(&A, nm("peek93"), u8t, IR_FUNC_PURE);
+            IrValue *pp = ir_add_param(pf, rp, nm("p"));
+            ir_set_ret(pf->entry, ir_const_int(pf, pf->entry, 0, u8t));
+            ir_finalize_cfg(pf);
+            IrFunc *mf = ir_func_new(&A, nm("main93"), mu64, IR_FUNC_PURE);
+            IrValue *mp = ir_add_param(mf, vp, nm("p")), *fl = ir_add_param(mf, boolt, nm("f"));
+            IrBlock *m0 = mf->entry, *m1 = ir_new_block(mf), *m2 = ir_new_block(mf), *m3 = c == 2 ? ir_new_block(mf) : NULL;
+            if (c == 1) (void)ir_slice_len(mf, m0, ir_load(mf, m0, ir_field_ptr(mf, m0, mp, 0, su8), su8));
+            IrBlock *cb = c == 2 ? m1 : m0;
+            if (c == 2) ir_set_br_cond(m0, fl, m1, m2);
+            IrInstr *call = ir_instr(mf, IR_CALL, u8t, 1); call->aux.callee = nm("peek93"); call->operands[0] = mp; ir_emit(cb, call);
+            IrBlock *ub = c == 2 ? m3 : m1;                    // where 100 / p.pos is
+            if (c == 2) { ir_set_br(m1, m3); ir_set_br(m2, m3); }
+            else { ir_set_br_cond(m0, ir_icmp(mf, m0, IR_CMP_EQ, call->result, ir_const_int(mf, m0, 40, u8t)), m1, m2); ir_set_ret(m2, ir_const_int(mf, m2, 0, mu64)); }
+            IrValue *qd = ir_binop(mf, ub, IR_UDIV, ir_const_int(mf, ub, 100, mu64), ir_load(mf, ub, ir_field_ptr(mf, ub, mp, 1, mu64), mu64), mu64);
+            ir_set_ret(ub, qd);
+            ir_finalize_cfg(mf);
+            pf->next = mf; gen_mod = pf;
+            JGuardClaim gc; memset(&gc, 0, sizeof gc);
+            gc.fn = pf; gc.nt = 2; gc.when.blk = JCLAIM_RET; gc.when.fn = pf;
+            gc.key[0] = pp->id; gc.tk[0] = JTERM_PRE; gc.fld[0] = 1; gc.coef[0] = 1;
+            gc.key[1] = pp->id; gc.tk[1] = JTERM_PRE; gc.fld[1] = 0; gc.coef[1] = -1; gc.rhs = -1;
+            gc.when.nt = 1; gc.when.key[0] = JKEY_RET; gc.when.coef[0] = -1; gc.when.rhs = -1;
+            gen_gc = &gc; gen_ngc = 1;
+            char *t = gen_with(mf, NULL, 0, JGEN_ALL, NULL), key[48], w[200];
+            snprintf(key, sizeof key, "bb%d.%d divzero", ub->id, idx_of(ub, qd));
+            const char *v = t ? vc_of(t, key) : "";
+            int r = call->result->id, n = count(v, " guarded #0 : ");
+            if (c == 0) snprintf(w, sizeof w, "contract %%v%d guarded #0 : or { 1*%%v%d <= 0 | 1*%%s%d.1@entry <= 9223372036854775806 }\n", r, r, mp->id);
+            else snprintf(w, sizeof w, "contract %%v%d guarded #0 : or { 1*%%v%d <= 0 | 1*%%s%d.1@entry + -1*len(%%s%d.0@entry) <= -1 }\n", r, r, mp->id, mp->id);
+            if (c < 2) CHECK(n == 1 && strstr(v, w) && strstr(v, "guard bb0->bb1"), "93 case %d: once, %s\n%s", c, w, v);
+            else CHECK(*v && n == 0, "93 case 2: no claim:\n%s", v);
+            free(t); gen_mod = NULL; gen_gc = NULL; gen_ngc = 0;
+        }
+    }
+    printf("  a guarded claim with a `when`: stated where its PRE version is, an unnamed part for its bound\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

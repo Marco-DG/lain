@@ -458,6 +458,15 @@ static void hk_claim(JObl *o, IVal *v, int nv, const char *where, long long *goa
         if (gv < o->gmin) return;
     }
     hk_check(o, v, nv);
+    // a claim owed under PREMISES (a guarded return claim's guards, s7 and s21) is owed only where
+    // they hold in the run: where one fails, or cannot be evaluated, its goal is not checked
+    for (int32_t k = 0; k < o->vc.nhyps; k++) {
+        const JHyp *y = &o->vc.hyps[k];
+        if (strncmp(y->origin, "premise ", 8)) continue;
+        int t = y->disj ? -1 : hk_cons(o, &y->cons, v, nv);
+        if (t < 0) unknown++;
+        if (t != 1) return;
+    }
     int r = hk_cons(o, &o->vc.goal, v, nv);
     if (r < 0) { hk_unknown(); return; }
     (*goals)++;
@@ -845,6 +854,28 @@ int main(int argc, char **argv) {
         }
         JInt r; jg_int(&r, cl[c].rhs); printf(" <= "); jint_print(&r, stdout); printf("\n");
     }
+    // the guarded return claims (s7, s21): `# claim fn guarded: sum <= rhs where %k = v, when sum <= r`
+    for (int32_t c = 0; show && c < F.ngc; c++) {
+        const JGuardClaim *q = &F.gc[c];
+        printf("# claim %.*s guarded: ", (int)q->fn->name->length, q->fn->name->name);
+        for (int w = 0; w < 2; w++) {
+            const int32_t *key = w ? q->when.key : q->key; const uint8_t *tk = w ? q->when.tk : q->tk;
+            const __int128 *co = w ? q->when.coef : q->coef; const int16_t *fl = w ? q->when.fld : q->fld;
+            int32_t nt = w ? q->when.nt : q->nt;
+            if (w && !nt) break;
+            if (w) printf(q->ng ? ", when " : " where ");
+            for (int k = 0; k < nt; k++) {
+                printf("%s%lld*", k ? " + " : "", (long long)co[k]);
+                if (key[k] == JKEY_RET) printf("%%ret");
+                else if (tk[k] == JTERM_LEN) printf("len(%%%d)", key[k]);
+                else if (tk[k] == JTERM_PRE || tk[k] == JTERM_POST) printf("%s(%%%d.%d)", tk[k] == JTERM_PRE ? "pre" : "post", key[k], fl[k]);
+                else printf("%%%d", key[k]);
+            }
+            JInt r; jg_int(&r, w ? q->when.rhs : q->rhs); printf(" <= "); jint_print(&r, stdout);
+            for (int k = 0; !w && k < q->ng; k++) { printf("%s%%%d = ", k ? " and " : " where ", q->gkey[k]); jg_int(&r, q->gval[k]); jint_print(&r, stdout); }
+        }
+        printf("\n");
+    }
     for (IrFunc *f = irmod; f; f = f->next) {
         if (f->is_extern) continue;
         char err[200]; err[0] = 0;
@@ -853,11 +884,11 @@ int main(int argc, char **argv) {
             // with --ranks, the finder's rankings: a VC owed on a back edge is checked like any other.
             // One the generator refuses is a finder bug (a compile refuses the function over it):
             // reported and counted, then the function's other hypotheses are checked without them
-            bool gen_ok = ranks && jgen_func(&m, f, irmod, cl, ncl, NULL, 0, F.rk, F.nrk, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err);
+            bool gen_ok = ranks && jgen_func(&m, f, irmod, cl, ncl, F.gc, F.ngc, F.rk, F.nrk, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err);
             if (ranks && !gen_ok) {
                 fprintf(stderr, "REFUSED-RANKING %.*s: %s\n", (int)f->name->length, f->name->name, err); refusedrk++; rc = 1;
             }
-            if (!gen_ok && !jgen_func(&m, f, irmod, cl, ncl, NULL, 0, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
+            if (!gen_ok && !jgen_func(&m, f, irmod, cl, ncl, F.gc, F.ngc, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
                 fprintf(stderr, "ERROR %.*s: %s\n", (int)f->name->length, f->name->name, err); rc = 1; continue;
             }
             HK *nh = realloc(hk, sizeof *hk * (size_t)(nhk + n + 1));
@@ -881,7 +912,7 @@ int main(int argc, char **argv) {
         Vra *V = vra_analyze(f);
         m = jmem_over(buf, cap);
         JObl *o; int32_t n;
-        if (!jgen_func(&m, f, irmod, cl, ncl, NULL, 0, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
+        if (!jgen_func(&m, f, irmod, cl, ncl, F.gc, F.ngc, NULL, 0, &drv_cg, JGEN_ALL, &o, &n, err, sizeof err)) {
             printf("%s %.*s: %s\n", stats ? "ERROR\t" : "# generator refused", (int)f->name->length, f->name->name, err);
             rc = 1; vra_free(V); continue;
         }

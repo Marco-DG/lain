@@ -1245,7 +1245,7 @@ int main(void) {
             for (int32_t i = 0; ok && i < n; i++)
                 for (int32_t h = 0; h < o[i].vc.nhyps; h++) {
                     const char *og = o[i].vc.hyps[h].origin;
-                    if (og && !strncmp(og, "guard", 5)) guards++;
+                    if (og && !strncmp(og, "premise guard", 13)) guards++;      // a premise, not a fact (s21)
                     if (og && strstr(og, "contract")) about_p++;
                 }
             CHECK(ok && n == 1 && guards == 1 && about_p == 0, "case 5: one post VC, one guard hypothesis, no other assumption (%s, %d VCs, %d guards)",
@@ -1461,7 +1461,7 @@ int main(void) {
         if (c == 0) CHECK(nhi == 1 && phi == 1 && !strstr(recs, "uncertified") && !strstr(recs, "refused"), "len(ret) <= 3: the narrowing proved:\n%s", recs);
         else if (c == 1) CHECK(strstr(recs, "uncertified") != NULL && phi == 0, "len(ret) <= 2: uncertified:\n%s", recs);
         else if (c == 2) CHECK(nhi == 1 && phi == 0 && strstr(recs, "not-implied") != NULL, "no claim: the narrowing not implied:\n%s", recs);
-        else CHECK(strstr(recs, "guarded return claim over a length") != NULL, "a guarded claim over len(ret): refused:\n%s", recs);
+        else CHECK(strstr(recs, "guarded return claim on a function returning no integer") != NULL, "a guarded claim over len(ret): refused:\n%s", recs);
     }
     printf("  a returned slice's length: return claims on len(ret), owed at the return, stated at the call\n");
 

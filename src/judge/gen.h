@@ -246,10 +246,14 @@ typedef struct {
     int32_t *ctr;                  // by version id: a HEAD version's counter floor's value id (jg_counter), -1 none, -2 not asked
     uint8_t *wneed;                // by value id: a path's stored values and what they are made of (jb_join_wraps)
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
+    struct JGSite *gs; int32_t ngs; bool gsdone;   // s21: their calls' PRE and POST versions (jg_gsites)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases, or an AND whose hull is two
                                    // cases (s16), (2), none (1), not asked yet (0)
 } JG;
 
+// A call to a function with a guarded claim that has PRE or POST terms (s21), and the caller's
+// versions those terms name there: jb_ver_guarded states the claim where one of them is described.
+typedef struct JGSite { IrInstr *d; IrFunc *h; int32_t blk, idx, gi, nv; int32_t ver[2 * JCLAIM_MAXT]; } JGSite;
 // The value with id `id`: an instruction's result or a parameter.
 static IrValue *jg_value(JG *g, int32_t id) {
     if (id < 0 || id >= g->nv) return NULL;
@@ -1005,6 +1009,7 @@ typedef struct {
     int32_t *jhyp, *jblk, **jpred; int32_t njr, cjr;
     bool allrel;                   // a goal of no variable that is false: every dominating fact is about it   // R7 hypotheses: index, join, disjuncts' predecessors
     int32_t *cst;                            // per claim: -2 unstated, -1 VC-wide, else its disjunct
+    int32_t *gst;                            // per guarded claim: the call it is stated at VC-wide, or -2
     const int32_t *wid, *wk; int32_t nw;     // the current disjunct's path: each wrapping op's case k (s5)
     bool fail;
 } JB;
@@ -2228,12 +2233,56 @@ static int32_t jg_call_part_ver(JG *g, IrValue *arg, int16_t fld, int32_t blk, i
     }
     return -1;
 }
+// The caller's cell a PRE term names at a call (s21), and its version just BEFORE the call: the one
+// the call's frame rule replaced (hprev), or, where the call made none (a read-only reference), the
+// last version an earlier instruction of the block made, else the one the block is entered with
+// (versions an instruction makes carry its index; those made on entry, -1). -1 where there is none.
+static int32_t jg_call_pre_ver(JG *g, IrValue *arg, int16_t fld, int32_t blk, int32_t idx) {
+    int32_t vv = jg_call_part_ver(g, arg, fld, blk, idx);
+    if (vv >= 0) return g->ver[vv].hprev;
+    if (!arg || arg->id < 0 || arg->id >= g->nv || g->aroot[arg->id] < 0 || !g->apath[arg->id]) return -1;
+    char path[256]; snprintf(path, sizeof path, fld >= 0 ? "%s.%d" : "%s", g->apath[arg->id], (int)fld);
+    for (int32_t c = 0; c < g->ncells; c++) {
+        if (g->croot[c] != g->aroot[arg->id] || strcmp(g->cpath[c], path)) continue;
+        int32_t best = -1;
+        for (int32_t v = 0; v < g->nver; v++)
+            if (g->ver[v].cell == c && g->ver[v].blk == blk && g->ver[v].idx >= 0 && g->ver[v].idx < idx) best = v;
+        return best >= 0 ? best : g->instate[(size_t)blk * (size_t)g->ncells + (size_t)c];
+    }
+    return -1;
+}
+// A version's term in a claim: a slice cell's is its length (a PRE or POST of a slice field, s21).
+static int32_t jb_part_term(JB *B, int32_t ver) {
+    const IrType *t = B->g->cty[B->g->ver[ver].cell];
+    return t && t->kind == IRT_SLICE ? jb_cell_len(B, ver) : jb_ver(B, ver);
+}
+// One term of h's return claim (or of a guard's `when`) at a call d to h, at blk, idx: the returned
+// term the call's result, its length (a slice) or its field ret.k (a struct, a part variable); an
+// integer parameter its argument, where the argument lands exactly (its landing obligation, owed at
+// this call, licenses it); a slice parameter's length the argument's (s21); a POST term the version
+// this call made for the caller's cell at the argument (root, path, part), a PRE term the one just
+// before the call (jg_call_pre_ver). -1 where it does not map.
+static int32_t jb_call_term(JB *B, IrInstr *d, IrFunc *h, int32_t blk, int32_t idx, int32_t key, uint8_t tk, int16_t fld) {
+    JG *g = B->g;
+    if (key == JKEY_RET) {
+        const IrType *rt = h->ret_type;
+        if (!d->result) return -1;
+        return rt && rt->kind == IRT_SLICE ? jb_len(B, d->result) : rt && rt->kind == IRT_STRUCT ? jb_part(B, d->result, fld) : jb_val(B, d->result);
+    }
+    int pk = jg_param_at(h, key);
+    IrParam *pp = h->params;
+    for (int q = 0; q < pk && pp; q++) pp = pp->next;
+    if (pk < 0 || pk >= d->n_operands || !pp || !pp->value) return -1;
+    if (tk == JTERM_POST || tk == JTERM_PRE) {
+        int32_t pv = tk == JTERM_PRE ? jg_call_pre_ver(g, d->operands[pk], fld, blk, idx) : jg_call_part_ver(g, d->operands[pk], fld, blk, idx);
+        return pv < 0 ? -1 : jb_part_term(B, pv);
+    }
+    if (tk == JTERM_LEN) return d->operands[pk]->type && d->operands[pk]->type->kind == IRT_SLICE ? jb_len(B, d->operands[pk]) : -1;
+    if (!jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) return -1;
+    return jb_val(B, d->operands[pk]);
+}
 // A call d (at blk, idx) to h of this module: h's RETURN claims (I.181's boundary), each where every
-// term maps, once per VC and call. The returned term is the call's result, its length (a slice) or
-// its field ret.k (a struct, a part variable); an integer parameter its argument, where the argument
-// lands exactly (its landing obligation, owed at this call, licenses it); a frame summary's POST
-// term the version this call made for the caller's cell at the argument (root, path, part), its PRE
-// term the version that one replaced (hprev, s15). A term that does not map leaves the claim unsaid
+// term maps (jb_call_term), once per VC and call. A term that does not map leaves the claim unsaid
 // here, and the version as fresh as the frame rule made it. Where a version the call made is what is
 // described (`sums`), only its frame summaries: a claim about the result alone waits for the result.
 static void jb_call_claims(JB *B, IrInstr *d, IrFunc *h, int32_t blk, int32_t idx, bool sums) {
@@ -2248,26 +2297,7 @@ static void jb_call_claims(JB *B, IrInstr *d, IrFunc *h, int32_t blk, int32_t id
         JLT u[JCLAIM_MAXT]; bool ok = true;                    // a return claim has up to JCLAIM_MAXT terms
         for (int k = 0; k < c->nt && ok; k++) {
             u[k].c = c->coef[k];
-            if (c->key[k] == JKEY_RET) {
-                const IrType *rt = h->ret_type;
-                if (!d->result) { ok = false; break; }
-                u[k].var = rt && rt->kind == IRT_SLICE ? jb_len(B, d->result) : rt && rt->kind == IRT_STRUCT ? jb_part(B, d->result, c->fld[k])
-                         : jb_val(B, d->result);
-                continue;
-            }
-            int pk = jg_param_at(h, c->key[k]);
-            IrParam *pp = h->params;
-            for (int q = 0; q < pk && pp; q++) pp = pp->next;
-            if (pk < 0 || pk >= d->n_operands || !pp || !pp->value) { ok = false; break; }
-            if (c->tk[k] == JTERM_POST || c->tk[k] == JTERM_PRE) {
-                int32_t vv = jg_call_part_ver(g, d->operands[pk], c->fld[k], blk, idx);
-                int32_t pv = vv >= 0 && c->tk[k] == JTERM_PRE ? g->ver[vv].hprev : vv;
-                if (pv < 0) { ok = false; break; }
-                u[k].var = jb_ver(B, pv);
-                continue;
-            }
-            if (!jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
-            u[k].var = jb_val(B, d->operands[pk]);
+            ok = (u[k].var = jb_call_term(B, d, h, blk, idx, c->key[k], c->tk[k], c->fld[k])) >= 0;
         }
         if (!ok || B->fail) continue;
         B->cst[ci] = code;
@@ -2284,6 +2314,135 @@ static void jb_value_call(JB *B, IrValue *v) {
     IrFunc *h = d && d->op == IR_CALL ? jg_callee(B->g, d) : NULL;
     int32_t blk, idx;
     if (h && jg_same_module(h, B->g->f) && jg_instr_at(B->g, d, &blk, &idx)) jb_call_claims(B, d, h, blk, idx, false);
+}
+// The range of a PRE or POST term of h's claim at call d (s21), whatever the caller's cells: the
+// field's type range, a slice field's length in [0, MAX_LEN] (what jb_state states of every version
+// of such a cell). False for any other term.
+static bool jg_call_term_range(IrInstr *d, IrFunc *h, int32_t key, uint8_t tk, int16_t fld, JRange *r) {
+    int pk = tk == JTERM_PRE || tk == JTERM_POST ? jg_param_at(h, key) : -1;
+    if (pk < 0 || pk >= d->n_operands || !d->operands[pk]) return false;
+    const IrType *pt = d->operands[pk]->type, *st = pt && pt->kind == IRT_PTR && !pt->is_raw ? pt->elem : NULL;
+    const IrType *ft = fld < 0 ? st : st && st->kind == IRT_STRUCT && fld < st->n_fields ? st->fields[fld] : NULL;
+    if (ft && ft->kind == IRT_SLICE) { r->lo = 0; r->hi = jg_len_max(ft); r->has_ne = false; return true; }
+    return ft && ft->kind != IRT_STRUCT && jg_range(ft, r);
+}
+// One row of a claim at call d, `sum of coef*term <= rhs`, into u[0, *n) and *rhs: each term as
+// jb_call_term maps it (a RET term `x`), and a PRE or POST term the caller has no version of (no
+// cell: `p.src` of a P whose caller reads only p.pos) dropped for its bound, c*t >= c*lo (c > 0)
+// or c*hi (c < 0), so the row stated is implied by the claim's. False where a term neither maps
+// nor has a range (the claim unsaid).
+static bool jb_call_row(JB *B, IrInstr *d, IrFunc *h, int32_t cb, int32_t cx, int32_t x, const int32_t *key,
+                        const uint8_t *tk, const int16_t *fld, const __int128 *coef, int nt, bool neg, JLT *u, int *n, __int128 *rhs) {
+    *n = 0;
+    for (int k = 0; k < nt; k++) {
+        __int128 c = neg ? -coef[k] : coef[k], m;
+        int32_t v = key[k] == JKEY_RET ? x : jb_call_term(B, d, h, cb, cx, key[k], tk[k], fld[k]);
+        JRange r;
+        if (v >= 0) { u[*n].var = v; u[*n].c = c; (*n)++; continue; }
+        if (B->fail || key[k] == JKEY_RET || !jg_call_term_range(d, h, key[k], tk[k], fld[k], &r) ||
+            !jg_mul_ok(c, c > 0 ? r.lo : r.hi, &m)) return false;
+        *rhs -= m;
+    }
+    return true;
+}
+// A call d (at cb, cx) to h of this module: h's GUARDED return claims (s7), or claim `only` alone
+// (-1: all). Where each guard argument is a literal equal to its constant and there is no `when`,
+// the bound; a literal of another value, nothing; otherwise, VC-wide only, `a1 <= c1 - 1 | a1 >=
+// c1 + 1 | ... | not when | sum <= rhs` (s21: `when`'s negation one row over the integers, -w <=
+// -r - 1), which the solver uses where it shows the arguments are the constants and `when` holds.
+// Each term maps as a return claim's (jb_call_term), or the claim is unsaid here; a claim stated
+// VC-wide is stated once per VC and call (gst: its call's result and a version a PRE or POST term
+// names may both lead here).
+static void jb_call_guarded(JB *B, IrInstr *d, IrFunc *h, int32_t cb, int32_t cx, int32_t only) {
+    JG *g = B->g;
+    int32_t code = -3 - (cb * 65536 + cx);
+    for (int32_t gi = only < 0 ? 0 : only; gi < (only < 0 ? g->ngc : only + 1) && !B->fail; gi++) {
+        const JGuardClaim *c = &g->gc[gi];
+        if (c->fn != h || (B->jS < 0 && B->gst[gi] == code) || !d->result) continue;
+        int32_t x = jb_val(B, d->result);
+        JLT u[JCLAIM_MAXT], wt[JCLAIM_MAXT]; int32_t ga[JGUARD_MAXP]; bool ok, lit = true, eq = true;
+        int nu = 0, nw = 0; __int128 ur = c->rhs, wr = -(__int128)c->when.rhs - 1;   // `not when`: -w <= -r - 1
+        ok = jb_call_row(B, d, h, cb, cx, x, c->key, c->tk, c->fld, c->coef, c->nt, false, u, &nu, &ur) &&
+             (!c->when.nt || jb_call_row(B, d, h, cb, cx, x, c->when.key, c->when.tk, c->when.fld, c->when.coef, c->when.nt, true, wt, &nw, &wr));
+        for (int k = 0; k < c->ng && ok; k++) {
+            int pk = jg_param_at(h, c->gkey[k]);
+            IrParam *pp = h->params;
+            for (int q = 0; q < pk && pp; q++) pp = pp->next;
+            if (pk < 0 || pk >= d->n_operands || !pp || !pp->value ||
+                !jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
+            __int128 cv;
+            if (jg_const_of(g, d->operands[pk], &cv)) { if (cv != c->gval[k]) eq = false; }
+            else lit = false;
+            ga[k] = jb_val(B, d->operands[pk]);
+        }
+        if (!ok || B->fail || (lit && !eq)) continue;
+        const char *os = jb_str(B, "contract %%v%lld guarded #%lld", d->result->id, gi, 0);   // the call's result
+        if (B->jS < 0) B->gst[gi] = code;
+        if (lit && !c->when.nt) { jb_atom(B, os, u, nu, J_LE, ur); continue; }
+        if (B->jS >= 0) continue;                              // a disjunct holds no disjunction
+        JCons cs[2 * JGUARD_MAXP + 2]; int n = 0;
+        for (int k = 0; k < c->ng && !lit && !B->fail; k++) {
+            JLT w[1];
+            w[0].var = ga[k]; w[0].c = 1;  if (!jb_cons(B, w, 1, J_LE, c->gval[k] - 1, &cs[n++])) B->fail = true;
+            w[0].var = ga[k]; w[0].c = -1; if (!jb_cons(B, w, 1, J_LE, -c->gval[k] - 1, &cs[n++])) B->fail = true;
+        }
+        if (c->when.nt && !B->fail && !jb_cons(B, wt, nw, J_LE, wr, &cs[n++])) B->fail = true;
+        if (B->fail || !jb_cons(B, u, nu, J_LE, ur, &cs[n++])) { B->fail = true; break; }
+        jb_orn(B, os, cs, n);
+    }
+}
+// The calls whose guarded claims name a caller's version by a PRE or POST term (s21), once per
+// function: per call and claim, the versions named there. False for want of memory.
+static bool jg_gsites(JG *g) {
+    if (g->gsdone) return g->gs != NULL || g->ngs == 0;
+    g->gsdone = true;
+    int32_t cap = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass == 1 && cap && !(g->gs = JG_NEW(g, JGSite, cap))) return false;
+        g->ngs = 0;
+        for (int32_t r = 0; r < g->nrpo; r++) {
+            IrBlock *b = g->blk[g->rpo[r]];
+            int32_t k = 0;
+            for (IrInstr *i = b->instrs; i; i = i->next, k++) {
+                IrFunc *h = i->op == IR_CALL ? jg_callee(g, i) : NULL;
+                if (!h || !jg_same_module(h, g->f)) continue;
+                for (int32_t gi = 0; gi < g->ngc; gi++) {
+                    const JGuardClaim *c = &g->gc[gi];
+                    if (c->fn != h) continue;
+                    JGSite S; S.d = i; S.h = h; S.blk = b->id; S.idx = k; S.gi = gi; S.nv = 0;
+                    for (int t = 0; t < c->nt + c->when.nt; t++) {
+                        bool w = t >= c->nt; int q = w ? t - c->nt : t;
+                        uint8_t tk = w ? c->when.tk[q] : c->tk[q];
+                        int pk = tk == JTERM_PRE || tk == JTERM_POST ? jg_param_at(h, w ? c->when.key[q] : c->key[q]) : -1;
+                        if (pk < 0 || pk >= i->n_operands) continue;
+                        int16_t fld = w ? c->when.fld[q] : c->fld[q];
+                        int32_t v = tk == JTERM_PRE ? jg_call_pre_ver(g, i->operands[pk], fld, b->id, k)
+                                                    : jg_call_part_ver(g, i->operands[pk], fld, b->id, k);
+                        if (v >= 0) S.ver[S.nv++] = v;
+                    }
+                    if (!S.nv) continue;
+                    if (pass == 1) g->gs[g->ngs] = S;
+                    g->ngs++;
+                }
+            }
+        }
+        cap = g->ngs;
+    }
+    return true;
+}
+// A caller's version that a guarded claim's PRE or POST term names at a call (s21: `peek(p) == 40`,
+// then `p.pos + 1`, whose VC names p.pos's version and never the call's result): that claim at that
+// call, where the call dominates the point, so its result is a value there (VC-wide only).
+static void jb_ver_guarded(JB *B, int32_t ver) {
+    JG *g = B->g;
+    if (B->jS >= 0 || !g->ngc) return;
+    if (!jg_gsites(g)) { B->fail = true; return; }
+    for (int32_t s = 0; s < g->ngs && !B->fail; s++) {
+        const JGSite *S = &g->gs[s];
+        if (S->blk == B->blk ? S->idx >= B->idx : !jg_dominates(g, S->blk, B->blk)) continue;
+        for (int32_t k = 0; k < S->nv; k++)
+            if (S->ver[k] == ver) { jb_call_guarded(B, S->d, S->h, S->blk, S->idx, S->gi); break; }
+    }
 }
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
@@ -2338,6 +2497,8 @@ static void jb_state(JB *B, int32_t x) {
             }
         }
         if (v->kind == JV_JOIN || v->kind == JV_HEAD) jb_claims(B, v);
+        if (g->ngc) jb_ver_guarded(B, B->key[x]);             // a call's guarded claims about it (s21)
+        if (B->fail) return;
         IrValue *lo = v->kind == JV_HEAD ? jg_counter(g, v->blk, v->cell, false) : NULL;
         if (lo) {                                              // a counter's floor (s22): lo <= c
             char o[96]; snprintf(o, sizeof o, "counter %s@head.bb%lld", g->cname[v->cell], (long long)v->blk);
@@ -2681,42 +2842,8 @@ static void jb_state(JB *B, int32_t x) {
             if (!h || !jg_same_module(h, g->f)) break;
             jb_value_call(B, v);
             if (B->fail) return;
-            // its GUARDED return claims (s7): where each guard argument is a literal equal to its
-            // constant, the bound; a literal of another value, nothing; otherwise, VC-wide only,
-            // `a1 <= c1 - 1 | a1 >= c1 + 1 | ... | sum <= rhs`, which the solver uses where it
-            // shows the arguments are the constants
-            for (int32_t gi = 0; gi < g->ngc && !B->fail; gi++) {
-                const JGuardClaim *c = &g->gc[gi];
-                if (c->fn != h) continue;
-                JLT u[JCLAIM_MAXT]; int32_t ga[JGUARD_MAXP]; bool ok = true, lit = true, eq = true;
-                for (int k = 0; k < c->nt + c->ng && ok; k++) {
-                    int32_t key = k < c->nt ? c->key[k] : c->gkey[k - c->nt];
-                    if (k < c->nt) u[k].c = c->coef[k];
-                    if (k < c->nt && key == JKEY_RET) { u[k].var = x; continue; }
-                    int pk = jg_param_at(h, key);
-                    IrParam *pp = h->params;
-                    for (int q = 0; q < pk && pp; q++) pp = pp->next;
-                    if (pk < 0 || pk >= d->n_operands || !pp || !pp->value ||
-                        !jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
-                    if (k < c->nt) { u[k].var = jb_val(B, d->operands[pk]); continue; }
-                    __int128 cv;
-                    if (jg_const_of(g, d->operands[pk], &cv)) { if (cv != c->gval[k - c->nt]) eq = false; }
-                    else lit = false;
-                    ga[k - c->nt] = jb_val(B, d->operands[pk]);
-                }
-                if (!ok || (lit && !eq)) continue;
-                const char *os = jb_str(B, "contract %%v%lld guarded #%lld", x, gi, 0);
-                if (lit) { jb_atom(B, os, u, c->nt, J_LE, c->rhs); continue; }
-                if (B->jS >= 0) continue;                          // a disjunct holds no disjunction
-                JCons cs[2 * JGUARD_MAXP + 1]; int n = 0;
-                for (int k = 0; k < c->ng && !B->fail; k++) {
-                    JLT w[1];
-                    w[0].var = ga[k]; w[0].c = 1;  if (!jb_cons(B, w, 1, J_LE, c->gval[k] - 1, &cs[n++])) B->fail = true;
-                    w[0].var = ga[k]; w[0].c = -1; if (!jb_cons(B, w, 1, J_LE, -c->gval[k] - 1, &cs[n++])) B->fail = true;
-                }
-                if (B->fail || !jb_cons(B, u, c->nt, J_LE, c->rhs, &cs[n++])) { B->fail = true; break; }
-                jb_orn(B, os, cs, n);
-            }
+            int32_t cb, cx;                                    // its GUARDED return claims (s7)
+            if (g->ngc && jg_instr_at(g, d, &cb, &cx)) jb_call_guarded(B, d, h, cb, cx, -1);
             break;
         }
         case IR_ICMP: jb_cmp_def(B, x, d, id); break;          // a comparison's value
@@ -3384,11 +3511,12 @@ static JB jb_begin(JG *g, int32_t blk, int32_t idx, int32_t self) {
     B.g = g; B.blk = blk; B.idx = idx; B.self = self; B.jS = -1; B.to = -1;
     B.vval = JG_NEW(g, int32_t, g->nv); B.vlen = JG_NEW(g, int32_t, g->nv); B.vver = JG_NEW(g, int32_t, g->nver ? g->nver : 1);
     B.vlenv = JG_NEW(g, int32_t, g->nver ? g->nver : 1);
-    B.cst = JG_NEW(g, int32_t, g->ncl ? g->ncl : 1);
-    if (!B.vval || !B.vlen || !B.vver || !B.vlenv || !B.cst) { B.fail = true; return B; }
+    B.cst = JG_NEW(g, int32_t, g->ncl ? g->ncl : 1); B.gst = JG_NEW(g, int32_t, g->ngc ? g->ngc : 1);
+    if (!B.vval || !B.vlen || !B.vver || !B.vlenv || !B.cst || !B.gst) { B.fail = true; return B; }
     for (int32_t i = 0; i < g->nv; i++) B.vval[i] = B.vlen[i] = -1;
     for (int32_t i = 0; i < g->nver; i++) B.vver[i] = B.vlenv[i] = -1;
     for (int32_t i = 0; i < g->ncl; i++) B.cst[i] = -2;
+    for (int32_t i = 0; i < g->ngc; i++) B.gst[i] = -2;
     return B;
 }
 static bool jb_finish(JB *B, IrInstr *at, const char *kind, int ordinal, JCons *goal, JObl *o) {
@@ -4083,18 +4211,22 @@ static bool jg_claim_shape(JG *g, const int32_t *key, const uint8_t *tk, const i
         }
     return true;
 }
-// A var parameter's integer part, a frame summary's POST or PRE term (s15): the pointee itself
-// (fld -1) or its integer field fld of a struct pointee, behind a checked mutable pointer.
-static bool jg_var_part_ok(const IrParam *pp, int16_t fld) {
+// A reference parameter's part, a frame summary's POST or PRE term (s15): the pointee itself (fld
+// -1, an integer) or its field fld of a struct pointee, an integer or a slice (its length, s21),
+// behind a checked pointer: a mutable one, or, for a PRE term, a read-only one too (s21).
+static bool jg_var_part_ok(const IrParam *pp, int16_t fld, bool pre) {
     const IrType *pt = pp && pp->value ? pp->value->type : NULL;
-    if (!pt || pt->kind != IRT_PTR || pt->is_raw || !pt->ptr_mut || !pt->elem) return false;
+    if (!pt || pt->kind != IRT_PTR || pt->is_raw || (!pt->ptr_mut && !pre) || !pt->elem) return false;
     if (fld < 0) return fld == -1 && pt->elem->kind == IRT_INT;
-    return pt->elem->kind == IRT_STRUCT && fld < pt->elem->n_fields && pt->elem->fields[fld] && pt->elem->fields[fld]->kind == IRT_INT;
+    const IrType *ft = pt->elem->kind == IRT_STRUCT && fld < pt->elem->n_fields ? pt->elem->fields[fld] : NULL;
+    return ft && (ft->kind == IRT_INT || ft->kind == IRT_SLICE);
 }
 // A return claim of h: its terms, the returned value among them and any other an integer
-// parameter of h; h returns an integer. A return whose landing wraps is owed about the value the
-// caller receives, the landed one (jg_post_obligations, s8), as the caller's contract states it.
-static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
+// parameter of h, a slice parameter's length (s21), or a reference parameter's part (jg_var_part_ok);
+// h returns an integer. A return whose landing wraps is owed about the value the caller receives,
+// the landed one (jg_post_obligations, s8), as the caller's contract states it. `about`: the claim
+// must name the returned value or a POST term (a guard's `when` need not, s21).
+static bool jg_ret_terms_ok(JG *g, const JClaim *c, const IrFunc *h, bool about) {
     const __int128 big = (__int128)1 << 66;
     // the returned value is an integer's (JTERM_VALUE), a returned slice's length (JTERM_LEN), or a
     // returned struct's integer field fld (JTERM_VALUE, s15); a frame summary may name none of them
@@ -4109,7 +4241,8 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
     for (int k = 0; k < c->nt; k++) {
         if (c->tk[k] == JTERM_MOD) return jg_fail(g, "a claim's MOD term (v1: a loop's ranking only)");
         if (c->key[k] != JKEY_RET) {
-            if (c->tk[k] != JTERM_VALUE && c->tk[k] != JTERM_POST && c->tk[k] != JTERM_PRE) return jg_fail(g, "a return claim over a length");
+            if (c->tk[k] != JTERM_VALUE && c->tk[k] != JTERM_POST && c->tk[k] != JTERM_PRE && c->tk[k] != JTERM_LEN)
+                return jg_fail(g, "a return claim's term of a kind it cannot name");
             continue;
         }
         if (c->tk[k] != (sret ? JTERM_LEN : JTERM_VALUE))
@@ -4125,31 +4258,43 @@ static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) {
         const IrParam *pp = h->params;
         for (int q = 0; q < pk && pp; q++) pp = pp->next;
         if (c->tk[k] == JTERM_POST || c->tk[k] == JTERM_PRE) {     // a frame summary's term (s15)
-            if (pk < 0 || !jg_var_part_ok(pp, c->fld[k])) return jg_fail(g, "a return claim's POST or PRE term is no var parameter's integer part");
+            if (pk < 0 || !jg_var_part_ok(pp, c->fld[k], c->tk[k] == JTERM_PRE))
+                return jg_fail(g, "a return claim's POST or PRE term is no reference parameter's integer or slice part");
             post |= c->tk[k] == JTERM_POST;
+            continue;
+        }
+        if (c->tk[k] == JTERM_LEN) {                                  // a slice parameter's length (s21)
+            if (pk < 0 || !pp || !pp->value || !pp->value->type || pp->value->type->kind != IRT_SLICE)
+                return jg_fail(g, "a return claim's length term is no slice parameter");
             continue;
         }
         if (pk < 0 || !pp || !pp->value || !jg_is_int(pp->value->type))
             return jg_fail(g, "a return claim's term is neither the returned value nor an integer parameter");
     }
-    if (!ret && !post) return jg_fail(g, "a return claim not about the returned value");
+    if (about && !ret && !post) return jg_fail(g, "a return claim not about the returned value");
     return true;
 }
+static bool jg_ret_claim_ok(JG *g, const JClaim *c, const IrFunc *h) { return jg_ret_terms_ok(g, c, h, true); }
 // A guarded return claim as the return claim it guards, for the checks they share
 static JClaim jg_guard_as_claim(const JGuardClaim *c) {
     JClaim r; memset(&r, 0, sizeof r);
     r.blk = JCLAIM_RET; r.nt = c->nt; r.rhs = c->rhs; r.fn = c->fn;
-    for (int k = 0; k < JCLAIM_MAXT; k++) { r.key[k] = c->key[k]; r.tk[k] = c->tk[k]; r.coef[k] = c->coef[k]; }
+    for (int k = 0; k < JCLAIM_MAXT; k++) { r.key[k] = c->key[k]; r.tk[k] = c->tk[k]; r.coef[k] = c->coef[k]; r.fld[k] = c->fld[k]; }
     return r;
 }
-// A guarded return claim's own rules: a return claim's, and one or two guard parameters, each an
-// integer parameter of h named once, its constant in the parameter's type.
+// A guarded return claim's own rules: a return claim's terms (the claim or its `when` about the
+// returned value or a POST term), on a function returning an integer; up to two guard parameters,
+// each an integer parameter of h named once, its constant in the parameter's type; and `when`, where
+// it has terms, a return claim's terms of the same function (s21). One guard at least.
 static bool jg_guard_claim_ok(JG *g, const JGuardClaim *c, const IrFunc *h) {
     JClaim r = jg_guard_as_claim(c);
-    if (!jg_ret_claim_ok(g, &r, h)) return false;
-    for (int k = 0; k < c->nt; k++) if (c->tk[k] != JTERM_VALUE) return jg_fail(g, "a guarded return claim over a length");
+    bool about = false;
+    for (int k = 0; k < c->when.nt && k < JCLAIM_MAXT; k++) about |= c->when.key[k] == JKEY_RET || c->when.tk[k] == JTERM_POST;
+    if (!jg_ret_terms_ok(g, &r, h, !about)) return false;
     if (!jg_is_int(h->ret_type)) return jg_fail(g, "a guarded return claim on a function returning no integer");
-    if (c->ng < 1 || c->ng > JGUARD_MAXP) return jg_fail(g, "a guarded claim of no guard, or of more than it may have");
+    if (c->when.nt && (c->when.blk != JCLAIM_RET || c->when.fn != c->fn)) return jg_fail(g, "a guarded claim's `when` not of its function's return");
+    if (c->when.nt && !jg_ret_terms_ok(g, &c->when, h, false)) return false;
+    if (c->ng < 0 || c->ng > JGUARD_MAXP || (c->ng == 0 && c->when.nt == 0)) return jg_fail(g, "a guarded claim of no guard, or of more than it may have");
     for (int k = 0; k < c->ng; k++) {
         for (int j = 0; j < k; j++) if (c->gkey[j] == c->gkey[k]) return jg_fail(g, "a guarded claim naming one parameter twice in its guard");
         int pk = jg_param_at(h, c->gkey[k]);
@@ -4221,6 +4366,27 @@ static bool jg_claims_ok(JG *g) {
     }
     return true;
 }
+// One term of a return claim (or of a guard's `when`) as block b returns: the returned term rv (a
+// returned struct's field, a part variable); a frame summary's part, its cell's version as b returns
+// (POST) or as the function was entered (PRE: its ENTRY version, the caller's before the call), a
+// slice cell's length (s21); a part with no cell here a fresh variable, so the claim is not implied
+// (never refused: the function's other claims stand); a slice parameter's length (s21); else the
+// parameter's value.
+static int32_t jb_ret_term(JB *B, IrBlock *b, int32_t rv, bool tret, int32_t key, uint8_t tk, int16_t fld) {
+    JG *g = B->g;
+    if (key == JKEY_RET) return tret ? jb_part(B, b->term.cond, fld) : rv;
+    if (tk == JTERM_POST || tk == JTERM_PRE) {
+        char path[16]; snprintf(path, sizeof path, fld >= 0 ? ".%d" : "", (int)fld);
+        int32_t cc = -1, ver = -1;
+        for (int32_t q = 0; q < g->ncells && cc < 0; q++) if (g->croot[q] == key && !strcmp(g->cpath[q], path)) cc = q;
+        if (cc >= 0) ver = tk == JTERM_POST ? g->outstate[(size_t)b->id * (size_t)g->ncells + (size_t)cc]
+                                            : g->instate[(size_t)g->f->entry->id * (size_t)g->ncells + (size_t)cc];
+        if (ver >= 0) return jb_part_term(B, ver);
+        return jb_fresh(B, tk == JTERM_POST ? "post" : "pre", key, NULL, 0, 0);   // den 0: no recipe
+    }
+    if (tk == JTERM_LEN) return jb_len(B, jg_value(g, key));
+    return jb_val(B, jg_value(g, key));
+}
 // Each claim's obligations (P3.5): on every edge P -> H into its block, at the end of P, the edge's
 // condition a fact, the claim about the versions P ends with: `hull` into a join, `inv.entry` into
 // a header from before its loop, `inv.keep` along a back edge (where H's own claims about its
@@ -4228,12 +4394,14 @@ static bool jg_claims_ok(JG *g) {
 // of its branch owes it once, with no edge condition.
 // A return claim's obligation, `post`: at every return, the claim about the value returned (its
 // landing in the return type exact: jg_ret_claim_ok) and the parameters' values (their entry ones).
-// A GUARDED one's (gd, s7) as its return claim's, its guard a hypothesis (each guard parameter at
-// entry is its constant); nothing about any other state at entry (a module variable, what an
-// argument points to) is assumed: the generator states the body's facts as for any return claim.
+// A GUARDED one's (gd, s7) as its return claim's, its guards hypotheses (each guard parameter at
+// entry is its constant; `when` about the value returned and the terms as b returns, s21); nothing
+// about any other state at entry (a module variable, what an argument points to) is assumed: the
+// generator states the body's facts as for any return claim.
 static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardClaim *gd, int ordinal, int32_t claim) {
     bool needret = false;
     for (int k = 0; k < c->nt; k++) needret |= c->key[k] == JKEY_RET;
+    for (int k = 0; gd && k < gd->when.nt; k++) needret |= gd->when.key[k] == JKEY_RET;
     for (IrBlock *b = g->f->blocks; b; b = b->next) {
         // every return owes it: one with no value too, where the claim names no returned value (a
         // frame summary of a function returning nothing, s15), never skipped as vacuous
@@ -4244,7 +4412,7 @@ static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardCl
         if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
         for (int k = 0; gd && k < gd->ng; k++) {
             JLT w[1]; w[0].var = jb_val(&B, jg_value(g, gd->gkey[k])); w[0].c = 1;
-            jb_atom(&B, jb_str(&B, "guard %%v%lld", gd->gkey[k], 0, 0), w, 1, J_EQ, gd->gval[k]);
+            jb_atom(&B, jb_str(&B, "premise guard %%v%lld", gd->gkey[k], 0, 0), w, 1, J_EQ, gd->gval[k]);
         }
         // the value the caller receives: the returned one where its landing in the return type keeps
         // it, else that value WRAPPED into the type (a waived narrowing, as it_wrap makes it): a fresh
@@ -4264,25 +4432,11 @@ static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardCl
             }
         }
         JLT t[JCLAIM_MAXT]; JCons goal;
-        for (int k = 0; k < c->nt; k++) {
-            t[k].c = c->coef[k];
-            if (c->key[k] == JKEY_RET) { t[k].var = tret ? jb_part(&B, b->term.cond, c->fld[k]) : rv; continue; }
-            if (c->tk[k] == JTERM_POST || c->tk[k] == JTERM_PRE) {
-                // a var parameter's part: its cell's version as b returns (POST) or as the function
-                // was entered (PRE: its ENTRY version, the caller's before the call); a part with no
-                // cell here is a fresh variable, so the claim is not implied (never refused: the
-                // function's other claims stand)
-                char path[16]; snprintf(path, sizeof path, c->fld[k] >= 0 ? ".%d" : "", (int)c->fld[k]);
-                int32_t cc = -1, ver = -1;
-                for (int32_t q = 0; q < g->ncells && cc < 0; q++) if (g->croot[q] == c->key[k] && !strcmp(g->cpath[q], path)) cc = q;
-                if (cc >= 0) ver = c->tk[k] == JTERM_POST ? g->outstate[(size_t)b->id * (size_t)g->ncells + (size_t)cc]
-                                                          : g->instate[(size_t)g->f->entry->id * (size_t)g->ncells + (size_t)cc];
-                if (ver >= 0) { t[k].var = jb_ver(&B, ver); continue; }
-                t[k].var = jb_fresh(&B, c->tk[k] == JTERM_POST ? "post" : "pre", c->key[k], NULL, 0, 0);   // den 0: no recipe
-                continue;
-            }
-            t[k].var = jb_val(&B, jg_value(g, c->key[k]));
+        if (gd && gd->when.nt) {                             // the guard `when`, as b returns (s21)
+            for (int k = 0; k < gd->when.nt; k++) { t[k].c = gd->when.coef[k]; t[k].var = jb_ret_term(&B, b, rv, tret, gd->when.key[k], gd->when.tk[k], gd->when.fld[k]); }
+            if (!B.fail) jb_atom(&B, "premise guard when", t, gd->when.nt, J_LE, gd->when.rhs);
         }
+        for (int k = 0; k < c->nt; k++) { t[k].c = c->coef[k]; t[k].var = jb_ret_term(&B, b, rv, tret, c->key[k], c->tk[k], c->fld[k]); }
         if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
         JObl *o = jg_push(g, L);
         if (!o || !jb_finish(&B, NULL, "post", ordinal, &goal, o)) return jg_fail(g, "out of memory building a VC");

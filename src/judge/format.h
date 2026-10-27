@@ -105,7 +105,10 @@ enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
 // JTERM_POST, JTERM_PRE: in a RETURN claim only, a FRAME SUMMARY's terms (s15): the integer that a
 // `var` parameter `key` points to, or its integer field fld[k] (one level; fld -1: the pointee
 // itself), as the function returns (POST) and as it was entered (PRE): `post(q.count) -
-// pre(q.count) + ret = 0`. fld is read for these two kinds only; a producer sets it for them.
+// pre(q.count) + ret = 0`. fld is read for these two kinds only; a producer sets it for them. A PRE
+// term may also name a read-only reference parameter's part (s21: `peek(p P)` reads p.pos), and a
+// field fld that is a slice is named by its length (pre(p.src) is p.src.len as the function was
+// entered). In a return claim, JTERM_LEN of a parameter is that slice parameter's length (s21).
 // JTERM_MOD: in a loop's RANKING claim only (s27), an integer cell's version FLOOR-MOD k, the r of
 // x = k*q + r with 0 <= r <= k - 1 whatever x's sign (not C's `%`): a natural number, so a component
 // may be bounded by it. k is the ranking's targ for the term, 2 .. JTERM_MODMAX.
@@ -113,15 +116,20 @@ enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENT
        JTERM_MOD = 8, JTERM_MODMAX = 1 << 20 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
                  struct IrFunc *fn; int16_t fld[JCLAIM_MAXT]; } JClaim;
-// A GUARDED return claim (s7): a return claim of `fn`, as a JClaim at JCLAIM_RET (the value returned,
-// JKEY_RET, and integer parameters), that holds where each guard parameter gkey[i] is gval[i] at
-// entry: `ret <= 84 where a0 = 48 and b0 = 36`. A list of its own beside the claims, so that no reader
-// of a claim can take one for unguarded. gen.h owes it at fn's returns under its guard, and states it
-// at every call: the bound where the arguments are those constants, else (not the guard) or the
-// bound. The VCs it owes name it ncl + its index.
+// A GUARDED return claim (s7): a return claim of `fn`, as a JClaim at JCLAIM_RET (its terms and
+// their parts fld, as a return claim's), that holds where each guard parameter gkey[i] is gval[i]
+// at entry and, where `when` has terms (s21), where `when` holds as fn returns: `ret <= 84 where
+// a0 = 48 and b0 = 36`, `pre(p.1) - pre(p.0) <= -1 where -ret <= -1` (peek returns nonzero only
+// below the end). `when` is one constraint over a return claim's terms (blk JCLAIM_RET, fn this
+// claim's; it need not name the returned value); ng may be 0 where it has terms. A list of its own
+// beside the claims, so that no reader of a claim can take one for unguarded. gen.h owes it at fn's
+// returns under its guards, and states it at every call: the bound where the arguments are those
+// constants and there is no `when`, else (not a guard) or the bound. The VCs it owes name it
+// ncl + its index.
 enum { JGUARD_MAXP = 2 };
 typedef struct { int32_t nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
-                 int32_t ng; int32_t gkey[JGUARD_MAXP]; __int128 gval[JGUARD_MAXP]; struct IrFunc *fn; } JGuardClaim;
+                 int32_t ng; int32_t gkey[JGUARD_MAXP]; __int128 gval[JGUARD_MAXP]; struct IrFunc *fn;
+                 int16_t fld[JCLAIM_MAXT]; JClaim when; } JGuardClaim;
 // A RANKING claim at a loop header: a tuple of components f_j = sum coef[j][i] * term_i + c0[j]
 // over terms by value id (a cell is its version at the header; any other value dominates it, so
 // its value before and after a trip is one). On each back edge, named by its predecessor `from`,
