@@ -697,7 +697,25 @@ static bool CN(ls_residue_shaped)(const JVc *vc, const uint8_t *on) {
     }
     return false;
 }
+// A VC over a ranking's RESIDUE term (s27: its definitions' origin is `def mod <k>`): the residue
+// search FIRST, under a sixteenth of the limit, then the plain one. Such a VC is about its parity
+// cases, and the plain search spent its whole limit before them (Kroening's rank.lex 1: 100000
+// pivots, its judge time 0.62 -> 7.8 s); no other VC carries the origin, so no other search moves.
+static bool CN(ls_residue_term)(const JVc *vc, const uint8_t *on) {
+    for (int32_t h = 0; h < vc->nhyps; h++)
+        if ((!on || on[h]) && vc->hyps[h].origin && !strncmp(vc->hyps[h].origin, "def mod ", 8)) return true;
+    return false;
+}
 static JAnswer CN(ls_solve)(const JVc *vc, const uint8_t *on, bool cone, JWork limit, void *mem, size_t size, bool *ovf) {
+    if (!cone && CN(ls_residue_term)(vc, on)) {
+        JWork l2 = limit; l2.pivot /= 16; l2.node /= 16; l2.leaf /= 16;
+        bool ovf2 = false;
+        JAnswer B = CN(ls_solve1)(vc, on, cone, l2, mem, size, &ovf2, true);
+        if (B.k == J_ANS_CERT || B.k == J_ANS_MODEL || B.k == J_ANS_CAPACITY) { if (ovf) *ovf = ovf2; return B; }
+        JAnswer A = CN(ls_solve1)(vc, on, cone, limit, mem, size, ovf, false);
+        A.used.pivot += B.used.pivot; A.used.node += B.used.node; A.used.leaf += B.used.leaf;
+        return A;
+    }
     JAnswer A = CN(ls_solve1)(vc, on, cone, limit, mem, size, ovf, false);
     if (A.k != J_ANS_BUDGET || cone || !CN(ls_residue_shaped)(vc, on)) return A;
     JWork l2 = limit; l2.pivot /= 16; l2.node /= 16; l2.leaf /= 16;
