@@ -731,7 +731,7 @@ int main(int argc, char **argv) {
     char *work = malloc(wcap);
     if (!buf || !hbuf || !work) { fprintf(stderr, "out of memory\n"); return 1; }
     // the finder (untrusted, src/solver/finder.h) proposes; the generator is offered to it as calls
-    JGenOffer offer = { hbuf, hcap, irmod };
+    JGenOffer offer = { hbuf, hcap, irmod, NULL, 0 };
     JudgeGen gen = jgen_offer(&offer);
     JFinder F; memset(&F, 0, sizeof F);
     F.meter_cap = meter_cap;

@@ -1,0 +1,24 @@
+// EXPECT: [E086]
+// peek's 0 is the end's sentinel as well as a byte: after `peek(c) == 0`, pos may be the length,
+// at the top of usize, and `c.pos + 1` can overflow.
+type Cursor {
+    src u8[]
+    pos usize
+}
+
+func peek(c Cursor) u8 {
+    if c.pos < c.src.len { return c.src[c.pos] }
+    return 0
+}
+
+func skip_nul(var c Cursor) {
+    if peek(c) == 0 { c.pos = c.pos + 1 }
+}
+
+func main() i32 {
+    var s = "a"
+    var c = Cursor(s[0..s.len], 0)
+    skip_nul(var c)
+    if c.pos > 9 { return 1 }
+    return 0
+}

@@ -219,6 +219,9 @@ typedef struct {
     // f's WRITTEN measure (`decreasing`) as the generator reads it, one row at f's entry; false when
     // f writes none or the generator cannot read it as a sum
     bool (*measure)(void *ctx, struct IrFunc *f, JRank *out, char *err, uint32_t errcap);
+    // the guarded return claims (s7, s21) that paths, paths_mod and call_paths state from now on, at
+    // calls as a VC states them, or none (NULL); `gc` must live until the next call of this
+    void (*guarded)(void *ctx, const JGuardClaim *gc, int32_t ngc);
 } JudgeGen;
 
 #endif // LAIN_JUDGE_FORMAT_H

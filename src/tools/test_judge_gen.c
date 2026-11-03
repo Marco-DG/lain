@@ -1198,7 +1198,7 @@ int main(void) {
         {   memset(region, 0x5a, sizeof region);                                // the region is not zeroed
             JMem m = jmem_over(region, sizeof region);
             JPaths P; char err[200];
-            bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+            bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err);
             CHECK(ok && !P.refused && P.n == 2, "two edges into the header (got %d, %s)", ok ? P.n : -1, ok ? (P.refused ? P.refused : "") : err);
             for (int32_t k = 0; ok && k < P.n; k++) {
                 const JPath *p = &P.p[k];
@@ -1218,7 +1218,7 @@ int main(void) {
                 } else CHECK(p->from == b0->id && q->pre == -1 && q->post >= 0, "the entry edge: no pre, i's value at entry");
             }
             m = jmem_over(region, sizeof region);
-            ok = jgen_paths(&m, f, gen_mod, NULL, 0, b2->id, &P, err, sizeof err);
+            ok = jgen_paths(&m, f, gen_mod, NULL, 0, NULL, 0, b2->id, &P, err, sizeof err);
             CHECK(ok && P.refused && strstr(P.refused, "not a loop header"), "b2 heads no loop");
         }
     }
@@ -1271,7 +1271,7 @@ int main(void) {
         free(t);
         {   JMem m = jmem_over(region, sizeof region);
             JPaths P; char err[200];
-            bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+            bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err);
             int lens = 0;
             for (int32_t k = 0; ok && k < P.n; k++)
                 for (int32_t q = 0; q < P.p[k].npairs; q++)
@@ -1541,7 +1541,7 @@ int main(void) {
         {   gen_rk = NULL; gen_nrk = 0;
             JMem jm = jmem_over(region, sizeof region);
             JPaths P; char err[200];
-            bool ok = jgen_call_paths(&jm, f, gen_mod, NULL, 0, &P, err, sizeof err);
+            bool ok = jgen_call_paths(&jm, f, gen_mod, NULL, 0, NULL, 0, &P, err, sizeof err);
             CHECK(ok && !P.refused && P.n == 1 && P.p[0].npairs == 1 && P.p[0].pairs[0].key == n->id &&
                   P.p[0].pairs[0].pre >= 0 && P.p[0].pairs[0].post >= 0 && P.p[0].pairs[0].pre != P.p[0].pairs[0].post,
                   "one call path: n at entry, n - 1 at the call (%d paths)", ok ? P.n : -1);
@@ -1677,13 +1677,13 @@ int main(void) {
         free(t);
         {   JMem jm = jmem_over(region, sizeof region);                     // a's call path names b
             JPaths P; char err[200];
-            bool ok = jgen_call_paths(&jm, fa, gen_mod, NULL, 0, &P, err, sizeof err);
+            bool ok = jgen_call_paths(&jm, fa, gen_mod, NULL, 0, NULL, 0, &P, err, sizeof err);
             CHECK(ok && !P.refused && P.n == 1 && P.p[0].callee == fb && P.p[0].from == cb[0]->id && P.p[0].at == cix[0] &&
                   P.p[0].npairs == 1 && P.p[0].pairs[0].key == pn[3]->id && P.p[0].pairs[0].pre == -1 && P.p[0].pairs[0].post >= 0 &&
                   P.p[0].nentry == 1 && P.p[0].entry[0].key == pn[0]->id && P.p[0].entry[0].pre >= 0 &&
                   P.p[0].entry[0].pre != P.p[0].pairs[0].post && P.p[0].entry[0].post == -1,
                   "a -> b's path: callee b, at bb%d.%d, b's n as the argument, a's n at entry", cb[0]->id, cix[0]);
-            ok = jgen_call_paths(&jm, fb, gen_mod, NULL, 0, &P, err, sizeof err);
+            ok = jgen_call_paths(&jm, fb, gen_mod, NULL, 0, NULL, 0, &P, err, sizeof err);
             CHECK(ok && P.n == 1 && P.p[0].callee == fc && P.p[0].at == cix[4], "b's one path is its call to c, not h's");
         }
         {   // u(x, n) -> v(n), v(n) -> u(n, n): the caller's parameters are not the callee's (value
@@ -1696,7 +1696,7 @@ int main(void) {
             ir_finalize_cfg(fu); ir_finalize_cfg(fv);
             fu->next = fv;
             JMem jm = jmem_over(region, sizeof region); JPaths P; char err[200];
-            bool ok = jgen_call_paths(&jm, fu, fu, NULL, 0, &P, err, sizeof err);
+            bool ok = jgen_call_paths(&jm, fu, fu, NULL, 0, NULL, 0, &P, err, sizeof err);
             CHECK(ok && P.n == 1 && P.p[0].callee == fv && P.p[0].npairs == 1 && P.p[0].nentry == 2 &&
                   P.p[0].entry[0].key == ux->id && P.p[0].entry[1].key == un->id && P.p[0].pairs[0].post == P.p[0].entry[1].pre,
                   "u -> v(n): v's one parameter, u's two at entry, the argument u's n");
@@ -1914,7 +1914,7 @@ int main(void) {
         gen_mod = f;
         JMem m = jmem_over(region, sizeof region);
         JPaths P; char err[200];
-        bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+        bool ok = jgen_paths(&m, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err);
         CHECK(ok && !P.refused && P.n == 2, "two edges into the header (%s)", ok ? "" : err);
         for (int32_t k = 0; ok && k < P.n; k++) {
             const JPath *p = &P.p[k]; const JPathPair *pi = NULL, *pc = NULL; int other = 0;
@@ -3479,7 +3479,7 @@ int main(void) {
                 for (int32_t q = 0; q < ns; q++) if (sl[q].key == a->id) none = false;
             JMem m4 = jmem_over(region, sizeof region);
             JPaths P; int pairs = 0;
-            if (jgen_paths(&m4, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err))
+            if (jgen_paths(&m4, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err))
                 for (int32_t q = 0; q < P.n; q++)
                     for (int32_t r = 0; r < P.p[q].npairs; r++) { if (P.p[q].pairs[r].key == a->id) none = false; pairs++; }
             CHECK(none && pairs > 0, "case 1: no slot, term or path pair keyed by the array's root (%d pairs)", pairs);
@@ -3535,7 +3535,7 @@ int main(void) {
         CHECK(g && !strncmp(g, "goal 0 <= 0\n", 12), "case 0: the target's measure at op[1] (h's x):\n%s", vf);
         free(t);
         {   JMem jm = jmem_over(region, sizeof region); JPaths P; char err[200];
-            bool ok = jgen_call_paths(&jm, h, gen_mod, NULL, 0, &P, err, sizeof err);
+            bool ok = jgen_call_paths(&jm, h, gen_mod, NULL, 0, NULL, 0, &P, err, sizeof err);
             bool cp = ok && P.n == 2 && P.p[0].callee != P.p[1].callee && (P.p[0].callee == fp || P.p[0].callee == fq) &&
                       (P.p[1].callee == fp || P.p[1].callee == fq);
             for (int q = 0; cp && q < 2; q++) cp = P.p[q].at == hci && P.p[q].npairs == 1 && P.p[q].nentry == 1 &&
@@ -4622,7 +4622,7 @@ int main(void) {
         cl[0].blk = b1->id; cl[0].fn = f; cl[0].nt = 2; cl[0].key[0] = k->id; cl[0].coef[0] = 1; cl[0].key[1] = r->id; cl[0].coef[1] = -1;
         JMem m = jmem_over(region, sizeof region);
         JPaths P; char err[200];
-        bool ok = jgen_paths(&m, f, gen_mod, cl, c == 1, b1->id, &P, err, sizeof err);
+        bool ok = jgen_paths(&m, f, gen_mod, cl, c == 1, NULL, 0, b1->id, &P, err, sizeof err);
         CHECK(ok && !P.refused && P.n == 2, "case %d: two edges into the header (got %d, %s)", c, ok ? P.n : -1, ok ? (P.refused ? P.refused : "") : err);
         for (int32_t q = 0; ok && q < P.n; q++) {
             const JPath *p = &P.p[q];
@@ -5258,7 +5258,7 @@ int main(void) {
             free(rc);
             for (int mode = 0; mode < 2; mode++) {               // paths_mod offers the pair; paths none
                 JMem mm = jmem_over(region, sizeof region); JPaths P; char err[200];
-                bool ok = mode ? jgen_paths_mod(&mm, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err) : jgen_paths(&mm, f, gen_mod, NULL, 0, b1->id, &P, err, sizeof err);
+                bool ok = mode ? jgen_paths_mod(&mm, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err) : jgen_paths(&mm, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err);
                 int mods = 0;
                 for (int32_t k = 0; ok && k < P.n; k++)
                     for (int32_t q = 0; q < P.p[k].npairs; q++) {

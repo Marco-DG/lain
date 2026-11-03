@@ -43,6 +43,8 @@ typedef struct {
     const char **rkstage;                // with fd_track_stages: the stage that ranked each (a label)
     struct FdMemo *memo;                 // during a call: the solver's answers by VC (fd_implied)
     bool keep_dead;                      // fd_loop_from keeps the paths the solver refutes (f64)
+    // during B1's last round: the guarded return claims every claim VC states at its calls (gc)
+    const JGuardClaim *hgc; int32_t nhgc;
 } JFinder;
 
 // ── its own small helpers (the generator's are the judge's; these are untrusted copies) ─────────
@@ -265,13 +267,15 @@ static LMax fd_max_goal(JFinder *F, const JVc *v) {
 // dropped, it calls a function that lost one, or it calls through a pointer (any target may have).
 // Exact in the claims kept. simdlex.ln: Houdini was 32% of the judge's run, every iteration
 // solving every function's VCs again.
-static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) {
+// `first`: the functions whose VCs can have changed (B1's last round: its candidates' functions),
+// in the module's order, or NULL for every function.
+static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold, const uint8_t *first) {
     char err[200];
     int32_t nfn = 0;
     for (IrFunc *f = F->mod; f; f = f->next) nfn++;
     uint8_t *dirty = malloc((size_t)(nfn ? nfn : 1)), *lost = calloc((size_t)(nfn ? nfn : 1), 1);
     if (!dirty || !lost) { free(dirty); free(lost); return -1; }
-    memset(dirty, 1, (size_t)(nfn ? nfn : 1));
+    if (first) memcpy(dirty, first, (size_t)nfn); else memset(dirty, 1, (size_t)(nfn ? nfn : 1));
     for (bool again = nc > 0; again; ) {
         again = false;
         uint8_t *bad = calloc((size_t)nc, 1);
@@ -281,14 +285,14 @@ static int32_t houdini_module(JFinder *F, JClaim *cl, int32_t nc, int32_t nold) 
             fk++;
             if (f->is_extern || !f->entry || !dirty[fk]) continue;
             JClaimVc *o; int32_t n;
-            if (!F->gen->claim_vcs(F->gen->ctx, f, cl, nc, NULL, 0, JGEN_CLAIMS, &o, &n, err, sizeof err)) {
+            if (!F->gen->claim_vcs(F->gen->ctx, f, cl, nc, F->hgc, F->nhgc, JGEN_CLAIMS, &o, &n, err, sizeof err)) {
                 bool fresh = false;                          // this round's: drop those, then retry
                 for (int32_t ci = nold; ci < nc; ci++) if (cl[ci].fn == f) { bad[ci] = 1; fresh = true; }
                 if (!fresh) for (int32_t ci = 0; ci < nc; ci++) if (cl[ci].fn == f) bad[ci] = 1;
                 continue;
             }
-            for (int32_t q = 0; q < n; q++)
-                if (!bad[o[q].claim] && !fd_implied(F, &o[q].vc)) bad[o[q].claim] = 1;
+            for (int32_t q = 0; q < n; q++)                  // a guarded claim's own (hgc) is owed apart
+                if (o[q].claim < nc && !bad[o[q].claim] && !fd_implied(F, &o[q].vc)) bad[o[q].claim] = 1;
         }
         // the functions that lost a claim, then next iteration's: those and their callers
         memset(lost, 0, (size_t)(nfn ? nfn : 1));
@@ -3261,7 +3265,7 @@ static bool fd_entry_max(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, co
     if (nv) memcpy(q, as, sizeof *q * (size_t)nv);
     q[nv] = *cand;
     JClaimVc *o; int32_t n;
-    bool ok = F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, NULL, 0, cand->blk, &o, &n, err, sizeof err);
+    bool ok = F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, F->hgc, F->nhgc, cand->blk, &o, &n, err, sizeof err);
     free(q);
     if (!ok) return false;
     bool any = false; __int128 best = 0;
@@ -3381,7 +3385,7 @@ static bool fd_iter_bound(JFinder *F, IrFunc *f, const JClaim *as, int32_t nv, J
     for (int it = 0; it < 6 && !ok; it++) {
         cand->rhs = have ? B : -big; q[nv] = *cand;
         JClaimVc *o; int32_t n;
-        if (!F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, NULL, 0, cand->blk, &o, &n, err, sizeof err)) break;
+        if (!F->gen->claim_vcs(F->gen->ctx, f, q, nv + 1, F->hgc, F->nhgc, cand->blk, &o, &n, err, sizeof err)) break;
         __int128 M = 0; bool any = false, unb = false;
         for (int32_t k = 0; k < n && !unb; k++) {
             if (o[k].claim != nv || !o[k].vc.id.kind) continue;
@@ -4015,6 +4019,262 @@ static bool fd_calls_itself(const JFinder *F, IrFunc *h) {
         for (IrInstr *i = b->instrs; i; i = i->next) if (fd_callee(F, i) == h) return true;
     return false;
 }
+// B1 (s21): GUARDED return claims that hold where the RETURNED VALUE says so. A callee that returns
+// a SENTINEL on some path and something else on another (peek's 0 past the end; find_from's
+// hay.len when nothing is found), the sentinel a constant, an integer parameter or a slice
+// parameter's length, and whose result a caller compares (as it is, or read back from the cell it
+// was stored to) with a constant, or with what it passed for that parameter: each side of the
+// sentinel such a comparison selects is a `when` (`peek(p) == 40`: -ret <= -1, ret above 0;
+// `k >= hay.len`: ret - len(hay) <= -1 and its mirror). The claims are the sums t1 - t2 and +-t1 of
+// the callee's return terms (ret, its integer parameters, its slice parameters' lengths, a
+// reference parameter's integer or slice parts as it was entered), each at its greatest value over
+// the returns `when` admits, kept only where that is below the greatest over every return (the
+// same sums under a `when` every return meets), at most FD_WHEN_PER a side: the furthest below
+// first, then those naming ret. `pre(p.pos) - pre(p.src) <= -1 where -ret <= -1` (calc.ln's four
+// `p.pos + 1`), `from - ret <= 0 where ret - len(hay) <= -1` (search.ln's loop advances). Each
+// callee on its facts' account. Untrusted like s7's claims, and checked as one set with them.
+#define FD_WHEN_MAXT 6
+static void fd_meter_to(const IrFunc *f, bool rank);
+#define FD_WHEN_PER 2
+#define FD_MAXWHEN 32
+typedef struct { int32_t key; uint8_t tk; int16_t fld; } FdRTerm;
+// h's return terms, ret first (FD_WHEN_MAXT at most), as jg_ret_terms_ok admits them
+static int32_t fd_ret_terms(const IrFunc *h, FdRTerm *t) {
+    int32_t n = 0;
+    t[n].key = JKEY_RET; t[n].tk = JTERM_VALUE; t[n].fld = -1; n++;
+    for (IrParam *p = h->params; p && n < FD_WHEN_MAXT; p = p->next) {
+        const IrType *pt = p->value ? p->value->type : NULL;
+        if (!pt) continue;
+        if (pt->kind == IRT_INT) { t[n].key = p->value->id; t[n].tk = JTERM_VALUE; t[n].fld = -1; n++; }
+        else if (pt->kind == IRT_SLICE) { t[n].key = p->value->id; t[n].tk = JTERM_LEN; t[n].fld = -1; n++; }
+        else if (pt->kind == IRT_PTR && !pt->is_raw && pt->elem && pt->elem->kind == IRT_INT) {
+            t[n].key = p->value->id; t[n].tk = JTERM_PRE; t[n].fld = -1; n++;
+        } else if (pt->kind == IRT_PTR && !pt->is_raw && pt->elem && pt->elem->kind == IRT_STRUCT)
+            for (int k = 0; k < pt->elem->n_fields && n < FD_WHEN_MAXT; k++) {
+                const IrType *ft = pt->elem->fields[k];
+                if (!ft || (ft->kind != IRT_INT && ft->kind != IRT_SLICE)) continue;
+                t[n].key = p->value->id; t[n].tk = JTERM_PRE; t[n].fld = (int16_t)k; n++;
+            }
+    }
+    return n;
+}
+// The return term a value of h is (its index in t), or -1: an integer parameter, a slice
+// parameter's length
+static int32_t fd_ret_term_of(IrFunc *h, const IrValue *v, const FdRTerm *t, int32_t nt) {
+    IrInstr *d = fd_def_in(h, v);
+    for (int32_t k = 1; k < nt; k++) {
+        if (t[k].tk == JTERM_VALUE && v && v->id == t[k].key) return k;
+        if (t[k].tk == JTERM_LEN && d && d->op == IR_SLICE_LEN && d->n_operands >= 1 && d->operands[0] && d->operands[0]->id == t[k].key) return k;
+    }
+    return -1;
+}
+// A return term's box: its type's range, a slice's length in [0, MAX_LEN] (gen.h's jg_len_max)
+static void fd_rterm_box(const IrFunc *h, const FdRTerm *t, __int128 *lo, __int128 *hi) {
+    const IrType *ty = NULL;
+    if (t->key == JKEY_RET) ty = h->ret_type;
+    for (IrParam *p = h->params; p && !ty; p = p->next) {
+        if (!p->value || p->value->id != t->key) continue;
+        ty = p->value->type;
+        if (t->tk == JTERM_PRE && ty && ty->elem) ty = t->fld < 0 ? ty->elem : t->fld < ty->elem->n_fields ? ty->elem->fields[t->fld] : NULL;
+    }
+    FdRange r;
+    if (ty && ty->kind == IRT_SLICE) {
+        int64_t es = ty->elem && ty->elem->kind == IRT_INT && ty->elem->bits >= 8 ? ty->elem->bits / 8 : 1;
+        *lo = 0; *hi = INT64_MAX / es;
+    } else if (fd_range(ty, &r)) { *lo = r.lo; *hi = r.hi; }
+    else { *lo = -((__int128)1 << 100); *hi = (__int128)1 << 100; }
+}
+typedef struct { bool isc; __int128 c; int32_t t; bool other, lo, hi; } FdSent;
+static void fd_when_set(JClaim *w, IrFunc *h, const FdRTerm *t, int32_t a, __int128 ca, int32_t b, __int128 cb, __int128 rhs) {
+    memset(w, 0, sizeof *w);
+    w->blk = JCLAIM_RET; w->fn = h; w->rhs = rhs;
+    w->key[0] = t[a].key; w->tk[0] = t[a].tk; w->fld[0] = t[a].fld; w->coef[0] = ca; w->nt = 1;
+    if (b >= 0) { w->key[1] = t[b].key; w->tk[1] = t[b].tk; w->fld[1] = t[b].fld; w->coef[1] = cb; w->nt = 2; }
+}
+static bool fd_when_claims(JFinder *F, IrCallGraph *G, const JClaim *as, int32_t nv, JGuardClaim **gcp, int32_t *ngcp) {
+    char err[200];
+    int32_t added = 0;
+    for (IrFunc *h = F->mod; h && added < FD_MAXWHEN; h = h->next) {
+        FdRange rr;
+        if (h->is_extern || !h->entry || h->incomplete || !h->ret_type || h->ret_type->kind != IRT_INT || !fd_range(h->ret_type, &rr)) continue;
+        int k = ir_cg_index(G, h);
+        if (k < 0 || ir_cg_members(G, k, NULL, 0) != 1 || fd_calls_itself(F, h)) continue;
+        FdRTerm t[FD_WHEN_MAXT]; int32_t nt = fd_ret_terms(h, t);
+        FdSent S[8]; int32_t ns = 0, nret = 0;
+        for (IrBlock *b = h->blocks; b; b = b->next) {         // the returns' sentinels
+            if (b->term.kind != IR_TERM_RET || !b->term.cond) continue;
+            nret++;
+            FdSent s; memset(&s, 0, sizeof s); s.t = -1;
+            if (fd_arg_const(h, b->term.cond, &s.c, 0)) s.isc = s.c >= rr.lo && s.c <= rr.hi;
+            else s.t = fd_ret_term_of(h, b->term.cond, t, nt);
+            if (!s.isc && s.t < 0) continue;
+            bool seen = false;
+            for (int32_t q = 0; q < ns && !seen; q++) seen = S[q].isc == s.isc && (s.isc ? S[q].c == s.c : S[q].t == s.t);
+            if (!seen && ns < 8) S[ns++] = s;
+        }
+        for (int32_t q = 0; q < ns; q++) {                     // a return other than it
+            int32_t same = 0;
+            for (IrBlock *b = h->blocks; b; b = b->next) {
+                if (b->term.kind != IR_TERM_RET || !b->term.cond) continue;
+                __int128 c;
+                if (S[q].isc ? fd_arg_const(h, b->term.cond, &c, 0) && c == S[q].c : fd_ret_term_of(h, b->term.cond, t, nt) == S[q].t) same++;
+            }
+            S[q].other = same < nret;
+        }
+        if (ns == 0) continue;
+        // the sides the callers' comparisons select
+        for (IrFunc *f = F->mod; f; f = f->next) {
+            if (f->is_extern || !f->entry) continue;
+            for (IrBlock *b = f->blocks; b; b = b->next)
+                for (IrInstr *i = b->instrs; i; i = i->next) {
+                    if (fd_callee(F, i) != h || !i->result) continue;
+                    const IrValue *rd[16]; int32_t nrd = 0; rd[nrd++] = i->result;
+                    for (int pass = 0; pass < 2; pass++)          // stored to a cell, read back, cast
+                        for (IrBlock *b2 = f->blocks; b2; b2 = b2->next)
+                            for (IrInstr *x = b2->instrs; x && nrd < 16; x = x->next) {
+                                bool in = false;
+                                if (x->op == IR_CAST && x->n_operands >= 1 && x->result)
+                                    for (int32_t r = 0; r < nrd && !in; r++) in = x->operands[0] == rd[r];
+                                if (x->op == IR_LOAD && x->n_operands >= 1 && x->result)
+                                    for (IrBlock *b3 = f->blocks; b3 && !in; b3 = b3->next)
+                                        for (IrInstr *y = b3->instrs; y && !in; y = y->next)
+                                            in = y->op == IR_STORE && y->n_operands >= 2 && y->operands[0] == x->operands[0] && y->operands[1] == i->result;
+                                bool dup = false;
+                                for (int32_t r = 0; r < nrd && !dup; r++) dup = rd[r] == x->result;
+                                if (in && !dup) rd[nrd++] = x->result;
+                            }
+                    for (IrBlock *b2 = f->blocks; b2; b2 = b2->next)
+                        for (IrInstr *x = b2->instrs; x; x = x->next) {
+                            if (x->op != IR_ICMP || x->n_operands < 2) continue;
+                            for (int sd = 0; sd < 2; sd++) {
+                                bool mine = false;
+                                for (int32_t r = 0; r < nrd && !mine; r++) mine = x->operands[sd] == rd[r];
+                                if (!mine) continue;
+                                IrValue *o = x->operands[1 - sd];
+                                __int128 c;
+                                bool isc = fd_arg_const(f, o, &c, 0);
+                                int32_t ot = -1;                  // the term the caller passed it as
+                                IrInstr *od = isc ? NULL : fd_def_in(f, o);
+                                int pk = 0;
+                                for (IrParam *p = h->params; p && !isc && ot < 0; p = p->next, pk++) {
+                                    if (pk >= i->n_operands || !p->value) continue;
+                                    for (int32_t q = 1; q < nt && ot < 0; q++) {
+                                        if (t[q].key != p->value->id) continue;
+                                        if (t[q].tk == JTERM_VALUE && o == i->operands[pk]) ot = q;
+                                        if (t[q].tk == JTERM_LEN && od && od->op == IR_SLICE_LEN && od->n_operands >= 1 && od->operands[0] == i->operands[pk]) ot = q;
+                                    }
+                                }
+                                for (int32_t q = 0; q < ns; q++) {
+                                    if (S[q].isc && isc) { if (c <= S[q].c) S[q].lo = true; if (c >= S[q].c) S[q].hi = true; }
+                                    if (!S[q].isc && ot >= 0 && S[q].t == ot) S[q].lo = S[q].hi = true;
+                                }
+                            }
+                        }
+                }
+        }
+        JClaim W[17]; int32_t nw = 0;
+        fd_when_set(&W[nw++], h, t, 0, 1, -1, 0, rr.hi);       // every return: ret <= its type's top
+        for (int32_t q = 0; q < ns && nw + 2 <= 17; q++) {
+            if (!S[q].other) continue;
+            if (S[q].isc) {
+                if (S[q].hi && S[q].c + 1 <= rr.hi) fd_when_set(&W[nw++], h, t, 0, -1, -1, 0, -(S[q].c + 1));
+                if (S[q].lo && S[q].c - 1 >= rr.lo) fd_when_set(&W[nw++], h, t, 0, 1, -1, 0, S[q].c - 1);
+            } else if (S[q].lo || S[q].hi) {
+                fd_when_set(&W[nw++], h, t, 0, 1, S[q].t, -1, -1);
+                fd_when_set(&W[nw++], h, t, 0, -1, S[q].t, 1, -1);
+            }
+        }
+        if (nw < 2) continue;
+        // the sums: t_a - t_b and +-t_a
+        enum { NG = FD_WHEN_MAXT * (FD_WHEN_MAXT + 1) };
+        JGuardClaim B[NG]; int32_t ng = 0;
+        for (int32_t a = 0; a < nt; a++)
+            for (int32_t b = -1; b < nt; b++) {
+                if (b == a) continue;
+                for (int sg = 1; sg >= -1; sg -= 2) {
+                    if (b >= 0 && sg < 0) continue;           // a pair once each way (b, a gives the other)
+                    JGuardClaim c; memset(&c, 0, sizeof c);
+                    c.fn = h; c.nt = 1; c.key[0] = t[a].key; c.tk[0] = t[a].tk; c.fld[0] = t[a].fld; c.coef[0] = sg;
+                    if (b >= 0) { c.nt = 2; c.key[1] = t[b].key; c.tk[1] = t[b].tk; c.fld[1] = t[b].fld; c.coef[1] = -1; }
+                    if (ng < NG) B[ng++] = c;
+                }
+            }
+        fd_meter_to(h, false);
+        __int128 U[NG]; bool Ub[NG];                           // over every return; bounded
+        for (int32_t w = 0; w < nw && added < FD_MAXWHEN; w++) {
+            __int128 best[NG]; bool any[NG], bnd[NG];
+            for (int32_t q = 0; q < ng; q++) { B[q].when = W[w]; any[q] = false; bnd[q] = true; best[q] = 0; }
+            JClaimVc *o; int32_t n;
+            if (!F->gen->claim_vcs(F->gen->ctx, h, as, nv, B, ng, JGEN_POST, &o, &n, err, sizeof err)) break;
+            for (int32_t q = 0; q < n; q++) {
+                int32_t s = o[q].claim - nv;
+                if (s < 0 || s >= ng || !bnd[s]) continue;
+                LMax x = fd_max_goal(F, &o[q].vc);
+                if (x.k == LIA_MAX_EMPTY) continue;
+                if (x.k != LIA_MAX_BOUND) { bnd[s] = false; continue; }
+                __int128 v = fd_int128(&x.b);
+                if (!any[s] || v > best[s]) best[s] = v;
+                any[s] = true;
+            }
+            if (w == 0) { for (int32_t q = 0; q < ng; q++) { U[q] = best[q]; Ub[q] = bnd[q] && any[q]; } continue; }
+            int32_t pick[FD_WHEN_PER]; __int128 gain[FD_WHEN_PER]; int32_t np = 0;
+            for (int32_t q = 0; q < ng; q++) {
+                if (!any[q] || !bnd[q] || best[q] > ((__int128)1 << 66) || best[q] < -((__int128)1 << 66)) continue;
+                bool same = B[q].nt == W[w].nt;              // the `when` itself, or its mirror
+                for (int32_t a = 0; a < B[q].nt && same; a++) {
+                    bool in = false;
+                    for (int32_t b = 0; b < W[w].nt && !in; b++) in = B[q].key[a] == W[w].key[b] && B[q].tk[a] == W[w].tk[b] && B[q].fld[a] == W[w].fld[b];
+                    same = in;
+                }
+                if (same || (Ub[q] && best[q] >= U[q])) continue;
+                // ...nor where `when` and the terms' boxes alone give the bound (`len(hay) - ret <=
+                // MAX_LEN - 1 where ret >= 1`): the boxes, `when` tightening each of its terms by
+                // the other's box, the sum's greatest value over them
+                __int128 lo[FD_WHEN_MAXT], hi[FD_WHEN_MAXT], lo0[FD_WHEN_MAXT], hi0[FD_WHEN_MAXT];
+                for (int32_t a = 0; a < nt; a++) { fd_rterm_box(h, &t[a], &lo[a], &hi[a]); lo0[a] = lo[a]; hi0[a] = hi[a]; }
+                int32_t wi[2] = { -1, -1 };
+                for (int32_t b = 0; b < W[w].nt && b < 2; b++)
+                    for (int32_t a = 0; a < nt; a++)
+                        if (t[a].key == W[w].key[b] && t[a].tk == W[w].tk[b] && t[a].fld == W[w].fld[b]) wi[b] = a;
+                for (int32_t b = 0; b < W[w].nt && b < 2; b++) {
+                    if (wi[b] < 0) continue;
+                    __int128 rest = W[w].rhs;                  // coef_b * x_b <= rhs - (the other's least)
+                    if (W[w].nt == 2 && wi[1 - b] >= 0) rest -= W[w].coef[1 - b] > 0 ? W[w].coef[1 - b] * lo0[wi[1 - b]] : W[w].coef[1 - b] * hi0[wi[1 - b]];
+                    if (W[w].coef[b] == 1 && rest < hi[wi[b]]) hi[wi[b]] = rest;
+                    if (W[w].coef[b] == -1 && -rest > lo[wi[b]]) lo[wi[b]] = -rest;
+                }
+                __int128 bx = 0;
+                for (int32_t a = 0; a < B[q].nt; a++)
+                    for (int32_t z = 0; z < nt; z++)
+                        if (t[z].key == B[q].key[a] && t[z].tk == B[q].tk[a] && t[z].fld == B[q].fld[a])
+                            bx += B[q].coef[a] > 0 ? B[q].coef[a] * hi[z] : B[q].coef[a] * lo[z];
+                if (best[q] >= bx) continue;
+                __int128 g = Ub[q] ? U[q] - best[q] : (__int128)1 << 100;
+                bool ret = B[q].key[0] == JKEY_RET || (B[q].nt > 1 && B[q].key[1] == JKEY_RET);
+                int32_t at = np;                               // the furthest below first, then naming ret
+                while (at > 0) {
+                    int32_t p = pick[at - 1];
+                    bool pret = B[p].key[0] == JKEY_RET || (B[p].nt > 1 && B[p].key[1] == JKEY_RET);
+                    if (gain[at - 1] > g || (gain[at - 1] == g && (pret || !ret))) break;
+                    at--;
+                }
+                if (at >= FD_WHEN_PER) continue;
+                if (np < FD_WHEN_PER) np++;
+                for (int32_t z = np - 1; z > at; z--) { pick[z] = pick[z - 1]; gain[z] = gain[z - 1]; }
+                pick[at] = q; gain[at] = g;
+            }
+            for (int32_t z = 0; z < np && added < FD_MAXWHEN; z++) {
+                JGuardClaim *x2 = realloc(*gcp, sizeof *x2 * (size_t)(*ngcp + 1));
+                if (!x2) { fd_meter_to(NULL, false); return false; }
+                *gcp = x2;
+                JGuardClaim c = B[pick[z]]; c.rhs = best[pick[z]];
+                (*gcp)[(*ngcp)++] = c; added++;
+            }
+        }
+        fd_meter_to(NULL, false);
+    }
+    return true;
+}
 // s7: GUARDED return claims, one pair per call with constant integer arguments to a function of the
 // module that is on no recursion cycle (its inner calls would need the call tree's tuples): ret's
 // greatest and least value at the callee's returns under its parameters at those constants
@@ -4080,6 +4340,7 @@ static bool fd_guarded_claims(JFinder *F, const JClaim *as, int32_t nv) {
                 gc[ngc++] = pair[0]; gc[ngc++] = pair[1];
             }
     }
+    if (ok && !fd_when_claims(F, &G, as, nv, &gc, &ngc)) ok = false;
     // the set whole, once: a claim one of whose VCs is not implied goes (no claim uses another)
     if (ok && ngc > 0) {
         uint8_t *bad = calloc((size_t)ngc, 1);
@@ -4164,9 +4425,80 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
     free(fd_acct_fn); free(fd_acct_left); fd_acct_fn = NULL; fd_acct_left = NULL; fd_acct_n = fd_acct_cur = 0;
     return r;
 }
+static bool fd_claim_same(const JClaim *a, const JClaim *b) {
+    if (a->blk != b->blk || a->nt != b->nt || a->rhs != b->rhs || a->fn != b->fn) return false;
+    for (int32_t k = 0; k < a->nt; k++)
+        if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k] || a->fld[k] != b->fld[k]) return false;
+    return true;
+}
+// One round's candidates for f, then pushed to cl[0..nc): its cut points' and returns' bounded
+// under the verified claims `as`, then every other kind (some from the second round on); f's facts'
+// account pays. False when memory ran out.
+static bool fd_fn_candidates(JFinder *F, IrFunc *f, FdNest *N, const JClaim *as, int32_t nv, int round,
+                             JCand **cd, int32_t *ncd, int32_t *ccd, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    char err[200];
+    fd_meter_to(f, false);                                   // f's candidates: its facts' account
+    JSlot *s0; int32_t ns = 0;
+    JSlot *sl = NULL;
+    if (!fd_nest_build(f, N)) return false;
+    if (F->gen->slots(F->gen->ctx, f, &s0, &ns, err, sizeof err) && ns > 0) {
+        if (!(sl = malloc(sizeof *sl * (size_t)ns))) return false;
+        memcpy(sl, s0, sizeof *sl * (size_t)ns);
+    }
+    // the cut points, block by block, then the returns; each under the verified claims
+    for (int32_t i = 0, j; i <= ns; i = j) {
+        int32_t only;
+        if (i < ns) {
+            for (j = i; j < ns && sl[j].blk == sl[i].blk; j++) ;
+            if (!block_candidates(F, f, N, as, nv, sl, i, j, cd, ncd, ccd, err, sizeof err)) continue;
+            for (int32_t c = 0; c < *ncd; c++) (*cd)[c].c.fn = f;
+            only = sl[i].blk;
+        } else {
+            j = ns + 1;
+            if (!ret_candidates(F, f, cd, ncd, ccd)) { free(sl); return false; }
+            only = JGEN_POST;
+        }
+        if (*ncd == 0) continue;
+        JClaim *q2 = malloc(sizeof *q2 * (size_t)(nv + *ncd + 1));
+        if (!q2) { free(sl); return false; }
+        if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
+        for (int32_t c = 0; c < *ncd; c++) q2[nv + c] = (*cd)[c].c;
+        JClaimVc *o; int32_t n;
+        bool gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + *ncd, F->hgc, F->nhgc, only, &o, &n, err, sizeof err);
+        free(q2);
+        if (gok && !bound_candidates(F, *cd, *ncd, o, n, nv, as, nv, cl, nc, ccl)) { free(sl); return false; }
+        // a header's back edge from ANY previous trip: each side of each header version
+        // alone, under the verified claims only (at their placeholders the header's
+        // comparisons, give or take one, contradict each other, and the back edge bounds
+        // nothing): `k = next(k)` with `next(k) <= 7` keeps `k <= 7` whatever k was
+        if (gok && i < ns && sl[i].head) {
+            int32_t n1 = 0;
+            for (int32_t c = 0; c < *ncd; c++) if (!(*cd)[c].fixed && (*cd)[c].c.nt == 1) (*cd)[n1++] = (*cd)[c];
+            if (n1 > 0) {
+                if (!(q2 = malloc(sizeof *q2 * (size_t)(nv + n1)))) { free(sl); return false; }
+                if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
+                for (int32_t c = 0; c < n1; c++) { q2[nv + c] = (*cd)[c].c; q2[nv + c].rhs = (*cd)[c].tb; }
+                gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + n1, F->hgc, F->nhgc, only, &o, &n, err, sizeof err);
+                free(q2);
+                if (gok && !bound_candidates(F, *cd, n1, o, n, nv, as, nv, cl, nc, ccl)) { free(sl); return false; }
+            }
+        }
+    }
+    free(sl);
+    if (round > 0 && !fd_nested_candidates(F, f, N, as, nv, cl, nc, ccl)) return false;
+    if (round > 0 && !fd_monotone_candidates(F, f, N, as, nv, cl, nc, ccl)) return false;
+    if (round > 0 && !fd_sum_monotone_candidates(F, f, as, nv, cl, nc, ccl)) return false;
+    if (round == 1 && !fd_rate_candidates(F, f, as, nv, cl, nc, ccl)) return false;
+    if (!fd_each_candidates(F, f, N, as, nv, cl, nc, ccl)) return false;
+    if (!fd_entry_candidates(F, f, as, nv, cl, nc, ccl)) return false;
+    if (!fd_sum_entry_candidates(F, f, as, nv, cl, nc, ccl)) return false;
+    for (IrBlock *kb = f->blocks; kb; kb = kb->next)
+        if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, cl, nc, ccl)) return false;
+    fd_nest_free(N);
+    return true;
+}
 static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
     IrFunc *mod = F->mod;
-    char err[200];
     JClaim *cl = NULL, *as = NULL;
     JCand *cd = NULL;
     int32_t nc = 0, ccl = 0, nv = 0, ncd = 0, ccd = 0;
@@ -4182,68 +4514,11 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         nc = nv;
         for (IrFunc *f = mod; f; f = f->next) {
             if (f->is_extern || !f->entry) continue;
-            fd_meter_to(f, false);                           // f's candidates: its facts' account
-            JSlot *s0; int32_t ns = 0;
-            JSlot *sl = NULL;
-            if (!fd_nest_build(f, &N)) goto oom;
-            if (F->gen->slots(F->gen->ctx, f, &s0, &ns, err, sizeof err) && ns > 0) {
-                if (!(sl = malloc(sizeof *sl * (size_t)ns))) goto oom;
-                memcpy(sl, s0, sizeof *sl * (size_t)ns);
-            }
-            // the cut points, block by block, then the returns; each under the verified claims
-            for (int32_t i = 0, j; i <= ns; i = j) {
-                int32_t only;
-                if (i < ns) {
-                    for (j = i; j < ns && sl[j].blk == sl[i].blk; j++) ;
-                    if (!block_candidates(F, f, &N, as, nv, sl, i, j, &cd, &ncd, &ccd, err, sizeof err)) continue;
-                    for (int32_t c = 0; c < ncd; c++) cd[c].c.fn = f;
-                    only = sl[i].blk;
-                } else {
-                    j = ns + 1;
-                    if (!ret_candidates(F, f, &cd, &ncd, &ccd)) { free(sl); goto oom; }
-                    only = JGEN_POST;
-                }
-                if (ncd == 0) continue;
-                JClaim *q2 = malloc(sizeof *q2 * (size_t)(nv + ncd + 1));
-                if (!q2) { free(sl); goto oom; }
-                if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
-                for (int32_t c = 0; c < ncd; c++) q2[nv + c] = cd[c].c;
-                JClaimVc *o; int32_t n;
-                bool gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + ncd, NULL, 0, only, &o, &n, err, sizeof err);
-                free(q2);
-                if (gok && !bound_candidates(F, cd, ncd, o, n, nv, as, nv, &cl, &nc, &ccl)) { free(sl); goto oom; }
-                // a header's back edge from ANY previous trip: each side of each header version
-                // alone, under the verified claims only (at their placeholders the header's
-                // comparisons, give or take one, contradict each other, and the back edge bounds
-                // nothing): `k = next(k)` with `next(k) <= 7` keeps `k <= 7` whatever k was
-                if (gok && i < ns && sl[i].head) {
-                    int32_t n1 = 0;
-                    for (int32_t c = 0; c < ncd; c++) if (!cd[c].fixed && cd[c].c.nt == 1) cd[n1++] = cd[c];
-                    if (n1 > 0) {
-                        if (!(q2 = malloc(sizeof *q2 * (size_t)(nv + n1)))) { free(sl); goto oom; }
-                        if (nv) memcpy(q2, as, sizeof *q2 * (size_t)nv);
-                        for (int32_t c = 0; c < n1; c++) { q2[nv + c] = cd[c].c; q2[nv + c].rhs = cd[c].tb; }
-                        gok = F->gen->claim_vcs(F->gen->ctx, f, q2, nv + n1, NULL, 0, only, &o, &n, err, sizeof err);
-                        free(q2);
-                        if (gok && !bound_candidates(F, cd, n1, o, n, nv, as, nv, &cl, &nc, &ccl)) { free(sl); goto oom; }
-                    }
-                }
-            }
-            free(sl);
-            if (round > 0 && !fd_nested_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
-            if (round > 0 && !fd_monotone_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
-            if (round > 0 && !fd_sum_monotone_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
-            if (round == 1 && !fd_rate_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
-            if (!fd_each_candidates(F, f, &N, as, nv, &cl, &nc, &ccl)) goto oom;
-            if (!fd_entry_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
-            if (!fd_sum_entry_candidates(F, f, as, nv, &cl, &nc, &ccl)) goto oom;
-            for (IrBlock *kb = f->blocks; kb; kb = kb->next)
-                if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, &cl, &nc, &ccl)) goto oom;
-            fd_nest_free(&N);
+            if (!fd_fn_candidates(F, f, &N, as, nv, round, &cd, &ncd, &ccd, &cl, &nc, &ccl)) goto oom;
         }
         if (nc == nv) break;                                 // nothing new to verify
         fd_meter_to(NULL, false);                                  // Houdini, over every function's: the module's
-        int32_t kept = houdini_module(F, cl, nc, nv);
+        int32_t kept = houdini_module(F, cl, nc, nv, NULL);
         if (kept < 0) goto oom;
         bool grew = kept > nv;
         free(as); as = malloc(sizeof *as * (size_t)(kept ? kept : 1));
@@ -4252,9 +4527,66 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         nv = kept;
         if (!grew) break;
     }
-    free(cd); free(cl);
     fd_meter_to(NULL, false);
     if (!fd_guarded_claims(F, as, nv)) goto oom;
+    // the rankings' paths state them at their calls, as the judge's VCs do (B1: search.ln's loop
+    // advances by what find_from returns, which is at least `at` where it is below hay.len)
+    if (F->gen->guarded) F->gen->guarded(F->gen->ctx, F->gc, F->ngc);
+    // B1: a LAST ROUND for each function that calls one with a `when` claim inside a loop, every
+    // claim VC stating the guarded claims at its calls (F->hgc): count_byte's `n <= at` holds only
+    // because `at` moves past what find_byte returns, which is at least `at` where it is below
+    // hay.len. Houdini solves those functions first, as the only ones whose VCs changed: a guarded
+    // claim stated at a call only adds a fact, so the claims kept before stay implied, and the
+    // guarded claims, verified under those, stay verified under more.
+    {
+        int32_t nfn = 0;
+        for (IrFunc *f = mod; f; f = f->next) nfn++;
+        uint8_t *mark = calloc((size_t)(nfn ? nfn : 1), 1);
+        if (!mark) goto oom;
+        bool any = false;
+        int32_t fk = -1;
+        for (IrFunc *f = mod; f; f = f->next) {
+            fk++;
+            if (f->is_extern || !f->entry || !fd_nest_build(f, &N)) continue;
+            for (IrBlock *b = f->blocks; b && !mark[fk]; b = b->next) {
+                bool inl = fd_nest_around(&N, b->id, -1) >= 0;
+                for (IrInstr *i = b->instrs; i && inl && !mark[fk]; i = i->next) {
+                    const IrFunc *h = fd_callee(F, i);
+                    for (int32_t q = 0; h && q < F->ngc && !mark[fk]; q++) mark[fk] = F->gc[q].fn == h && F->gc[q].when.nt > 0;
+                }
+            }
+            fd_nest_free(&N);
+            any |= mark[fk];
+        }
+        if (any) {
+            if (nv > ccl) { JClaim *x = realloc(cl, sizeof *x * (size_t)nv); if (!x) { free(mark); goto oom; } cl = x; ccl = nv; }
+            if (nv) memcpy(cl, as, sizeof *cl * (size_t)nv);
+            nc = nv;
+            F->hgc = F->gc; F->nhgc = F->ngc;
+            fk = -1;
+            for (IrFunc *f = mod; f; f = f->next) {
+                fk++;
+                if (!mark[fk]) continue;
+                if (!fd_fn_candidates(F, f, &N, as, nv, 1, &cd, &ncd, &ccd, &cl, &nc, &ccl)) { free(mark); F->hgc = NULL; F->nhgc = 0; goto oom; }
+            }
+            fd_meter_to(NULL, false);
+            int32_t kept = nc > nv ? houdini_module(F, cl, nc, nv, mark) : nv;
+            F->hgc = NULL; F->nhgc = 0;
+            if (kept < 0) { free(mark); goto oom; }
+            // the claims kept before lead, all of them (else the round is dropped: the guarded
+            // claims were verified under them)
+            bool all = kept >= nv;
+            for (int32_t k = 0; k < nv && all; k++) all = fd_claim_same(&cl[k], &as[k]);
+            if (kept > nv && all) {
+                free(as); as = malloc(sizeof *as * (size_t)kept);
+                if (!as) { free(mark); goto oom; }
+                memcpy(as, cl, sizeof *as * (size_t)kept);
+                nv = kept;
+            }
+        }
+        free(mark);
+    }
+    free(cd); free(cl); cd = NULL; cl = NULL;
     // PE.5: a ranking claim per loop header, under the claims Houdini kept (owed, never believed)
     IrCallGraph CG0; memset(&CG0, 0, sizeof CG0);
     bool cg0 = ir_cg_build(&CG0, mod);
@@ -4347,11 +4679,13 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         }
         ir_cg_free(&G);
     }
+    if (F->gen->guarded) F->gen->guarded(F->gen->ctx, NULL, 0);   // F->gc is the caller's from here
     F->kept += nv;
     *ncl = nv;
     if (nv == 0) { free(as); return NULL; }
     return as;
 oom:
+    if (F->gen->guarded) F->gen->guarded(F->gen->ctx, NULL, 0);
     fd_nest_free(&N);
     free(cd); free(cl); free(as); free(F->rk); F->rk = NULL; F->nrk = 0; free(F->gc); F->gc = NULL; F->ngc = 0;
     F->oom = true;

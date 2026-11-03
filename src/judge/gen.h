@@ -5705,13 +5705,15 @@ static void jg_mod_pairs(JG *g, int32_t header, int32_t *keys, uint8_t *tks, int
         }
     }
 }
-static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, bool modp, JPaths *out,
-                     char *err, size_t errcap);
-static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out, char *err, size_t errcap) {
-    return jg_paths(m, f, mod, cl, ncl, header, false, out, err, errcap);
+static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
+                     int32_t header, bool modp, JPaths *out, char *err, size_t errcap);
+static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc, int32_t header,
+                       JPaths *out, char *err, size_t errcap) {
+    return jg_paths(m, f, mod, cl, ncl, gc, ngc, header, false, out, err, errcap);
 }
-static bool jgen_paths_mod(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out, char *err, size_t errcap) {
-    return jg_paths(m, f, mod, cl, ncl, header, true, out, err, errcap);
+static bool jgen_paths_mod(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc, int32_t header,
+                           JPaths *out, char *err, size_t errcap) {
+    return jg_paths(m, f, mod, cl, ncl, gc, ngc, header, true, out, err, errcap);
 }
 // For whoever proposes ranking functions and loop relations (untrusted; PE.5, PE.7): every edge
 // into loop header `header` as the generator states it with the claims `cl` (on a back edge the
@@ -5719,12 +5721,14 @@ static bool jgen_paths_mod(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, in
 // header makes, its variable at the previous entry (-1 on an edge from before the loop) and the one
 // the edge ends with. The goal of each path's VC is 0 <= 0 and means nothing. `refused` says why a
 // header has no paths; false with `err` when the generator refuses the function. With `modp`
-// (paths_mod, s27), the MOD pairs after those (jg_mod_pairs).
-static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, int32_t header, bool modp, JPaths *out,
-                     char *err, size_t errcap) {
+// (paths_mod, s27), the MOD pairs after those (jg_mod_pairs). The guarded claims `gc` are stated
+// at the paths' calls as a VC states them (jb_call_guarded, jb_ver_guarded).
+static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
+                     int32_t header, bool modp, JPaths *out, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
+    g.gc = gc; g.ngc = gc ? ngc : 0;
     memset(out, 0, sizeof *out);
     if (!f || !f->entry || f->is_extern) { out->refused = "a function without a body"; return true; }
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
@@ -5803,12 +5807,14 @@ static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t 
 // per integer or slice parameter of the callee, its variable at f's entry (f being the callee;
 // else -1) and the argument's at the call, and per one of f's, its variable at f's entry (`entry`).
 // `from` and `at` are the call's block and instruction index, `callee` the function it reaches; a
-// call through a pointer gives one path per function it may reach in f's component.
-static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, JPaths *out,
-                            char *err, size_t errcap) {
+// call through a pointer gives one path per function it may reach in f's component. The guarded
+// claims `gc` are stated as jg_paths states them.
+static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
+                            JPaths *out, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
+    g.gc = gc; g.ngc = gc ? ngc : 0;
     memset(out, 0, sizeof *out);
     if (!f || !f->entry || f->is_extern) { out->refused = "a function without a body"; return true; }
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
@@ -5874,7 +5880,8 @@ static bool jgen_call_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, i
 
 // ── the generator offered to an UNTRUSTED proposer (format.h's JudgeGen) ─────────────────────
 // Each call works in the caller's region from its start, so an answer lives until the next call.
-typedef struct { char *buf; size_t cap; IrFunc *mod; } JGenOffer;
+// gc: the guarded claims its paths state (`guarded`), the proposer's, none until it sets them.
+typedef struct { char *buf; size_t cap; IrFunc *mod; const JGuardClaim *gc; int32_t ngc; } JGenOffer;
 static bool jgo_claim_vcs(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
                           int32_t only, JClaimVc **out, int32_t *nout, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
@@ -5902,16 +5909,16 @@ static bool jgo_term_kinds(void *ctx, struct IrFunc *f, int32_t blk, const int32
 static bool jgo_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
                       char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
-    return jgen_paths(&m, f, x->mod, cl, ncl, header, out, err, errcap);
+    return jgen_paths(&m, f, x->mod, cl, ncl, x->gc, x->ngc, header, out, err, errcap);
 }
 static bool jgo_paths_mod(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
                           char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
-    return jgen_paths_mod(&m, f, x->mod, cl, ncl, header, out, err, errcap);
+    return jgen_paths_mod(&m, f, x->mod, cl, ncl, x->gc, x->ngc, header, out, err, errcap);
 }
 static bool jgo_call_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, JPaths *out, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
-    return jgen_call_paths(&m, f, x->mod, cl, ncl, out, err, errcap);
+    return jgen_call_paths(&m, f, x->mod, cl, ncl, x->gc, x->ngc, out, err, errcap);
 }
 static bool jgo_measure(void *ctx, struct IrFunc *f, JRank *out, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
@@ -5925,9 +5932,14 @@ static bool jgo_measure(void *ctx, struct IrFunc *f, JRank *out, char *err, uint
     jg_written_rank(f, gh, out);
     return true;
 }
+static void jgo_guarded(void *ctx, const JGuardClaim *gc, int32_t ngc) {
+    JGenOffer *x = ctx;
+    x->gc = gc; x->ngc = gc ? ngc : 0;
+}
 static JudgeGen jgen_offer(JGenOffer *x) {
     JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
     g.paths = jgo_paths; g.paths_mod = jgo_paths_mod; g.call_paths = jgo_call_paths; g.measure = jgo_measure;
+    g.guarded = jgo_guarded;
     return g;
 }
 

@@ -162,7 +162,7 @@ static bool judge_module(IrFunc *mod, const JudgeLimits *lim, const JudgeCalls *
     JGuardClaim *gc = NULL; int32_t ngc = 0;              // guarded return claims: certified as claims are
     JRank *rk = NULL; int32_t nrk = 0;                    // ranking claims: owed, never facts
     if (calls && calls->propose) {
-        JGenOffer offer = { gbuf, gcap, mod };
+        JGenOffer offer = { gbuf, gcap, mod, NULL, 0 };
         JudgeGen gen = jgen_offer(&offer);
         JClaim *pc = NULL; int32_t pn = 0;
         JGuardClaim *pg = NULL; int32_t pgn = 0;

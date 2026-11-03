@@ -1,0 +1,61 @@
+// A callee that returns a SENTINEL at the end of its input and something else before it, and callers
+// that act only on its other values. peek returns 0 past the end, so a byte of 40 says pos was below
+// the length and `c.pos + 1` fits; find_byte returns hay.len when nothing is found, so a result below
+// hay.len is at least `from`: last_byte's loop advances on every trip, and count_byte's count stays
+// at most `at`.
+type Cursor {
+    src u8[]
+    pos usize
+}
+
+func peek(c Cursor) u8 {
+    if c.pos < c.src.len { return c.src[c.pos] }
+    return 0
+}
+
+func skip_open(var c Cursor) {
+    if peek(c) == 40 { c.pos = c.pos + 1 }
+}
+
+func find_byte(hay u8[], b u8, from usize) usize {
+    var i = from
+    while i < hay.len {
+        if hay[i] == b { return i }
+        i = i + 1
+    }
+    return hay.len
+}
+
+func count_byte(hay u8[], b u8) usize {
+    var n usize = 0
+    var at usize = 0
+    while at < hay.len {
+        var k = find_byte(hay, b, at)
+        if k >= hay.len { break }
+        n = n + 1
+        at = k + 1
+    }
+    return n
+}
+
+func last_byte(hay u8[], b u8) usize {
+    var last = hay.len
+    var at usize = 0
+    while at < hay.len {
+        var k = find_byte(hay, b, at)
+        if k >= hay.len { break }
+        last = k
+        at = k + 1
+    }
+    return last
+}
+
+func main() i32 {
+    var s = "(a(b"
+    var c = Cursor(s[0..s.len], 0)
+    skip_open(var c)
+    if c.pos != 1 { return 1 }
+    if count_byte(s[0..s.len], 40) != 2 { return 2 }
+    if last_byte(s[0..s.len], 40) != 2 { return 3 }
+    return 0
+}
