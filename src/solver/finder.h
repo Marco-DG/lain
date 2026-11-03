@@ -148,7 +148,12 @@ static int32_t fd_len_of(IrFunc *f, int32_t vid, const IrType **lt) {
 }
 static bool same_form(const JClaim *a, const JClaim *b) {
     if (a->blk != b->blk || a->nt != b->nt) return false;
-    for (int k = 0; k < a->nt; k++) if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k]) return false;
+    for (int k = 0; k < a->nt; k++) {
+        if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k]) return false;
+        // a part (fld) names a different quantity: post(p.src) - pre(p.src) is not p.pos's
+        bool part = a->key[k] == JKEY_RET || a->tk[k] == JTERM_POST || a->tk[k] == JTERM_PRE;
+        if (part && a->fld[k] != b->fld[k]) return false;
+    }
     return true;
 }
 // ── Questions asked again ─────────────────────────────────────────────────────────────────────
@@ -2818,6 +2823,19 @@ static bool fd_frame_candidates(const JFinder *F, IrFunc *f, JCand **cd, int32_t
         if (fd_var_part_ok(pp, -1)) parts[np++] = -1;
         else if (pt->elem->kind == IRT_STRUCT)
             for (int16_t k = 0; k < pt->elem->n_fields && np < 8; k++) if (fd_var_part_ok(pp, k)) parts[np++] = k;
+        // a slice field, by its length: only that the call keeps it, FIXED both sides (a cursor's
+        // `p.src.len - p.pos` falls across skip(var p) only if skip leaves p.src's length as it was)
+        for (int16_t k = 0; pt->elem->kind == IRT_STRUCT && k < pt->elem->n_fields; k++) {
+            if (!pp->value || pt->is_raw || !pt->ptr_mut || !pt->elem->fields[k] || pt->elem->fields[k]->kind != IRT_SLICE) continue;
+            int32_t key[2] = { pp->value->id, pp->value->id };
+            uint8_t tk[2] = { JTERM_POST, JTERM_PRE };
+            int16_t fld[2] = { k, k };
+            for (int sd = 1; sd >= -1; sd -= 2) {
+                int coef[2] = { sd, -sd };
+                if (!fd_frame_push(cd, ncd, ccd, f, 2, key, tk, fld, coef, 1)) return false;
+                (*cd)[*ncd - 1].c.rhs = 0; (*cd)[*ncd - 1].fixed = true;
+            }
+        }
         for (int q = 0; q < np; q++) {
             const IrType *ft = parts[q] < 0 ? pt->elem : pt->elem->fields[parts[q]];
             FdRange fr;
@@ -3769,24 +3787,41 @@ static bool fd_each_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JCl
 // besides its entry, the version against each integer parameter the generator can name at the
 // header, `p - v <= 0` (never falls); the second loop's entry is the first's exit, so only the
 // parameter carries `i >= start` across both. Only returned cells: every version of every loop
-// against every parameter is a search per header the corpus would pay for nothing.
+// against every parameter is a search per header the corpus would pay for nothing. And a part of a
+// `var` parameter, which the function hands back as it returns: skip's `while p.pos < p.src.len
+// and ... { p.pos = p.pos + 1 }` keeps p.pos >= its entry, so skip's frame summary says p.pos never
+// falls, and a caller's loop that advances a cursor through skip is ranked by p.src.len - p.pos.
 static bool fd_returns_cell(IrFunc *f, int32_t key);
 // Whether cell `key` (-1: any) is what f subtracts from to measure it, or a subslice's upper end
 // (fd_sub_partners)
 static bool fd_cell_feeds_sub(IrFunc *f, int32_t key) { return fd_sub_partners(f, key, NULL, NULL, 1) > 0; }
+// Whether cell `key` (-1: any) is a part of a `var` parameter's pointee, which the function hands
+// back as it returns (skip's p.pos): its first address is a field of the parameter, or the parameter
+static bool fd_frame_cell(IrFunc *f, int32_t key) {
+    for (IrParam *p = f->params; p; p = p->next) {
+        const IrType *pt = p->value ? p->value->type : NULL;
+        if (!pt || pt->kind != IRT_PTR || pt->is_raw || !pt->ptr_mut) continue;
+        if (key < 0 || key == p->value->id) return true;
+        for (IrBlock *b = f->blocks; b; b = b->next)
+            for (IrInstr *i = b->instrs; i; i = i->next)
+                if (i->op == IR_FIELD_PTR && i->result && i->result->id == key && i->n_operands >= 1 && i->operands[0] == p->value) return true;
+    }
+    return false;
+}
 static bool fd_monotone_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
     JWork slim = F->lim; slim.pivot /= 16; slim.node /= 16; slim.leaf /= 16;
     char err[200];
     for (IrBlock *h2 = f->blocks; h2; h2 = h2->next) {
         bool nested = h2->is_loop_header && fd_nest_around(N, h2->id, h2->id) >= 0;
-        if (!h2->is_loop_header || (!nested && !fd_returns_cell(f, -1) && !fd_cell_feeds_sub(f, -1))) continue;
+        if (!h2->is_loop_header || (!nested && !fd_returns_cell(f, -1) && !fd_cell_feeds_sub(f, -1) && !fd_frame_cell(f, -1))) continue;
         FdLoop L;
         if (!fd_loop_build(F, f, h2->id, as, nv, &L)) { free(L.mem); if (F->oom) return false; continue; }
         for (int32_t v = 0; v < L.npk; v++) {
             if (L.ptk[v] != JTERM_VALUE) continue;
             int32_t e = -1;
             for (int32_t z = 0; z < L.npk && e < 0; z++) if (L.ptk[z] == JTERM_ENTRY && L.pkey[z] == L.pkey[v]) e = z;
-            if (e < 0 || !L.moves || !L.moves[v] || (!nested && !fd_returns_cell(f, L.pkey[v]) && !fd_cell_feeds_sub(f, L.pkey[v]))) continue;
+            if (e < 0 || !L.moves || !L.moves[v] || (!nested && !fd_returns_cell(f, L.pkey[v]) && !fd_cell_feeds_sub(f, L.pkey[v]) &&
+                                                      !fd_frame_cell(f, L.pkey[v]))) continue;
             int dir = 0;                                     // +1: never falls, -1: never rises
             for (int sg = 1; sg >= -1 && !dir; sg -= 2) {
                 bool all = L.npaths > 0;

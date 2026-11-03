@@ -374,6 +374,14 @@ rc=0
 out=Result: 10
 at=const 2
 ty=Slice_u8 scalar
+### tests/functions/cursor_advanced_by_callee_pass.ln
+rc=0
+out=
+at=access 2
+at=nonnull 4
+at=pure 2
+ty=Cursor struct
+ty=Slice_u8 scalar
 ### tests/functions/decreasing_binary_search_pass.ln
 rc=0
 out=0

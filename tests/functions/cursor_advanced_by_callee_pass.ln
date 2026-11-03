@@ -1,0 +1,28 @@
+// A loop that advances a cursor through a callee (a tokenizer's word count): skip moves p.pos
+// forward over spaces and never back, and leaves p.src as it was, so p.src.len - p.pos falls on
+// every trip of count_words, though the loop itself adds only one.
+type Cursor {
+    src u8[]
+    pos usize
+}
+
+func skip(var p Cursor) {
+    while p.pos < p.src.len and p.src[p.pos] == 32 { p.pos = p.pos + 1 }
+}
+
+func count_words(s u8[]) u32 {
+    var p = Cursor(s, 0)
+    var n u32 = 0
+    while p.pos < p.src.len {
+        p.pos = p.pos + 1
+        skip(var p)
+        n = n +% 1
+    }
+    return n
+}
+
+func main() i32 {
+    var s = "a b  c"
+    if count_words(s[0..s.len]) != 3 { return 1 }
+    return 0
+}

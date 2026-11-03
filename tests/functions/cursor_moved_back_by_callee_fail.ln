@@ -1,0 +1,28 @@
+// EXPECT: [E011]
+// The callee may move the cursor BACK: after a space it steps two places down, so on "a b" p.pos
+// goes 1, 2, 0, 1, 2, 0, ... and count_words never ends.
+type Cursor {
+    src u8[]
+    pos usize
+}
+
+func back(var p Cursor) {
+    if p.pos >= 2 and p.pos <= p.src.len and p.src[p.pos - 1] == 32 { p.pos = p.pos - 2 }
+}
+
+func count_words(s u8[]) u32 {
+    var p = Cursor(s, 0)
+    var n u32 = 0
+    while p.pos < p.src.len {
+        p.pos = p.pos + 1
+        back(var p)
+        n = n +% 1
+    }
+    return n
+}
+
+func main() i32 {
+    var s = "ab"
+    if count_words(s[0..s.len]) != 2 { return 1 }
+    return 0
+}
