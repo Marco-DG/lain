@@ -1134,7 +1134,7 @@ def _box(fn, pat):
             'func main() i32 effects io {\n    var n i32 = 5\n    b = Box.Full(n)\n    case b {\n'
             '        %s: libc_printf("%%d\\n", v)\n        else: libc_printf("E\\n")\n    }\n    return 0\n}\n'
             % (fn, pat))
-_FULL_MOV = 'func Full(mov x i32) i32 {\n    return x\n}\n'
+_FULL_MOV = 'func Full(mov x i32) mov i32 {\n    return mov x\n}\n'   # I.95: a mov value returns as `mov`
 _FULL_VAR = 'func Full(var x i32) {\n    x = 1\n}\n'
 # DERIVED: the box holds 5, so the Full arm binds v = 5 and prints it.
 add("pattern-as-call", "a bare payload pattern beside an unrelated func Full(mov ...)",

@@ -1,0 +1,15 @@
+// A function that takes ownership and hands it back declares its return type `mov`: the caller
+// receives the obligation, and discharges it through the C side that releases the pointer.
+extern func release(p mov *i32) effects io
+
+func keep(mov p *i32) mov *i32 {
+    return mov p
+}
+
+func main() i32 effects io {
+    var n i32 = 3
+    mov p *i32 = &n
+    mov q = keep(mov p)
+    release(mov q)
+    return 0
+}

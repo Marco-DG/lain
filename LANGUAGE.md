@@ -1226,6 +1226,23 @@ func main() i32 {
 }
 ```
 
+A value that must be **released** (a `mov` pointer, or a struct holding one) leaves a function only
+under a `mov` return type, which hands the caller the obligation. Returned as a plain value, the
+obligation would end there with nothing released:
+
+```lain
+func launder(mov p *i32) *i32 {
+    return p              // ERROR [E140]
+}
+```
+
+```
+[E140] Error Ln 2, Col 5: a value that must be released is returned as a plain one, which releases nothing: declare the return type `mov`, so the caller receives the obligation
+```
+
+Declared `func launder(mov p *i32) mov *i32 { return mov p }`, it compiles, and its caller must
+release what it receives.
+
 **`return var` — return a mutable reference:**
 ```lain
 type Context { counter int }

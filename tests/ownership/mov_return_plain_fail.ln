@@ -1,0 +1,13 @@
+// EXPECT: [E140]
+// A function that takes ownership of a pointer and hands it back as a plain one: the caller could
+// then drop it, where dropping the owning binding itself is E003. Returning it needs `mov *i32`.
+func launder(mov p *i32) *i32 {
+    return p
+}
+
+func main() i32 {
+    var n i32 = 3
+    mov p *i32 = &n
+    q = launder(mov p)
+    return 0
+}

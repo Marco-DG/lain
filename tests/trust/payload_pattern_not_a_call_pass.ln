@@ -6,8 +6,8 @@ extern func libc_printf(fmt *u8, ...) i32 effects io
 
 type Box { Empty, Full { v i32 } }
 
-func Full(mov x i32) i32 {
-    return x
+func Full(mov x i32) mov i32 {
+    return mov x
 }
 
 func main() i32 effects io {

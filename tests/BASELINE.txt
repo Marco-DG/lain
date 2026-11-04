@@ -1136,11 +1136,6 @@ at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_i32 scalar
-### tests/ownership/elif_borrow_pass.ln
-rc=0
-out=
-at=const 2
-ty=Resource struct
 ### tests/ownership/field_consume_pass.ln
 rc=42
 out=

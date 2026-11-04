@@ -105,6 +105,16 @@ Uninit      & read or \lain{mov}            & \illformed{} \\
 \end{constraint}
 
 \begin{constraint}
+  A \lain{return} whose value still owes a release (a \lain{mov} value, or an
+  aggregate holding one) is \illformed{}~(\diagcode{E140}) unless the
+  function's return type owes the same release: written \lain{mov}, the
+  obligation passes to the caller.  Returned as a plain value, it would end
+  without anything released, as \lain{func f(mov p *i32) *i32 \{ return p \}}
+  would let a caller drop the pointer that dropping directly is
+  \diagcode{E003}.
+\end{constraint}
+
+\begin{constraint}
   An aliasing violation — attempting a mutable borrow when a shared borrow
   is active, or a shared borrow when a mutable borrow is active, or a
   second mutable borrow of the same variable — is

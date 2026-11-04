@@ -24,7 +24,7 @@ Diagnostic codes are divided into the following ranges:
 \endhead
 \bottomrule
 \endlastfoot
-\diagcode{E001}–\diagcode{E010}, \diagcode{E016}--\diagcode{E021} & Ownership and lifetime \\
+\diagcode{E001}–\diagcode{E010}, \diagcode{E016}--\diagcode{E021}, \diagcode{E140} & Ownership and lifetime \\
 \diagcode{E011}–\diagcode{E015}, \diagcode{E060} & Purity, safety, and verification \\
 \diagcode{E082} & Bounded while verification \\
 \diagcode{E083}–\diagcode{E087} & Array/slice safety and integer boundaries \\
@@ -34,7 +34,7 @@ Diagnostic codes are divided into the following ranges:
 \end{longtable}
 
 % -------------------------------------------------------------------------
-\section*{Ownership and lifetime diagnostics (\diagcode{E001}–\diagcode{E010}, \diagcode{E016}, \diagcode{E020}–\diagcode{E021})}
+\section*{Ownership and lifetime diagnostics (\diagcode{E001}–\diagcode{E010}, \diagcode{E016}, \diagcode{E020}–\diagcode{E021}, \diagcode{E140})}
 % -------------------------------------------------------------------------
 
 \begin{longtable}{@{}p{1.5cm}p{3.5cm}p{7.5cm}@{}}
@@ -134,6 +134,16 @@ Diagnostic codes are divided into the following ranges:
     resource, which would be lost.  Consume it first.  Through a borrow the
     old value can never have been consumed (\diagcode{E020}), so any such
     assignment is refused.
+    \\[4pt]
+
+\diagcode{E140}
+  & \S\,\ref{sec:own.diag}
+  & \textit{a value that must be released is returned as a plain one}
+    --- Issued when a \lain{return}'s value still owes a release (a
+    \lain{mov} value, or an aggregate holding one) and the function's return
+    type owes none: the obligation would end there and release nothing.
+    Declare the return type \lain{mov}, so that the caller receives the
+    obligation, or release the value before returning.
     \\[4pt]
 
 \end{longtable}

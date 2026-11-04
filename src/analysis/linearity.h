@@ -567,8 +567,16 @@ static void lin_run_block(Lin *L, IrBlock *b, uint64_t *st, bool report) {
             }
         }
     }
-    if (b->term.kind==IR_TERM_RET && b->term.cond)                                   // to the caller
+    if (b->term.kind==IR_TERM_RET && b->term.cond) {                                 // to the caller
+        // ★ E140 (I.95): a value that carries a release obligation goes to the caller only under a
+        // `mov` return type, which hands the caller the obligation. Returned as a plain value, the
+        // obligation ended here and released nothing: `func launder(mov p *i32) *i32 { return p }`
+        // let `q = launder(mov p)` be dropped where dropping p itself is E003.
+        if (report && b->term.cond->type && lin_has_release_obligation(b->term.cond->type, 0) &&
+            !(L->f->ret_type && lin_has_release_obligation(L->f->ret_type, 0)))
+            lin_add(L, b->term.cond->id, b->term.line ? b->term.line : b->term.cond->line, b->term.line ? b->term.col : b->term.cond->col, 40);
         lin_escape(L, b->term.cond, st, true, report, b->term.cond->line, b->term.cond->col);
+    }
 }
 
 // ── P3: a fixpoint bound must be DERIVED and its exhaustion must be LOUD ───────────────────
