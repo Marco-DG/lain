@@ -167,6 +167,9 @@ typedef struct IrType {
     // type must be consumed exactly once (an owned resource: `mov`d, freed, or returned).
     // Language-neutral: Lain's owned modes and Rust's affine owners both lower to this.
     bool  linear;
+    // IRT_SLICE: a SENTINEL slice (`T[:0]`): a 0 follows its last element in storage, which a
+    // read at index len yields (PE.16). Never fabricated (the front end's E089), so it holds.
+    bool  sentinel;
     // IRT_STRUCT — self-contained: carries its lowered field types + names so the
     // backend never re-touches the AST.
     //

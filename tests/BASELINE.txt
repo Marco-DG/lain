@@ -49,7 +49,6 @@ ty=Kind scalar
 ### tests/codegen/str_eq_literal_pass.ln
 rc=1
 out=
-at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
@@ -150,7 +149,6 @@ ty=Slice_u8 scalar
 ### tests/effects/effects_bound_honest_pass.ln
 rc=0
 out=
-at=access 4
 at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/effects/effects_row_grants_pass.ln
@@ -780,7 +778,6 @@ ty=Slice_i32 scalar
 ### tests/ir/str1.ln
 rc=0
 out=
-at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
@@ -1000,27 +997,23 @@ at=const 8
 ### tests/modules/import_through_loaded_module_pass.ln
 rc=0
 out=ok
-at=access 4
 at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/modules/module_alias_pass.ln
 rc=0
 out=via alias
-at=access 4
 at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/modules/module_qualified_access_pass.ln
 rc=0
 out=hi
 out=also unqualified
-at=access 4
 at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/modules/qualifier_through_import_pass.ln
 rc=0
 out=io
 out=alias
-at=access 4
 at=const 8
 at=nonnull 4
 ty=Slice_u8 scalar
@@ -1159,7 +1152,6 @@ ty=Two struct
 ### tests/ownership/loop_reassign_consume_pass.ln
 rc=134
 out=
-at=access 6
 at=nonnull 4
 ty=File struct
 ty=Slice_u8 scalar
@@ -1304,7 +1296,6 @@ ty=Slice_i32 scalar
 ### tests/ownership/struct_field_param_pass.ln
 rc=0
 out=
-at=access 2
 at=nonnull 2
 at=pure 2
 ty=Lexer struct
@@ -1437,7 +1428,6 @@ out=Testing extern keyword...
 out=abs(-42) = 42 (OK)
 out=malloc and free (OK)
 out=All extern tests passed.
-at=access 4
 at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/stdlib/fs_smoke_pass.ln
@@ -1446,7 +1436,6 @@ out=Opening file: test_output.txt
 out=Writing to file...
 out=Closing file...
 out=Done.
-at=access 6
 at=nonnull 4
 ty=File struct
 ty=Slice_u8 scalar
@@ -1458,7 +1447,6 @@ at=const 2
 rc=0
 out=Hello World!
 out=Partial line... Done.
-at=access 4
 at=nonnull 4
 ty=Slice_u8 scalar
 ### tests/stdlib/math_pass.ln
@@ -1498,7 +1486,6 @@ ty=Slice_u8 scalar
 ### tests/trust/algo_max_pass.ln
 rc=0
 out=111
-at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
@@ -1593,7 +1580,6 @@ ty=Slice_u8 scalar
 ### tests/trust/bounds_scan_pass.ln
 rc=0
 out=198
-at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
@@ -2457,7 +2443,6 @@ out=
 ### tests/trust/sentinel_zero_pass.ln
 rc=0
 out=
-at=access 4
 at=nonnull 4
 at=pure 4
 ty=Slice_u8 scalar
@@ -2557,7 +2542,6 @@ ty=Slice_u8 scalar
 ### tests/trust/slice_len_pass.ln
 rc=0
 out=5
-at=access 2
 at=nonnull 2
 at=pure 2
 ty=Slice_u8 scalar
@@ -2578,7 +2562,6 @@ ty=W struct
 rc=0
 out=[hello]
 out=[world]
-at=access 2
 at=nonnull 2
 ty=Slice_u8 scalar
 ### tests/trust/struct_byte_view_ordered_pass.ln
@@ -3088,6 +3071,12 @@ out=
 ### tests/types/refinement_type_alias_pass.ln
 rc=0
 out=
+### tests/types/sentinel_scan_pass.ln
+rc=0
+out=
+at=nonnull 2
+at=pure 2
+ty=Slice_u8 scalar
 ### tests/types/sizeof_alignof_pass.ln
 rc=0
 out=
@@ -3113,7 +3102,6 @@ out=Length: 14
 out=Content: Hello Sentinel
 out=Length: 8
 out=Content: Explicit
-at=access 2
 at=nonnull 2
 ty=Slice_u8 scalar
 ### tests/types/struct_ctor_array_field_layout_pass.ln
@@ -3124,7 +3112,6 @@ ty=W struct
 ### tests/types/struct_ctor_sentinel_to_slice_pass.ln
 rc=0
 out=
-at=access 2
 at=nonnull 2
 at=pure 2
 ty=Lexer struct
@@ -3283,7 +3270,6 @@ ty=Slice_u8 scalar
 rc=0
 out=find_char: 2
 out=peek_safe: 98
-at=access 4
 at=nonnull 4
 at=pure 4
 ty=Slice_u8 scalar
@@ -3529,7 +3515,6 @@ ty=Buf struct
 ### tests/vra/invariant/position_invariant_lexer_pass.ln
 rc=0
 out=
-at=access 2
 at=nonnull 10
 at=pure 6
 ty=Lexer struct

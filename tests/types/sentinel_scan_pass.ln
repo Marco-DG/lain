@@ -1,0 +1,15 @@
+// A sentinel slice's 0 is readable: `s[s.len]` on a `u8[:0]` is the terminator, so a scan for it
+// needs no bound test and is proved to stay in bounds (i <= s.len) and to end (s.len - i falls).
+func cstrlen(s u8[:0]) usize {
+    var i usize = 0
+    while s[i] != 0 {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 {
+    if cstrlen("hello") != 5 { return 1 }
+    if cstrlen("") != 0 { return 2 }
+    return 0
+}

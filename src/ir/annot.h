@@ -230,7 +230,9 @@ static int ir_c_access_list(IrFunc *f, IrFunc *mod, IrCAccess *out, int max) {
     for (IrParam *p=f->params; p; p=p->next, k++) {
         IrType *t = p->value ? p->value->type : NULL;
         if (t && t->kind == IRT_SLICE) {
-            if (n < max) {
+            // not a SENTINEL slice (PE.16): its pointer also reaches the 0 at index len, which an
+            // access size of len would make an overread to gcc and to UBSan's object-size check
+            if (n < max && !t->sentinel) {
                 out[n].len_pos = cpos;          // the length comes first — see the emitter
                 out[n].ptr_pos = cpos + 1;
                 out[n].read_only = (k < 64) && !((w >> k) & 1ull);

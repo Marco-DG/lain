@@ -1,0 +1,9 @@
+// EXPECT: [E085]
+// Only a READ may name a sentinel slice's s.len: writing there would overwrite the terminator.
+func poke(var s u8[:0]) {
+    s[s.len] = 1
+}
+
+func main() i32 {
+    return 0
+}

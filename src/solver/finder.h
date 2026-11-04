@@ -4466,6 +4466,37 @@ static bool fd_claim_same(const JClaim *a, const JClaim *b) {
         if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k] || a->fld[k] != b->fld[k]) return false;
     return true;
 }
+// A SENTINEL slice's scan (PE.16): `while s[i] != 0 { i = i + 1 }` over `s T[:0]` reads at most its
+// one past the end, the 0 that follows the last element, so i <= len(s) at the header. No
+// comparison in the program names that pair (the sentinel ends the loop), so it is proposed here:
+// per element read of a sentinel slice, indexed by a cell the loop reads, `i - len(s) <= 0` at the
+// innermost header around it, fixed, for Houdini to keep (the judge states the 0 at index len).
+static bool fd_sentinel_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+    char err[200];
+    for (IrBlock *b = f->blocks; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op != IR_ELEM_PTR || i->n_operands < 2 || !i->operands[0] || !i->operands[1]) continue;
+            IrInstr *sd = fd_def_in(f, i->operands[0]);
+            if (!sd || sd->op != IR_SLICE_DATA || sd->n_operands < 1 || !sd->operands[0] || !sd->operands[0]->type ||
+                sd->operands[0]->type->kind != IRT_SLICE || !sd->operands[0]->type->sentinel) continue;
+            IrInstr *ld = fd_def_in(f, i->operands[1]);           // the index: a cell the loop reads
+            IrInstr *al = ld && ld->op == IR_LOAD && ld->n_operands >= 1 ? fd_def_in(f, ld->operands[0]) : NULL;
+            if (!al || al->op != IR_ALLOCA || !al->result || !fd_is_int(ld->result->type)) continue;
+            int32_t H = fd_nest_around(N, b->id, -1);
+            if (H < 0) continue;
+            IrInstr *sl = fd_def_in(f, sd->operands[0]);          // the slice: a value, or a cell's
+            IrInstr *sa = sl && sl->op == IR_LOAD && sl->n_operands >= 1 ? fd_def_in(f, sl->operands[0]) : NULL;
+            int32_t skey = sa && sa->op == IR_ALLOCA && sa->result ? sa->result->id : sd->operands[0]->id;
+            int32_t keys[2] = { al->result->id, skey }; uint8_t tk[2] = { JTERM_VALUE, JTERM_LEN }, kind[2];
+            if (!F->gen->term_kinds(F->gen->ctx, f, H, keys, tk, 2, kind, err, sizeof err) || !kind[0] || !kind[1]) continue;
+            JClaim c; memset(&c, 0, sizeof c);
+            c.blk = H; c.fn = f; c.nt = 2; c.rhs = 0;
+            c.key[0] = keys[0]; c.tk[0] = JTERM_VALUE; c.coef[0] = 1;
+            c.key[1] = keys[1]; c.tk[1] = JTERM_LEN; c.coef[1] = -1;
+            if (!fd_push_claim(F, &c, as, nv, cl, nc, ccl)) return false;
+        }
+    return true;
+}
 // One round's candidates for f, then pushed to cl[0..nc): its cut points' and returns' bounded
 // under the verified claims `as`, then every other kind (some from the second round on); f's facts'
 // account pays. False when memory ran out.
@@ -4526,6 +4557,7 @@ static bool fd_fn_candidates(JFinder *F, IrFunc *f, FdNest *N, const JClaim *as,
     if (round == 1 && !fd_rate_candidates(F, f, as, nv, cl, nc, ccl)) return false;
     if (!fd_each_candidates(F, f, N, as, nv, cl, nc, ccl)) return false;
     if (!fd_entry_candidates(F, f, as, nv, cl, nc, ccl)) return false;
+    if (!fd_sentinel_candidates(F, f, N, as, nv, cl, nc, ccl)) return false;
     if (!fd_sum_entry_candidates(F, f, as, nv, cl, nc, ccl)) return false;
     for (IrBlock *kb = f->blocks; kb; kb = kb->next)
         if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, cl, nc, ccl)) return false;

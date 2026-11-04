@@ -601,6 +601,16 @@ padding}.
   out-of-bounds violation~(\diagcode{E085}).
 \end{constraint}
 
+\begin{constraint}
+  A \emph{read} of an element of a sentinel slice \lain{s} (type \lain{T[:0]})
+  may also name the index \textit{s.len}: it shall satisfy
+  $0 \leq \textit{idx} \leq \textit{s.len}$, and \lain{s[s.len]} is 0, the
+  sentinel that follows the last element.  So a scan for the terminator,
+  \lain{while s[i] != 0 \{ i = i + 1 \}}, stays in bounds and ends.  A write
+  shall still satisfy $\textit{idx} < \textit{s.len}$~(\diagcode{E085}): the
+  sentinel cannot be overwritten.
+\end{constraint}
+
 \begin{example}
 \begin{laincode}
 var arr int[5] = [1, 2, 3, 4, 5]

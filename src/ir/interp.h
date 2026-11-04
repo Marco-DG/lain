@@ -44,7 +44,9 @@ typedef struct IObj IObj;
 // LAST step may move (ELEM_PTR); `lo`/`hi` bound it — a slice's data pointer carries the slice's
 // own bounds, so a read past the slice is caught even inside the array it views. hi < 0: the
 // enclosing aggregate's length.
-typedef struct { IObj *o; int8_t d; int32_t p[IP_MAX]; int32_t lo, hi; } IPtr;
+// sent: the data pointer of a SENTINEL slice (`T[:0]`), which may also READ at hi, the 0 storage
+// holds after the last element (PE.16); a store there is refused as before.
+typedef struct { IObj *o; int8_t d; int32_t p[IP_MAX]; int32_t lo, hi; bool sent; } IPtr;
 
 typedef struct IVal {
     uint8_t  k;
@@ -453,6 +455,16 @@ static IVal *ip_cell(const IPtr *p, IrInstr *at) {
         II_PROOF(at, "access at index %d outside [%d, %d)", ix, p->lo, hi);
     }
     return &par->e[ix];
+}
+// A READ's cell: through a sentinel slice's pointer, its one past the end is the sentinel storage
+// holds there; anything else as ip_cell
+static IVal *ip_cell_read(const IPtr *p, IrInstr *at) {
+    if (p->sent) {
+        IVal *par = ip_parent(p, at);
+        int32_t ix = p->p[p->d - 1], hi = p->hi >= 0 ? p->hi : par->n;
+        if (ix == hi && ix < par->n) return &par->e[ix];
+    }
+    return ip_cell(p, at);
 }
 static IPtr iv_ptr(const IVal *v, IrInstr *at) {
     if (v->k == IV_PTR) return v->p;
@@ -995,7 +1007,7 @@ static void ii_exec(IrInstr *ins) {
                 for (int k = 0; k < n; k++) { IPtr q = p; q.p[q.d - 1] += k; iv_copy(&r.e[k], ip_cell(&q, ins), false); }
                 break;
             }
-            IVal *c = ip_cell(&p, ins);
+            IVal *c = ip_cell_read(&p, ins);
             if (c->k == IV_UNINIT && rt && rt->kind != IRT_STRUCT && rt->kind != IRT_ARRAY && rt->kind != IRT_VECTOR) {
                 // Heap storage is reached only through raw pointers, inside `unsafe`, where the
                 // initialisation analysis promises nothing: reading it unwritten is the program's UB.
@@ -1095,7 +1107,13 @@ static void ii_exec(IrInstr *ins) {
             break;
         }
         case IR_SLICE_LEN: { IVal *s = ii_val(ins->operands[0], ins); if (s->k != IV_SLICE) II_UNSUP(ins, "len of a non-slice"); iv_int(&r, s->len); break; }
-        case IR_SLICE_DATA: { IVal *s = ii_val(ins->operands[0], ins); if (s->k != IV_SLICE) II_UNSUP(ins, "data of a non-slice"); r.k = IV_PTR; r.p = s->p; break; }
+        case IR_SLICE_DATA: {
+            IVal *s = ii_val(ins->operands[0], ins); if (s->k != IV_SLICE) II_UNSUP(ins, "data of a non-slice");
+            r.k = IV_PTR; r.p = s->p;
+            IrType *st = ii_ty(ins->operands[0]);
+            r.p.sent = st && st->kind == IRT_SLICE && st->sentinel;   // its 0 is readable (PE.16)
+            break;
+        }
         case IR_MAKE_SLICE: {
             IVal *d = ii_val(ins->operands[0], ins);
             __int128 n = iv_get(ii_val(ins->operands[1], ins), ii_ty(ins->operands[1]), ins);

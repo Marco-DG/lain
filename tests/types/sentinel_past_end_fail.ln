@@ -1,0 +1,10 @@
+// EXPECT: [E085]
+// A sentinel slice's read may name s.len, the terminator, and no further.
+func past(s u8[:0]) u8 {
+    return s[s.len + 1]
+}
+
+func main() i32 {
+    if past("ab") != 0 { return 1 }
+    return 0
+}

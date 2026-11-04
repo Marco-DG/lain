@@ -1605,6 +1605,26 @@ static bool jg_may_write(const IrInstr *i) {
         default: return true;
     }
 }
+// An element address of a SENTINEL slice (`T[:0]`, PE.16): an ELEM_PTR, by an integer index, whose
+// base is SLICE_DATA of a slice of that type. The ELEM_PTR, or NULL.
+static IrInstr *jg_sentinel_elem(JG *g, IrValue *addr) {
+    IrInstr *ep = addr && addr->id >= 0 && addr->id < g->nv ? g->def[addr->id] : NULL;
+    if (!ep || ep->op != IR_ELEM_PTR || ep->n_operands < 2 || !ep->operands[0] || !jg_is_int(ep->operands[1]->type)) return NULL;
+    IrValue *b = ep->operands[0];
+    IrInstr *sd = b->id >= 0 && b->id < g->nv ? g->def[b->id] : NULL;
+    if (!sd || sd->op != IR_SLICE_DATA || sd->n_operands < 1 || !sd->operands[0] || !sd->operands[0]->type) return NULL;
+    return sd->operands[0]->type->kind == IRT_SLICE && sd->operands[0]->type->sentinel ? ep : NULL;
+}
+// Is every use of v a LOAD from it (its address read, never written, passed or kept)?
+static bool jg_read_only(JG *g, IrValue *v) {
+    for (IrBlock *b = g->f->blocks; b; b = b->next) {
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            for (int k = 0; k < i->n_operands; k++)
+                if (i->operands[k] == v && !(i->op == IR_LOAD && k == 0)) return false;
+        if (b->term.cond == v) return false;
+    }
+    return true;
+}
 // Are two addresses one: jg_same_value, or the same ELEM_PTR or FIELD_PTR (one aux), or SLICE_DATA
 // (a slice is a value: its data pointer is one), of operands that are pairwise one, to a small depth?
 static bool jg_same_addr(JG *g, IrValue *a, IrValue *b, int depth) {
@@ -2591,6 +2611,18 @@ static void jb_state(JB *B, int32_t x) {
             break;
         case IR_LOAD: {                                        // a[i]: the element the index names (R7)
             JELoad *el = g->eload ? g->eload[id] : NULL;
+            // an element of a SENTINEL slice (`T[:0]`, PE.16): at index len it is the 0 storage holds
+            // there, `i <= len - 1 | value = 0`, VC-wide only (a disjunct holds no disjunction)
+            IrInstr *sep = jg_sentinel_elem(g, d->n_operands >= 1 ? d->operands[0] : NULL);
+            if (sep && B->jS < 0) {
+                JCons cs[2]; JLT u[2];
+                u[0].var = jb_val(B, sep->operands[1]); u[0].c = 1;
+                u[1].var = jb_len(B, g->def[sep->operands[0]->id]->operands[0]); u[1].c = -1;
+                if (jb_cons(B, u, 2, J_LE, -1, &cs[0])) {
+                    u[0].var = x; u[0].c = 1;
+                    if (jb_cons(B, u, 1, J_EQ, 0, &cs[1])) jb_or2(B, jb_str(B, "def %%v%lld sentinel", id, 0, 0), cs, 1, 1);
+                }
+            }
             if (!el) {
                 jb_table_load(B, x, d, id);
                 // the value an earlier load of the same address read, no write between (s9)
@@ -3220,6 +3252,12 @@ static bool jb_rel(JB *B, IrValue *v, int depth) {
         IrInstr *ic = jg_cond_cmp(B->g, w);
         if (ic && jg_cond_value(B->g, w) >= 0) return true;   // fixed: about every VC, as jb_facts has it
         if (ic && ic->n_operands >= 2) return jb_rel(B, ic->operands[0], depth - 1) || jb_rel(B, ic->operands[1], depth - 1);
+    }
+    // an element read of a SENTINEL slice states `i <= len - 1 | value = 0` (PE.16): it is about the
+    // VC where its index is, so `while s[i] != 0` tells the loop that i stays at most len
+    if (d && d->op == IR_LOAD && d->n_operands >= 1) {
+        IrInstr *sep = jg_sentinel_elem(B->g, d->operands[0]);
+        if (sep) return jb_rel(B, sep->operands[1], depth - 1);
     }
     if (!d || !(d->op == IR_ADD || d->op == IR_SUB || d->op == IR_NEG || d->op == IR_MUL || d->op == IR_CAST ||
                 d->op == IR_SDIV || d->op == IR_UDIV || d->op == IR_SREM || d->op == IR_UREM)) return false;
@@ -3979,6 +4017,9 @@ static bool jg_obligations(JG *g, JObls *L) {
                         if (j->op == IR_MAKE_SLICE && j->n_operands >= 1 && j->operands[0] == i->result) sub = true;
                     if (sub) break;
                     JBoundArg a; jg_bound_arg(g, i, &a);
+                    // a sentinel slice's address that is only READ may name its one past the end,
+                    // the 0 that follows the last element (PE.16): i + w - 1 <= len
+                    if (a.slice && a.w >= 1 && jg_sentinel_elem(g, i->result) && jg_read_only(g, i->result)) a.w -= 1;
                     if (!jg_is_int(i->operands[1]->type)) { if (!jg_outside(g, L, i, b->id, k, "bounds.lo", "an index that is not an integer")) return false; break; }
                     if (!jg_goal(g, L, i, b->id, k, -1, "bounds.lo", 0, jgk_bounds_lo, NULL)) return false;
                     if (a.clen < 0 && !a.slice) { if (!jg_outside(g, L, i, b->id, k, "bounds.hi", "no length is known for the base (a shape or a shared-term cancellation)")) return false; break; }

@@ -417,6 +417,27 @@ a length:
 u8[:0]     // Null-terminated byte slice (C string compatible)
 ```
 
+The `0` is readable: on a `u8[:0]`, `s[s.len]` is the sentinel. A scan for the terminator then needs
+no bound test of its own, and it is proved to stay in bounds and to end:
+
+```lain
+// VERIFY: exit 0
+func cstrlen(s u8[:0]) usize {
+    var i usize = 0
+    while s[i] != 0 {
+        i = i + 1
+    }
+    return i
+}
+
+func main() i32 {
+    if cstrlen("hello") != 5 { return 1 }
+    return 0
+}
+```
+
+Only a read may name `s.len`: `s[s.len] = 1` is `[E085]`, as on a plain `u8[]`.
+
 ### 2.6 String Literals
 
 String literals have type `u8[:0]` (null-terminated sentinel slice).

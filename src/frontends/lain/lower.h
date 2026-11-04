@@ -909,7 +909,7 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
             if (t->array_len >= 0) { IrType *r=ir_type_new(c->a,IRT_ARRAY); r->elem=el; r->array_len=t->array_len; return r; }
             IrType *r=ir_type_new(c->a,IRT_SLICE); r->elem=el; return r;   // dynamic → slice
         }
-        case TYPE_SLICE: { IrType *r=ir_type_new(c->a,IRT_SLICE); r->elem=ir_lower_type(c,t->element_type); return r; }
+        case TYPE_SLICE: { IrType *r=ir_type_new(c->a,IRT_SLICE); r->elem=ir_lower_type(c,t->element_type); r->sentinel=t->has_sentinel; return r; }
         case TYPE_POINTER:{ IrType *r=ir_type_new(c->a,IRT_PTR); r->elem=ir_lower_type(c,t->element_type); r->ptr_mut=t->pointee_mutable; r->is_raw=true; return r; }   // `*T` is unsafe: no exclusivity to promise
         default: return ir_type_new(c->a, IRT_UNIT);
     }
