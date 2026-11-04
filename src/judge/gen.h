@@ -1008,6 +1008,7 @@ typedef struct {
     int32_t to;                              // a claim's obligation: the edge's target block; else -1
     int32_t *jhyp, *jblk, **jpred; int32_t njr, cjr;
     bool allrel;                   // a goal of no variable that is false: every dominating fact is about it   // R7 hypotheses: index, join, disjuncts' predecessors
+    bool ltr;                      // jb_rel looks through an integer's exact store (a dominating guard's test only)
     int32_t *cst;                            // per claim: -2 unstated, -1 VC-wide, else its disjunct
     int32_t *gst;                            // per guarded claim: the call it is stated at VC-wide, or -2
     const int32_t *wid, *wk; int32_t nw;     // the current disjunct's path: each wrapping op's case k (s5)
@@ -3197,7 +3198,20 @@ static void jb_drain(JB *B) { while (B->qh < B->qt && !B->fail) jb_state(B, B->q
 // jb_cmp_def states its value)? Depth 3.
 static bool jb_rel(JB *B, IrValue *v, int depth) {
     if (jb_has(B, v)) return true;
-    if (depth <= 0 || !v || v->id < 0 || v->id >= B->g->nv) return false;
+    if (!v || v->id < 0 || v->id >= B->g->nv) return false;
+    // where a dominating guard is asked about (jb_facts, B->ltr), an integer read back from a slot
+    // of ONE store (a temporary, an immutable binding), where that store put it exactly, is the
+    // stored value, at no depth: the trap form `(x +? y else panic(..)) > 0` stores the checked sum
+    // in a temporary and compares its load (restricted-15 b.10). Not a `var`'s slot, nor for a
+    // join's relevance: each made VCs that no proof needed heavier (a corpus file's judge time
+    // +10%; AliasDarteFeautrierGonnord-SAS2010-wise's trap leg, an `or` of two such tests, 1.6 -> 40 s)
+    IrInstr *ld = B->ltr ? B->g->def[v->id] : NULL;
+    bool one = ld && ld->op == IR_LOAD && ld->n_operands >= 1 && ld->operands[0] && ld->operands[0]->id >= 0 &&
+               ld->operands[0]->id < B->g->nv && B->g->one && B->g->one[ld->operands[0]->id];
+    const JVer *sv = one && B->g->loadver[v->id] >= 0 ? &B->g->ver[B->g->loadver[v->id]] : NULL;
+    if (sv && sv->kind == JV_STORE && jg_store_exact(sv) && sv->stored && sv->stored != v && v->type && v->type->kind == IRT_INT)
+        return jb_rel(B, sv->stored, depth);
+    if (depth <= 0) return false;
     IrInstr *d = B->g->def[v->id];
     if (v->type && v->type->kind == IRT_BOOL) {
         IrValue *w = v;
@@ -3515,8 +3529,11 @@ static void jb_facts(JB *B) {
         for (int32_t i = 0; i < nf; i++) {
             if (F[i].used) continue;
             IrInstr *ic = jg_cond_cmp(g, F[i].cv);
-            if (!B->allrel && jg_cond_value(g, F[i].cv) < 0 &&  // a fixed one is about every VC
-                (ic ? !jb_rel(B, ic->operands[0], 3) && !jb_rel(B, ic->operands[1], 3) : !jb_rel(B, F[i].cv, 3))) continue;
+            B->ltr = true;
+            bool rel = B->allrel || jg_cond_value(g, F[i].cv) >= 0 ||  // a fixed one is about every VC
+                       (ic ? jb_rel(B, ic->operands[0], 3) || jb_rel(B, ic->operands[1], 3) : jb_rel(B, F[i].cv, 3));
+            B->ltr = false;
+            if (!rel) continue;
             F[i].used = true;
             if (jb_cond(B, F[i].cv, F[i].truth, F[i].origin)) more = true;
         }
