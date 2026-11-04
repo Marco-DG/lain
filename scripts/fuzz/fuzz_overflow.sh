@@ -109,7 +109,10 @@ for ((k=0; k<N; k++)); do
     # ── oracle 2+3: the interpreter, and the two legs' printed values ───────────────────────
     # These cover i8/i16/i32, where UBSan structurally cannot fire.
     if [ ! -x "$LAIN" ]; then nointerp=$((nointerp+1)); continue; fi
-    LAIN_INTERP_STEPS=50000000 timeout 60 "$LAIN" "$prog" --interpret >"$SC/i.out" 2>"$SC/i.err"; ist=$?
+    # under VRA's proofs, the ones this leg's C was emitted from: the default (the judge) may refuse
+    # a program VRA proves, and its interpreter then printed nothing, a "differential" that was the
+    # two analyses disagreeing, not a wrong value (seed of the 2026-11-04 chain on 46a6084d)
+    LAIN_INTERP_STEPS=50000000 timeout 60 "$LAIN" "$prog" --judge=vra --interpret >"$SC/i.out" 2>"$SC/i.err"; ist=$?
     m=$(grep -m1 'lain --interpret' "$SC/i.err")
     if echo "$m" | grep -q 'PROOF FAILED\|UNDEFINED BEHAVIOUR'; then
         interp_bug=$((interp_bug+1))
