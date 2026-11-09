@@ -1,0 +1,33 @@
+// Division by counting (termination-nla's mannadiv): y1 the quotient, y2 the remainder, y3 what is
+// left to count, and the loop keeps y1*x2 + y2 + y3 = x1, so it stops when y3 reaches 0. The
+// equality holds across the branch that raises y1 only because that branch is taken where
+// y2 + 1 = x2 (the product y1*x2 rises by x2 as y2 + y3 falls by x2), and it names x1, which the
+// loop only reads. With it, y3 >= 0 holds and the loop is ranked. E011 before the finder's affine
+// equalities read a path's own equalities (and a read-only cell's `post = pre`, stated as two
+// inequalities) and named the loop's products (s31's ghosts). b may be negative: then y2 only
+// grows, and the equality alone bounds y3.
+func quotient(a i32 >= 0, b i32 != 0) i32 effects raises {
+    var x1 i32 = a
+    var x2 i32 = b
+    var y1 i32 = 0
+    var y2 i32 = 0
+    var y3 i32 = x1
+    while 1 != 0 {
+        if !(y3 != ((((y1 *? x2 else panic("overflow")) +? y2 else panic("overflow")) +? y3 else panic("overflow")) -? x1 else panic("overflow"))) {
+            break
+        }
+        if (y2 +? 1 else panic("overflow")) == x2 {
+            y1 = y1 +? 1 else panic("overflow")
+            y2 = 0
+            y3 = y3 -? 1 else panic("overflow")
+        } else {
+            y2 = y2 +? 1 else panic("overflow")
+            y3 = y3 -? 1 else panic("overflow")
+        }
+    }
+    return y1
+}
+
+func main() i32 effects raises {
+    return quotient(17, 5) - 3
+}

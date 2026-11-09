@@ -3596,9 +3596,39 @@ static bool fd_rref(__int128 *A, int32_t nr, int32_t w, const int32_t *ord, int3
     }
     return true;
 }
-static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl) {
+// Whether hypotheses a and b are each other's negation, a.x <= r and -a.x <= -r: together a.x = r.
+// A version a path leaves as it was is stated so (`post - pre <= 0`, `pre - post <= 0`), never as an
+// equality, and read as none every cell the loop only reads was undetermined, its coefficient 0:
+// no equality could name it (mannadiv's y1*x2 + y2 + y3 = x1, x1 read only).
+static bool fd_hyp_negates(const JCons *a, const JCons *b) {
+    if (a->op != J_LE || b->op != J_LE || a->nt != b->nt || a->nt < 1 || a->nt > 2 || fd_int128(&a->rhs) != -fd_int128(&b->rhs)) return false;
+    for (int32_t t = 0; t < a->nt; t++) {
+        bool hit = false;
+        for (int32_t u = 0; u < b->nt && !hit; u++) hit = a->t[t].var == b->t[u].var && fd_int128(&a->t[t].coef) == -fd_int128(&b->t[u].coef);
+        if (!hit) return false;
+    }
+    return true;
+}
+// With `ghost`, over the paths with the loop's products followed as GHOSTS (paths_ghost, s31), a
+// ghost one more column: mannadiv keeps y1*x2 + y2 + y3 = x1 (where y2 + 1 = x2, y1 rises by 1 and
+// y2 falls to 0: the product rises by x2 as y2 + y3 falls by x2), with which y3 >= 0 holds and <y3>
+// ranks its loop. Only where the header has a ghost.
+static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl,
+                               bool ghost) {
     FdLoop L;
-    if (!fd_loop_build(F, f, H, as, nv, &L)) { free(L.mem); return !F->oom; }
+    if (!ghost && !fd_loop_build(F, f, H, as, nv, &L)) { free(L.mem); return !F->oom; }
+    if (ghost) {
+        char gerr[200]; JPaths GP; bool gb = false;
+        memset(&L, 0, sizeof L);
+        size_t gcap = (size_t)1 << 22;
+        if (!(L.mem = malloc(gcap))) { F->oom = true; return false; }
+        L.cur = L.mem; L.end = L.mem + gcap;
+        if (F->gen->paths_ghost && F->gen->paths_ghost(F->gen->ctx, f, as, nv, H, &GP, gerr, sizeof gerr) && !GP.refused)
+            gb = fd_loop_from(F, f, H, &GP, &L, JRANK_MAXE);
+        bool any = false;
+        for (int32_t q = 0; gb && q < L.npk && !any; q++) any = L.ptk[q] == JTERM_GHOST;
+        if (!gb || !any) { free(L.mem); return !F->oom; }
+    }
     // the columns: the header's versions, its ENTRY pairs aside (c40: fixed in the loop, each would
     // be a free column of its own, and a claim of it alone is refused); col[q] is column q's pair
     int32_t col[16], K = 0, W = L.nv + 1;
@@ -3616,19 +3646,29 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
     // Houdini checks the candidate on every path.
     bool plain = false;
     for (int32_t k = 0; k < L.npaths; k++) plain |= !L.wrapped || !L.wrapped[k];
+    uint8_t moved[16] = { 0 };                                // a column some path changes
     for (int32_t k = 0; ok && k < L.npaths; k++) {
         if (plain && L.wrapped && L.wrapped[k]) continue;
         const JVc *P = L.paths[k];
+        // the path's equalities: each J_EQ, and each pair of inequalities that negate each other
+        uint8_t *use = calloc((size_t)(P->nhyps ? P->nhyps : 1), 1);
+        if (!use) { ok = false; break; }
         int32_t ne = 0;
-        for (int32_t h = 0; h < P->nhyps; h++) if (!P->hyps[h].disj && P->hyps[h].cons.op == J_EQ) ne++;
+        for (int32_t h = 0; h < P->nhyps; h++) if (!P->hyps[h].disj && P->hyps[h].cons.op == J_EQ) { use[h] = 1; ne++; }
+        for (int32_t h = 0; ghost && h < P->nhyps; h++) {
+            const JCons *a = &P->hyps[h].cons;
+            if (use[h] || P->hyps[h].disj || a->op != J_LE || a->nt < 1 || a->nt > 2) continue;
+            for (int32_t h2 = h + 1; h2 < P->nhyps; h2++)
+                if (!use[h2] && !P->hyps[h2].disj && fd_hyp_negates(a, &P->hyps[h2].cons)) { use[h] = 1; use[h2] = 2; ne++; break; }
+        }
         __int128 *A = calloc((size_t)(ne ? ne : 1) * (size_t)W, sizeof *A);
         int32_t *piv = malloc(sizeof *piv * (size_t)W), *ord = malloc(sizeof *ord * (size_t)W);
         uint8_t *base = calloc((size_t)W, 1);
-        if (!A || !piv || !ord || !base) { free(A); free(piv); free(ord); free(base); ok = false; break; }
+        if (!A || !piv || !ord || !base) { free(A); free(piv); free(ord); free(base); free(use); ok = false; break; }
         int32_t r = 0;
         for (int32_t h = 0; h < P->nhyps && ok; h++) {
             const JHyp *y = &P->hyps[h];
-            if (y->disj || y->cons.op != J_EQ) continue;
+            if (use[h] != 1) continue;
             for (int32_t t = 0; t < y->cons.nt; t++) {
                 int32_t v = y->cons.t[t].var;
                 if (v < 0 || v >= L.nv) { ok = false; break; }
@@ -3646,10 +3686,18 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
         // per version q: d*post = rhs - sum_b a_b * b, or undetermined
         for (int32_t q = 0; ok && q < K; q++) {
             int32_t pv = L.post[col[q]], pr = piv[pv];
-            bool det = pr >= 0;
+            bool det = pr >= 0 && (!ghost || pv != L.pre[col[q]]);             // a value fixed at the header: out, as before
             for (int32_t v = 0; det && v < L.nv; v++) if (v != pv && A[(size_t)pr * W + v] != 0 && !base[v]) det = false;
             if (!det) { if (ncr < cap) { C[(size_t)ncr * (K + 1) + q] = 1; ncr++; } continue; }
         }
+        // a path no state takes (its equalities contradict: 0 = c) bounds nothing
+        bool dead = false;
+        for (int32_t ri = 0; ghost && ok && ri < r && !dead; ri++) {
+            bool zero = true;
+            for (int32_t v = 0; v < L.nv && zero; v++) zero = A[(size_t)ri * W + v] == 0;
+            dead = zero && A[(size_t)ri * W + L.nv] != 0;
+        }
+        if (dead) { free(A); free(piv); free(ord); free(base); free(use); continue; }
         // c.(post - pre) = 0: scale each version's expression to the path's common denominator D
         __int128 D = 1;
         for (int32_t q = 0; ok && q < K; q++) {
@@ -3660,27 +3708,61 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
             D = D / g * d;
             if (D > FD_KARR_BIG) ok = false;
         }
-        for (int32_t b = 0; ok && b <= L.nv; b++) {                // per base variable, and the constant
+        // Fm: per base variable and the constant (row nb), c's coefficient there, a row over c
+        int32_t nb = 0, *bx = malloc(sizeof *bx * (size_t)(L.nv + 1));
+        for (int32_t v = 0; bx && v < L.nv; v++) bx[v] = base[v] ? nb++ : -1;
+        __int128 *Fm = bx ? calloc((size_t)(nb + 1) * (size_t)K, sizeof *Fm) : NULL;
+        if (!bx || !Fm) { free(bx); free(Fm); free(A); free(piv); free(ord); free(base); free(use); ok = false; break; }
+        for (int32_t b = 0; ok && b <= L.nv; b++) {
             if (b < L.nv && !base[b]) continue;
-            if (ncr >= cap) { ok = false; break; }
-            __int128 *row = C + (size_t)ncr * (K + 1);
-            bool nz = false;
+            __int128 *row = Fm + (size_t)(b < L.nv ? bx[b] : nb) * K;
             for (int32_t q = 0; q < K; q++) {
                 int32_t pv = L.post[col[q]], pr = piv[pv];
                 __int128 coef = 0;
                 if (pr >= 0) {
                     __int128 d = A[(size_t)pr * W + pv], m = D / (d < 0 ? -d : d), sgn = d < 0 ? -1 : 1;
                     // post = (rhs - sum a_b b) / d: coefficient of b is -a_b/d, the constant rhs/d
-                    __int128 a = b < L.nv ? -A[(size_t)pr * W + b] : A[(size_t)pr * W + L.nv];
-                    coef = a * m * sgn;
+                    __int128 a2 = b < L.nv ? -A[(size_t)pr * W + b] : A[(size_t)pr * W + L.nv];
+                    coef = a2 * m * sgn;
                 }
                 if (b < L.nv && b == L.pre[col[q]]) coef -= D;
                 if (coef > FD_KARR_BIG || coef < -FD_KARR_BIG) { ok = false; break; }
-                row[q] = coef; nz |= coef != 0;
+                row[q] = coef;
+                if (coef) moved[q] = 1;
             }
-            if (nz) { if (!fd_row_norm(row, K + 1)) ok = false; else ncr++; }
-            else memset(row, 0, sizeof *row * (size_t)(K + 1));
         }
+        // ...where the path runs: an equality of its old values alone (a row whose pivot is a base
+        // variable: mannadiv's `y2 + 1 = x2` on the branch that raises y1) restricts the states that
+        // take it, and c.(post - pre) need vanish only on those. Each such row's pivot p is put out of
+        // the function by the row itself (fraction-free: d*F - F[p]*row), so what is left must be 0.
+        for (int32_t p0 = 0; ghost && ok && p0 < L.nv; p0++) {
+            if (!base[p0] || piv[p0] < 0) continue;
+            const __int128 *R = A + (size_t)piv[p0] * W;
+            __int128 d = R[p0], *Fp = Fm + (size_t)bx[p0] * K, fp[16];
+            for (int32_t q = 0; q < K; q++) fp[q] = Fp[q];
+            for (int32_t b = 0; ok && b <= L.nv; b++) {
+                if (b < L.nv && (!base[b] || b == p0)) continue;
+                __int128 *row = Fm + (size_t)(b < L.nv ? bx[b] : nb) * K, rb = b < L.nv ? R[b] : -R[L.nv];
+                for (int32_t q = 0; q < K; q++) {
+                    if (d > FD_KARR_BIG || d < -FD_KARR_BIG || rb > FD_KARR_BIG || rb < -FD_KARR_BIG) { ok = false; break; }
+                    row[q] = d * row[q] - rb * fp[q];
+                    if (row[q] > FD_KARR_BIG || row[q] < -FD_KARR_BIG) { ok = false; break; }
+                }
+            }
+            for (int32_t q = 0; q < K; q++) Fp[q] = 0;
+            if (ok) ok = fd_row_norm(Fm, (nb + 1) * K);           // one scale for all: they are one function
+        }
+        for (int32_t i = 0; ok && i <= nb; i++) {
+            __int128 *src = Fm + (size_t)i * K;
+            bool nz = false;
+            for (int32_t q = 0; q < K; q++) nz |= src[q] != 0;
+            if (!nz) continue;
+            if (ncr >= cap) { ok = false; break; }
+            __int128 *row = C + (size_t)ncr * (K + 1);
+            memcpy(row, src, sizeof *row * (size_t)K); row[K] = 0;
+            if (!fd_row_norm(row, K + 1)) ok = false; else ncr++;
+        }
+        free(bx); free(Fm); free(use);
         free(A); free(piv); free(ord); free(base);
     }
     // the nullspace of C (ncr x K): each free column a basis vector
@@ -3704,6 +3786,9 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
                 nzt += vec[q] != 0;
             }
             if (bad || nzt < 1 || nzt > JCLAIM_MAXT) continue;
+            bool mv = false, gh = false;                         // a sum of versions no path changes:
+            for (int32_t q = 0; q < K; q++) { mv |= vec[q] != 0 && moved[q]; gh |= vec[q] != 0 && L.ptk[col[q]] == JTERM_GHOST; }   // not this question's
+            if (ghost && (!mv || !gh)) continue;
             __int128 g = 0;
             for (int32_t q = 0; q < K; q++) g = fd_gcd128(g, vec[q]);
             JClaim c; memset(&c, 0, sizeof c);
@@ -3711,6 +3796,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
             int32_t ent[JCLAIM_MAXT]; bool all_ent = true;
             for (int32_t q = 0; q < K; q++) if (vec[q]) {
                 c.key[c.nt] = L.pkey[col[q]]; c.tk[c.nt] = L.ptk[col[q]]; c.coef[c.nt] = vec[q] / g;
+                if (c.tk[c.nt] == JTERM_GHOST) c.targ[c.nt] = L.parg[col[q]];   // which product (s31)
                 ent[c.nt] = -1;                                  // the term's ENTRY pair, if the path offers one
                 for (int32_t e = 0; e < L.npk; e++) if (L.ptk[e] == JTERM_ENTRY && L.pkey[e] == c.key[c.nt]) ent[c.nt] = e;
                 all_ent &= ent[c.nt] >= 0;
@@ -4660,7 +4746,7 @@ static bool fd_fn_candidates(JFinder *F, IrFunc *f, FdNest *N, const JClaim *as,
     if (!fd_sentinel_candidates(F, f, N, as, nv, cl, nc, ccl)) return false;
     if (!fd_sum_entry_candidates(F, f, as, nv, cl, nc, ccl)) return false;
     for (IrBlock *kb = f->blocks; kb; kb = kb->next)
-        if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, cl, nc, ccl)) return false;
+        if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, cl, nc, ccl, false)) return false;
     fd_nest_free(N);
     return true;
 }
@@ -4768,6 +4854,33 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             const char *stage = fd_stage;
             if (!got && built && !F->oom && fd_rank_residue(F, f, b->id, as, nv, &r)) { got = true; stage = "residue"; }
             if (!got && built && !F->oom && fd_rank_ghost(F, f, b->id, as, nv, &r)) { got = true; stage = "ghost"; }
+            // ...and only now, at a header nothing ranked, the affine equalities that name its
+            // products (fd_karr_candidates' ghost pass): proposed for this header alone, kept by
+            // Houdini over this function alone, and the header ranked again under them. Proposed in
+            // every round, they cost every loop with a product: each such claim has the generator
+            // state the header's ghosts in all of its VCs (g32), and cohencu5's loop, ranked without
+            // them, lost its ranking to the meter (630e6 -> 784e6), cohencu2's to the search
+            // (lia_rank STOP); mannadiv's y1*x2 + y2 + y3 = x1 is found here and ranks its loop.
+            if (!got && built && !F->oom && F->gen->paths_ghost) {
+                JClaim *ext = malloc(sizeof *ext * (size_t)(nv + 16)); int32_t next = nv, cext = nv + 16;
+                if (ext) {
+                    if (nv) memcpy(ext, as, sizeof *ext * (size_t)nv);
+                    if (fd_karr_candidates(F, f, b->id, as, nv, &ext, &next, &cext, true) && next > nv) {
+                        int32_t nfn = 0, fk = -1;
+                        for (IrFunc *h = mod; h; h = h->next) { if (h == f) fk = nfn; nfn++; }
+                        uint8_t *mk = calloc((size_t)(nfn ? nfn : 1), 1);
+                        int32_t kept = mk && fk >= 0 ? (mk[fk] = 1, houdini_module(F, ext, next, nv, mk)) : -1;
+                        free(mk);
+                        FdLoop L3; bool b3 = kept > nv;
+                        if (b3 && fd_loop_build(F, f, b->id, ext, kept, &L3) && fd_rank(F, f, b->id, &L3, &r)) {
+                            got = true; stage = "karr-ghost";
+                            free(as); as = ext; ext = NULL; nv = kept;   // the claims it is ranked under
+                        }
+                        if (b3) free(L3.mem);
+                    }
+                    free(ext);
+                }
+            }
             if (!built && L.dead && L.nedges > 0 && L.nedges <= JRANK_MAXE) {
                 // no back edge can be taken (a constant guard, c2): the constant measure 0, which
                 // falls on every edge only because none runs; the judge owes it as any other. The

@@ -474,6 +474,10 @@ at=const 2
 rc=0
 out=
 ty=Slice_u8 scalar
+### tests/functions/karr_guarded_ghost_rank_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
 ### tests/functions/loop_advance_or_break_pass.ln
 rc=0
 out=
