@@ -85,19 +85,18 @@
 // A FRESH variable's value, for a harness that evaluates a VC at run time: (sum of coef * var) / den,
 // an exact division; or, with fval >= 0, the integral part of that FLOAT value (a conversion's,
 // P3.3); or, with mm +1 (-1), the MAX (MIN) of the forms mmf holds (a ranking component's rows on
-// one side of a trip, c41), mmf NULL where mm is 0; or, with wbits 1..64, the linear value WRAPPED
-// into wbits bits, signed where wsgn, as it_wrap narrows it (a return's landed value, s8). The
-// generator states its facts; the recipe only says which value they are about (the remainder of
-// x / c is x - c*q). With fdiv, the division is the FLOOR of that quotient (den > 0), a residue's
-// quotient (JTERM_MOD, s27): not exact, so read apart. With prod, the PRODUCT of var[0] and var[1]
-// (n 2, coef and den unread): a ghost monomial's (s31), the one before it times its last factor.
+// one side of a trip, c41), mmf NULL where mm is 0. The generator states its facts; the recipe
+// only says which value they are about (the remainder of x / c is x - c*q). With fdiv, the
+// division is the FLOOR of that quotient (den > 0), a residue's quotient (JTERM_MOD, s27): not
+// exact, so read apart. With prod, the PRODUCT of var[0] and var[1] (n 2, coef and den unread): a
+// ghost monomial's (s31), the one before it times its last factor.
 // A form k: sum over i < fn[k] of fcoef[k][i] * fvar[k][i], plus fc0[k]; nf forms, 1 .. JRANK_MAXC.
 typedef struct {
     int32_t nf; uint8_t fn[JRANK_MAXC]; int32_t fvar[JRANK_MAXC][JRANK_MAXT];
     __int128 fcoef[JRANK_MAXC][JRANK_MAXT], fc0[JRANK_MAXC];
 } JMinMax;
 typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int32_t fval; int8_t mm; const JMinMax *mmf;
-                 int8_t wbits; bool wsgn; bool fdiv; bool prod; } JRecipe;
+                 bool fdiv; bool prod; } JRecipe;
 
 // A claim at a cut point, `sum(coef * term) <= rhs`, over one to four terms by value id: a cell's
 // ALLOCA id is the version the cell has as block `blk` is entered, any other id that integer value.
@@ -1258,7 +1257,7 @@ static void jb_defk(JB *B, int32_t x, JLT *t, int n, __int128 k, const char *ori
 static void jb_def(JB *B, int32_t x, JLT *t, int n, const char *origin) { jb_defk(B, x, t, n, 0, origin); }
 
 // Does a STORE keep the value it stores? When its landing is exact (jg_lands_exact): the landing
-// obligation at the store (jg_land) licenses it; a waived one into a plain slot wraps (ii_land).
+// obligation at the store (jg_land) licenses it, owed inside `unsafe` too (I.69).
 static bool jg_store_exact(const JVer *v) {
     return v->stored && v->slot && jg_lands_exact(v->stored->type, v->slot);
 }
@@ -1271,7 +1270,7 @@ static int32_t jb_fresh(JB *B, const char *what, int32_t id, const JLT *t, int n
     JRecipe *r = JG_NEW(B->g, JRecipe, 1);
     if (!s || !r) { B->fail = true; return 0; }
     strcpy(s, nm);
-    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL; r->wbits = 0; r->wsgn = false; r->fdiv = false; r->prod = false;
+    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL; r->fdiv = false; r->prod = false;
     for (int i = 0; i < n; i++) { r->var[i] = t[i].var; r->coef[i] = t[i].c; }
     int32_t x = jb_newvar(B, s, 3, id, NULL);
     B->qt--;                                                   // nothing to state for it
@@ -2996,14 +2995,6 @@ static void jb_state(JB *B, int32_t x) {
     if (B->kind[x] == 1) {                                     // a cell's version
         JVer *v = &g->ver[B->key[x]];
         jb_type(B, x, v->slot, g->cname[v->cell], -1);
-        if (v->kind == JV_STORE && !jg_store_exact(v) && v->stored && v->stored->type &&   // an int one: waived
-            v->stored->type->kind == IRT_INT && v->slot && v->slot->kind == IRT_INT) {
-            // a waived landing that does not keep the value wraps it into the slot (ii_land)
-            char o[96]; snprintf(o, sizeof o, "store %s@bb%lld.%lld wrap", g->cname[v->cell], (long long)v->blk, (long long)v->idx);
-            char *os = JG_NEW(g, char, strlen(o) + 1);
-            if (os) strcpy(os, o); else B->fail = true;
-            if (os) jb_wrapto(B, x, jb_val(B, v->stored), v->slot, "wrap.ver", B->key[x], os);
-        }
         if (v->kind == JV_HAVOC && v->spv && v->spart >= 0) {     // a store of a call's struct result's field
             JLT t[1]; t[0].var = jb_part(B, v->spv, v->spart); t[0].c = 1;
             jb_def(B, x, t, 1, jb_str(B, "store part %%v%lld.%lld", v->spv->id, v->spart, 0));
@@ -4827,8 +4818,8 @@ static bool jg_var_part_ok(const IrParam *pp, int16_t fld, bool pre) {
 }
 // A return claim of h: its terms, the returned value among them and any other an integer
 // parameter of h, a slice parameter's length (s21), or a reference parameter's part (jg_var_part_ok);
-// h returns an integer. A return whose landing wraps is owed about the value the caller receives,
-// the landed one (jg_post_obligations, s8), as the caller's contract states it. `about`: the claim
+// h returns an integer. Inside `unsafe` a return that wraps does so at a modular cast before it
+// (I.69): the claim is about that cast's value, the one the caller receives. `about`: the claim
 // must name the returned value or a POST term (a guard's `when` need not, s21).
 static bool jg_ret_terms_ok(JG *g, const JClaim *c, const IrFunc *h, bool about) {
     const __int128 big = (__int128)1 << 66;
@@ -5057,23 +5048,13 @@ static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardCl
             JLT w[1]; w[0].var = jb_val(&B, jg_value(g, gd->gkey[k])); w[0].c = 1;
             jb_atom(&B, jb_str(&B, "premise guard %%v%lld", gd->gkey[k], 0, 0), w, 1, J_EQ, gd->gval[k]);
         }
-        // the value the caller receives: the returned one where its landing in the return type keeps
-        // it, else that value WRAPPED into the type (a waived narrowing, as it_wrap makes it): a fresh
-        // x = v - k*2^w within the type, its recipe the wrap for a run-time check
+        // the value the caller receives: the returned one, its landing in the return type owed (a
+        // wrap inside `unsafe` is a modular cast before the return, I.69)
         // a returned slice: its length (a return claim's JTERM_LEN of JKEY_RET), the slice landing as it
         // is; a returned struct: its fields, part variables (s15); a summary naming no returned value: none
         const IrType *rt = g->f->ret_type;
         bool sret = rt && rt->kind == IRT_SLICE, tret = rt && rt->kind == IRT_STRUCT;
         int32_t rv = !needret || tret ? -1 : sret ? jb_len(&B, b->term.cond) : jb_val(&B, b->term.cond);
-        if (rv >= 0 && !sret && !jg_lands_exact(b->term.cond->type, rt) && rt && rt->kind == IRT_INT && rt->bits >= 1 && rt->bits <= 64) {
-            JLT w[1]; w[0].var = rv; w[0].c = 1;
-            int32_t x = jb_fresh(&B, "ret.landed", b->term.cond->id, w, 1, 1);
-            if (!B.fail) {
-                JRecipe *r = (JRecipe *)B.vrec[x]; r->wbits = (int8_t)rt->bits; r->wsgn = rt->is_signed;
-                jb_wrapto(&B, x, rv, rt, "ret.k", b->term.cond->id, jb_str(&B, "return bb%lld wrap", b->id, 0, 0));
-                rv = x;
-            }
-        }
         JLT t[JCLAIM_MAXT]; JCons goal;
         if (gd && gd->when.nt) {                             // the guard `when`, as b returns (s21)
             for (int k = 0; k < gd->when.nt; k++) { t[k].c = gd->when.coef[k]; t[k].var = jb_ret_term(&B, b, rv, tret, gd->when.key[k], gd->when.tk[k], gd->when.fld[k]); }

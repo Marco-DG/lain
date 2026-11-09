@@ -326,11 +326,6 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
         }
         if (s % r->den) return false;                  // not exact: the recipe does not apply
         s /= r->den;
-        if (r->wbits > 0) {                            // wrapped into wbits bits, as it_wrap narrows (s8)
-            __int128 M = (__int128)1 << r->wbits;
-            s %= M; if (s < 0) s += M;
-            if (r->wsgn && s >= M / 2) s -= M;
-        }
         *out = s; return true;
     }
     if (c->k != IV_INT) { hk_why = HKW_NOTINT; return false; }
@@ -355,10 +350,8 @@ static const char *hk_recipe_bad(const JObl *o, int32_t x) {
     if (o->vkind[x] != 3) return "a recipe on a variable that is not fresh";
     if (r->mm < -1 || r->mm > 1) return "mm is not -1, 0 or 1";
     if ((r->mm != 0) != (r->mmf != NULL)) return "mm and its forms disagree";
-    if (r->wbits < 0 || r->wbits > 64) return "a wrap of a width outside 0..64";
-    if (r->wbits && (r->mm || r->fval >= 0)) return "a wrap beside a max, a min or a float part";
-    if (r->fdiv && (r->den <= 0 || r->mm || r->fval >= 0 || r->wbits)) return "a floor division by no positive number, or beside another kind";
-    if (r->prod && (r->n != 2 || r->fdiv || r->mm || r->fval >= 0 || r->wbits)) return "a product of other than two variables, or beside another kind";
+    if (r->fdiv && (r->den <= 0 || r->mm || r->fval >= 0)) return "a floor division by no positive number, or beside another kind";
+    if (r->prod && (r->n != 2 || r->fdiv || r->mm || r->fval >= 0)) return "a product of other than two variables, or beside another kind";
     if (!r->mm) return NULL;
     const JMinMax *mf = r->mmf;
     if (r->fval >= 0) return "a max or min with a float part";
