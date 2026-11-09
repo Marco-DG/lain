@@ -1,0 +1,28 @@
+// EXPECT: [E011]
+// EXPECT-TEXT: this loop never ends for bounce(0): at line 10, up = false and i = 0 come back every 20 laps
+// A loop that goes up and down between 0 and 10 for ever: i rises to 10, falls to 0 and rises
+// again. Its state repeats only after 20 laps, longer than any lasso the solver proposes, so the
+// note named no input; run from small inputs and from the constants its tests compare, it repeats
+// (PE.12 w7), and the note says for which call.
+func bounce(n i32) i32 {
+    var i i32 = n
+    var up bool = false
+    while 0 <= i and i <= 10 {
+        if i == 10 {
+            up = false
+        }
+        if i == 0 {
+            up = true
+        }
+        if up {
+            i = i + 1
+        } else {
+            i = i - 1
+        }
+    }
+    return i
+}
+
+func main() i32 {
+    return bounce(11)
+}

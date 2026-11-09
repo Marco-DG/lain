@@ -408,8 +408,9 @@ static void jau_witnesses(IrFunc *mod, JFinder *F, char *region, size_t cap, con
         for (int32_t w = 0; w < jau_nw && !done; w++) done = jau_w[w].fn == q->fn && jau_w[w].header == H->id;
         if (done) continue;
         IrFunc *f = q->fn;
-        FdWitness cand[4];
+        FdWitness cand[4 + 64];
         int32_t nc = fd_witness(F, f, H->id, cl, ncl, cand, 4);
+        nc += fd_witness_probe(f, H->id, nc ? &cand[0] : NULL, cand + nc, 64);   // then small inputs and its constants (w7)
         int np = 0;
         for (IrParam *p = f->params; p; p = p->next) np++;
         bool found = false;

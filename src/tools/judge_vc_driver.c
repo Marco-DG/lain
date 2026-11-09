@@ -772,8 +772,9 @@ int main(int argc, char **argv) {
                         bool ranked = false;
                         for (int32_t k = 0; k < F.nrk && !ranked; k++) ranked = F.rk[k].fn == f && F.rk[k].blk == b->id;
                         if (ranked) continue;
-                        FdWitness w[4];
+                        FdWitness w[4 + 64];
                         int32_t nw = fd_witness(&F, f, b->id, cl, ncl, w, 4);
+                        nw += fd_witness_probe(f, b->id, nw ? &w[0] : NULL, w + nw, 64);   // PE.12 w7
                         if (nw == 0) printf("no witness %.*s bb%d\n", (int)f->name->length, f->name->name, b->id);
                         bool hang = false;
                         long long left = 30000000LL;

@@ -2018,6 +2018,89 @@ static int32_t fd_witness_enum(IrFunc *f, FdWitness *out, int32_t max) {
         }
     return got;
 }
+// PE.12 w7: inputs for a LOOP to be run on after the proposals: fd_witness_enum's small values, then
+// the first integer parameter at each integer constant a comparison of f names, give or take one
+// (Ex08's `i == 1`, `i == 10`; Sunset's 25, 30). A loop that cycles through many states
+// (UpAndDown, 20 laps) or repeats only after a long stem (NO_13, 50 laps) has no short lasso for
+// the solver to find, and a run from the right input repeats a state, which the interpreter checks:
+// the run decides, as for a recursion's (fd_witness_enum). The state a note shows (the keys) is
+// `like`'s when the solver proposed one, else the named variables the loop at H stores (with no
+// keys the note said "no lap changes anything" of a loop sweeping 0..10). The number written to
+// out (at most max).
+static IrInstr *fd_def_in(IrFunc *f, const IrValue *v);   // below
+static int32_t fd_witness_probe(IrFunc *f, int32_t H, const FdWitness *like, FdWitness *out, int32_t max) {
+    int32_t got = fd_witness_enum(f, out, max), q0 = -1, q = 0;
+    for (IrParam *p = f->params; p && q < FD_WMAXP && q0 < 0; p = p->next, q++)
+        if (p->value && p->value->type && p->value->type->kind == IRT_INT) q0 = q;
+    int64_t ks[16]; int nk = 0;
+    for (IrBlock *b = q0 >= 0 ? f->blocks : NULL; b; b = b->next)
+        for (IrInstr *i = b->instrs; i; i = i->next) {
+            if (i->op != IR_ICMP || i->n_operands < 2) continue;
+            for (int o = 0; o < 2; o++) {
+                IrInstr *d = fd_def_in(f, i->operands[o]);
+                if (!d || d->op != IR_CONST) continue;
+                int64_t c = (int64_t)fd_const(d); bool have = false;
+                for (int k = 0; k < nk && !have; k++) have = ks[k] == c;
+                if (!have && nk < 16) ks[nk++] = c;
+            }
+        }
+    const IrType *t0 = NULL; q = 0;
+    for (IrParam *p = f->params; p && q <= q0; p = p->next, q++) if (q == q0) t0 = p->value->type;
+    for (int k = 0; k < nk && got < max; k++)
+        for (int d = -1; d <= 1 && got < max; d++) {
+            __int128 v = (__int128)ks[k] + d;
+            if (t0 && !t0->is_signed && v < 0) continue;
+            bool dup = false;                                // the small values are there already
+            for (int32_t c = 0; c < got && !dup; c++) dup = out[c].given[q0] && out[c].val[q0] == v;
+            if (dup) continue;
+            FdWitness w; memset(&w, 0, sizeof w); q = 0;
+            for (IrParam *p = f->params; p && q < FD_WMAXP; p = p->next, q++) {
+                const IrType *ty = p->value ? p->value->type : NULL;
+                if (!ty || (ty->kind != IRT_INT && ty->kind != IRT_BOOL)) continue;
+                w.val[q] = q == q0 ? v : 0; w.given[q] = 1;
+            }
+            out[got++] = w;
+        }
+    int32_t key[FD_WMAXK], nkey = 0;
+    if (like) { nkey = like->nkey < FD_WMAXK ? like->nkey : FD_WMAXK; for (int k = 0; k < nkey; k++) key[k] = like->key[k]; }
+    else if (f->next_block_id > 0) {                         // the loop's blocks: reached from H, reaching H
+        int32_t nb = f->next_block_id;
+        uint8_t *fw = calloc((size_t)nb, 1), *bw = calloc((size_t)nb, 1);
+        IrBlock **at = calloc((size_t)nb, sizeof *at), **stk = malloc(sizeof *stk * (size_t)nb);
+        for (IrBlock *b = f->blocks; at && b; b = b->next) if (b->id >= 0 && b->id < nb) at[b->id] = b;
+        if (fw && bw && at && stk && H >= 0 && H < nb && at[H]) {
+            int32_t sp = 0; stk[sp++] = at[H]; fw[H] = 1;
+            while (sp) {
+                IrBlock *b = stk[--sp];
+                IrBlock *nx[2] = { b->term.kind == IR_TERM_BR || b->term.kind == IR_TERM_BR_COND || b->term.kind == IR_TERM_SWITCH ? b->term.a : NULL,
+                                   b->term.kind == IR_TERM_BR_COND ? b->term.b : NULL };
+                for (int k = 0; k < 2; k++) if (nx[k] && nx[k]->id >= 0 && nx[k]->id < nb && !fw[nx[k]->id]) { fw[nx[k]->id] = 1; stk[sp++] = nx[k]; }
+                for (IrSwitchCase *sc = b->term.kind == IR_TERM_SWITCH ? b->term.cases : NULL; sc; sc = sc->next)
+                    if (sc->target && sc->target->id >= 0 && sc->target->id < nb && !fw[sc->target->id]) { fw[sc->target->id] = 1; stk[sp++] = sc->target; }
+            }
+            sp = 0; stk[sp++] = at[H]; bw[H] = 1;
+            while (sp) {
+                IrBlock *b = stk[--sp];
+                for (IrEdge *e = b->preds; e; e = e->next)
+                    if (e->block && e->block->id >= 0 && e->block->id < nb && !bw[e->block->id]) { bw[e->block->id] = 1; stk[sp++] = e->block; }
+            }
+            for (IrBlock *b = f->blocks; b; b = b->next) {
+                if (b->id < 0 || b->id >= nb || !fw[b->id] || !bw[b->id]) continue;
+                for (IrInstr *i = b->instrs; i && nkey < FD_WMAXK; i = i->next) {
+                    if (i->op != IR_STORE || i->n_operands < 2 || !i->operands[0] || !i->operands[0]->src_name) continue;
+                    IrInstr *ad = fd_def_in(f, i->operands[0]);
+                    if (!ad || ad->op != IR_ALLOCA) continue;
+                    bool have = false;
+                    for (int k = 0; k < nkey && !have; k++) have = key[k] == i->operands[0]->id;
+                    if (!have) key[nkey++] = i->operands[0]->id;
+                }
+            }
+        }
+        free(fw); free(bw); free(at); free(stk);
+    }
+    for (int32_t c = 0; c < got; c++) { out[c].nkey = nkey; for (int k = 0; k < nkey; k++) out[c].key[k] = key[k]; }
+    return got;
+}
 // Up to `max` candidates for header H of f under the claims cl (the judge's): the number found.
 static int32_t fd_witness(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdWitness *out, int32_t max) {
     char err[200];
