@@ -915,6 +915,28 @@ static IrType *ir_lower_type_impl(LowerCtx *c, Type *t) {
     }
 }
 
+// I.69: what `unsafe` waives, stated in the IR. Where the waived check has a DEFINED meaning, the
+// instruction says it: unsigned arithmetic and an integer cast WRAP (the interpreter's semantics,
+// interp.h ii_settle and ii_cast), so they take the modular mode and need no flag. Everything
+// else keeps `unchecked`, whose meaning is then always "the check is skipped, and failing it is
+// undefined": signed overflow, an index, a division, a shift, a float conversion, a write to
+// immutable storage, and (until they are explicit casts) the narrowing of a store, an argument or
+// a field. Each reader then reads the mode, never a meaning of its own for the flag.
+static void ir_waive(IrInstr *i) {
+    IrType *rt = i->result ? i->result->type : NULL;
+    if (i->wrap == IR_WRAP_CHECK && rt && rt->kind == IRT_INT) {
+        if ((i->op == IR_ADD || i->op == IR_SUB || i->op == IR_MUL) && !rt->is_signed && i->n_operands == 2 &&
+            i->operands[0]->type && i->operands[0]->type->kind == IRT_INT && i->operands[1]->type && i->operands[1]->type->kind == IRT_INT) {
+            i->wrap = IR_WRAP_MODULAR; return;
+        }
+        if (i->op == IR_CAST && i->n_operands == 1 && i->operands[0]->type &&
+            (i->operands[0]->type->kind == IRT_INT || i->operands[0]->type->kind == IRT_BOOL)) {
+            i->wrap = IR_WRAP_MODULAR; return;
+        }
+    }
+    i->unchecked = true;
+}
+
 // forward
 // ★ AN IMMUTABLE BINDING'S STORAGE IS IMMUTABLE BY ANY PATH. sema refuses a write that NAMES it
 // (`a[0] = 9`, E009), but a slice of it kept in a `var` binding or handed back by a call was
@@ -4389,9 +4411,9 @@ static void ir_lower_stmt_body(LowerCtx *c, Stmt *s) {
             bool b0_set = b0 && ir_is_set_term(b0);
             int32_t nb0 = c->f->next_block_id;
             ir_lower_stmts(c, s->as.unsafe_stmt.body);
-            for (IrInstr *i = (t0 ? t0->next : (b0 ? b0->instrs : NULL)); i; i = i->next) i->unchecked = true;
+            for (IrInstr *i = (t0 ? t0->next : (b0 ? b0->instrs : NULL)); i; i = i->next) ir_waive(i);
             for (IrBlock *b = c->f->blocks; b; b = b->next)
-                if (b->id >= nb0) for (IrInstr *i = b->instrs; i; i = i->next) i->unchecked = true;
+                if (b->id >= nb0) for (IrInstr *i = b->instrs; i; i = i->next) ir_waive(i);
             // ...and every TERMINATOR the body set: a `return` inside the block narrows its value
             // into the return type there, and that narrowing is waived like the others. A
             // terminator still unset belongs to code after the block.
