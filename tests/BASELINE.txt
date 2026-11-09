@@ -470,6 +470,10 @@ ty=Slice_u8 scalar
 rc=12
 out=
 at=const 2
+### tests/functions/ghost_product_rank_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
 ### tests/functions/loop_advance_or_break_pass.ln
 rc=0
 out=

@@ -1,0 +1,24 @@
+// A loop whose test reads a PRODUCT of its cells (termination-nla's ps2): `c + y*y - 2x + y`
+// rises by exactly 1 a trip (c and y by 1, x by the new y), so <k - c - y*y + 2x - y> falls and the
+// test bounds it below. No linear function of the cells falls; with y*y followed across a trip as
+// a ghost (its post (y + 1)*(y + 1) = y*y + 2y + 1), one does. E011 before the finder ranked over
+// the header's ghosts. The bound is a local, as in the ports (TCW's translate.py).
+func steps(n i32) i32 effects raises {
+    var k i32 = n
+    var y i32 = 0
+    var x i32 = 0
+    var c i32 = 0
+    while 1 != 0 {
+        if !((((c +? (y *? y else panic("overflow")) else panic("overflow")) -? (2 *? x else panic("overflow")) else panic("overflow")) +? y else panic("overflow")) < k) {
+            break
+        }
+        c = c +? 1 else panic("overflow")
+        y = y +? 1 else panic("overflow")
+        x = y +? x else panic("overflow")
+    }
+    return c
+}
+
+func main() i32 effects raises {
+    return steps(5) - 5
+}

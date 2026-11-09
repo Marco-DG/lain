@@ -356,7 +356,7 @@ typedef struct {
     char *mem, *cur, *end;
     int32_t npairs, *pkey, *pre, *post;     // in the merged list; pkey: the cell or the value id
     uint8_t *ptk;                           // each pair's term kind (JTERM_LEN: a length)
-    int32_t *parg;                          // and its argument (JTERM_MOD: the modulus k), else 0;
+    int32_t *parg;                          // and its argument (JTERM_MOD: the modulus k; JTERM_GHOST: its index), else 0;
                                             // NULL on fd_rank's subset loops
     int32_t nv; const char **names;
     const JVc **paths; int32_t npaths, *edge;
@@ -537,7 +537,7 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             if (!pk || !pktk || !pkarg) return false;
             for (int32_t q = 0; q < npk; q++) {
                 pk[q] = pp->pairs[q].key; pktk[q] = pp->pairs[q].tk;
-                pkarg[q] = pp->pairs[q].tk == JTERM_MOD ? pp->pairs[q].arg : 0;
+                pkarg[q] = pp->pairs[q].tk == JTERM_MOD || pp->pairs[q].tk == JTERM_GHOST ? pp->pairs[q].arg : 0;
             }
         } else if (pp->npairs != npk) return false;
         FdRaw *w = &raw[r++];
@@ -551,7 +551,8 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
         for (int32_t q = 0; q < npk; q++) {
             int32_t at = -1;
             for (int32_t z = 0; z < pp->npairs; z++)
-                if (pp->pairs[z].key == pk[q] && pp->pairs[z].tk == pktk[q] && (pktk[q] != JTERM_MOD || pp->pairs[z].arg == pkarg[q])) at = z;
+                if (pp->pairs[z].key == pk[q] && pp->pairs[z].tk == pktk[q] &&
+                    ((pktk[q] != JTERM_MOD && pktk[q] != JTERM_GHOST) || pp->pairs[z].arg == pkarg[q])) at = z;   // y*y, y*y*y: one key
             if (at < 0 || pp->pairs[at].pre < 0 || pp->pairs[at].post < 0) return false;
             w->pre[q] = pp->pairs[at].pre; w->post[q] = pp->pairs[at].post;
         }
@@ -1718,6 +1719,27 @@ static bool fd_rank_residue(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, 
     free(M.mem);
     return got;
 }
+static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out);   // below
+// ...the loop's paths with the products its loop computes followed as GHOSTS (paths_ghost, s31):
+// a header's product of its versions is one more pair, its post the expansion of its factors'
+// updates, and a linear or lexicographic ranking may read it. ps2's guard `c + y*y - 2x + y < k`
+// rises by exactly 1 a trip, so <k - c - y*y + 2x - y> falls; without y*y no linear function of the
+// cells does. Only where the header has a ghost, after every other stage.
+static bool fd_rank_ghost(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, JRank *out) {
+    if (!F->gen->paths_ghost || H == JRANK_ENTRY) return false;
+    char err[200]; JPaths P; FdLoop M; bool got = false;
+    memset(&M, 0, sizeof M);
+    size_t cap = (size_t)1 << 22;
+    if (!(M.mem = malloc(cap))) { F->oom = true; return false; }
+    M.cur = M.mem; M.end = M.mem + cap;
+    if (F->gen->paths_ghost(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) && !P.refused && fd_loop_from(F, f, H, &P, &M, JRANK_MAXE)) {
+        bool ghost = false;
+        for (int32_t z = 0; z < M.npk && !ghost; z++) ghost = M.ptk[z] == JTERM_GHOST;
+        if (ghost) got = fd_rank_on(F, f, H, &M, out);
+    }
+    free(M.mem);
+    return got;
+}
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
     memset(out, 0, sizeof *out);
     if (L->nedges > JRANK_MAXE) return false;
@@ -1783,7 +1805,10 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
     }
     if (nt == 0) return false;
     out->ncomp = ncomp; out->nt = nt;
-    for (int32_t t = 0; t < nt; t++) { out->key[t] = L->pkey[idx[t]]; out->tk[t] = L->ptk[idx[t]]; }
+    for (int32_t t = 0; t < nt; t++) {
+        out->key[t] = L->pkey[idx[t]]; out->tk[t] = L->ptk[idx[t]];
+        if (out->tk[t] == JTERM_GHOST) out->targ[t] = L->parg[idx[t]];   // which product (s31)
+    }
     for (int32_t j = 0; j < ncomp; j++) {
         if (!fd_i128(&c0[j], &out->c0[j])) return false;
         for (int32_t t = 0; t < nt; t++) if (!fd_i128(&coef[j][idx[t]], &out->coef[j][t])) return false;
@@ -4742,6 +4767,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             bool got = built && fd_rank(F, f, b->id, &L, &r);
             const char *stage = fd_stage;
             if (!got && built && !F->oom && fd_rank_residue(F, f, b->id, as, nv, &r)) { got = true; stage = "residue"; }
+            if (!got && built && !F->oom && fd_rank_ghost(F, f, b->id, as, nv, &r)) { got = true; stage = "ghost"; }
             if (!built && L.dead && L.nedges > 0 && L.nedges <= JRANK_MAXE) {
                 // no back edge can be taken (a constant guard, c2): the constant measure 0, which
                 // falls on every edge only because none runs; the judge owes it as any other. The
