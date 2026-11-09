@@ -34,6 +34,7 @@ typedef struct {
     long long proposed, kept, dropped;   // counted across calls
     uint64_t meter; bool meter_out;      // the last call's metered work (lia.h), and whether any account ran out
     uint64_t meter_cap;                  // the work allowed each account; 0: FD_WORK (a test sets it smaller)
+    size_t region0;                      // the first region a loop's paths are built in; 0: 4 MB (a test sets it smaller)
     // the last call's accounts that ran out (finder_propose): the functions whose own search did, at
     // most 16 of them (out_more: others too), and the module's (Houdini, guarded claims, the cycles)
     IrFunc *out_fn[16]; int32_t nout_fn; bool out_more, out_module;
@@ -368,6 +369,7 @@ typedef struct {
     uint8_t *moves;                         // per version: some path gives it a new value (its pre and
                                             // post differ there); NULL on fd_rank's subset loops, whose
                                             // pairs are renumbered
+    bool overflow;                          // fd_bump ran out of the region (fd_loop_region retries)
     bool dead;                              // every flattened path the solver refuted: no trip can
                                             // run, and a constant measure falls on every one (c2)
     uint8_t *wrapped;                       // per path: some wrapping operation took a case past its
@@ -375,7 +377,7 @@ typedef struct {
 } FdLoop;
 static void *fd_bump(FdLoop *L, size_t n) {
     uintptr_t at = ((uintptr_t)L->cur + 15u) & ~(uintptr_t)15u;
-    if (at > (uintptr_t)L->end || n > (size_t)((uintptr_t)L->end - at)) return NULL;
+    if (at > (uintptr_t)L->end || n > (size_t)((uintptr_t)L->end - at)) { L->overflow = true; return NULL; }
     L->cur = (char *)at + n; memset((void *)at, 0, n); return (void *)at;
 }
 // A path variable that names a quantity fixed at the header: `%v<id>` a value (2*id) or
@@ -500,18 +502,31 @@ static bool fd_same_path(const JVc *a, const JVc *b) {
 // for every pair (a call to another function of the cycle has none), so a cycle of several
 // functions builds nothing here: its measures must be found jointly (a later link).
 static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdLoop *L, int32_t maxedges);
+// fd_loop_from in a region of L's own: 4 MB (F->region0 if set), larger by 8 where that ran out, up
+// to 32 MB. ps4's loop
+// (termination-nla: four products and twelve checked operations in its test) flattened to 23
+// paths that did not fit in 4 MB, and was left with no ranking proposed (E011); at 32 MB its loop
+// builds and is ranked. L->mem is the caller's to free, as fd_loop_build's, whatever the answer.
+static bool fd_loop_region(JFinder *F, IrFunc *f, int32_t H, const JPaths *P, FdLoop *L, int32_t maxedges) {
+    const size_t top = (size_t)1 << 25;
+    for (size_t cap = F->region0 ? F->region0 : (size_t)1 << 22; ; cap = cap * 8 < top ? cap * 8 : top) {
+        memset(L, 0, sizeof *L);
+        if (!(L->mem = malloc(cap))) { F->oom = true; return false; }
+        L->cur = L->mem; L->end = L->mem + cap;
+        if (fd_loop_from(F, f, H, P, L, maxedges)) return true;
+        if (!L->overflow || cap >= top) return false;
+        free(L->mem); L->mem = NULL;
+    }
+}
 static bool fd_loop_build(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, FdLoop *L) {
     char err[200];
     memset(L, 0, sizeof *L);
-    size_t cap = (size_t)1 << 22;
-    if (!(L->mem = malloc(cap))) { F->oom = true; return false; }
-    L->cur = L->mem; L->end = L->mem + cap;
     JPaths P;
     bool entry = H == JRANK_ENTRY;
     if (entry ? !F->gen->call_paths || !F->gen->call_paths(F->gen->ctx, f, cl, ncl, &P, err, sizeof err)
               : !F->gen->paths || !F->gen->paths(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err)) return false;
     if (P.refused) return false;
-    return fd_loop_from(F, f, H, &P, L, JRANK_MAXE);
+    return fd_loop_region(F, f, H, &P, L, JRANK_MAXE);
 }
 // ...from paths already in hand (the generator's, or a recursion cycle's built by fd_rank_cycle),
 // in L's region, at most `maxedges` of them
@@ -1710,10 +1725,7 @@ static bool fd_rank_residue(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, 
     if (!F->gen->paths_mod || H == JRANK_ENTRY) return false;
     char err[200]; JPaths P; FdLoop M; bool got = false;
     memset(&M, 0, sizeof M);
-    size_t cap = (size_t)1 << 22;
-    if (!(M.mem = malloc(cap))) { F->oom = true; return false; }
-    M.cur = M.mem; M.end = M.mem + cap;
-    if (F->gen->paths_mod(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) && !P.refused && fd_loop_from(F, f, H, &P, &M, JRANK_MAXE))
+    if (F->gen->paths_mod(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) && !P.refused && fd_loop_region(F, f, H, &P, &M, JRANK_MAXE))
         for (int32_t z = 0; z < M.npk && !got && !F->oom; z++)
             if (M.ptk[z] == JTERM_MOD && M.parg[z] >= 2 && M.parg[z] <= FD_RESIDUE_MAXK) got = fd_residue_tuple(F, f, H, &M, z, out);
     free(M.mem);
@@ -1729,10 +1741,7 @@ static bool fd_rank_ghost(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, in
     if (!F->gen->paths_ghost || H == JRANK_ENTRY) return false;
     char err[200]; JPaths P; FdLoop M; bool got = false;
     memset(&M, 0, sizeof M);
-    size_t cap = (size_t)1 << 22;
-    if (!(M.mem = malloc(cap))) { F->oom = true; return false; }
-    M.cur = M.mem; M.end = M.mem + cap;
-    if (F->gen->paths_ghost(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) && !P.refused && fd_loop_from(F, f, H, &P, &M, JRANK_MAXE)) {
+    if (F->gen->paths_ghost(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) && !P.refused && fd_loop_region(F, f, H, &P, &M, JRANK_MAXE)) {
         bool ghost = false;
         for (int32_t z = 0; z < M.npk && !ghost; z++) ghost = M.ptk[z] == JTERM_GHOST;
         if (ghost) got = fd_rank_on(F, f, H, &M, out);
@@ -3703,11 +3712,9 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
     if (ghost) {
         char gerr[200]; JPaths GP; bool gb = false;
         memset(&L, 0, sizeof L);
-        size_t gcap = (size_t)1 << 22;
-        if (!(L.mem = malloc(gcap))) { F->oom = true; return false; }
-        L.cur = L.mem; L.end = L.mem + gcap;
         if (F->gen->paths_ghost && F->gen->paths_ghost(F->gen->ctx, f, as, nv, H, &GP, gerr, sizeof gerr) && !GP.refused)
-            gb = fd_loop_from(F, f, H, &GP, &L, JRANK_MAXE);
+            gb = fd_loop_region(F, f, H, &GP, &L, JRANK_MAXE);
+        if (F->oom) { free(L.mem); return false; }
         bool any = false;
         for (int32_t q = 0; gb && q < L.npk && !any; q++) any = L.ptk[q] == JTERM_GHOST;
         if (!gb || !any) { free(L.mem); return !F->oom; }

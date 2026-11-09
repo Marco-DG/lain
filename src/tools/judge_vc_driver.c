@@ -686,6 +686,7 @@ int main(int argc, char **argv) {
     // ranking whose fixed edges hold owes nothing more there: its hypotheses are facts all the same
     bool ranks = false, ranks_free = false, witness = false;
     unsigned long long meter_cap = 0;                       // --finder-work=N: the finder's work cap (tests)
+    unsigned long long region0 = 0;                         // --finder-region=N: a loop's first region, bytes (tests)
     for (int k = 2; k < argc; k++) {
         if (!strcmp(argv[k], "--no-claims")) claims = false;
         if (!strcmp(argv[k], "--claims")) show = true;
@@ -702,6 +703,7 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--witness")) witness = true;
         if (!strcmp(argv[k], "--rank-stages")) fd_track_stages = true;
         if (!strncmp(argv[k], "--finder-work=", 14)) meter_cap = strtoull(argv[k] + 14, NULL, 10);   // tests: the meter's cap
+        if (!strncmp(argv[k], "--finder-region=", 16)) region0 = strtoull(argv[k] + 16, NULL, 10);   // tests: fd_loop_region's first
     }
     Arena aa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
     Arena sa = arena_new(memory_alloc, MEMORY_PAGE_MINIMUM_SIZE*4096);
@@ -740,7 +742,7 @@ int main(int argc, char **argv) {
     JGenOffer offer = { hbuf, hcap, irmod, NULL, 0 };
     JudgeGen gen = jgen_offer(&offer);
     JFinder F; memset(&F, 0, sizeof F);
-    F.meter_cap = meter_cap;
+    F.meter_cap = meter_cap; F.region0 = (size_t)region0;
     F.gen = &gen; F.mod = irmod; F.work = work; F.worksz = wcap;
     F.lim.pivot = 100000; F.lim.node = 4096; F.lim.leaf = 4096;   // solve_vc's
     int rc = 0;
