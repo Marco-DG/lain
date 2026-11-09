@@ -4804,6 +4804,101 @@ static bool ir_sa_has_layout(const IrSAExpr *x) {
     if (x->kind == IR_SA_SIZEOF || x->kind == IR_SA_ALIGNOF) return true;
     return ir_sa_has_layout(x->l) || ir_sa_has_layout(x->r);
 }
+// I.69 A2: A VALUE THAT NARROWS WHERE IT LANDS INSIDE `unsafe` WRAPS THERE, AND THE IR SAYS SO.
+// A landing (a store, a field, a payload, an argument, a return) converts implicitly, and inside
+// `unsafe` a value its slot cannot hold wrapped: every reader worked that out for itself from
+// `unchecked` (interp.h ii_land, gen.h jg_land, vra_check_narrow, emit_c's ir_emit_landed). Now a
+// modular CAST to the slot's type stands before such a landing, which then lands exactly. A
+// refined slot gets none: its narrowing is never waived (I.60), so the landing stays a check.
+// Run once the module is lowered, so that a call finds its callee's parameters wherever the
+// callee is defined (interp.h's and gen.h's lookup, by name).
+static bool ir_lands_wrapping(const IrValue *v, const IrType *slot) {
+    const IrType *t = v ? v->type : NULL;
+    return t && slot && t->kind == IRT_INT && slot->kind == IRT_INT && t->bits >= 1 && slot->bits >= 1 &&
+           !slot->has_refine && !slot->has_ne && !ir_int_holds(slot, t);
+}
+// The modular cast of v to slot, for the landing at (line, col).
+static IrInstr *ir_land_cast_new(IrFunc *f, IrValue *v, IrType *slot, isize line, isize col) {
+    IrInstr *cv = ir_instr(f, IR_CAST, slot, 1);
+    cv->operands[0] = v;
+    cv->aux.cast_kind = v->type->bits > slot->bits ? IR_CAST_TRUNC
+                      : v->type->bits < slot->bits ? (v->type->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT)
+                      : IR_CAST_BITCAST;
+    cv->wrap = IR_WRAP_MODULAR;
+    cv->line = line; cv->col = col;
+    return cv;
+}
+// ...linked in at *link, before the instruction it points at; *link then points past it.
+static IrValue *ir_land_cast(IrFunc *f, IrInstr ***link, IrValue *v, IrType *slot, isize line, isize col) {
+    IrInstr *cv = ir_land_cast_new(f, v, slot, line, col);
+    cv->next = **link; **link = cv; *link = &cv->next;
+    return cv->result;
+}
+static IrFunc *ir_land_callee(IrFunc *mod, const IrName *n) {
+    for (IrFunc *g = mod; n && g; g = g->next)
+        if (g->name && g->name->length == n->length && !memcmp(g->name->name, n->name, (size_t)n->length)) return g;
+    return NULL;
+}
+static void ir_land_waived_func(IrFunc *mod, IrFunc *f) {
+    if (!f || f->is_extern) return;
+    for (IrBlock *b = f->blocks; b; b = b->next) {
+        IrInstr **link = &b->instrs;
+        for (IrInstr *i = b->instrs; i; link = &i->next, i = i->next) {
+            if (!i->unchecked) continue;
+            IrInstr **at = link;
+            switch (i->op) {
+                case IR_STORE: {
+                    IrType *pt = i->n_operands >= 2 ? i->operands[0]->type : NULL;
+                    if (pt && pt->kind == IRT_PTR && ir_lands_wrapping(i->operands[1], pt->elem))
+                        i->operands[1] = ir_land_cast(f, &at, i->operands[1], pt->elem, i->line, i->col);
+                    break;
+                }
+                case IR_STRUCT_NEW: {
+                    IrType *rt = i->result ? i->result->type : NULL;
+                    for (int k = 0; rt && rt->kind == IRT_STRUCT && k < i->n_operands && k < rt->n_fields; k++)
+                        if (ir_lands_wrapping(i->operands[k], rt->fields[k]))
+                            i->operands[k] = ir_land_cast(f, &at, i->operands[k], rt->fields[k], i->line, i->col);
+                    break;
+                }
+                case IR_SUM_NEW: {
+                    IrType *rt = i->result ? i->result->type : NULL;
+                    int vk = i->aux.sum.variant;
+                    IrType *pl = rt && rt->kind == IRT_SUM && vk >= 0 && vk < rt->n_fields ? rt->fields[vk] : NULL;
+                    for (int k = 0; pl && k < i->n_operands; k++) {
+                        IrType *ft = pl->kind == IRT_STRUCT ? (k < pl->n_fields ? pl->fields[k] : NULL) : (k == 0 ? pl : NULL);
+                        if (ir_lands_wrapping(i->operands[k], ft))
+                            i->operands[k] = ir_land_cast(f, &at, i->operands[k], ft, i->line, i->col);
+                    }
+                    break;
+                }
+                case IR_CALL: {
+                    if (i->aux.callee) {
+                        IrFunc *h = ir_land_callee(mod, i->aux.callee);
+                        int k = 0;
+                        for (IrParam *pp = h ? h->params : NULL; pp && k < i->n_operands; pp = pp->next, k++)
+                            if (pp->value && ir_lands_wrapping(i->operands[k], pp->value->type))
+                                i->operands[k] = ir_land_cast(f, &at, i->operands[k], pp->value->type, i->line, i->col);
+                    } else if (i->n_operands >= 1 && i->operands[0]->type) {
+                        IrType *ft = i->operands[0]->type;
+                        if (ft->kind == IRT_PTR && ft->elem) ft = ft->elem;
+                        for (int k = 1; ft->kind == IRT_FUNC && k < i->n_operands && k - 1 < ft->n_fields; k++)
+                            if (ir_lands_wrapping(i->operands[k], ft->fields[k - 1]))
+                                i->operands[k] = ir_land_cast(f, &at, i->operands[k], ft->fields[k - 1], i->line, i->col);
+                    }
+                    break;
+                }
+                default: break;
+            }
+        }
+        if (b->term.kind == IR_TERM_RET && b->term.unchecked && b->term.cond && ir_lands_wrapping(b->term.cond, f->ret_type)) {
+            IrInstr *cv = ir_land_cast_new(f, b->term.cond, f->ret_type, b->term.line, b->term.col);
+            ir_emit(b, cv);
+            b->term.cond = cv->result;
+        }
+    }
+}
+static void ir_land_waived(IrFunc *mod) { for (IrFunc *f = mod; f; f = f->next) ir_land_waived_func(mod, f); }
+
 static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
     IrFunc *head=NULL, *tail=NULL;
     // DECIDE-O: the module-scope asserts, in source order, for the emitter. Reset first: the
@@ -4899,6 +4994,7 @@ static IrFunc *ir_lower_module(DeclList *program, Arena *a) {
         }
         if (f) { if (!head) head=tail=f; else { tail->next=f; tail=f; } }
     }
+    ir_land_waived(head);
     return head;
 }
 

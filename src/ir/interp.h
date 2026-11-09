@@ -490,14 +490,15 @@ static void ii_set(IrValue *r, const IVal *x) { if (r && r->id >= 0 && r->id < i
 // returned from an i32 function printed -2147483651 here and 2147483645 from the C, and as an
 // exit status both were 253, so the false proof showed only where a program happened to print it
 // (found with the per-operation soundness harness). Now it stops at the line that owed the
-// proof. Inside `unsafe` the conversion is C's: it wraps.
+// proof. Inside `unsafe` too: a narrowing there that wraps is a modular CAST before the landing
+// (lower.h ir_land_waived, I.69), so a value that reaches here unfit owed its proof, a refined
+// slot's included (I.60; the wrap that stood here skipped that slot's check).
 static void ii_land_refined(IVal *v, const IrType *dt, IrInstr *at);   // below
 static void ii_land(IVal *v, const IrType *vt, const IrType *dt, IrInstr *at) {
     if (!v || v->k != IV_INT || !vt || !dt || vt->kind != IRT_INT || dt->kind != IRT_INT) return;
     if (vt->bits == dt->bits && vt->is_signed == dt->is_signed) { ii_land_refined(v, dt, at); return; }
     __int128 x = iv_get(v, (IrType *)vt, at);
     if (it_fits(x, dt)) { ii_land_refined(v, dt, at); return; }
-    if (at && at->unchecked) { iv_int(v, it_wrap(x, (IrType *)dt)); return; }
     char b[48]; int n = 0, j = 0; unsigned __int128 u = x < 0 ? -(unsigned __int128)x : (unsigned __int128)x;
     char t[48]; do { t[n++] = (char)('0' + (int)(u % 10)); u /= 10; } while (u);
     if (x < 0) b[j++] = '-';

@@ -1,0 +1,49 @@
+// I.69: inside `unsafe`, a value that narrows where it LANDS wraps there, by a modular cast that
+// lowering places before the landing (lower.h ir_land_waived). The return and the store are in
+// unsafe_wrap_signed_pass.ln; here the other three: an argument, a struct field and a sum payload,
+// each 300 into a u8 (44) and 200 into an i8 (-56). The indices by the argument's result and the
+// field are proven only from the exact wrapped value (44 in an i32[45], -56 + 60 = 4 in an
+// i32[5]); before the cast, the index by `r` was refused. The interpreter stops at a landing that
+// does not fit, so each of the three is also checked as it runs. Run under the interpreter and the
+// sanitizers: 44 44 -56 44 5.
+extern func libc_printf(fmt *u8, ...) i32 effects io
+
+type Pair {
+    a u8
+    b i8
+}
+
+type Box {
+    Small { v u8 }
+    Empty
+}
+
+func id8(x u8) u8 {
+    return x
+}
+
+func main() i32 effects io {
+    var big i32[45]
+    var small i32[5] = [1, 2, 3, 4, 5]
+    var w i32 = 300
+    var s i32 = 200
+    var r u8 = 0
+    var p = Pair(0, 0)
+    var k = Box.Empty
+    unsafe {
+        r = id8(w)
+        p = Pair(w, s)
+        k = Box.Small(w)
+    }
+    big[r] = 7
+    big[p.a] = 8
+    var got u8 = 0
+    case k {
+        Small(v): got = v
+        Empty: got = 1
+    }
+    big[got % 45] = 9
+    var j i32 = p.b + 60
+    libc_printf("%d %d %d %d %d\n", r, p.a, p.b, got, small[j])
+    return 0
+}

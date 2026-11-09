@@ -267,6 +267,7 @@ static SeProof se_fold_one(SeCtx *x, Decl *d, bool quiet, int *folded) {
         int64_t lo = rg->as.range_expr.start->as.literal_expr.value, hi = rg->as.range_expr.end->as.literal_expr.value;
         if (rg->as.range_expr.inclusive) hi++;
         IrFunc *th = ir_lower_function(se_thunk(d, body, body->type, init->as.array_comprehension_expr.idx, lo, hi), x->program, x->a);
+        ir_land_waived_func(x->mod, th);
         SeProof pr = se_prove(x, th, d, init, quiet);
         if (pr != SE_OK) return pr;
         ExprList *head = NULL, **tail = &head;
@@ -287,6 +288,7 @@ static SeProof se_fold_one(SeCtx *x, Decl *d, bool quiet, int *folded) {
         for (ExprList *l = init->as.array_literal_expr.elements; l; l = l->next) {
             if (!se_has_call(l->expr)) continue;
             IrFunc *th = ir_lower_function(se_thunk(d, l->expr, l->expr->type, NULL, 0, 0), x->program, x->a);
+            ir_land_waived_func(x->mod, th);
             SeProof pr = se_prove(x, th, d, l->expr, quiet);
             if (pr != SE_OK) return pr;
             Expr *lit = se_run(x, d, th, NULL, et ? et : l->expr->type, l->expr, &err, &left, "an element of constant");
@@ -297,6 +299,7 @@ static SeProof se_fold_one(SeCtx *x, Decl *d, bool quiet, int *folded) {
         return SE_OK;
     }
     IrFunc *th = ir_lower_function(se_thunk(d, init, init->type, NULL, 0, 0), x->program, x->a);   // a scalar
+    ir_land_waived_func(x->mod, th);
     SeProof pr = se_prove(x, th, d, init, quiet);
     if (pr != SE_OK) return pr;
     Expr *lit = se_run(x, d, th, NULL, ty, init, &err, &left, "constant");
