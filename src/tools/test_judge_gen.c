@@ -293,24 +293,28 @@ int main(void) {
         free(t);
         printf("  a cast to bool is not an equality, a cast from bool is\n");
     }
-    // 8. a store inside `unsafe` that narrows wraps, so its version is not the value stored: it is
-    // that value wrapped into the slot (`... wrap`, x = v - k*2^8 within u8)
+    // 8. a store inside `unsafe` that narrows is a modular CAST before the store (A2, I.69): the
+    // cast's value is v wrapped into u8 (`cast.wrap`, x = v - k*2^8 within u8), and the store keeps
+    // it. A checked store of the i32 is the value stored, its landing an obligation
     for (int k = 0; k < 2; k++) {
         IrFunc *f = ir_func_new(&A, nm(k ? "g10" : "g9"), u8t, IR_FUNC_PURE);
         IrValue *v = ir_add_param(f, i32t, nm("v"));
         IrBlock *b0 = f->entry;
         IrValue *s = ir_alloca(f, b0, u8t);
-        ir_store(f, b0, s, v);
-        b0->instrs_tail->unchecked = k == 0;
+        if (k == 0) {
+            IrInstr *wc = ir_instr(f, IR_CAST, u8t, 1); wc->operands[0] = v;
+            wc->aux.cast_kind = IR_CAST_TRUNC; wc->wrap = IR_WRAP_MODULAR; ir_emit(b0, wc);
+            ir_store(f, b0, s, wc->result);
+        } else ir_store(f, b0, s, v);
         ir_set_ret(b0, ir_binop(f, b0, IR_UDIV, ir_const_int(f, b0, 10, u8t), ir_load(f, b0, s, u8t), u8t));
         char *t = gen_text(f);
         const char *dz = t ? vc_of(t, "divzero") : "";
-        if (k == 0) CHECK(!plain_store(dz, "store %s") && strstr(dz, " wrap : "),
-                          "an unchecked narrowing store states no equality, but its wrap into u8:\n%s", dz);
+        if (k == 0) CHECK(strstr(dz, "store %s") && strstr(dz, "cast.wrap : "),
+                          "a narrowing store in `unsafe`: the cast wraps into u8, the store keeps it:\n%s", dz);
         else        CHECK(strstr(dz, "store %s"), "a checked one does (its landing is an obligation):\n%s", dz);
         free(t);
     }
-    printf("  a store that wraps in `unsafe` is not an equality, a checked one is\n");
+    printf("  a store that wraps in `unsafe` keeps its modular cast's value, a checked one the value\n");
     // 9. a u64 constant is read unsigned: -1's bits are 2^64 - 1
     {   IrFunc *f = ir_func_new(&A, nm("g11"), u64t, IR_FUNC_PURE);
         IrBlock *b0 = f->entry;
@@ -633,7 +637,8 @@ int main(void) {
         CHECK(t && count(t, " post ") == 0, "the caller owes no callee's return claim:\n%s", t ? t : "");
         free(t);
         if (!other) {
-            // an argument that does not land exactly (a narrowing the call waives) states nothing
+            // an argument flagged unchecked lands exactly too (I.69: the flag waives nothing, the
+            // narrowing is owed), so the claim holds of it
             IrFunc *n8 = ir_func_new(&A, nm("n8"), u8t, IR_FUNC_PURE), *g = ir_func_new(&A, nm("g22"), u8t, IR_FUNC_PURE);
             IrValue *pn = ir_add_param(n8, u8t, nm("v"));
             ir_set_ret(n8->entry, pn);
@@ -651,7 +656,10 @@ int main(void) {
             t = gen_with(g, &c8, 1, JGEN_ALL, NULL);
             snprintf(key, sizeof key, "bb%d.%d divzero", g->entry->id, idx_of(g->entry, q2));
             dz = t ? vc_of(t, key) : "";
-            CHECK(dz[0] && !strstr(dz, "contract"), "an argument narrowed unchecked does not land exactly: no contract:\n%s", dz);
+            CHECK(strstr(dz, "contract n8 #0"), "an argument flagged unchecked lands exactly: the contract:\n%s", dz);
+            snprintf(key, sizeof key, " bb%d.%d narrow.hi 0\n", g->entry->id, idx_of(g->entry, c2->result));
+            CHECK(t && strstr(t, key), "...and owes its narrowing:\n%s", t ? t : "");
+            snprintf(key, sizeof key, "bb%d.%d divzero", g->entry->id, idx_of(g->entry, q2));
             free(t);
             // c2 checked: one that does not fit traps before n8 runs, so the claim holds of it
             c2->unchecked = false;
@@ -660,8 +668,8 @@ int main(void) {
             CHECK(strstr(dz, "contract n8 #0"), "a checked landing states it:\n%s", dz);
             free(t);
             // refused: no function, not about the returned value, a term no parameter, the value of a
-            // returned slice (a claim may name its length, s14), one lowered with a construct dropped. A return that WRAPS is not
-            // refused (s8): its post is owed about the landed value, a fresh x = w - k*256 in u8
+            // returned slice (a claim may name its length, s14), one lowered with a construct dropped. A return flagged
+            // unchecked that narrows is not refused: its narrowing is owed (I.69), its post about the value returned
             struct { JClaim c; IrFunc *at; const char *why; } bad[6];
             for (int k = 0; k < 6; k++) { bad[k].c = c; bad[k].at = mn; }
             bad[0].c.fn = NULL; bad[0].why = "with no function";
@@ -672,7 +680,7 @@ int main(void) {
             bad[5].why = "lowered incompletely";
             n8->entry->term.unchecked = true; n8->ret_type = u8t;
             IrValue *wide = ir_add_param(n8, u32t, nm("w"));
-            n8->entry->term.cond = wide;                     // return w as u8, waived: it wraps
+            n8->entry->term.cond = wide;                     // return w as u8, flagged: owed all the same
             gen_mod = mn;
             for (int k = 0; k < 6; k++) {
                 if (k == 4) { n8->entry->term.unchecked = false; n8->entry->term.cond = pn; n8->ret_type = slice_of(u8t); }
@@ -680,10 +688,11 @@ int main(void) {
                 char why[200] = "";
                 char *tb = gen_with(bad[k].at, &bad[k].c, 1, JGEN_ALL, why);
                 if (!bad[k].why) {
-                    char lw[64], wk[64]; snprintf(lw, sizeof lw, "ret.landed.%%v%d", wide->id); snprintf(wk, sizeof wk, "return bb%d wrap :", n8->entry->id);
+                    char lw[64], nh[64]; snprintf(lw, sizeof lw, "1*%%v%d ", wide->id); snprintf(nh, sizeof nh, " bb%d.0 narrow.hi 0\n", n8->entry->id);
                     const char *pv = tb ? vc_of(tb, " post 0") : "";
                     const char *gl = strstr(pv, "\n  goal "), *ge = gl ? strchr(gl + 1, '\n') : NULL, *gx = gl ? strstr(gl, lw) : NULL;
-                    CHECK(strstr(pv, wk) && strstr(pv, "ret.k.") && gx && (!ge || gx < ge), "a wrapping return's post is about its landed value, in its goal:\n%s", tb ? tb : why);
+                    CHECK(tb && strstr(tb, nh) && !strstr(pv, "ret.landed") && gx && (!ge || gx < ge),
+                          "a return flagged unchecked owes its narrowing, its post about the value returned:\n%s", tb ? tb : why);
                 } else CHECK(!tb && strstr(why, bad[k].why), "return claim %d is refused (%s): got \"%s\"", k, bad[k].why, why);
                 free(tb);
             }
@@ -760,8 +769,8 @@ int main(void) {
         c3->aux.callee = nm("take2"); c3->operands[0] = y; c3->operands[1] = y; ir_emit(b0, c3);
         IrValue *fp = ir_func_ref(f, b0, nm("take8"), fnt);
         IrInstr *ic = ir_instr(f, IR_CALL, u8t, 2); ic->operands[0] = fp; ic->operands[1] = y; ir_emit(b0, ic);
-        // a constructor's field lands at the CONSTRUCTOR: waived there, the field's version is not
-        // the value even when the struct's store is checked
+        // a constructor's field lands at the CONSTRUCTOR, its narrowing owed there whether it is
+        // flagged unchecked or not (I.69), so the field's version is the value either way
         IrType *S1 = ir_type_new(&A, IRT_STRUCT);
         S1->n_fields = 1; S1->fields = arena_push_many_aligned(&A, IrType*, 1); S1->fields[0] = i32t;
         IrValue *sc[2], *fq[2];
@@ -786,8 +795,8 @@ int main(void) {
         #define HAS(pt, kind, ord) (snprintf(key, sizeof key, " bb%d.%d " kind " %d\n", b0->id, (pt), (ord)), t && strstr(t, key))
         CHECK(HAS(at[0], "narrow.lo", 0) && HAS(at[0], "narrow.hi", 0), "an i33 stored in an i32 owes both sides:\n%s", t ? t : "");
         CHECK(!HAS(at[1], "narrow.lo", 0) && !HAS(at[1], "narrow.hi", 0), "a store of its own type owes nothing");
-        CHECK(!HAS(at[2], "narrow.lo", 0) && !HAS(at[2], "narrow.hi", 0), "a waived store into a plain slot owes nothing");
-        CHECK(HAS(at[3], "narrow.lo", 0) && HAS(at[3], "narrow.hi", 0), "a waived store into a refined slot owes its range (I.60)");
+        CHECK(HAS(at[2], "narrow.lo", 0) && HAS(at[2], "narrow.hi", 0), "a store flagged unchecked owes its narrowing (I.69)");
+        CHECK(HAS(at[3], "narrow.lo", 0) && HAS(at[3], "narrow.hi", 0), "a flagged store into a refined slot owes its range (I.60)");
         CHECK(!HAS(at[4], "narrow.lo", 0) && !HAS(at[4], "narrow.hi", 0) && HAS(at[4], "narrow.ne", 0), "a slot != 0 owes only the excluded value");
         CHECK(!HAS(at[5], "narrow.lo", 0) && !HAS(at[5], "narrow.hi", 0), "a u8 into a u32 cannot lose it");
         int isn = idx_of(b0, sn), iun = idx_of(b0, un), ic1 = idx_of(b0, c1), ic2 = idx_of(b0, c2), iic = idx_of(b0, ic->result);
@@ -804,9 +813,9 @@ int main(void) {
         const char *ne = t ? vc_of(t, (snprintf(key, sizeof key, "bb%d.%d narrow.ne", b0->id, at[4]), key)) : "";
         char want[96]; snprintf(want, sizeof want, "goal 1*%%v%d != 0", y->id);
         CHECK(strstr(ne, want), "the excluded value is a `!=` goal:\n%s", ne);
-        // which versions are the value stored: the checked one, and the waived one into a refined
-        // slot (its obligation is owed); not the waived one into a plain slot (it may wrap)
-        bool exact[6] = { true, true, false, true, true, true };
+        // every version is the value stored: each landing's obligation is owed, the flag waiving
+        // none (I.69; inside `unsafe` a wrap is a modular cast before the store)
+        bool exact[6] = { true, true, true, true, true, true };
         for (int k = 0; k < 6; k++) {
             snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, q[k]));
             char vcbuf[1 << 12]; snprintf(vcbuf, sizeof vcbuf, "%s", t ? vc_of(t, key) : "");
@@ -817,23 +826,23 @@ int main(void) {
             snprintf(key, sizeof key, "bb%d.%d divzero", b0->id, idx_of(b0, fq[k]));
             char vcbuf[1 << 12]; snprintf(vcbuf, sizeof vcbuf, "%s", t ? vc_of(t, key) : "");
             snprintf(want, sizeof want, "store %%s%d.0@bb%d.", sc[k]->id, b0->id);
-            CHECK(plain_store(vcbuf, want) == (k == 0), "a field constructed %s is %sthe value:\n%s", k ? "waived" : "checked", k ? "not " : "", vcbuf);
+            CHECK(plain_store(vcbuf, want), "a field constructed %s is the value:\n%s", k ? "flagged unchecked" : "checked", vcbuf);
         }
         #undef HAS
         free(t);
-        // waived, the result owes nothing (it wraps); into a refined result type it is owed
+        // flagged unchecked, the result owes its type all the same (I.69), a refined one too
         b0->term.unchecked = true;
         t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
         snprintf(key, sizeof key, " bb%d.%d narrow.hi 0\n", b0->id, nins(b0));
-        CHECK(t && !strstr(t, key), "a waived return into a plain type owes nothing");
+        CHECK(t && strstr(t, key), "a return flagged unchecked owes its narrowing (I.69)");
         free(t);
         IrType *r8 = ir_type_int(&A, 8, false); r8->has_refine = true; r8->refine_lo = 0; r8->refine_hi = 9;
         f->ret_type = r8;
         t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
-        CHECK(t && strstr(t, key), "a waived return into a refined type owes its range");
+        CHECK(t && strstr(t, key), "a flagged return into a refined type owes its range");
         free(t);
     }
-    printf("  landings: a store, a field, a payload, an argument, the result; waived unless refined\n");
+    printf("  landings: a store, a field, a payload, an argument, the result; the flag waives none\n");
     // 19. an ASSERT (P2.6) owes its condition where it stands, `unsafe` or not, its kind naming its
     // code; a comparison is a goal as a fact is read (an equality two VCs; one value compared with
     // itself the empty sum), anything else `!= 0`, and a comparison that cannot be a goal is owed
@@ -2421,8 +2430,8 @@ int main(void) {
     printf("  a reference binding: a slot stored once with an address is that address where it dominates\n");
     // 48. a WAIVED narrowing wraps, as it_wrap makes it: x = v - k*2^w within the type's width, k a
     // fresh integer. (0) an unchecked cast i16 -> i8 (k*256); (1) a `%` cast u64 -> u32 (k*2^32); (2)
-    // a `|` cast clamps: nothing; (3) a checked cast: the plain `def ... cast`; (4) an unchecked
-    // store of an i16 into an i8 slot: the version wraps; (5) an unchecked SIGNED i8 + i8 in an i9
+    // a `|` cast clamps: nothing; (3) a checked cast: the plain `def ... cast`; (4) a store of an
+    // i16 into an i8 slot flagged unchecked: no wrap, the value stored (I.69); (5) an unchecked SIGNED i8 + i8 in an i9
     // cannot leave it: exact; (6) an unchecked i32 + i32 in an i32 may: nothing
     {   IrType *i16t = ir_type_int(&A, 16, true), *i9t = ir_type_int(&A, 9, true), *u32w = ir_type_int(&A, 32, false);
         for (int c = 0; c < 7; c++) {
@@ -2456,7 +2465,7 @@ int main(void) {
                     CHECK(strstr(vz, want) && strstr(vz, c ? "cast.wrap : 1*" : "cast.wrap : -1*"), "case %d: the cast wraps:\n%s", c, vz); break;
                 case 2: snprintf(want, sizeof want, "def %%v%d cast", r->id); CHECK(*vz && !strstr(vz, want), "case 2: a clamp states nothing:\n%s", vz); break;
                 case 3: snprintf(want, sizeof want, "def %%v%d cast :", r->id); CHECK(strstr(vz, want) && !strstr(vz, "wrap"), "case 3: a checked cast is exact:\n%s", vz); break;
-                case 4: CHECK(strstr(vz, " wrap : ") && strstr(vz, "256*wrap.ver"), "case 4: the waived store wraps into its slot:\n%s", vz); break;
+                case 4: CHECK(strstr(vz, "store %s") && !strstr(vz, "wrap"), "case 4: a flagged store keeps the value stored:\n%s", vz); break;
                 case 5: snprintf(want, sizeof want, "def %%v%d add :", r->id); CHECK(strstr(vz, want), "case 5: i8 + i8 in an i9 is exact:\n%s", vz); break;
                 default: snprintf(want, sizeof want, "def %%v%d add", r->id); CHECK(*vz && !strstr(vz, want), "case 6: i32 + i32 in an i32 states nothing:\n%s", vz); break;
             }
@@ -3211,8 +3220,9 @@ int main(void) {
     // 62. a store a[i] = 7 through a checked variable index into a fixed array whose elements are
     // cells: element k's fresh version is `or { i = k , a[k]' = 7 | i <= k - 1 , a[k]' = a[k] |
     // i >= k + 1 , a[k]' = a[k] }`. (0) an i32[4] stored by constant indexes, a[2] read after; (3)
-    // a[3] no cell: a[2]'s all the same. Nothing where (1) the index is unchecked; (2) the array has
-    // 17 elements; (4) the value is an i64 landing waived in the i32 slots (it may wrap); (5) the
+    // a[3] no cell: a[2]'s all the same; (4) the value an i64 flagged unchecked, landing exactly in
+    // the i32 elements (I.69: its narrowing owed). Nothing where (1) the index is unchecked; (2) the array has
+    // 17 elements; (5) the
     // store is on one arm of a join and a[2] is read past it (a disjunct holds no disjunction)
     for (int c = 0; c < 6; c++) {
         IrType *an = ir_type_new(&A, IRT_ARRAY); an->elem = i32t; an->array_len = c == 2 ? 17 : 4;
@@ -3246,7 +3256,7 @@ int main(void) {
         snprintf(d0, sizeof d0, "element : or { 1*%%v%d = 2 , ", ix->id);
         snprintf(d1, sizeof d1, " | 1*%%v%d <= 1 , ", ix->id);
         snprintf(d2, sizeof d2, " | -1*%%v%d <= -3 , ", ix->id);
-        bool has = c == 0 || c == 3;
+        bool has = c == 0 || c == 3 || c == 4;
         CHECK(*vz && !!strstr(vz, d0) == has && !!strstr(vz, d1) == has && !!strstr(vz, d2) == has && (has || !strstr(vz, "element :")),
               "case %d: %sthe element's disjunction:\n%s", c, has ? "" : "no ", vz);
         free(t);

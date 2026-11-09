@@ -1465,17 +1465,19 @@ int main(void) {
     }
     printf("  a returned slice's length: return claims on len(ret), owed at the return, stated at the call\n");
 
-    // a return that WRAPS (s8): g(p, q) returns the i32 sum p + q into an i8, waived (`unsafe { return
-    // p + q }`), so g(100, 100) is -56. The caller divides by g(100, 100) + 57. (A) the guarded claim ret
-    // in [-56, -56]: certified (its post is owed about the landed value), the division proved; (B) ret in
-    // [200, 200], true of the sum before it lands and of nothing a caller receives: uncertified
+    // a return that WRAPS (s8): g(p, q) returns the i32 sum p + q into an i8 inside `unsafe` (`unsafe {
+    // return p + q }`), lowered as a modular cast before the return (A2, I.69), so g(100, 100) is -56.
+    // The caller divides by g(100, 100) + 57. (A) the guarded claim ret in [-56, -56]: certified (its
+    // post is owed about the cast's value), the division proved; (B) ret in [200, 200], true of the sum
+    // before it lands and of nothing a caller receives: uncertified
     for (int c = 0; c < 2; c++) {
         IrType *mi32 = ir_type_int(&A, 32, true), *mi8 = ir_type_int(&A, 8, true);
         IrFunc *gf = ir_func_new(&A, nm("g"), mi8, IR_FUNC_PURE);
         IrValue *gp = ir_add_param(gf, mi32, nm("p")), *gq = ir_add_param(gf, mi32, nm("q"));
         IrValue *sum = ir_binop(gf, gf->entry, IR_ADD, gp, gq, mi32);
-        ir_set_ret(gf->entry, sum);
-        gf->entry->term.unchecked = true;                      // the landing i32 -> i8 is waived: it wraps
+        IrInstr *wc = ir_instr(gf, IR_CAST, mi8, 1); wc->operands[0] = sum;
+        wc->aux.cast_kind = IR_CAST_TRUNC; wc->wrap = IR_WRAP_MODULAR; ir_emit(gf->entry, wc);
+        ir_set_ret(gf->entry, wc->result);                     // i32 -> i8 wraps at the cast
         ir_finalize_cfg(gf);
         IrFunc *mf = ir_func_new(&A, nm("main"), mi32, IR_FUNC_PURE);
         IrInstr *call = ir_instr(mf, IR_CALL, mi8, 2); call->aux.callee = nm("g");

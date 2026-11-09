@@ -411,7 +411,7 @@ static JELoad *jg_elem_load(JG *g, IrValue *a, const int32_t *o) {
 // is element k's cell, or -1. Its havoc version of each is that element, or the value stored where
 // the index names it (jb_state); each on its own, so an element that is no cell takes nothing from
 // the others. 0 where any of that fails: the store's versions are plain havoc.
-static bool jg_lands_exact(const IrType *from, const IrType *to, bool waived);   // below
+static bool jg_lands_exact(const IrType *from, const IrType *to);   // below
 static int32_t jg_elem_store(JG *g, IrInstr *st, int32_t *cells) {
     IrValue *a = st->n_operands >= 2 ? st->operands[0] : NULL;
     IrInstr *d = a && a->id >= 0 && a->id < g->nv ? g->def[a->id] : NULL;
@@ -425,7 +425,7 @@ static int32_t jg_elem_store(JG *g, IrInstr *st, int32_t *cells) {
         int32_t c = -1;
         for (int32_t c2 = 0; c2 < g->ncells && c < 0; c2++)
             if (g->croot[c2] == g->aroot[base->id] && !strcmp(g->cpath[c2], pth)) c = c2;
-        if (c >= 0 && (!jg_is_int(g->cty[c]) || !jg_lands_exact(st->operands[1]->type, g->cty[c], st->unchecked))) return 0;
+        if (c >= 0 && (!jg_is_int(g->cty[c]) || !jg_lands_exact(st->operands[1]->type, g->cty[c]))) return 0;
         cells[k] = c;
     }
     return (int32_t)t->array_len;
@@ -1260,7 +1260,7 @@ static void jb_def(JB *B, int32_t x, JLT *t, int n, const char *origin) { jb_def
 // Does a STORE keep the value it stores? When its landing is exact (jg_lands_exact): the landing
 // obligation at the store (jg_land) licenses it; a waived one into a plain slot wraps (ii_land).
 static bool jg_store_exact(const JVer *v) {
-    return v->stored && v->slot && jg_lands_exact(v->stored->type, v->slot, v->unchecked);
+    return v->stored && v->slot && jg_lands_exact(v->stored->type, v->slot);
 }
 
 // A fresh variable `<what>.%v<id>` whose value is (t[0..n) + 0) / den. It is stated nothing about
@@ -1999,7 +1999,7 @@ static bool jp_mul(JPoly *r, const JPoly *a, const JPoly *b) {
         }
     return true;
 }
-static bool jg_lands_exact(const IrType *from, const IrType *to, bool waived);
+static bool jg_lands_exact(const IrType *from, const IrType *to);
 // v's form over header H's versions, or NULL (memoised per function for one header at a time)
 static const JPoly *jg_form(JG *g, int32_t H, IrValue *v, int depth) {
     if (!v || v->id < 0 || v->id >= g->nv || depth > 32) return NULL;
@@ -2033,7 +2033,7 @@ static const JPoly *jg_form(JG *g, int32_t H, IrValue *v, int depth) {
             else if (d->op == IR_SUB && a && b) ok = jp_add(&r, a, b, -1);
             else if (d->op == IR_MUL && a && b) ok = jp_mul(&r, a, b);
             else if (d->op == IR_NEG && a) { JPoly z; z.n = 0; ok = jp_add(&r, &z, a, -1); }
-            else if (d->op == IR_CAST && a && jg_lands_exact(d->operands[0]->type, v->type, d->unchecked)) { r = *a; ok = true; }
+            else if (d->op == IR_CAST && a && jg_lands_exact(d->operands[0]->type, v->type)) { r = *a; ok = true; }
         }
     }
     if (ok && (out = JG_NEW(g, JPoly, 1))) *out = r;
@@ -2327,16 +2327,12 @@ static int jg_param_at(const IrFunc *h, int32_t key) {
     for (const IrParam *p = h->params; p; p = p->next, k++) if (p->value && p->value->id == key) return k;
     return -1;
 }
-// A value landing in a slot of type `to` keeps its value: the same integer type (no conversion);
-// a landing whose obligation the generator owes there (jg_land: a checked one, or one into a
-// refined slot, `unsafe` or not), which a program reaching past it has kept, the value in range;
-// or a slot that holds every value of `from`. A waived landing into a plain slot may wrap.
-static bool jg_lands_exact(const IrType *from, const IrType *to, bool waived) {
-    if (!jg_is_int(from) || !jg_is_int(to)) return false;
-    if (from->kind == to->kind && (from->kind == IRT_BOOL || (from->bits == to->bits && from->is_signed == to->is_signed))) return true;
-    if (!waived || (to->kind == IRT_INT && (to->has_refine || to->has_ne))) return true;
-    JRange a, b;
-    return jg_range(from, &a) && jg_range(to, &b) && b.lo <= a.lo && a.hi <= b.hi;
+// A value landing in a slot of type `to` keeps its value: the same integer type (no conversion), or
+// a landing whose obligation the generator owes there (jg_land), which a program reaching past it
+// has kept, the value in range. A landing is never waived: inside `unsafe` a narrowing that wraps is
+// a modular CAST before it (lower.h ir_land_waived, I.69), and the landing itself is exact.
+static bool jg_lands_exact(const IrType *from, const IrType *to) {
+    return jg_is_int(from) && jg_is_int(to);
 }
 // The claims about a version a join or a header makes, stated where the version is: VC-wide, or
 // inside the current disjunct when the version is local to its path. Each once per place (a claim
@@ -2713,7 +2709,7 @@ static int32_t jb_call_term(JB *B, IrInstr *d, IrFunc *h, int32_t blk, int32_t i
         return pv < 0 ? -1 : jb_part_term(B, pv);
     }
     if (tk == JTERM_LEN) return d->operands[pk]->type && d->operands[pk]->type->kind == IRT_SLICE ? jb_len(B, d->operands[pk]) : -1;
-    if (!jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) return -1;
+    if (!jg_lands_exact(d->operands[pk]->type, pp->value->type)) return -1;
     return jb_val(B, d->operands[pk]);
 }
 // A call d (at blk, idx) to h of this module: h's RETURN claims (I.181's boundary), each where every
@@ -2804,7 +2800,7 @@ static void jb_call_guarded(JB *B, IrInstr *d, IrFunc *h, int32_t cb, int32_t cx
             IrParam *pp = h->params;
             for (int q = 0; q < pk && pp; q++) pp = pp->next;
             if (pk < 0 || pk >= d->n_operands || !pp || !pp->value ||
-                !jg_lands_exact(d->operands[pk]->type, pp->value->type, d->unchecked)) { ok = false; break; }
+                !jg_lands_exact(d->operands[pk]->type, pp->value->type)) { ok = false; break; }
             __int128 cv;
             if (jg_const_of(g, d->operands[pk], &cv)) { if (cv != c->gval[k]) eq = false; }
             else lit = false;
@@ -3090,7 +3086,7 @@ static void jb_state(JB *B, int32_t x) {
         jb_type(B, x, sv->type->fields[k], "%v", sv->id);
         IrInstr *d = sv->id >= 0 && sv->id < g->nv ? g->def[sv->id] : NULL;
         if (d && d->op == IR_STRUCT_NEW && k < d->n_operands && d->operands[k] && jg_is_int(d->operands[k]->type) &&
-            jg_lands_exact(d->operands[k]->type, sv->type->fields[k], d->unchecked)) {   // its constructor's operand
+            jg_lands_exact(d->operands[k]->type, sv->type->fields[k])) {   // its constructor's operand
             JLT t[1]; t[0].var = jb_val(B, d->operands[k]); t[0].c = 1;
             jb_def(B, x, t, 1, jb_str(B, "def %%v%lld.%lld field", sv->id, k, 0));
         }
@@ -4402,14 +4398,13 @@ static bool jgk_ne(JB *B, IrInstr *at, void *arg, JCons *goal) {
 // payload, a call argument, the result), owed as the interpreter checks it (ii_land,
 // ii_land_refined) and VRA proves it (vra_check_narrow): the slot's range, refinement included,
 // on each side the value's type may pass (`narrow.lo`, `narrow.hi`), and the value it excludes
-// (`narrow.ne`). A WAIVED landing (`unsafe`) wraps and owes nothing, unless the slot is refined:
-// a refinement is never waived (I.60). `ord` tells a call's arguments and a struct's fields apart.
+// (`narrow.ne`). Inside `unsafe` too: a narrowing there that wraps is a modular CAST before the
+// landing (I.69), which then owes nothing, and a refined slot's never wraps (I.60). `ord` tells a
+// call's arguments and a struct's fields apart.
 // The obligation is what licenses an exact landing's fact (jg_lands_exact): a program that reaches
 // past it has the value in range.
-static bool jg_land(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, IrValue *v, const IrType *dt,
-                    bool waived, int ord) {
+static bool jg_land(JG *g, JObls *L, IrInstr *at, int32_t blk, int32_t idx, IrValue *v, const IrType *dt, int ord) {
     if (!v || !v->type || v->type->kind != IRT_INT || !dt || dt->kind != IRT_INT) return true;
-    if (waived && !(dt->has_refine || dt->has_ne)) return true;
     JRange vr, dr;
     if (!jg_range(v->type, &vr) || !jg_range(dt, &dr)) return true;
     if (vr.lo < dr.lo) {
@@ -4701,13 +4696,13 @@ static bool jg_obligations(JG *g, JObls *L) {
                 // the LANDINGS (P2.3), where the interpreter lands each value (ii_land)
                 case IR_STORE: {                                     // into the address's pointee
                     const IrType *pt = i->n_operands >= 2 ? i->operands[0]->type : NULL;
-                    if (pt && pt->kind == IRT_PTR && !jg_land(g, L, i, b->id, k, i->operands[1], pt->elem, i->unchecked, 0)) return false;
+                    if (pt && pt->kind == IRT_PTR && !jg_land(g, L, i, b->id, k, i->operands[1], pt->elem, 0)) return false;
                     break;
                 }
                 case IR_STRUCT_NEW: {                                // each field into its type
                     const IrType *rt = i->result ? i->result->type : NULL;
                     for (int f = 0; rt && rt->kind == IRT_STRUCT && f < i->n_operands && f < rt->n_fields; f++)
-                        if (!jg_land(g, L, i, b->id, k, i->operands[f], rt->fields[f], i->unchecked, f)) return false;
+                        if (!jg_land(g, L, i, b->id, k, i->operands[f], rt->fields[f], f)) return false;
                     break;
                 }
                 case IR_SUM_NEW: {                                   // each payload field into its type
@@ -4716,7 +4711,7 @@ static bool jg_obligations(JG *g, JObls *L) {
                     const IrType *pl = rt && rt->kind == IRT_SUM && vk >= 0 && vk < rt->n_fields ? rt->fields[vk] : NULL;
                     for (int f = 0; pl && f < i->n_operands; f++) {
                         const IrType *ft = pl->kind == IRT_STRUCT ? (f < pl->n_fields ? pl->fields[f] : NULL) : (f == 0 ? pl : NULL);
-                        if (!jg_land(g, L, i, b->id, k, i->operands[f], ft, i->unchecked, f)) return false;
+                        if (!jg_land(g, L, i, b->id, k, i->operands[f], ft, f)) return false;
                     }
                     break;
                 }
@@ -4729,12 +4724,12 @@ static bool jg_obligations(JG *g, JObls *L) {
                         IrFunc *h = jg_callee(g, i);
                         int a = 0;
                         for (IrParam *pp = h ? h->params : NULL; pp && a < i->n_operands; pp = pp->next, a++)
-                            if (pp->value && !jg_land(g, L, i, b->id, k, i->operands[a], pp->value->type, i->unchecked, a)) return false;
+                            if (pp->value && !jg_land(g, L, i, b->id, k, i->operands[a], pp->value->type, a)) return false;
                     } else if (i->n_operands >= 1 && i->operands[0]->type) {
                         const IrType *ft = i->operands[0]->type;
                         if (ft->kind == IRT_PTR && ft->elem) ft = ft->elem;
                         for (int a = 1; ft->kind == IRT_FUNC && a < i->n_operands && a - 1 < ft->n_fields; a++)
-                            if (!jg_land(g, L, i, b->id, k, i->operands[a], ft->fields[a - 1], i->unchecked, a - 1)) return false;
+                            if (!jg_land(g, L, i, b->id, k, i->operands[a], ft->fields[a - 1], a - 1)) return false;
                     }
                     break;
                 }
@@ -4744,7 +4739,7 @@ static bool jg_obligations(JG *g, JObls *L) {
         // the RETURN's landing, at the block's end: the value returned into the result type, the
         // `return` itself waived or not (interp.h's RET)
         if (b->term.kind == IR_TERM_RET && b->term.cond &&
-            !jg_land(g, L, NULL, b->id, k, b->term.cond, g->f->ret_type, b->term.unchecked, 0)) return false;
+            !jg_land(g, L, NULL, b->id, k, b->term.cond, g->f->ret_type, 0)) return false;
     }
     return true;
 }
@@ -5070,7 +5065,7 @@ static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardCl
         const IrType *rt = g->f->ret_type;
         bool sret = rt && rt->kind == IRT_SLICE, tret = rt && rt->kind == IRT_STRUCT;
         int32_t rv = !needret || tret ? -1 : sret ? jb_len(&B, b->term.cond) : jb_val(&B, b->term.cond);
-        if (rv >= 0 && !sret && !jg_lands_exact(b->term.cond->type, rt, b->term.unchecked) && rt && rt->kind == IRT_INT && rt->bits >= 1 && rt->bits <= 64) {
+        if (rv >= 0 && !sret && !jg_lands_exact(b->term.cond->type, rt) && rt && rt->kind == IRT_INT && rt->bits >= 1 && rt->bits <= 64) {
             JLT w[1]; w[0].var = rv; w[0].c = 1;
             int32_t x = jb_fresh(&B, "ret.landed", b->term.cond->id, w, 1, 1);
             if (!B.fail) {
