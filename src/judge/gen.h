@@ -249,6 +249,7 @@ typedef struct {
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
     struct JGSite *gs; int32_t ngs; bool gsdone;   // s21: their calls' PRE and POST versions (jg_gsites)
     struct JGhosts **ghost;        // s31: by header block id, its ghost monomials (jg_ghosts), NULL not asked
+    uint8_t *gnamed;               // by header block id: something here names a ghost (jg_ghost_named), NULL not asked
     struct JPoly **pform; int32_t pfH; uint8_t *pfst;   // s31: forms of values over header pfH's versions, and their state
     int32_t *sqkey; __int128 *sqpt; int32_t nsq; bool sqdone;   // s29: squares' candidate points (jg_sq_points)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases, or an AND whose hull is two
@@ -2266,11 +2267,29 @@ static int32_t jb_ghost_post(JB *B, int32_t H, int32_t P, int i) {
 }
 // A checked product's DEFINITION as its form, in the loop of its innermost header H, where the form
 // has a monomial of degree >= 2 and each such is one of H's ghosts: m - (its terms) = constant.
+// Whether header H's ghosts are named by anything these VCs are about: a claim at H with a GHOST
+// term, a ranking at H with one (jgen_func marks it first), or the ghost paths asked of H
+// (jgen_paths). A product's ghost form (jb_ghost_def) is stated only there. Elsewhere its ghost is
+// a fresh variable nothing else constrains, so the definition only grew the VC: termination-nla's
+// ps3, a loop with three products and no ghost named anywhere, spent 595e6 -> 772e6 of finder work
+// on it and lost its ranking to the meter.
+static bool jg_ghost_named(JG *g, int32_t H) {
+    if (H < 0 || H >= g->nb) return false;
+    if (!g->gnamed) {                                        // the region is not zeroed
+        if (!(g->gnamed = JG_NEW(g, uint8_t, g->nb))) return true;   // no room to ask: state it
+        for (int32_t h = 0; h < g->nb; h++) g->gnamed[h] = 0;
+        for (int32_t c = 0; c < g->ncl; c++)
+            for (int32_t k = 0; k < g->cl[c].nt; k++)
+                if (g->cl[c].tk[k] == JTERM_GHOST && g->cl[c].blk >= 0 && g->cl[c].blk < g->nb) g->gnamed[g->cl[c].blk] = 1;
+    }
+    return g->gnamed[H] != 0;
+}
+static void jg_ghost_name(JG *g, int32_t H) { if (jg_ghost_named(g, H) || !g->gnamed || H < 0 || H >= g->nb) return; g->gnamed[H] = 1; }
 static void jb_ghost_def(JB *B, int32_t x, IrInstr *d, int32_t id) {
     JG *g = B->g;
     if (g->defblk[id] < 0) return;
     int32_t H = jg_inner_head(g, g->defblk[id]);
-    if (H < 0) return;
+    if (H < 0 || !jg_ghost_named(g, H)) return;
     const JGhosts *G = jg_ghosts(g, H);
     const JPoly *f = G && G->n ? jg_form(g, H, d->result, 0) : NULL;
     bool deg2 = false;
@@ -6177,6 +6196,8 @@ static bool jgen_func(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t
     *out = NULL; *nout = 0;
     if (!f || !f->entry || f->is_extern) return g.ncl + g.ngc == 0 || jg_fail(&g, "a claim on a function without a body");
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
+    for (int32_t k = 0; rk && only == JGEN_ALL && k < nrk; k++)   // a ranking's GHOST terms, before any VC is built
+        if (rk[k].fn == f) for (int32_t t = 0; t < rk[k].nt; t++) if (rk[k].tk[t] == JTERM_GHOST) jg_ghost_name(&g, rk[k].blk);
     JObls L; memset(&L, 0, sizeof L);
     if (only == JGEN_ALL && !jg_obligations(&g, &L)) return false;
     if (!jg_claim_obligations(&g, &L, only)) return false;
@@ -6421,6 +6442,7 @@ static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t 
     for (int32_t q = 0; q < nk; q++) args[q] = 0;
     if (modp) jg_mod_pairs(&g, header, keys, tks, args, &nk, cap);
     const JGhosts *G = ghostp ? jg_ghosts(&g, header) : NULL;   // with ghostp (paths_ghost, s31): H's ghosts
+    if (G && G->n) jg_ghost_name(&g, header);
     for (int32_t q = 0; G && q < G->n && nk < cap; q++) { keys[nk] = g.cellv[G->m[q].c[0]]->id; tks[nk] = JTERM_GHOST; args[nk] = q; nk++; }
     int32_t n = 0;
     for (IrEdge *e = H->preds; e; e = e->next) {

@@ -5733,6 +5733,34 @@ int main(void) {
         free(t);
     }
     printf("  product ghosts: a loop's y*y followed across its trip, a ranking over it, the refusals\n");
+    // 98b. ...and only where a ghost is NAMED (g32): the same loop with no claim, no ranking and no
+    // ghost paths asked: the guard's y*y is a product like any other, its narrowing's VC defines
+    // no ghost (a fresh variable nothing constrains only grew the VC: termination-nla's ps3 lost its
+    // ranking to the meter on it); with a ranking naming y*y, the same VC defines it (case 1 above).
+    {
+        IrFunc *f = ir_func_new(&A, nm("g98b"), i32t, IR_FUNC_PURE);
+        IrValue *kp = ir_add_param(f, i32t, nm("k"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *yc = ir_alloca(f, b0, i32t), *kc = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, yc, ir_const_int(f, b0, 0, i32t)); ir_store(f, b0, kc, kp); ir_set_br(b0, b1);
+        IrValue *ly = ir_load(f, b1, yc, i32t);
+        IrInstr *sq = ir_instr(f, IR_MUL, i32t, 2); sq->operands[0] = ly; sq->operands[1] = ly; sq->wrap = IR_WRAP_CHECK; ir_emit(b1, sq);
+        IrValue *gs = ir_binop(f, b1, IR_ADD, sq->result, ly, i32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SLT, gs, ir_load(f, b1, kc, i32t)), b2, b3);
+        IrInstr *inc = ir_instr(f, IR_ADD, i32t, 2); inc->operands[0] = ir_load(f, b2, yc, i32t); inc->operands[1] = ir_const_int(f, b2, 1, i32t);
+        inc->wrap = IR_WRAP_CHECK; ir_emit(b2, inc);
+        ir_store(f, b2, yc, inc->result); ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, i32t));
+        ir_finalize_cfg(f);
+        char why[200] = "", key[48], w1[64];
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        snprintf(key, sizeof key, "bb%d.%d narrow.hi", b1->id, idx_of(b1, gs));
+        const char *vn = t ? vc_of(t, key) : "";
+        snprintf(w1, sizeof w1, "def %%v%d ghost", sq->result->id);
+        CHECK(t && *vn && !strstr(vn, w1) && !strstr(vn, "ghost."), "98b: no ghost named, none defined:\n%s", t ? vn : why);
+        free(t);
+    }
+    printf("  ...and a product's ghost form only where a ghost is named\n");
     // 99. a GHOST through a JOIN and its ENTRY value (s31, mannadiv): i32 cells y1, x2 = p, `while
     // y1*x2 < n { if c { y1 = y1 + 1 } }`, the latch b5 joining the two arms. (0) y1 = 0 on entry:
     // on the back edge one expansion per arm, `or { y1@b5 - y1 = 1 , g' - g - x2 = 0 | y1@b5 - y1 = 0 ,
