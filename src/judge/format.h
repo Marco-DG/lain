@@ -126,10 +126,16 @@ typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MA
 // returns under its guards, and states it at every call: the bound where the arguments are those
 // constants and there is no `when`, else (not a guard) or the bound. The VCs it owes name it
 // ncl + its index.
+// With `cut` (s30) it is a CUT-POINT claim instead, at block `blk` of fn (a forward join or a loop
+// header, as a JClaim's): its terms and `when`'s (when.blk that block) a cut-point claim's terms
+// there, and it holds at the block wherever its guards and `when` hold there (gcd's header: `b <= 0
+// or x + y >= 1`, `when` -b <= -1 and the claim -x - y <= -1). gen.h owes it on every edge into the
+// block with its guards and `when` as premises, and states it where the block's claims are as
+// `not a guard | not when | sum <= rhs`. A producer that zeroes the struct makes a return claim.
 enum { JGUARD_MAXP = 2 };
 typedef struct { int32_t nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
                  int32_t ng; int32_t gkey[JGUARD_MAXP]; __int128 gval[JGUARD_MAXP]; struct IrFunc *fn;
-                 int16_t fld[JCLAIM_MAXT]; JClaim when; } JGuardClaim;
+                 int16_t fld[JCLAIM_MAXT]; JClaim when; bool cut; int32_t blk; } JGuardClaim;
 // A RANKING claim at a loop header: a tuple of components f_j = sum coef[j][i] * term_i + c0[j]
 // over terms by value id (a cell is its version at the header; any other value dominates it, so
 // its value before and after a trip is one). On each back edge, named by its predecessor `from`,

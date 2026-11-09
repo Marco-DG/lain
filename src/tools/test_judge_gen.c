@@ -5558,6 +5558,69 @@ int main(void) {
         free(t);
     }
     printf("  a product of two variables: a square's tangents and chords, a quotient's bound, a quotient >= 1\n");
+    // 97. a guarded CUT-POINT claim (s30, gcd.ln's `b <= 0 or x + y >= 1` at its loop's header): f97(a,
+    // b) u64 with x = a, y = b, `while y != 0 { t = x % y; x = y; y = t }`, the claim `when -b <= -1,
+    // -x - y <= -1` at the header. (0) owed on both edges into it, inv.entry and inv.keep, each with
+    // `premise guard when` over b and the claim about the versions the edge ends with; stated where
+    // the header's version of y is (x % y's divzero) as `or { b <= 0 | -x - y <= -1 }`; (1) a caller
+    // of f97 states it nowhere (it is no return claim), the claim `-b <= -1` there, whose one term, a
+    // parameter, would map at a call as a return claim's does; refused: (2) at the entry block, (3)
+    // its `when` at another block, (4) no guard and no `when`, (5) an EACH term
+    for (int c = 0; c < 6; c++) {
+        IrFunc *f = ir_func_new(&A, nm("f97"), u64t, IR_FUNC_PURE);
+        IrValue *a = ir_add_param(f, u64t, nm("a")), *bp = ir_add_param(f, u64t, nm("b"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *xc = ir_alloca(f, b0, u64t), *yc = ir_alloca(f, b0, u64t);
+        ir_store(f, b0, xc, a); ir_store(f, b0, yc, bp); ir_set_br(b0, b1);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_NE, ir_load(f, b1, yc, u64t), ir_const_int(f, b1, 0, u64t)), b2, b3);
+        IrValue *ly = ir_load(f, b2, yc, u64t), *rm = ir_binop(f, b2, IR_UREM, ir_load(f, b2, xc, u64t), ly, u64t);
+        ir_store(f, b2, xc, ly); ir_store(f, b2, yc, rm); ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_load(f, b3, xc, u64t));
+        ir_finalize_cfg(f);
+        JGuardClaim gc; memset(&gc, 0, sizeof gc);
+        gc.fn = f; gc.cut = true; gc.blk = b1->id; gc.nt = 2;
+        gc.key[0] = xc->id; gc.coef[0] = -1; gc.key[1] = yc->id; gc.coef[1] = -1; gc.rhs = -1;
+        gc.when.blk = b1->id; gc.when.fn = f; gc.when.nt = 1; gc.when.key[0] = bp->id; gc.when.coef[0] = -1; gc.when.rhs = -1;
+        if (c == 1) { gc.nt = 1; gc.key[0] = bp->id; }        // the caller's generation never checks it
+        if (c == 2) { gc.blk = b0->id; gc.when.blk = b0->id; }
+        if (c == 3) gc.when.blk = b2->id;
+        if (c == 4) gc.when.nt = 0;
+        if (c == 5) gc.tk[0] = JTERM_EACH;
+        gen_gc = &gc; gen_ngc = 1;
+        char why[200] = "", w[200];
+        if (c >= 2) {
+            static const char *bad[6] = { "", "", "not at a block entered by edges only", "`when` not at its block", "of no guard", "EACH or UPTO" };
+            char *tb = gen_with(f, NULL, 0, JGEN_ALL, why);
+            CHECK(!tb && strstr(why, bad[c]), "97 bad %d: refused (%s): got \"%s\"", c, bad[c], why);
+            free(tb);
+        } else if (c == 0) {
+            char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL);
+            int ok = 0;
+            for (int e = 0; e < 2; e++) {
+                char key[48]; snprintf(key, sizeof key, "%s 0", e ? "inv.keep" : "inv.entry");
+                const char *v = t ? vc_of(t, key) : "";
+                snprintf(w, sizeof w, "premise guard when : -1*%%v%d <= -1\n", bp->id);
+                if (strstr(v, w) && strstr(v, "goal -1*") && strstr(v, " <= -1\n")) ok++;
+            }
+            char key[48]; snprintf(key, sizeof key, "bb%d.%d divzero", b2->id, idx_of(b2, rm));
+            const char *v = t ? vc_of(t, key) : "";
+            snprintf(w, sizeof w, "claim bb%d guarded #0 : or { 1*%%v%d <= 0 | -1*", b1->id, bp->id);
+            CHECK(t && ok == 2 && strstr(v, w) && count(v, " guarded #0 : ") == 1, "97: owed on both edges under `when`, stated once as %s...:\n%s", w, t ? t : "");
+            free(t);
+        } else {                                             // m97(p, q): 100 / f97(p, q)
+            IrFunc *m = ir_func_new(&A, nm("m97"), u64t, IR_FUNC_PURE);
+            IrValue *mp = ir_add_param(m, u64t, nm("p")), *mq = ir_add_param(m, u64t, nm("q"));
+            IrInstr *call = ir_instr(m, IR_CALL, u64t, 2); call->aux.callee = nm("f97"); call->operands[0] = mp; call->operands[1] = mq; ir_emit(m->entry, call);
+            ir_set_ret(m->entry, ir_binop(m, m->entry, IR_UDIV, ir_const_int(m, m->entry, 100, u64t), call->result, u64t));
+            ir_finalize_cfg(m);
+            f->next = m; gen_mod = f;
+            char *t = gen_with(m, NULL, 0, JGEN_ALL, NULL);
+            CHECK(t && !strstr(t, "guarded"), "97 case 1: the caller states no cut-point claim:\n%s", t ? t : "");
+            free(t); gen_mod = NULL;
+        }
+        gen_gc = NULL; gen_ngc = 0;
+    }
+    printf("  a guarded cut-point claim: owed on its edges under `when`, stated where its block's claims are\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

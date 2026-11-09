@@ -863,10 +863,13 @@ int main(int argc, char **argv) {
         }
         JInt r; jg_int(&r, cl[c].rhs); printf(" <= "); jint_print(&r, stdout); printf("\n");
     }
-    // the guarded return claims (s7, s21): `# claim fn guarded: sum <= rhs where %k = v, when sum <= r`
+    // the guarded claims (s7, s21): `# claim fn guarded: sum <= rhs where %k = v, when sum <= r`, a
+    // cut-point one (s30) `# claim fn bbH guarded: ...`
     for (int32_t c = 0; show && c < F.ngc; c++) {
         const JGuardClaim *q = &F.gc[c];
-        printf("# claim %.*s guarded: ", (int)q->fn->name->length, q->fn->name->name);
+        printf("# claim %.*s ", (int)q->fn->name->length, q->fn->name->name);
+        if (q->cut) printf("bb%d ", (int)q->blk);
+        printf("guarded: ");
         for (int w = 0; w < 2; w++) {
             const int32_t *key = w ? q->when.key : q->key; const uint8_t *tk = w ? q->when.tk : q->tk;
             const __int128 *co = w ? q->when.coef : q->coef; const int16_t *fl = w ? q->when.fld : q->fld;

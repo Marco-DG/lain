@@ -2020,6 +2020,31 @@ static void jb_claims(JB *B, const JVer *v) {
             jb_or2(B, jb_str(B, "claim bb%lld #%lld upto", c->blk, ci, 0), cs, 1, 1);   // the finder keys on "upto"
         }
     }
+    // a guarded CUT-POINT claim about it (s30): `not a guard | not when | sum <= rhs`, each term as a
+    // claim's at its block; VC-wide only (a disjunct holds no disjunction), once a VC (gst -1)
+    for (int32_t gi = 0; gi < g->ngc && B->jS < 0 && !B->fail; gi++) {
+        const JGuardClaim *c = &g->gc[gi];
+        if (!c->cut || c->fn != g->f || c->blk != v->blk || B->gst[gi] == -1) continue;
+        bool about = false;
+        for (int k = 0; k < c->nt; k++) if (c->key[k] >= 0 && c->key[k] < g->nv && g->cell[c->key[k]] == v->cell) about = true;
+        if (!about) continue;
+        B->gst[gi] = -1;
+        const int32_t *row = g->instate + (size_t)c->blk * (size_t)g->ncells;
+        JCons cs[2 * JGUARD_MAXP + 2]; int n = 0; JLT t[JCLAIM_MAXT];
+        for (int k = 0; k < c->ng; k++) {
+            int32_t pv = jb_val(B, jg_value(g, c->gkey[k]));
+            JLT w[1];
+            w[0].var = pv; w[0].c = 1;  if (!jb_cons(B, w, 1, J_LE, c->gval[k] - 1, &cs[n++])) return;
+            w[0].var = pv; w[0].c = -1; if (!jb_cons(B, w, 1, J_LE, -c->gval[k] - 1, &cs[n++])) return;
+        }
+        if (c->when.nt) {                                         // not when: -w <= -r - 1
+            for (int k = 0; k < c->when.nt; k++) { t[k].c = -c->when.coef[k]; t[k].var = jb_cterm(B, c->when.key[k], c->when.tk[k], row, c->blk, 0); }
+            if (B->fail || !jb_cons(B, t, c->when.nt, J_LE, -c->when.rhs - 1, &cs[n++])) return;
+        }
+        for (int k = 0; k < c->nt; k++) { t[k].c = c->coef[k]; t[k].var = jb_cterm(B, c->key[k], c->tk[k], row, c->blk, 0); }
+        if (B->fail || !jb_cons(B, t, c->nt, J_LE, c->rhs, &cs[n++])) return;
+        jb_orn(B, jb_str(B, "claim bb%lld guarded #%lld", c->blk, gi, 0), cs, n);
+    }
 }
 // MAX_LEN(T) for a slice of type `st` (P2.4, D1 A3): ISIZE_MAX / sizeof(T), with sizeof(T) its
 // byte width for an integer element and 1 otherwise, which only weakens the bound. ONE function
@@ -2405,7 +2430,7 @@ static void jb_call_guarded(JB *B, IrInstr *d, IrFunc *h, int32_t cb, int32_t cx
     int32_t code = -3 - (cb * 65536 + cx);
     for (int32_t gi = only < 0 ? 0 : only; gi < (only < 0 ? g->ngc : only + 1) && !B->fail; gi++) {
         const JGuardClaim *c = &g->gc[gi];
-        if (c->fn != h || (B->jS < 0 && B->gst[gi] == code) || !d->result) continue;
+        if (c->cut || c->fn != h || (B->jS < 0 && B->gst[gi] == code) || !d->result) continue;
         int32_t x = jb_val(B, d->result);
         JLT u[JCLAIM_MAXT], wt[JCLAIM_MAXT]; int32_t ga[JGUARD_MAXP]; bool ok, lit = true, eq = true;
         int nu = 0, nw = 0; __int128 ur = c->rhs, wr = -(__int128)c->when.rhs - 1;   // `not when`: -w <= -r - 1
@@ -2455,7 +2480,7 @@ static bool jg_gsites(JG *g) {
                 if (!h || !jg_same_module(h, g->f)) continue;
                 for (int32_t gi = 0; gi < g->ngc; gi++) {
                     const JGuardClaim *c = &g->gc[gi];
-                    if (c->fn != h) continue;
+                    if (c->cut || c->fn != h) continue;
                     JGSite S; S.d = i; S.h = h; S.blk = b->id; S.idx = k; S.gi = gi; S.nv = 0;
                     for (int t = 0; t < c->nt + c->when.nt; t++) {
                         bool w = t >= c->nt; int q = w ? t - c->nt : t;
@@ -4501,6 +4526,7 @@ static JClaim jg_guard_as_claim(const JGuardClaim *c) {
     for (int k = 0; k < JCLAIM_MAXT; k++) { r.key[k] = c->key[k]; r.tk[k] = c->tk[k]; r.coef[k] = c->coef[k]; r.fld[k] = c->fld[k]; }
     return r;
 }
+static bool jg_guard_params_ok(JG *g, const JGuardClaim *c, const IrFunc *h);
 // A guarded return claim's own rules: a return claim's terms (the claim or its `when` about the
 // returned value or a POST term), on a function returning an integer; up to two guard parameters,
 // each an integer parameter of h named once, its constant in the parameter's type; and `when`, where
@@ -4513,6 +4539,11 @@ static bool jg_guard_claim_ok(JG *g, const JGuardClaim *c, const IrFunc *h) {
     if (!jg_is_int(h->ret_type)) return jg_fail(g, "a guarded return claim on a function returning no integer");
     if (c->when.nt && (c->when.blk != JCLAIM_RET || c->when.fn != c->fn)) return jg_fail(g, "a guarded claim's `when` not of its function's return");
     if (c->when.nt && !jg_ret_terms_ok(g, &c->when, h, false)) return false;
+    return jg_guard_params_ok(g, c, h);
+}
+// A guarded claim's guard parameters: up to two, each an integer parameter of h named once, its
+// constant in the parameter's type; one guard at least, or a `when`.
+static bool jg_guard_params_ok(JG *g, const JGuardClaim *c, const IrFunc *h) {
     if (c->ng < 0 || c->ng > JGUARD_MAXP || (c->ng == 0 && c->when.nt == 0)) return jg_fail(g, "a guarded claim of no guard, or of more than it may have");
     for (int k = 0; k < c->ng; k++) {
         for (int j = 0; j < k; j++) if (c->gkey[j] == c->gkey[k]) return jg_fail(g, "a guarded claim naming one parameter twice in its guard");
@@ -4526,11 +4557,27 @@ static bool jg_guard_claim_ok(JG *g, const JGuardClaim *c, const IrFunc *h) {
     }
     return true;
 }
+static bool jg_cut_claim_ok(JG *g, const JClaim *c, bool need_made);
+// A guarded CUT-POINT claim (s30): a cut-point claim at its block, no EACH or UPTO term in it or its
+// `when` (a cut-point claim's terms there, when.blk the block), its guards as a return claim's.
+static bool jg_guard_cut_ok(JG *g, const JGuardClaim *c) {
+    JClaim r; memset(&r, 0, sizeof r);
+    r.blk = c->blk; r.nt = c->nt; r.rhs = c->rhs; r.fn = c->fn;
+    for (int k = 0; k < JCLAIM_MAXT; k++) { r.key[k] = c->key[k]; r.tk[k] = c->tk[k]; r.coef[k] = c->coef[k]; }
+    for (int k = 0; k < c->nt && k < JCLAIM_MAXT; k++)
+        if (c->tk[k] == JTERM_EACH || c->tk[k] == JTERM_UPTO) return jg_fail(g, "a guarded cut-point claim of an EACH or UPTO term");
+    for (int k = 0; k < c->when.nt && k < JCLAIM_MAXT; k++)
+        if (c->when.tk[k] == JTERM_EACH || c->when.tk[k] == JTERM_UPTO) return jg_fail(g, "a guarded claim's `when` of an EACH or UPTO term");
+    if (!jg_cut_claim_ok(g, &r, true)) return false;
+    if (c->when.nt && (c->when.blk != c->blk || c->when.fn != c->fn)) return jg_fail(g, "a guarded cut-point claim's `when` not at its block");
+    if (c->when.nt && !jg_cut_claim_ok(g, &c->when, false)) return false;
+    return jg_guard_params_ok(g, c, c->fn);
+}
 static bool jg_claims_ok(JG *g) {
-    const __int128 big = (__int128)1 << 66;
     for (int32_t i = 0; i < g->ngc; i++) {                   // owed here, or a callee's contract
         const JGuardClaim *c = &g->gc[i];
         if (!c->fn) return jg_fail(g, "a guarded claim with no function");
+        if (c->cut) { if (c->fn == g->f && !jg_guard_cut_ok(g, c)) return false; continue; }   // another function's cut point: none of this one's
         if ((c->fn == g->f || jg_same_module(c->fn, g->f)) && !jg_guard_claim_ok(g, c, c->fn)) return false;
     }
     for (int32_t ci = 0; ci < g->ncl; ci++) {
@@ -4541,48 +4588,56 @@ static bool jg_claims_ok(JG *g) {
             continue;
         }
         if (!jg_mine(g, c)) continue;                        // another function's cut point
-        // a claim is owed on every edge into its block, so any reached block will do but the
-        // function's entry, which is entered with no edge; one with a fresh version is a join or
-        // a header (the `made` rule below)
-        if (c->blk < 0 || c->blk >= g->nb || !g->blk[c->blk] || g->rpoix[c->blk] < 0 || c->blk == g->f->entry->id)
-            return jg_fail(g, "a claim not at a block entered by edges only");
-        if (!jg_claim_shape(g, c->key, c->tk, NULL, c->nt, JCLAIM_MAXT)) return false;
-        if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
-        bool made = false;
-        int each = 0, upto = 0;
-        for (int k = 0; k < c->nt; k++) {
-            int32_t key = c->key[k];
-            if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
-            if (c->tk[k] == JTERM_MOD) return jg_fail(g, "a claim's MOD term (v1: a loop's ranking only)");
-            if (c->tk[k] == JTERM_EACH) {                    // one instance per element cell
-                int32_t ec[JELEM_MAXN], en = jg_each_cells(g, key, ec);
-                if (++each > 1) return jg_fail(g, "a claim of two EACH terms");
-                if (!en) return jg_fail(g, "a claim's EACH term is not a fixed array with an element cell");
-                for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && jg_made_at(g, c->blk, ec[q])) made = true;
-                continue;
-            }
-            if (c->tk[k] == JTERM_ENTRY) {                   // a cell's version on the loop's entry edge
-                if (key < 0 || key >= g->nv || g->cell[key] < 0 || !jg_is_int(g->cty[g->cell[key]])) return jg_fail(g, "a claim's ENTRY term is no integer cell");
-                if (!jg_loop_header(g, c->blk)) return jg_fail(g, "a claim's ENTRY term at a block that is no loop header");
-                if (jg_entry_pred(g, c->blk) < 0) return jg_fail(g, "a claim's ENTRY term at a loop entered by more than one edge");
-                if (!jg_entry_ok(g, c->blk, key)) return jg_fail(g, "a claim's ENTRY term of a cell with no version on the entry edge");
-                continue;                                    // fixed: no version the block makes
-            }
-            if (c->tk[k] == JTERM_HEAD) {                    // a cell's version as the trip began
-                if (!jg_head_ok(g, c->blk, key)) return jg_fail(g, "a claim's HEAD term of no integer cell with a version at an enclosing loop's header");
-                continue;                                    // fixed in the trip: no version the block makes
-            }
-            if (c->tk[k] == JTERM_UPTO) {                    // a value guarding each instance
-                if (++upto > 1) return jg_fail(g, "a claim of two UPTO terms");
-                if (c->coef[k] != 1) return jg_fail(g, "a claim's UPTO term of a coefficient other than 1");
-            }
-            if (!jg_term_ok(g, c->blk, key, c->tk[k] == JTERM_UPTO ? JTERM_VALUE : c->tk[k]))
-                return jg_fail(g, "a claim's term is not a cell or a value fixed at its block");
-            if (g->cell[key] >= 0 && jg_made_at(g, c->blk, g->cell[key])) made = true;
-        }
-        if (upto && !each) return jg_fail(g, "a claim's UPTO term without an EACH term");
-        if (!made) return jg_fail(g, "a claim about no version its block makes afresh");
+        if (!jg_cut_claim_ok(g, c, true)) return false;
     }
+    return true;
+}
+// A cut-point claim's terms at its block c->blk (a JClaim's, or a guarded cut-point claim's or its
+// `when`'s, s30): `made`, one of them a version the block makes afresh (a claim is stated where
+// such a version is described; a `when` need not be).
+static bool jg_cut_claim_ok(JG *g, const JClaim *c, bool need_made) {
+    const __int128 big = (__int128)1 << 66;
+    // a claim is owed on every edge into its block, so any reached block will do but the
+    // function's entry, which is entered with no edge; one with a fresh version is a join or
+    // a header (the `made` rule below)
+    if (c->blk < 0 || c->blk >= g->nb || !g->blk[c->blk] || g->rpoix[c->blk] < 0 || c->blk == g->f->entry->id)
+        return jg_fail(g, "a claim not at a block entered by edges only");
+    if (!jg_claim_shape(g, c->key, c->tk, NULL, c->nt, JCLAIM_MAXT)) return false;
+    if (c->rhs > big || c->rhs < -big) return jg_fail(g, "a claim's bound out of range");
+    bool made = false;
+    int each = 0, upto = 0;
+    for (int k = 0; k < c->nt; k++) {
+        int32_t key = c->key[k];
+        if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
+        if (c->tk[k] == JTERM_MOD) return jg_fail(g, "a claim's MOD term (v1: a loop's ranking only)");
+        if (c->tk[k] == JTERM_EACH) {                    // one instance per element cell
+            int32_t ec[JELEM_MAXN], en = jg_each_cells(g, key, ec);
+            if (++each > 1) return jg_fail(g, "a claim of two EACH terms");
+            if (!en) return jg_fail(g, "a claim's EACH term is not a fixed array with an element cell");
+            for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && jg_made_at(g, c->blk, ec[q])) made = true;
+            continue;
+        }
+        if (c->tk[k] == JTERM_ENTRY) {                   // a cell's version on the loop's entry edge
+            if (key < 0 || key >= g->nv || g->cell[key] < 0 || !jg_is_int(g->cty[g->cell[key]])) return jg_fail(g, "a claim's ENTRY term is no integer cell");
+            if (!jg_loop_header(g, c->blk)) return jg_fail(g, "a claim's ENTRY term at a block that is no loop header");
+            if (jg_entry_pred(g, c->blk) < 0) return jg_fail(g, "a claim's ENTRY term at a loop entered by more than one edge");
+            if (!jg_entry_ok(g, c->blk, key)) return jg_fail(g, "a claim's ENTRY term of a cell with no version on the entry edge");
+            continue;                                    // fixed: no version the block makes
+        }
+        if (c->tk[k] == JTERM_HEAD) {                    // a cell's version as the trip began
+            if (!jg_head_ok(g, c->blk, key)) return jg_fail(g, "a claim's HEAD term of no integer cell with a version at an enclosing loop's header");
+            continue;                                    // fixed in the trip: no version the block makes
+        }
+        if (c->tk[k] == JTERM_UPTO) {                    // a value guarding each instance
+            if (++upto > 1) return jg_fail(g, "a claim of two UPTO terms");
+            if (c->coef[k] != 1) return jg_fail(g, "a claim's UPTO term of a coefficient other than 1");
+        }
+        if (!jg_term_ok(g, c->blk, key, c->tk[k] == JTERM_UPTO ? JTERM_VALUE : c->tk[k]))
+            return jg_fail(g, "a claim's term is not a cell or a value fixed at its block");
+        if (g->cell[key] >= 0 && jg_made_at(g, c->blk, g->cell[key])) made = true;
+    }
+    if (upto && !each) return jg_fail(g, "a claim's UPTO term without an EACH term");
+    if (need_made && !made) return jg_fail(g, "a claim about no version its block makes afresh");
     return true;
 }
 // One term of a return claim (or of a guard's `when`) as block b returns: the returned term rv (a
@@ -4666,9 +4721,44 @@ static bool jg_post_obligations(JG *g, JObls *L, const JClaim *c, const JGuardCl
 static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
     // a guarded return claim's `post`, ordinal (ncl + i) * 1000 (past every claim's), index ncl + i
     for (int32_t i = 0; i < g->ngc && only < 0; i++) {
-        if (g->gc[i].fn != g->f) continue;
+        if (g->gc[i].fn != g->f || g->gc[i].cut) continue;
         JClaim r = jg_guard_as_claim(&g->gc[i]);
         if (!jg_post_obligations(g, L, &r, &g->gc[i], (g->ncl + i) * 1000, g->ncl + i)) return false;
+    }
+    // a guarded CUT-POINT claim's (s30): on every edge into its block as a claim's, its guards and its
+    // `when` (about the versions the edge ends with, as the claim is) premises; the same ordinal
+    for (int32_t i = 0; i < g->ngc; i++) {
+        const JGuardClaim *c = &g->gc[i];
+        if (!c->cut || c->fn != g->f || only == JGEN_POST || (only >= 0 && c->blk != only)) continue;
+        IrBlock *H = g->blk[c->blk];
+        for (IrEdge *e = H->preds; e; e = e->next) {
+            IrBlock *P = e->block;
+            if (g->rpoix[P->id] < 0) continue;
+            bool again = false;
+            for (IrEdge *e2 = H->preds; e2 != e; e2 = e2->next) if (e2->block == P) again = true;
+            if (again) continue;
+            int32_t n = 0;
+            for (IrInstr *ii = P->instrs; ii; ii = ii->next) n++;
+            const int32_t *row = g->outstate + (size_t)P->id * (size_t)g->ncells;
+            JB B = jb_begin(g, P->id, n, -1);
+            if (B.fail) return jg_fail(g, "out of memory building a VC");   // its arrays are not there
+            B.to = H->id;
+            for (int k = 0; k < c->ng; k++) {
+                JLT w[1]; w[0].var = jb_val(&B, jg_value(g, c->gkey[k])); w[0].c = 1;
+                jb_atom(&B, jb_str(&B, "premise guard %%v%lld", c->gkey[k], 0, 0), w, 1, J_EQ, c->gval[k]);
+            }
+            JLT t[JCLAIM_MAXT]; JCons goal;
+            if (c->when.nt) {
+                for (int k = 0; k < c->when.nt; k++) { t[k].c = c->when.coef[k]; t[k].var = jb_cterm(&B, c->when.key[k], c->when.tk[k], row, c->blk, 0); }
+                if (!B.fail) jb_atom(&B, "premise guard when", t, c->when.nt, J_LE, c->when.rhs);
+            }
+            for (int k = 0; k < c->nt; k++) { t[k].c = c->coef[k]; t[k].var = jb_cterm(&B, c->key[k], c->tk[k], row, c->blk, 0); }
+            if (B.fail || !jb_cons(&B, t, c->nt, J_LE, c->rhs, &goal)) return jg_fail(g, "out of memory building a claim");
+            const char *kind = jg_forward_join(g, H->id) ? "hull" : g->rpoix[P->id] < g->rpoix[H->id] ? "inv.entry" : "inv.keep";
+            JObl *o = jg_push(g, L);
+            if (!o || !jb_finish(&B, NULL, kind, (g->ncl + i) * 1000, &goal, o)) return jg_fail(g, "out of memory building a VC");
+            o->to = H; o->claim = g->ncl + i;
+        }
     }
     for (int32_t ci = 0; ci < g->ncl; ci++) {
         const JClaim *c = &g->cl[ci];
