@@ -2398,12 +2398,54 @@ static int fd_sub_partners(IrFunc *f, int32_t key, int32_t *out, const IrType **
         }
     return n;
 }
+// Whether cell `key` is a slot the lowering made for itself (an alloca with no source name) whose
+// version at header H is never read: every path from H stores the slot before it loads it, and
+// its address goes nowhere but those loads and stores. A checked `x +? a else panic(...)` keeps
+// its value in one, written and read back on the same trip, so at a header it is the last trip's,
+// which nothing reads. Paired with every other version there, such slots only cost: dijkstra1's
+// trap port has six (its guard's two, its body's three, its first loop's one), and its second
+// loop's 174 candidates ran the generator's region out ("out of memory building a VC") in every
+// round after the first, so that header kept only round 0's bounds. A candidate filter only.
+static bool fd_dead_temp(IrFunc *f, int32_t H, int32_t key) {
+    IrValue *a = fd_value_by_id(f, key);
+    IrInstr *ad = a ? fd_def_in(f, a) : NULL;
+    if (!ad || ad->op != IR_ALLOCA || a->src_name || f->next_block_id <= 0) return false;
+    for (IrBlock *b = f->blocks; b; b = b->next)               // the address: loads and stores only
+        for (IrInstr *i = b->instrs; i; i = i->next)
+            for (int o = 0; o < i->n_operands; o++)
+                if (i->operands[o] == a && !((i->op == IR_LOAD || i->op == IR_STORE) && o == 0)) return false;
+    int32_t nb = f->next_block_id;
+    IrBlock **at = calloc((size_t)nb, sizeof *at), **stk = malloc(sizeof *stk * (size_t)nb);
+    uint8_t *seen = calloc((size_t)nb, 1);
+    bool dead = at && stk && seen;
+    for (IrBlock *b = f->blocks; dead && b; b = b->next) if (b->id >= 0 && b->id < nb) at[b->id] = b;
+    int32_t sp = 0;
+    if (dead && H >= 0 && H < nb && at[H]) { stk[sp++] = at[H]; seen[H] = 1; } else dead = false;
+    while (dead && sp > 0) {
+        IrBlock *b = stk[--sp];
+        bool killed = false;
+        for (IrInstr *i = b->instrs; i && !killed && dead; i = i->next) {
+            if (i->n_operands < 1 || i->operands[0] != a) continue;
+            if (i->op == IR_LOAD) dead = false;                 // read before any store on this path
+            else killed = true;                                 // a store: this path ends here
+        }
+        if (killed || !dead) continue;
+        IrBlock *nx[2] = { b->term.a, b->term.kind == IR_TERM_BR_COND ? b->term.b : NULL };
+        if (b->term.kind == IR_TERM_RET || b->term.kind == IR_TERM_UNREACHABLE) nx[0] = NULL;
+        for (int k = 0; k < 2; k++)
+            if (nx[k] && nx[k]->id >= 0 && nx[k]->id < nb && !seen[nx[k]->id]) { seen[nx[k]->id] = 1; stk[sp++] = nx[k]; }
+        for (IrSwitchCase *sc = b->term.kind == IR_TERM_SWITCH ? b->term.cases : NULL; sc; sc = sc->next)
+            if (sc->target && sc->target->id >= 0 && sc->target->id < nb && !seen[sc->target->id]) { seen[sc->target->id] = 1; stk[sp++] = sc->target; }
+    }
+    free(at); free(stk); free(seen);
+    return dead;
+}
 static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, const JSlot *sl, int32_t i, int32_t j,
                              JCand **cd, int32_t *ncd, int32_t *ccd, char *err, size_t errcap) {
     int32_t H = sl[i].blk, nt = 0;
     bool head = sl[i].head;
     JSlot *tm = NULL;
-    uint8_t *cst = NULL;                                     // terms that are one constant (fd_const_cell)
+    uint8_t *cst = NULL;                                     // terms that are one constant (fd_const_cell) or dead here (fd_dead_temp)
     uint8_t *inl = NULL;                                     // the header's loop, by block id
     int32_t nbk = 0;
     *ncd = 0;
@@ -2414,7 +2456,7 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
         memcpy(tm, t0, sizeof *tm * (size_t)nt);
     }
     if (!(cst = calloc((size_t)(nt ? nt : 1), 1))) goto oom;
-    for (int32_t t = 0; head && t < nt; t++) cst[t] = fd_const_cell(F, f, tm[t].key);
+    for (int32_t t = 0; head && t < nt; t++) cst[t] = fd_const_cell(F, f, tm[t].key) || fd_dead_temp(f, H, tm[t].key);
     for (int32_t k = i; k < j; k++) {
         if (fd_elem_covered(N, f, H, sl[k].key, as, nv)) continue;
         if (!cand_push(cd, ncd, ccd, H, sl[k].key, 1, -1, 0, sl[k].type, NULL) ||
@@ -4515,7 +4557,9 @@ static bool fd_fn_candidates(JFinder *F, IrFunc *f, FdNest *N, const JClaim *as,
     if (!fd_nest_build(f, N)) return false;
     if (F->gen->slots(F->gen->ctx, f, &s0, &ns, err, sizeof err) && ns > 0) {
         if (!(sl = malloc(sizeof *sl * (size_t)ns))) return false;
-        memcpy(sl, s0, sizeof *sl * (size_t)ns);
+        int32_t m = 0;                                       // a header's dead temporaries: no pairs
+        for (int32_t k = 0; k < ns; k++) if (!(s0[k].head && fd_dead_temp(f, s0[k].blk, s0[k].key))) sl[m++] = s0[k];
+        ns = m;
     }
     // the cut points, block by block, then the returns; each under the verified claims
     for (int32_t i = 0, j; i <= ns; i = j) {
