@@ -5481,6 +5481,83 @@ int main(void) {
         free(t);
     }
     printf("  a wrapping op on a join's path its stores are not made of: one case, its k fresh\n");
+    // 96. RELATIONAL facts of a product of two u64 variables (s29, PE.15's B4), whose corners leave
+    // the type. (0) a SQUARE compared to a constant, sieve's `while p * p <= 1000 { p = p + 1 }`: its
+    // narrowing owed (not outside), and in its VCs x*x >= 0, the tangents at 31 and 32 (-x*x + 62p <=
+    // 961, -x*x + 64p <= 1024) and the chords `p >= 33 | x*x - 32p <= 0` (p >= 0 by its type: no
+    // third case); (1) the same square compared to nothing: outside, as before; (2) lcm's `if q > MAX
+    // / b { return }; q * b`: owed, `q >= d + 1 | q*b <= MAX` with d the quotient, the product >= 0;
+    // (3) that quotient alone: `a <= b - 1 , d <= 0 | a >= b , d >= 1` (div.unit); (4) the quotient on
+    // one arm of a branch, the product past the join: it does not dominate the product, so no bound
+    // (outside); (5) a product of two i64 factors, then p + 1: p is not stated >= 0
+    for (int c = 0; c < 6; c++) {
+        IrFunc *f = ir_func_new(&A, nm("rel96"), u64t, IR_FUNC_PURE);
+        IrValue *a = ir_add_param(f, u64t, nm("a")), *b = ir_add_param(f, u64t, nm("b"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        char *t = NULL, w[160];
+        if (c == 4) {                                        // if a > 7 { d = MAX / b }; a * b
+            IrValue *mx = ir_const_int(f, b0, -1, u64t);
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_UGT, a, ir_const_int(f, b0, 7, u64t)), b1, b2);
+            (void)ir_binop(f, b1, IR_UDIV, mx, b, u64t); ir_set_br(b1, b2);
+            ir_set_ret(b2, ir_binop(f, b2, IR_MUL, a, b, u64t)); (void)b3;
+            t = gen_text(f);
+            CHECK(t && strstr(t, "outside atom.mul") && !strstr(t, "mul.quot"), "96 case 4: outside, no quotient bound:\n%s", t ? t : "");
+            free(t); continue;
+        }
+        if (c == 5) {                                        // i64: p = x * y, then p + 1
+            IrFunc *g5 = ir_func_new(&A, nm("rel96s"), i64t, IR_FUNC_PURE);
+            IrValue *x5 = ir_add_param(g5, i64t, nm("x")), *y5 = ir_add_param(g5, i64t, nm("y"));
+            IrValue *pp = ir_binop(g5, g5->entry, IR_MUL, x5, y5, i64t);
+            IrValue *r5 = ir_binop(g5, g5->entry, IR_ADD, pp, ir_const_int(g5, g5->entry, 1, i64t), i64t);
+            ir_set_ret(g5->entry, r5);
+            t = gen_text(g5);
+            char key[48]; snprintf(key, sizeof key, "bb%d.%d narrow.hi", g5->entry->id, idx_of(g5->entry, r5));
+            const char *v = t ? vc_of(t, key) : "";
+            CHECK(*v && strstr(v, "mul.sign") && !strstr(v, "mul.nonneg"), "96 case 5: no nonneg for signed factors:\n%s", v);
+            free(t); continue;
+        }
+        if (c <= 1) {
+            IrValue *pc = ir_alloca(f, b0, u64t);
+            ir_store(f, b0, pc, a); ir_set_br(b0, b1);
+            IrValue *sq = ir_binop(f, b1, IR_MUL, ir_load(f, b1, pc, u64t), ir_load(f, b1, pc, u64t), u64t);
+            if (c == 0) ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULE, sq, ir_const_int(f, b1, 1000, u64t)), b2, b3);
+            else ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_ULE, ir_load(f, b1, pc, u64t), b), b2, b3);
+            ir_store(f, b2, pc, ir_binop(f, b2, IR_ADD, ir_load(f, b2, pc, u64t), ir_const_int(f, b2, 1, u64t), u64t)); ir_set_br(b2, b1);
+            ir_set_ret(b3, ir_const_int(f, b3, 0, u64t));
+            t = gen_text(f);
+            if (c == 1) { CHECK(t && strstr(t, "outside atom.mul") && !strstr(t, "mul.sq"), "96 case 1: outside:\n%s", t ? t : ""); free(t); continue; }
+            char key[48]; snprintf(key, sizeof key, "bb%d.%d narrow.hi", b1->id, idx_of(b1, sq));
+            const char *v = t ? vc_of(t, key) : "";
+            char pv[48]; snprintf(pv, sizeof pv, "%%s%d@head.bb%d", pc->id, b1->id);
+            snprintf(w, sizeof w, "def %%v%d mul.sq : -1*%%v%d + 64*%s <= 1024\n", sq->id, sq->id, pv);
+            char w2[160]; snprintf(w2, sizeof w2, "def %%v%d mul.chord : or { -1*%s <= -33 | 1*%%v%d + -32*%s <= 0 }\n", sq->id, pv, sq->id, pv);
+            char w3[96]; snprintf(w3, sizeof w3, "def %%v%d mul.sq : -1*%%v%d <= 0\n", sq->id, sq->id);
+            CHECK(t && !strstr(t, "outside atom.mul") && strstr(v, w) && strstr(v, w2) && strstr(v, w3) && strstr(v, "+ 62*"),
+                  "96 case 0: %s, %s, %s:\n%s", w, w2, w3, v);
+        } else {
+            IrValue *mx = ir_const_int(f, b0, -1, u64t);
+            IrValue *qd = ir_binop(f, b0, IR_UDIV, mx, b, u64t);
+            ir_set_br_cond(b0, ir_icmp(f, b0, IR_CMP_UGT, a, qd), b2, b1);
+            ir_set_ret(b2, ir_const_int(f, b2, 0, u64t));
+            IrValue *pr = c == 2 ? ir_binop(f, b1, IR_MUL, a, b, u64t) : ir_binop(f, b1, IR_UDIV, ir_const_int(f, b1, 100, u64t), qd, u64t);
+            ir_set_ret(b1, pr);
+            (void)b3;
+            t = gen_text(f);
+            char key[48]; snprintf(key, sizeof key, "bb%d.%d %s", b1->id, idx_of(b1, pr), c == 2 ? "narrow.hi" : "divzero");
+            const char *v = t ? vc_of(t, key) : "";
+            if (c == 2) {
+                snprintf(w, sizeof w, "def %%v%d mul.quot : or { -1*%%v%d + 1*%%v%d <= -1 | 1*%%v%d + -1*%%v%d <= 0 }\n", pr->id, a->id, qd->id, pr->id, mx->id);
+                char w3[96]; snprintf(w3, sizeof w3, "def %%v%d mul.nonneg : -1*%%v%d <= 0\n", pr->id, pr->id);
+                CHECK(t && !strstr(t, "outside atom.mul") && strstr(v, w) && strstr(t, w3), "96 case 2: %s:\n%s", w, v);
+            } else {
+                snprintf(w, sizeof w, "def %%v%d div.unit : or { 1*%%v%d + -1*%%v%d <= -1 , 1*%%v%d <= 0 | -1*%%v%d + 1*%%v%d <= 0 , -1*%%v%d <= -1 }\n",
+                         qd->id, mx->id, b->id, qd->id, mx->id, b->id, qd->id);
+                CHECK(strstr(v, w), "96 case 3: %s:\n%s", w, v);
+            }
+        }
+        free(t);
+    }
+    printf("  a product of two variables: a square's tangents and chords, a quotient's bound, a quotient >= 1\n");
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

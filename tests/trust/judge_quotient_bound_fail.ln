@@ -1,0 +1,12 @@
+// EXPECT: [E086]
+// The twin of judge_quotient_bound_pass.ln: the guard divides by c, not by b, so it bounds q * b by
+// nothing (c = 1 lets q = 2^32 through, and with b = 2^32 the product is 2^64, one past u64).
+func scaled(q u64, b u64, c u64) u64 {
+    if c == 0 { return 0 }
+    if q > 18446744073709551615 / c { return 0 }
+    return q * b
+}
+func main() i32 {
+    if scaled(2, 3, 4) != 6 { return 1 }
+    return 0
+}

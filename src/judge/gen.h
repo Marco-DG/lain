@@ -247,6 +247,7 @@ typedef struct {
     uint8_t *wneed;                // by value id: a path's stored values and what they are made of (jb_join_wraps)
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
     struct JGSite *gs; int32_t ngs; bool gsdone;   // s21: their calls' PRE and POST versions (jg_gsites)
+    int32_t *sqkey; __int128 *sqpt; int32_t nsq; bool sqdone;   // s29: squares' candidate points (jg_sq_points)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases, or an AND whose hull is two
                                    // cases (s16), (2), none (1), not asked yet (0)
 } JG;
@@ -2490,6 +2491,122 @@ static void jb_ver_guarded(JB *B, int32_t ver) {
             if (S->ver[k] == ver) { jb_call_guarded(B, S->d, S->h, S->blk, S->idx, S->gi); break; }
     }
 }
+// RELATIONAL facts of a product of two variables (s29, PE.15's B4 from the real programs), where its
+// hull is no help (its factors' ranges are their types'):
+// - a SQUARE x*x (both operands one value, jg_same_value): its base's identity, the cell a load of it
+//   reads, else the value; and its candidate points, isqrt(K) and isqrt(K) + 1 of each constant
+//   K >= 0 a square of that base is compared to (sieve's `p * p <= 1000`: 31 and 32), at most JSQ_MAX
+//   in a function, found once;
+// - a product q*b beside a QUOTIENT d = a / b by the same b (jg_same_value), the division dominating
+//   the product, a >= 0 and b >= 0 by their static ranges (gcd's lcm: `if q > MAX / b { return }`,
+//   then `q * b`).
+enum { JSQ_MAX = 16 };
+static int32_t jg_sq_key(JG *g, IrValue *v) {
+    if (v->id >= 0 && v->id < g->nv && g->loadver[v->id] >= 0) return g->ver[g->loadver[v->id]].cell;
+    return -(v->id + 2);
+}
+static IrValue *jg_sq_base(JG *g, const IrInstr *d) {
+    if (!d || d->op != IR_MUL || d->n_operands < 2 || !jg_is_int(d->operands[0]->type)) return NULL;
+    return jg_same_value(g, d->operands[0], d->operands[1]) ? d->operands[0] : NULL;
+}
+static __int128 jg_isqrt(__int128 k) {                         // floor(sqrt(k)), k in [0, 2^62]
+    __int128 lo = 0, hi = (__int128)1 << 31;
+    while (lo < hi) { __int128 m = (lo + hi + 1) / 2; if (m * m <= k) lo = m; else hi = m - 1; }
+    return lo;
+}
+static bool jg_sq_points(JG *g) {
+    if (g->sqdone) return g->sqkey != NULL;
+    g->sqdone = true; g->nsq = 0;
+    if (!(g->sqkey = JG_NEW(g, int32_t, JSQ_MAX)) || !(g->sqpt = JG_NEW(g, __int128, JSQ_MAX))) { g->sqkey = NULL; return false; }
+    for (int32_t r = 0; r < g->nrpo; r++)
+        for (IrInstr *i = g->blk[g->rpo[r]]->instrs; i; i = i->next) {
+            if (i->op != IR_ICMP || i->n_operands < 2) continue;
+            for (int k = 0; k < 2; k++) {
+                IrValue *sv = i->operands[k]; __int128 K;
+                IrInstr *sd = sv && sv->id >= 0 && sv->id < g->nv ? g->def[sv->id] : NULL;
+                IrValue *base = jg_sq_base(g, sd);
+                if (!base || !jg_const_of(g, i->operands[1 - k], &K) || K < 0 || K > ((__int128)1 << 62)) continue;
+                int32_t key = jg_sq_key(g, base);
+                for (int w = 0; w < 2; w++) {
+                    __int128 c = jg_isqrt(K) + w;
+                    bool have = false;
+                    for (int32_t q = 0; q < g->nsq && !have; q++) have = g->sqkey[q] == key && g->sqpt[q] == c;
+                    if (!have && g->nsq < JSQ_MAX) { g->sqkey[g->nsq] = key; g->sqpt[g->nsq] = c; g->nsq++; }
+                }
+            }
+        }
+    return true;
+}
+static bool jg_instr_dominates(JG *g, IrInstr *e, IrInstr *d) {
+    int32_t eb, ei, db, di;
+    if (!jg_instr_at(g, e, &eb, &ei) || !jg_instr_at(g, d, &db, &di)) return false;
+    return eb == db ? ei < di : jg_dominates(g, eb, db);
+}
+static bool jg_mul_quot(JG *g, IrInstr *d, IrValue **q, IrInstr **e) {
+    if (!d || d->op != IR_MUL || d->n_operands < 2) return false;
+    for (int k = 0; k < 2; k++) {
+        IrValue *b = d->operands[k]; JRange rb, ra;
+        if (!jg_is_int(b->type) || !jg_is_int(d->operands[1 - k]->type) || !jg_static_range(g, b, &rb, 0) || rb.lo < 0) continue;
+        for (int32_t r = 0; r < g->nrpo; r++)
+            for (IrInstr *i = g->blk[g->rpo[r]]->instrs; i; i = i->next) {
+                if ((i->op != IR_UDIV && i->op != IR_SDIV) || i->n_operands < 2 || !i->result || !jg_is_int(i->result->type) ||
+                    !jg_same_value(g, i->operands[1], b) || !jg_static_range(g, i->operands[0], &ra, 0) || ra.lo < 0 ||
+                    (i->op == IR_SDIV && i->wrap != IR_WRAP_CHECK) || !jg_instr_dominates(g, i, d)) continue;
+                *q = d->operands[1 - k]; *e = i;
+                return true;
+            }
+    }
+    return false;
+}
+// Has a product of two variables a relational fact (jb_mul_rel): a square with candidate points,
+// or a quotient by one of its factors? Then its narrowing is owed although its corners leave its type.
+static bool jg_mul_rel(JG *g, IrInstr *d) {
+    IrValue *base = jg_sq_base(g, d), *q; IrInstr *e;
+    if (base) {
+        if (!jg_sq_points(g)) return false;
+        int32_t key = jg_sq_key(g, base);
+        for (int32_t k = 0; k < g->nsq; k++) if (g->sqkey[k] == key) return true;
+        return false;
+    }
+    return jg_mul_quot(g, d, &q, &e);
+}
+// The facts: a square x*x is >= 0, and at each candidate point c above its tangent, x*x >= 2c*x - c*c
+// ((x - c)^2 >= 0, for every x), and, for x in [0, c], below its chord, x*x <= c*x (x(x - c) <= 0):
+// `x <= -1 | x >= c + 1 | x*x <= c*x` (the first case left out where x >= 0 by its type); the tangent
+// at 32 and p*p <= 1000 give 64p - 1024 <= 1000, p <= 31. A product q*b and its quotient d = a / b:
+// `q >= d + 1 | q*b <= a`, since q <= d gives q*b <= d*b <= a (b >= 0; d*b <= a as a >= 0 and the
+// division by b >= 1 floors). Disjunctions VC-wide only, as every product's.
+static void jb_mul_rel(JB *B, int32_t x, IrInstr *d, int32_t id) {
+    JG *g = B->g;
+    IrValue *base = jg_sq_base(g, d), *q; IrInstr *e;
+    if (base) {
+        if (!jg_sq_points(g)) return;
+        const char *o = jb_str(B, "def %%v%lld mul.sq", id, 0, 0);
+        int32_t a = jb_val(B, base), key = jg_sq_key(g, base);
+        JRange ra;
+        bool nn = jg_uns(base->type) || (jg_static_range(g, base, &ra, 0) && ra.lo >= 0);
+        JLT t[2]; t[0].var = x; t[0].c = -1; jb_atom(B, o, t, 1, J_LE, 0);              // x*x >= 0
+        for (int32_t k = 0; k < g->nsq && !B->fail; k++) {
+            if (g->sqkey[k] != key) continue;
+            __int128 c = g->sqpt[k];
+            t[0].var = x; t[0].c = -1; t[1].var = a; t[1].c = 2 * c;
+            jb_atom(B, o, t, 2, J_LE, c * c);                                            // -x*x + 2c*x <= c*c
+            if (B->jS >= 0) continue;
+            JCons cs[3]; int n = 0; JLT u[2];
+            if (!nn) { u[0].var = a; u[0].c = 1; if (!jb_cons(B, u, 1, J_LE, -1, &cs[n++])) return; }        // x <= -1
+            u[0].var = a; u[0].c = -1; if (!jb_cons(B, u, 1, J_LE, -(c + 1), &cs[n++])) return;              // x >= c + 1
+            u[0].var = x; u[0].c = 1; u[1].var = a; u[1].c = -c; if (!jb_cons(B, u, 2, J_LE, 0, &cs[n++])) return;   // x*x <= c*x
+            jb_orn(B, jb_str(B, "def %%v%lld mul.chord", id, 0, 0), cs, n);
+        }
+        return;
+    }
+    if (B->jS >= 0 || !jg_mul_quot(g, d, &q, &e)) return;
+    int32_t qv = jb_val(B, q), dv = jb_val(B, e->result), av = jb_val(B, e->operands[0]);
+    JCons cs[2]; JLT u[2];
+    u[0].var = qv; u[0].c = -1; u[1].var = dv; u[1].c = 1; if (!jb_cons(B, u, 2, J_LE, -1, &cs[0])) return;   // q >= d + 1
+    u[0].var = x; u[0].c = 1; u[1].var = av; u[1].c = -1; if (!jb_cons(B, u, 2, J_LE, 0, &cs[1])) return;      // q*b <= a
+    jb_orn(B, jb_str(B, "def %%v%lld mul.quot", id, 0, 0), cs, 2);
+}
 static void jb_state(JB *B, int32_t x) {
     JG *g = B->g;
     if (B->kind[x] == 1) {                                     // a cell's version
@@ -2693,6 +2810,13 @@ static void jb_state(JB *B, int32_t x) {
             JRange h;                                          // two variables: between the corners
             if (!lin && jg_mul_hull(g, d, &h)) jb_range(B, x, &h, jb_str(B, "def %%v%lld mul.hull", id, 0, 0));
             if (!lin) jb_mul_mono(B, x, d, id);
+            if (!lin) jb_mul_rel(B, x, d, id);                // a square's, or a quotient bound's (s29)
+            // two factors >= 0 by their static ranges (u64 * u64): the product is >= 0 (s29: the
+            // hull says it where the corners fit, and nothing did where they leave the type)
+            JRange r0, r1;
+            if (!lin && jg_static_range(g, d->operands[0], &r0, 0) && r0.lo >= 0 && jg_static_range(g, d->operands[1], &r1, 0) && r1.lo >= 0) {
+                t[0].var = x; t[0].c = -1; jb_atom(B, jb_str(B, "def %%v%lld mul.nonneg", id, 0, 0), t, 1, J_LE, 0);
+            }
             // two variables of an exact product: where both are >= 1, it is at least each (p - b =
             // b(a - 1) >= 0), so `fact(n) = n *? fact(n - 1)` keeps fact >= 1 (s6). Two disjunctions of
             // three, VC-wide only: a disjunct holds no disjunction
@@ -2795,6 +2919,16 @@ static void jb_state(JB *B, int32_t x) {
                 // with 0 <= r <= y - 1 gives lo*q <= x <= hi*q + hi - 1
                 if (ra.lo < 0) break;
                 if (!dv) { t[0].var = x; t[0].c = 1; t[1].var = xv; t[1].c = -1; jb_atom(B, o, t, 2, J_LE, 0); break; }
+                // and whether it is 0 (s29, B4: isqrt's `n / x` >= 1 where 1 <= x <= n), a divisor >= 0
+                // being >= 1 where it completes: `x <= y - 1 , q <= 0 | x >= y , q >= 1`, VC-wide only
+                if (rb.lo >= 0 && B->jS < 0) {
+                    JCons cs[4]; JLT u[2]; bool ok = true;
+                    u[0].var = xv; u[0].c = 1; u[1].var = yv; u[1].c = -1; ok = ok && jb_cons(B, u, 2, J_LE, -1, &cs[0]);
+                    u[0].var = x; u[0].c = 1; ok = ok && jb_cons(B, u, 1, J_LE, 0, &cs[1]);
+                    u[0].var = xv; u[0].c = -1; u[1].var = yv; u[1].c = 1; ok = ok && jb_cons(B, u, 2, J_LE, 0, &cs[2]);
+                    u[0].var = x; u[0].c = -1; ok = ok && jb_cons(B, u, 1, J_LE, -1, &cs[3]);
+                    if (ok) jb_or2(B, jb_str(B, "def %%v%lld div.unit", id, 0, 0), cs, 2, 2);
+                }
                 __int128 lo = rb.lo == 0 ? 1 : rb.lo;
                 if (lo < 1) break;
                 t[0].var = x; t[0].c = lo; t[1].var = xv; t[1].c = -1; jb_atom(B, o, t, 2, J_LE, 0);
@@ -4086,9 +4220,11 @@ static bool jg_obligations(JG *g, JObls *L) {
                         __int128 kc;                           // as jb states the product: one constant factor
                         bool c0 = jg_const_of(g, i->operands[0], &kc), c1 = jg_const_of(g, i->operands[1], &kc);
                         // two variables: owed where the corners of their static ranges lie in the type
-                        // (its narrowing then follows from them), else outside
+                        // (its narrowing then follows from them), or where a relational fact may bound
+                        // it (jg_mul_rel, s29: a square compared to a constant, a quotient bound), else
+                        // outside
                         JRange h;
-                        if (!c0 && !c1 && (!jg_mul_hull(g, i, &h) || h.lo < rr.lo || h.hi > rr.hi)) {
+                        if (!c0 && !c1 && (!jg_mul_hull(g, i, &h) || h.lo < rr.lo || h.hi > rr.hi) && !jg_mul_rel(g, i)) {
                             if (!jg_outside(g, L, i, b->id, k, "narrow.lo", "atom.mul: a product of two variables whose corners leave its type")) return false;
                             break;
                         }

@@ -2016,6 +2016,10 @@ at=nonnull 8
 ### tests/trust/judge_one_case_pass.ln
 rc=0
 out=
+### tests/trust/judge_quotient_bound_pass.ln
+rc=0
+out=
+at=const 4
 ### tests/trust/judge_signed_division_pass.ln
 rc=0
 out=
@@ -2558,6 +2562,10 @@ out=
 at=const 6
 ty=Slice_i32 scalar
 ty=W struct
+### tests/trust/square_bound_pass.ln
+rc=0
+out=
+at=const 2
 ### tests/trust/string_sentinel_terminated_pass.ln
 rc=0
 out=[hello]

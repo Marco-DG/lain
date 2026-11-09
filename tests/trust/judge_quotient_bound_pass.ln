@@ -1,0 +1,20 @@
+// The proof engine's judge relates a product, or a quotient, to the quotient that guards it (PE.15's
+// B4, the real programs' gcd.ln and isqrt.ln). `if q > MAX / b { return }`, then `q * b`: q <= MAX / b
+// gives q * b <= MAX (lcm's overflow check); before, the product of two u64 variables was outside,
+// its corners past the type. And `a / b` is at least 1 where a >= b >= 1, so `100 / (a / b)` divides
+// by no zero (Newton's `n / x` for 1 <= x <= n). judge_gate requires every VC of this program
+// implied, with and without the finder.
+func scaled(q u64, b u64) u64 {
+    if b == 0 { return 0 }
+    if q > 18446744073709551615 / b { return 0 }
+    return q * b
+}
+func ratio(a u64, b u64) u64 {
+    if b == 0 or a < b { return 0 }
+    return 100 / (a / b)
+}
+func main() i32 {
+    if scaled(6, 7) != 42 or scaled(18446744073709551615, 2) != 0 or scaled(4294967296, 4294967295) != 18446744069414584320 { return 1 }
+    if ratio(10, 3) != 33 or ratio(3, 10) != 0 or ratio(7, 7) != 100 { return 2 }
+    return 0
+}

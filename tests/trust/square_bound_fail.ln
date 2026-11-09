@@ -1,0 +1,13 @@
+// EXPECT: [E086]
+// The twin of square_bound_pass.ln: compared to 2^64 - 1, the square bounds p only by 2^32, and at
+// p = 2^32 (below the loop's other bound) the product p * p is 2^64, one past u64: refused.
+func count_squares() usize {
+    var p usize = 2
+    var n usize = 0
+    while p < 5000000000 and p * p <= 18446744073709551615 {
+        n = n + 1
+        p = p + 1
+    }
+    return n
+}
+func main() i32 { return 0 }

@@ -1,0 +1,18 @@
+// The proof engine's judge bounds a square compared to a constant (PE.15's B4, the real programs'
+// sieve.ln): in `while p * p <= 1000`, the tangent of the square at 32, p*p >= 64p - 1024, gives
+// p <= 31, so `p = p + 1` keeps p <= 32 and p * p within u64; before, the product of two usize
+// variables was outside, its corners past the type. The finder proposes p's bound at the header.
+func count_squares() usize {
+    var p usize = 2
+    var n usize = 0
+    while p * p <= 1000 {
+        var m = p * p
+        if m % 2 == 0 { n = n + 1 }
+        p = p + 1
+    }
+    return n
+}
+func main() i32 {
+    if count_squares() != 15 { return 1 }
+    return 0
+}
