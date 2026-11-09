@@ -376,6 +376,10 @@ ty=Slice_u8 scalar
 rc=0
 out=
 ty=Slice_u8 scalar
+### tests/functions/checked_guard_store_rank_pass.ln
+rc=0
+out=
+ty=Slice_u8 scalar
 ### tests/functions/cursor_advanced_by_callee_pass.ln
 rc=0
 out=

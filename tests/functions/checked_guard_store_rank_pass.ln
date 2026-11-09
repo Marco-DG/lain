@@ -1,0 +1,32 @@
+// The trap leg's idiom: a body comparison guards a write through a checked operation,
+// `if r >= h { r = r -? h else panic(..) }`. Integer square root (Dijkstra): q the power of 4 past
+// n, then the second loop's test fails at once (r = n < q, p = 0), a fact its header keeps only
+// together with the comparisons in the body, give or take one, each made a candidate where it
+// guards a write to the cell it compares. With `-?` the write is in the block after the overflow
+// test, not in the branch's first block, and no candidate was made: no ranking (E011).
+func isqrt_steps(n i32) i32 effects raises {
+    if n < 0 or n >= 1073741824 {
+        return 0
+    }
+    var q i32 = 1
+    while q <= n {
+        q = 4 *? q else panic("overflow")
+    }
+    var p i32 = 0
+    var r i32 = n
+    var h i32 = 0
+    while r >= ((2 *? p else panic("overflow")) +? q else panic("overflow")) {
+        q = q / 4
+        h = p +? q else panic("overflow")
+        p = p / 2
+        if r >= h {
+            p = p +? q else panic("overflow")
+            r = r -? h else panic("overflow")
+        }
+    }
+    return q
+}
+
+func main() i32 effects raises {
+    return isqrt_steps(1000) - isqrt_steps(1000)
+}

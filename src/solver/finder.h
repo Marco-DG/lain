@@ -2440,6 +2440,35 @@ static bool fd_dead_temp(IrFunc *f, int32_t H, int32_t key) {
     free(at); free(stk); free(seen);
     return dead;
 }
+// Whether the code a branch runs at `t` stores to cell `key` before it meets other code: t itself,
+// then on through what a checked operation leaves. `if r >= h { r = r -? h else panic(..) }` goes
+// to the subtraction, which branches to its panic or on, and the store is in the block on; a body
+// comparison was taken to guard a write only if the branch's FIRST block stored, so in the trap
+// ports none did (dijkstra1's `r >= h`: written `r = r - h`, its candidates made the body's back
+// edge empty at their placeholders and its loop ranked; with `-?`, no ranking). A block entered
+// from elsewhere too, or two ways on that both live, ends it.
+static bool fd_branch_stores(IrFunc *f, IrBlock *t, int32_t key) {
+    for (int step = 0; t && step < 16; step++) {
+        for (IrInstr *st = t->instrs; st; st = st->next)
+            if (st->op == IR_STORE && st->n_operands >= 1 && st->operands[0] && st->operands[0]->id == key) return true;
+        IrBlock *nx = NULL;
+        if (t->term.kind == IR_TERM_BR) nx = t->term.a;
+        else if (t->term.kind == IR_TERM_BR_COND && t->term.a && t->term.b) {
+            bool da = t->term.a->term.kind == IR_TERM_UNREACHABLE, db = t->term.b->term.kind == IR_TERM_UNREACHABLE;
+            nx = da && !db ? t->term.b : db && !da ? t->term.a : NULL;
+        }
+        if (!nx) return false;
+        int np = 0;                                          // nx's predecessors: t alone, or a join
+        for (IrBlock *b = f->blocks; b; b = b->next) {
+            if (b->term.kind == IR_TERM_BR || b->term.kind == IR_TERM_BR_COND || b->term.kind == IR_TERM_SWITCH) np += b->term.a == nx;
+            if (b->term.kind == IR_TERM_BR_COND) np += b->term.b == nx;
+            for (IrSwitchCase *sc = b->term.kind == IR_TERM_SWITCH ? b->term.cases : NULL; sc; sc = sc->next) np += sc->target == nx;
+        }
+        if (np != 1) return false;
+        t = nx;
+    }
+    return false;
+}
 static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClaim *as, int32_t nv, const JSlot *sl, int32_t i, int32_t j,
                              JCand **cd, int32_t *ncd, int32_t *ccd, char *err, size_t errcap) {
     int32_t H = sl[i].blk, nt = 0;
@@ -2576,11 +2605,7 @@ static bool block_candidates(JFinder *F, IrFunc *f, const FdNest *N, const JClai
         bool guards[2] = { hb->id == H, hb->id == H };
         if (hb->id != H && hb->term.kind == IR_TERM_BR_COND && hb->term.cond == ic->result)
             for (int k = 0; k < 2; k++)
-                for (int w = 0; w < 2 && !guards[k]; w++) {
-                    IrBlock *t = w ? hb->term.b : hb->term.a;
-                    for (IrInstr *st = t ? t->instrs : NULL; st && !guards[k]; st = st->next)
-                        guards[k] = st->op == IR_STORE && st->n_operands >= 1 && st->operands[0] && st->operands[0]->id == key[k];
-                }
+                for (int w = 0; w < 2 && !guards[k]; w++) guards[k] = fd_branch_stores(f, w ? hb->term.b : hb->term.a, key[k]);
         for (int k = 0; k < 2; k++) {
             int32_t x = -1;                                  // which header version this side is
             for (int32_t s2 = i; s2 < j; s2++) if (sl[s2].key == key[k]) x = s2;
