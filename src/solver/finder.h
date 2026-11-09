@@ -150,6 +150,8 @@ static bool same_form(const JClaim *a, const JClaim *b) {
     if (a->blk != b->blk || a->nt != b->nt) return false;
     for (int k = 0; k < a->nt; k++) {
         if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k]) return false;
+        // a GHOST names a product by its index (s31): y*y and y*y*y share their first factor's key
+        if (a->tk[k] == JTERM_GHOST && a->targ[k] != b->targ[k]) return false;
         // a part (fld) names a different quantity: post(p.src) - pre(p.src) is not p.pos's
         bool part = a->key[k] == JKEY_RET || a->tk[k] == JTERM_POST || a->tk[k] == JTERM_PRE;
         if (part && a->fld[k] != b->fld[k]) return false;
@@ -2643,9 +2645,12 @@ static bool fd_claim_shape_ok(const JClaim *c) {
         // ...and s15's POST and PRE (a var parameter's part after and before the call) are two more
         // classes, a part told apart by its fld: gen.h's jg_tk_class and jg_claim_shape. Taken for
         // the same term twice, every frame summary was filtered out here, unproposed
+        // ...and s27's MOD and s31's GHOST two more, two GHOSTs told apart by their index (targ):
+        // `y + y*y` keys y twice, and was filtered out here as one cell named twice
         for (int32_t j = i + 1; j < c->nt; j++) {
-            int ci = c->tk[i] == JTERM_ENTRY ? 1 : c->tk[i] == JTERM_HEAD ? 2 : c->tk[i] == JTERM_POST ? 3 : c->tk[i] == JTERM_PRE ? 4 : 0;
-            int cj = c->tk[j] == JTERM_ENTRY ? 1 : c->tk[j] == JTERM_HEAD ? 2 : c->tk[j] == JTERM_POST ? 3 : c->tk[j] == JTERM_PRE ? 4 : 0;
+            if (c->tk[i] == JTERM_GHOST && c->tk[j] == JTERM_GHOST) { if (c->targ[i] == c->targ[j]) return false; continue; }
+            int ci = c->tk[i] == JTERM_ENTRY ? 1 : c->tk[i] == JTERM_HEAD ? 2 : c->tk[i] == JTERM_POST ? 3 : c->tk[i] == JTERM_PRE ? 4 : c->tk[i] == JTERM_MOD ? 5 : c->tk[i] == JTERM_GHOST ? 6 : 0;
+            int cj = c->tk[j] == JTERM_ENTRY ? 1 : c->tk[j] == JTERM_HEAD ? 2 : c->tk[j] == JTERM_POST ? 3 : c->tk[j] == JTERM_PRE ? 4 : c->tk[j] == JTERM_MOD ? 5 : c->tk[j] == JTERM_GHOST ? 6 : 0;
             bool part = c->key[i] == JKEY_RET || ci >= 3;
             if (c->key[i] == c->key[j] && ci == cj && (!part || c->fld[i] == c->fld[j])) return false;
         }
@@ -4463,7 +4468,8 @@ static JClaim *finder_propose(JFinder *F, int32_t *ncl) {
 static bool fd_claim_same(const JClaim *a, const JClaim *b) {
     if (a->blk != b->blk || a->nt != b->nt || a->rhs != b->rhs || a->fn != b->fn) return false;
     for (int32_t k = 0; k < a->nt; k++)
-        if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k] || a->fld[k] != b->fld[k]) return false;
+        if (a->key[k] != b->key[k] || a->tk[k] != b->tk[k] || a->coef[k] != b->coef[k] || a->fld[k] != b->fld[k] ||
+            (a->tk[k] == JTERM_GHOST && a->targ[k] != b->targ[k])) return false;
     return true;
 }
 // A SENTINEL slice's scan (PE.16): `while s[i] != 0 { i = i + 1 }` over `s T[:0]` reads at most its

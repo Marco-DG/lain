@@ -20,7 +20,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 fail=0
 echo "── judge include rules ──"
 python3 scripts/gates/judge_includes.py . || fail=1
-for t in test_octagon test_vra test_place test_linearity test_borrow test_definite_init test_ir test_callgraph test_judge_format test_rank test_judge_gen test_judge_kernel test_judge_module; do
+for t in test_octagon test_vra test_place test_linearity test_borrow test_definite_init test_ir test_callgraph test_judge_format test_rank test_judge_gen test_judge_kernel test_judge_module test_finder_forms; do
     src="src/tools/$t.c"
     if [ ! -f "$src" ]; then echo "MISSING: $t"; fail=1; continue; fi
     # test_octagon enumerates a 13^3 box 40,000 times against gamma. Unoptimised that
