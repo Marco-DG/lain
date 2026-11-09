@@ -112,10 +112,16 @@ enum { JCLAIM_RET = -1, JKEY_RET = -2, JCLAIM_MAXT = 4 };
 // JTERM_MOD: in a loop's RANKING claim only (s27), an integer cell's version FLOOR-MOD k, the r of
 // x = k*q + r with 0 <= r <= k - 1 whatever x's sign (not C's `%`): a natural number, so a component
 // may be bounded by it. k is the ranking's targ for the term, 2 .. JTERM_MODMAX.
+// JTERM_GHOST (s31): in a loop's RANKING, or a cut-point claim at a loop's header (not a guarded
+// one), a PRODUCT of the header's versions of integer cells, the monomial at index targ of the
+// header's ghost list (paths_ghost offers them in that order; y*y, y*y*y, y1*x2), key its first
+// factor's cell: what the loop computes as `y *? y`, followed across a trip through its factors'
+// exact updates. mannadiv's `y1*x2 + y2 + y3 - x1 = 0` is a claim at its header.
 enum { JTERM_VALUE = 0, JTERM_LEN = 1, JTERM_EACH = 2, JTERM_UPTO = 3, JTERM_ENTRY = 4, JTERM_HEAD = 5, JTERM_POST = 6, JTERM_PRE = 7,
-       JTERM_MOD = 8, JTERM_MODMAX = 1 << 20 };
+       JTERM_MOD = 8, JTERM_MODMAX = 1 << 20, JTERM_GHOST = 9 };
 typedef struct { int32_t blk, nt; int32_t key[JCLAIM_MAXT]; uint8_t tk[JCLAIM_MAXT]; __int128 coef[JCLAIM_MAXT]; __int128 rhs;
-                 struct IrFunc *fn; int16_t fld[JCLAIM_MAXT]; } JClaim;
+                 struct IrFunc *fn; int16_t fld[JCLAIM_MAXT];
+                 int32_t targ[JCLAIM_MAXT]; } JClaim;                  // a GHOST term's index (s31), read for that kind only
 // A GUARDED return claim (s7): a return claim of `fn`, as a JClaim at JCLAIM_RET (its terms and
 // their parts fld, as a return claim's), that holds where each guard parameter gkey[i] is gval[i]
 // at entry and, where `when` has terms (s21), where `when` holds as fn returns: `ret <= 84 where
@@ -218,6 +224,11 @@ typedef struct {
     // Asked apart, so that no stage that takes every pair of paths() as a term names one
     bool (*paths_mod)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
                       char *err, uint32_t errcap);
+    // the same paths with a GHOST pair (JTERM_GHOST, arg its index) appended per product of the
+    // header's cells the loop computes and can follow across a trip (s31): its variable at the
+    // previous entry and at the edge's end, defined in the path's VC. Asked apart, as paths_mod is
+    bool (*paths_ghost)(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
+                        char *err, uint32_t errcap);
     // f's calls that may close a recursion cycle through it: per direct one, the facts at the call,
     // and per parameter of the callee its variable at f's entry (when f is the callee) and the
     // argument's at the call

@@ -1875,6 +1875,86 @@ int main(void) {
         }
     }
 
+    // PRODUCT GHOSTS (s31, termination-nla), i32 and checked. (0) ps2's shape, `y = 0; while y*y + y
+    // < k { y = y + 1 }`, ranked <k - y*y - y> over the header's ghost y*y: its fall and bound
+    // proved. (1) mannadiv: `if x1 < 0 { return } y1 = 0; y2 = 0; y3 = x1; while y1*x2 + y2 != x1 {
+    // if y2 + 1 == x2 { y1++; y2 = 0; y3-- } else { y2++; y3-- } }`, Karr's y1*x2 + y2 + y3 - x1 = 0
+    // and y3 >= 0 claimed at the header over the ghost y1*x2 (entered as 0*x2, raised by x2 on the
+    // arm that raises y1, a disjunction at the latch's join), ranked <y3>: every claim and ranking
+    // VC proved. (2) the same, the equality off by one: its inv.entry not implied, the ranking's VCs
+    // that assume it not certified.
+    printf("── product ghosts: a ranking over y*y, mannadiv's invariant over y1*x2 ──\n");
+    for (int c = 0; c < 3; c++) {
+        IrType *T = ir_type_int(&A, 32, true);
+        Stub sg; memset(&sg, 0, sizeof sg);
+        sg.propose = P_RANK;
+        IrFunc *gf = ir_func_new(&A, nm(c == 0 ? "ps2g" : "mannadivg"), T, IR_FUNC_PURE);
+        IrBlock *H, *latch;
+        if (c == 0) {
+            IrValue *kp = ir_add_param(gf, T, nm("k"));
+            IrBlock *b0 = gf->entry, *b1 = ir_new_block(gf), *b2 = ir_new_block(gf), *b3 = ir_new_block(gf);
+            IrValue *y = ir_alloca(gf, b0, T), *kc = ir_alloca(gf, b0, T);
+            ir_store(gf, b0, y, ir_const_int(gf, b0, 0, T)); ir_store(gf, b0, kc, kp); ir_set_br(b0, b1);
+            IrValue *ly = ir_load(gf, b1, y, T);
+            IrInstr *sq = ir_instr(gf, IR_MUL, T, 2); sq->operands[0] = ly; sq->operands[1] = ly; sq->wrap = IR_WRAP_CHECK; ir_emit(b1, sq);
+            ir_set_br_cond(b1, ir_icmp(gf, b1, IR_CMP_SLT, ir_binop(gf, b1, IR_ADD, sq->result, ly, T), ir_load(gf, b1, kc, T)), b2, b3);
+            ir_store(gf, b2, y, ir_binop(gf, b2, IR_ADD, ir_load(gf, b2, y, T), ir_const_int(gf, b2, 1, T), T)); ir_set_br(b2, b1);
+            ir_set_ret(b3, ir_const_int(gf, b3, 0, T));
+            ir_finalize_cfg(gf);
+            H = b1; latch = b2;
+            JRank *r = &sg.rank[0];
+            r->blk = b1->id; r->fn = gf; r->ncomp = 1; r->nt = 3; r->nedge = 1; r->from[0] = b2->id;
+            r->key[0] = kc->id; r->coef[0][0] = 1; r->key[1] = y->id; r->tk[1] = JTERM_GHOST; r->targ[1] = 0; r->coef[0][1] = -1;
+            r->key[2] = y->id; r->coef[0][2] = -1;
+            sg.nrank = 1;
+        } else {
+            IrValue *x1p = ir_add_param(gf, T, nm("x1")), *x2p = ir_add_param(gf, T, nm("x2"));
+            IrBlock *b0 = gf->entry, *b1 = ir_new_block(gf), *b2 = ir_new_block(gf), *b3 = ir_new_block(gf), *b4 = ir_new_block(gf),
+                    *b5 = ir_new_block(gf), *b6 = ir_new_block(gf);
+            IrValue *y1 = ir_alloca(gf, b0, T), *x2 = ir_alloca(gf, b0, T), *y2 = ir_alloca(gf, b0, T), *y3 = ir_alloca(gf, b0, T), *x1 = ir_alloca(gf, b0, T);
+            ir_store(gf, b0, x1, x1p); ir_store(gf, b0, x2, x2p);
+            ir_store(gf, b0, y1, ir_const_int(gf, b0, 0, T)); ir_store(gf, b0, y2, ir_const_int(gf, b0, 0, T)); ir_store(gf, b0, y3, x1p);
+            ir_set_br_cond(b0, ir_icmp(gf, b0, IR_CMP_SLT, x1p, ir_const_int(gf, b0, 0, T)), b6, b1);
+            IrInstr *mu = ir_instr(gf, IR_MUL, T, 2); mu->operands[0] = ir_load(gf, b1, y1, T); mu->operands[1] = ir_load(gf, b1, x2, T);
+            mu->wrap = IR_WRAP_CHECK; ir_emit(b1, mu);
+            ir_set_br_cond(b1, ir_icmp(gf, b1, IR_CMP_NE, ir_binop(gf, b1, IR_ADD, mu->result, ir_load(gf, b1, y2, T), T), ir_load(gf, b1, x1, T)), b2, b6);
+            ir_set_br_cond(b2, ir_icmp(gf, b2, IR_CMP_EQ, ir_binop(gf, b2, IR_ADD, ir_load(gf, b2, y2, T), ir_const_int(gf, b2, 1, T), T), ir_load(gf, b2, x2, T)), b3, b4);
+            ir_store(gf, b3, y1, ir_binop(gf, b3, IR_ADD, ir_load(gf, b3, y1, T), ir_const_int(gf, b3, 1, T), T));
+            ir_store(gf, b3, y2, ir_const_int(gf, b3, 0, T));
+            ir_store(gf, b3, y3, ir_binop(gf, b3, IR_SUB, ir_load(gf, b3, y3, T), ir_const_int(gf, b3, 1, T), T)); ir_set_br(b3, b5);
+            ir_store(gf, b4, y2, ir_binop(gf, b4, IR_ADD, ir_load(gf, b4, y2, T), ir_const_int(gf, b4, 1, T), T));
+            ir_store(gf, b4, y3, ir_binop(gf, b4, IR_SUB, ir_load(gf, b4, y3, T), ir_const_int(gf, b4, 1, T), T)); ir_set_br(b4, b5);
+            ir_set_br(b5, b1);
+            ir_set_ret(b6, ir_const_int(gf, b6, 0, T));
+            ir_finalize_cfg(gf);
+            H = b1; latch = b5;
+            for (int q = 0; q < 2; q++) {                      // y1*x2 + y2 + y3 - x1 = 0 (+ 1 in case 2), both ways
+                JClaim *cl = &sg.claims[q]; int sgn = q ? -1 : 1;
+                cl->blk = b1->id; cl->fn = gf; cl->nt = 4;
+                cl->key[0] = y1->id; cl->tk[0] = JTERM_GHOST; cl->targ[0] = 0; cl->key[1] = y2->id; cl->key[2] = y3->id; cl->key[3] = x1->id;
+                cl->coef[0] = sgn; cl->coef[1] = sgn; cl->coef[2] = sgn; cl->coef[3] = -sgn; cl->rhs = c == 2 ? sgn : 0;
+            }
+            JClaim *cp = &sg.claims[2];
+            cp->blk = b1->id; cp->fn = gf; cp->nt = 1; cp->key[0] = y3->id; cp->coef[0] = -1; cp->rhs = 0;
+            sg.nclaims = 3;
+            JRank *r = &sg.rank[0];
+            r->blk = b1->id; r->fn = gf; r->ncomp = 1; r->nt = 1; r->nedge = 1; r->from[0] = b5->id; r->key[0] = y3->id; r->coef[0][0] = 1;
+            sg.nrank = 1;
+        }
+        CHECK(run(gf, &sg, true, sizeof region, err), "judges: %s", err);
+        int ni = 0;                                               // the claims' and ranking's records (narrowings beside the point)
+        for (const char *l = recs; (l = strstr(l, "not-implied ")); l++) { const char *e = strchr(l, '\n'), *k1 = strstr(l, " inv."), *k2 = strstr(l, " rank.");
+                                                                           if ((k1 && (!e || k1 < e)) || (k2 && (!e || k2 < e))) ni++; }
+        char fe[64]; snprintf(fe, sizeof fe, "not-implied bb%d.%d inv.entry", gf->entry->id, nins_m(gf->entry));
+        if (c < 2) CHECK(ni == 0 && !strstr(recs, "uncertified") && !strstr(recs, "refused") && count_in(recs, "rank.fall") == 1 && count_in(recs, "rank.bound") == 1 &&
+                         count_in(recs, " inv.entry") == (c ? 3 : 0) && count_in(recs, " inv.keep") == (c ? 3 : 0),
+                         "case %d: every claim and ranking VC proved:\n%s", c, recs);
+        char pr[48], un[48]; snprintf(pr, sizeof pr, "proved bb%d.%d rank.", latch->id, nins_m(latch)); snprintf(un, sizeof un, "uncertified bb%d.%d rank.", latch->id, nins_m(latch));
+        if (c == 2) CHECK(strstr(recs, fe) != NULL && !strstr(recs, pr) && count_in(recs, un) == 2,
+                          "case 2: the equality off by one not implied on entry, the ranking it carries not certified:\n%s", recs);
+        (void)H;
+    }
+
     printf("── a function the generator refuses, a region too small ──\n");
     IrFunc *g = ir_func_new(&A, nm("g"), u32t, IR_FUNC_PURE);
     IrValue *z = ir_add_param(g, u32t, nm("z"));

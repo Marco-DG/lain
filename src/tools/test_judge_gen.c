@@ -5218,7 +5218,7 @@ int main(void) {
     // every edge, paths() none, and term_kinds 1 for MOD on x, 0 on the parameter; (1) the even
     // path leaves x as it was: one residue for pre and post there. Refused: a modulus of 1 and of
     // 2^20 + 1, an argument on a VALUE term, MOD over the parameter (no cell), the same cell's MOD
-    // twice, MOD in a claim, kind 9 (none)
+    // twice, MOD in a claim, kind 10 (none)
     for (int c = 0; c < 2; c++) {
         IrFunc *f = ir_func_new(&A, nm("kst94"), i32t, IR_FUNC_PURE);
         IrValue *x0 = ir_add_param(f, i32t, nm("x0"));
@@ -5284,7 +5284,7 @@ int main(void) {
                 if (k == 2) b.targ[1] = 3;                              // on the VALUE term
                 if (k == 3) b.key[0] = x0->id;                          // the parameter: no cell
                 if (k == 4) { b.tk[1] = JTERM_MOD; b.targ[1] = 3; }      // x's residue twice
-                if (k == 6) b.tk[1] = 9;                                // no such kind
+                if (k == 6) b.tk[1] = 10;                               // no such kind
                 if (k == 5) {
                     gen_rk = NULL; gen_nrk = 0;
                     cl.blk = b1->id; cl.fn = f; cl.nt = 1; cl.key[0] = xc->id; cl.tk[0] = JTERM_MOD; cl.coef[0] = 1; cl.rhs = 1;
@@ -5589,7 +5589,7 @@ int main(void) {
         gen_gc = &gc; gen_ngc = 1;
         char why[200] = "", w[200];
         if (c >= 2) {
-            static const char *bad[6] = { "", "", "not at a block entered by edges only", "`when` not at its block", "of no guard", "EACH or UPTO" };
+            static const char *bad[6] = { "", "", "not at a block entered by edges only", "`when` not at its block", "of no guard", "EACH, UPTO or GHOST" };
             char *tb = gen_with(f, NULL, 0, JGEN_ALL, why);
             CHECK(!tb && strstr(why, bad[c]), "97 bad %d: refused (%s): got \"%s\"", c, bad[c], why);
             free(tb);
@@ -5621,6 +5621,165 @@ int main(void) {
         gen_gc = NULL; gen_ngc = 0;
     }
     printf("  a guarded cut-point claim: owed on its edges under `when`, stated where its block's claims are\n");
+    // 98. PRODUCT GHOSTS (s31, termination-nla's ps2..ps6): i32 cells y = 0 and k, `while y*y + y < k
+    // { y = y + 1 }`. (0) paths_ghost offers one ghost, y*y (key y, arg 0), on both edges, paths() none;
+    // on the back edge its expansion `ghost@bbP - ghost@head - 2y = 1`, on the entry edge 0 (y's
+    // store of 0); (1) the guard's y*y defined as the header's ghost; (2) a ranking <k - y*y - y>
+    // naming it, its fall's VC with both defined; refused: (3) an index past the list, (4) a key that
+    // is not its first factor, (5) one ghost twice; (6) a claim at the header naming it, `y*y >= 0`:
+    // owed on the entry edge with the ghost's entry value and on the back edge with its expansion;
+    // (7) `y *% y` (wrapping): no ghost; refused: (8) the claim at the body's block (no header), (9)
+    // in a guarded cut-point claim; (10) `y = y +% 1` (a wrapping store): y*y has no form at the back
+    // edge, so no ghost; (11) refused: the claim's index past the header's list
+    for (int c = 0; c < 12; c++) {
+        IrFunc *f = ir_func_new(&A, nm("g98"), i32t, IR_FUNC_PURE);
+        IrValue *kp = ir_add_param(f, i32t, nm("k"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f);
+        IrValue *yc = ir_alloca(f, b0, i32t), *kc = ir_alloca(f, b0, i32t);
+        ir_store(f, b0, yc, ir_const_int(f, b0, 0, i32t)); ir_store(f, b0, kc, kp); ir_set_br(b0, b1);
+        IrValue *ly = ir_load(f, b1, yc, i32t);
+        IrInstr *sq = ir_instr(f, IR_MUL, i32t, 2); sq->operands[0] = ly; sq->operands[1] = ly;
+        sq->wrap = c == 7 ? IR_WRAP_MODULAR : IR_WRAP_CHECK; ir_emit(b1, sq);
+        IrValue *gs = ir_binop(f, b1, IR_ADD, sq->result, ly, i32t);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SLT, gs, ir_load(f, b1, kc, i32t)), b2, b3);
+        IrInstr *inc = ir_instr(f, IR_ADD, i32t, 2); inc->operands[0] = ir_load(f, b2, yc, i32t); inc->operands[1] = ir_const_int(f, b2, 1, i32t);
+        inc->wrap = c == 10 ? IR_WRAP_MODULAR : IR_WRAP_CHECK; ir_emit(b2, inc);
+        ir_store(f, b2, yc, inc->result); ir_set_br(b2, b1);
+        ir_set_ret(b3, ir_const_int(f, b3, 0, i32t));
+        ir_finalize_cfg(f);
+        char hv[48], gh[64]; snprintf(hv, sizeof hv, "%%s%d@head.bb%d", yc->id, b1->id); snprintf(gh, sizeof gh, "ghost.%%s%d*%%s%d@head.bb%d", yc->id, yc->id, b1->id);
+        if (c == 0 || c == 7 || c == 10) {
+            for (int mode = 0; mode < 2; mode++) {
+                JMem mm = jmem_over(region, sizeof region); JPaths P; char err[200];
+                bool ok = mode ? jgen_paths_ghost(&mm, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err) : jgen_paths(&mm, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err);
+                int ghosts = 0, defs = 0;
+                for (int32_t k = 0; ok && k < P.n; k++) {
+                    FILE *one = tmpfile(); jvc_print(P.p[k].vc, one); long len = ftell(one); rewind(one);
+                    char *txt = malloc((size_t)len + 1); size_t got = fread(txt, 1, (size_t)len, one); txt[got] = 0; fclose(one);
+                    for (int32_t q = 0; q < P.p[k].npairs; q++) {
+                        const JPathPair *pp = &P.p[k].pairs[q];
+                        if (pp->tk != JTERM_GHOST) continue;
+                        ghosts++;
+                        CHECK(pp->key == yc->id && pp->arg == 0 && (pp->pre >= 0) == P.p[k].back, "98: the pair names y*y (path %d)", k);
+                        char w[200], line[400] = "", t1[96], t2[96], t3[64];   // the line's terms in any order
+                        if (P.p[k].back) snprintf(w, sizeof w, "def ghost 0 bb%d : ", P.p[k].from);
+                        else snprintf(w, sizeof w, "def ghost 0 bb%d entry : 1*ghost.%%s%d*%%s%d@bb%d = 0\n", P.p[k].from, yc->id, yc->id, P.p[k].from);
+                        const char *l = strstr(txt, w), *e = l ? strchr(l, '\n') : NULL;
+                        if (l && e) snprintf(line, sizeof line, "%.*s ", (int)(e - l), l);
+                        snprintf(t1, sizeof t1, " 1*ghost.%%s%d*%%s%d@bb%d ", yc->id, yc->id, P.p[k].from);
+                        snprintf(t2, sizeof t2, " -1*%s ", gh); snprintf(t3, sizeof t3, " -2*%s ", hv);
+                        bool good = P.p[k].back ? strstr(line, t1) && strstr(line, t2) && strstr(line, t3) && strstr(line, " = 1 ") : l != NULL;
+                        if (good) defs++; else printf("  98: want %s... in\n%s", w, txt);
+                    }
+                    free(txt);
+                }
+                int want = c == 7 || c == 10 || !mode ? 0 : 2;
+                CHECK(ok && P.n == 2 && ghosts == want && defs == want, "98 case %d %s: %d ghost pairs, %d defined (want %d)", c, mode ? "paths_ghost" : "paths", ghosts, defs, want);
+            }
+            continue;
+        }
+        JRank r; memset(&r, 0, sizeof r);                       // <k - y*y - y>, the back edge
+        r.blk = b1->id; r.fn = f; r.ncomp = 1; r.nt = 3;
+        r.key[0] = kc->id; r.coef[0][0] = 1; r.key[1] = yc->id; r.tk[1] = JTERM_GHOST; r.targ[1] = 0; r.coef[0][1] = -1;
+        r.key[2] = yc->id; r.coef[0][2] = -1; r.nedge = 1; r.from[0] = b2->id; r.fall[0] = 0;
+        if (c == 3) r.targ[1] = 1;
+        if (c == 4) r.key[1] = kc->id;
+        if (c == 5) { r.nt = 4; r.key[3] = yc->id; r.tk[3] = JTERM_GHOST; r.targ[3] = 0; r.coef[0][3] = 1; }
+        char why[200] = "", *t = NULL;
+        if (c == 6 || c == 8 || c == 11) {
+            JClaim cl; memset(&cl, 0, sizeof cl);
+            cl.blk = c == 8 ? b2->id : b1->id; cl.fn = f; cl.nt = 1; cl.key[0] = yc->id; cl.tk[0] = JTERM_GHOST; cl.coef[0] = -1; cl.rhs = 0;
+            if (c == 11) cl.targ[0] = 1;
+            t = gen_with(f, &cl, 1, JGEN_ALL, why);
+            if (c != 6) { CHECK(!t && strstr(why, "no ghost of a loop header"), "98 case %d: refused: \"%s\"", c, why); free(t); continue; }
+            char k1[48], k2[48], w1[160], w2[200], w3[160];
+            snprintf(k1, sizeof k1, "bb%d.%d inv.entry", b0->id, nins(b0)); snprintf(k2, sizeof k2, "bb%d.%d inv.keep", b2->id, nins(b2));
+            const char *v1 = t ? vc_of(t, k1) : "";                // vc_of's buffer is one: a copy of the first
+            char *ve = malloc(strlen(v1) + 1); if (ve) strcpy(ve, v1);
+            const char *vk = t ? vc_of(t, k2) : "";
+            snprintf(w1, sizeof w1, "def ghost 0 bb%d entry : 1*ghost.%%s%d*%%s%d@bb%d = 0\n", b0->id, yc->id, yc->id, b0->id);
+            snprintf(w2, sizeof w2, "def ghost 0 bb%d : ", b2->id);
+            snprintf(w3, sizeof w3, "claim bb%d #0 : -1*%s <= 0\n", b1->id, gh);
+            CHECK(t && ve && strstr(ve, w1) && strstr(vk, w2) && strstr(vk, w3), "98 case 6: %s in the entry VC, %s and %s in the keep VC:\n%s\n%s", w1, w2, w3, t && ve ? ve : why, vk);
+            free(ve); free(t); continue;
+        }
+        if (c == 9) {
+            JGuardClaim gc; memset(&gc, 0, sizeof gc);
+            gc.cut = true; gc.blk = b1->id; gc.fn = f; gc.nt = 1; gc.key[0] = yc->id; gc.tk[0] = JTERM_GHOST; gc.coef[0] = -1; gc.rhs = 0;
+            gen_gc = &gc; gen_ngc = 1;
+            t = gen_with(f, NULL, 0, JGEN_ALL, why);
+            gen_gc = NULL; gen_ngc = 0;
+            CHECK(!t && strstr(why, "EACH, UPTO or GHOST"), "98 case 9: refused: \"%s\"", why);
+            free(t); continue;
+        }
+        gen_rk = &r; gen_nrk = 1;
+        t = gen_with(f, NULL, 0, JGEN_ALL, why);
+        gen_rk = NULL; gen_nrk = 0;
+        if (c >= 3) {
+            static const char *bad[6] = { "", "", "", "no ghost of its header", "no ghost of its header", "one ghost twice" };
+            CHECK(!t && strstr(why, bad[c]), "98 bad %d: refused (%s): got \"%s\"", c, bad[c], why);
+            free(t); continue;
+        }
+        char key[48]; snprintf(key, sizeof key, "bb%d.%d rank.fall", b2->id, nins(b2));
+        const char *vf = t ? vc_of(t, key) : "";
+        char w2[160]; snprintf(w2, sizeof w2, "def ghost 0 bb%d : ", b2->id);
+        if (c == 2) CHECK(t && strstr(vf, w2) && strstr(vf, gh), "98 case 2: the fall with %s:\n%s", w2, t ? vf : why);
+        else {
+            snprintf(key, sizeof key, "bb%d.%d narrow.hi", b1->id, idx_of(b1, gs));
+            const char *vn = t ? vc_of(t, key) : "";
+            char w1[160]; snprintf(w1, sizeof w1, "def %%v%d ghost : 1*%%v%d + -1*%s = 0\n", sq->result->id, sq->result->id, gh);
+            CHECK(strstr(vn, w1), "98 case 1: %s:\n%s", w1, vn);
+        }
+        free(t);
+    }
+    printf("  product ghosts: a loop's y*y followed across its trip, a ranking over it, the refusals\n");
+    // 99. a GHOST through a JOIN and its ENTRY value (s31, mannadiv): i32 cells y1, x2 = p, `while
+    // y1*x2 < n { if c { y1 = y1 + 1 } }`, the latch b5 joining the two arms. (0) y1 = 0 on entry:
+    // on the back edge one expansion per arm, `or { y1@b5 - y1 = 1 , g' - g - x2 = 0 | y1@b5 - y1 = 0 ,
+    // g' - g = 0 }`, and on the entry edge g = 0; (1) y1 = 2: entered as 2*x2, `g - 2*x2 = 0`; (2) y1 = q,
+    // a parameter: two factors not constant, nothing stated on entry
+    for (int c = 0; c < 3; c++) {
+        IrType *T = ir_type_int(&A, 32, true);
+        IrFunc *f = ir_func_new(&A, nm("g99"), T, IR_FUNC_PURE);
+        IrValue *pp = ir_add_param(f, T, nm("p")), *np = ir_add_param(f, T, nm("n")), *cp = ir_add_param(f, T, nm("c")), *qp = ir_add_param(f, T, nm("q"));
+        IrBlock *b0 = f->entry, *b1 = ir_new_block(f), *b2 = ir_new_block(f), *b3 = ir_new_block(f), *b4 = ir_new_block(f), *b5 = ir_new_block(f), *b6 = ir_new_block(f);
+        IrValue *y1 = ir_alloca(f, b0, T), *x2 = ir_alloca(f, b0, T);
+        ir_store(f, b0, y1, c == 2 ? qp : ir_const_int(f, b0, c == 1 ? 2 : 0, T)); ir_store(f, b0, x2, pp); ir_set_br(b0, b1);
+        IrInstr *mu = ir_instr(f, IR_MUL, T, 2); mu->operands[0] = ir_load(f, b1, y1, T); mu->operands[1] = ir_load(f, b1, x2, T);
+        mu->wrap = IR_WRAP_CHECK; ir_emit(b1, mu);
+        ir_set_br_cond(b1, ir_icmp(f, b1, IR_CMP_SLT, mu->result, np), b2, b6);
+        ir_set_br_cond(b2, ir_icmp(f, b2, IR_CMP_NE, cp, ir_const_int(f, b2, 0, T)), b3, b4);
+        ir_store(f, b3, y1, ir_binop(f, b3, IR_ADD, ir_load(f, b3, y1, T), ir_const_int(f, b3, 1, T), T)); ir_set_br(b3, b5);
+        ir_set_br(b4, b5); ir_set_br(b5, b1);
+        ir_set_ret(b6, ir_const_int(f, b6, 0, T));
+        ir_finalize_cfg(f);
+        JMem mm = jmem_over(region, sizeof region); JPaths P; char err[200];
+        bool ok = jgen_paths_ghost(&mm, f, gen_mod, NULL, 0, NULL, 0, b1->id, &P, err, sizeof err);
+        char *bk = NULL, *en = NULL;
+        for (int32_t k = 0; ok && k < P.n; k++) {
+            FILE *one = tmpfile(); jvc_print(P.p[k].vc, one); long len = ftell(one); rewind(one);
+            char *txt = malloc((size_t)len + 1); size_t got = fread(txt, 1, (size_t)len, one); txt[got] = 0; fclose(one);
+            if (P.p[k].back) bk = txt; else en = txt;
+        }
+        char g[64], wb1[400], wb2[300], wb3[200], we1[200], we2[120];
+        snprintf(g, sizeof g, "ghost.%%s%d*%%s%d", y1->id, x2->id);
+        snprintf(wb1, sizeof wb1, "def ghost 0 bb%d : or { 1*%%s%d@join.bb%d + -1*%%s%d@head.bb%d = 0 , 1*%s@bb%d + -1*%s@head.bb%d = 0 | ",
+                 b5->id, y1->id, b5->id, y1->id, b1->id, g, b5->id, g, b1->id);
+        snprintf(wb2, sizeof wb2, "1*%%s%d@join.bb%d + -1*%%s%d@head.bb%d = 1 , -1*%%s%d@bb%d.", y1->id, b5->id, y1->id, b1->id, x2->id, b0->id);
+        snprintf(wb3, sizeof wb3, " + 1*%s@bb%d + -1*%s@head.bb%d = 0 }\n", g, b5->id, g, b1->id);
+        if (c == 1) snprintf(we1, sizeof we1, "def ghost 0 bb%d entry : -2*%%s%d@bb%d.", b0->id, x2->id, b0->id);
+        else snprintf(we1, sizeof we1, "def ghost 0 bb%d entry : 1*%s@bb%d = 0\n", b0->id, g, b0->id);
+        snprintf(we2, sizeof we2, " + 1*%s@bb%d = 0\n", g, b0->id);
+        bool good = ok && bk && en && strstr(bk, wb1) && strstr(bk, wb2) && strstr(bk, wb3);
+        if (c == 0) good = good && strstr(en, we1);
+        if (c == 1) good = good && strstr(en, we1) && strstr(en, we2);
+        if (c == 2) good = good && !strstr(en, "def ghost 0");
+        CHECK(good, "99 case %d: the join's disjunction %s...%s...%s and the entry %s:\n%s\n%s", c, wb1, wb2, wb3, c == 2 ? "(none)" : we1,
+              bk ? bk : err, en ? en : "");
+        free(bk); free(en);
+    }
+    printf("  a ghost through a join (one expansion per arm) and entered as c*v\n");
+
     printf("%s\n", failures ? "test_judge_gen: FAILED" : "test_judge_gen: all passed");
     return failures ? 1 : 0;
 }

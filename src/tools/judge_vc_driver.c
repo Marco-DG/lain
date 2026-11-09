@@ -313,6 +313,11 @@ static bool hk_var(JObl *o, int32_t x, IVal *v, int nv, __int128 *out) {
             if (r->var[i] == x || !hk_var(o, r->var[i], v, nv, &y)) return false;
             if (__builtin_mul_overflow(r->coef[i], y, &p) || __builtin_add_overflow(s, p, &s)) return false;
         }
+        if (r->prod) {                                 // a PRODUCT of two variables (a ghost's, s31)
+            __int128 y0, y1, pr;
+            if (r->n != 2 || !hk_var(o, r->var[0], v, nv, &y0) || !hk_var(o, r->var[1], v, nv, &y1) || __builtin_mul_overflow(y0, y1, &pr)) return false;
+            *out = pr; return true;
+        }
         if (r->fdiv) {                                 // the FLOOR of the quotient (a residue's, s27)
             if (r->den <= 0) return false;
             __int128 q = s / r->den;
@@ -353,6 +358,7 @@ static const char *hk_recipe_bad(const JObl *o, int32_t x) {
     if (r->wbits < 0 || r->wbits > 64) return "a wrap of a width outside 0..64";
     if (r->wbits && (r->mm || r->fval >= 0)) return "a wrap beside a max, a min or a float part";
     if (r->fdiv && (r->den <= 0 || r->mm || r->fval >= 0 || r->wbits)) return "a floor division by no positive number, or beside another kind";
+    if (r->prod && (r->n != 2 || r->fdiv || r->mm || r->fval >= 0 || r->wbits)) return "a product of other than two variables, or beside another kind";
     if (!r->mm) return NULL;
     const JMinMax *mf = r->mmf;
     if (r->fval >= 0) return "a max or min with a float part";
@@ -859,6 +865,7 @@ int main(int argc, char **argv) {
             else if (cl[c].tk[k] == JTERM_LEN) printf("%lld*len(%%%d)", (long long)cl[c].coef[k], cl[c].key[k]);
             else if (cl[c].tk[k] == JTERM_EACH) printf("%lld*each(%%%d)", (long long)cl[c].coef[k], cl[c].key[k]);
             else if (cl[c].tk[k] == JTERM_UPTO) printf("upto(%%%d)", cl[c].key[k]);
+            else if (cl[c].tk[k] == JTERM_GHOST) printf("%lld*ghost(%%%d, %d)", (long long)cl[c].coef[k], cl[c].key[k], (int)cl[c].targ[k]);
             else printf("%lld*%%%d", (long long)cl[c].coef[k], cl[c].key[k]);
         }
         JInt r; jg_int(&r, cl[c].rhs); printf(" <= "); jint_print(&r, stdout); printf("\n");

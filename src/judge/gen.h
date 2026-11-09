@@ -89,14 +89,15 @@
 // into wbits bits, signed where wsgn, as it_wrap narrows it (a return's landed value, s8). The
 // generator states its facts; the recipe only says which value they are about (the remainder of
 // x / c is x - c*q). With fdiv, the division is the FLOOR of that quotient (den > 0), a residue's
-// quotient (JTERM_MOD, s27): not exact, so read apart.
+// quotient (JTERM_MOD, s27): not exact, so read apart. With prod, the PRODUCT of var[0] and var[1]
+// (n 2, coef and den unread): a ghost monomial's (s31), the one before it times its last factor.
 // A form k: sum over i < fn[k] of fcoef[k][i] * fvar[k][i], plus fc0[k]; nf forms, 1 .. JRANK_MAXC.
 typedef struct {
     int32_t nf; uint8_t fn[JRANK_MAXC]; int32_t fvar[JRANK_MAXC][JRANK_MAXT];
     __int128 fcoef[JRANK_MAXC][JRANK_MAXT], fc0[JRANK_MAXC];
 } JMinMax;
 typedef struct { int32_t n; int32_t var[4]; __int128 coef[4]; __int128 den; int32_t fval; int8_t mm; const JMinMax *mmf;
-                 int8_t wbits; bool wsgn; bool fdiv; } JRecipe;
+                 int8_t wbits; bool wsgn; bool fdiv; bool prod; } JRecipe;
 
 // A claim at a cut point, `sum(coef * term) <= rhs`, over one to four terms by value id: a cell's
 // ALLOCA id is the version the cell has as block `blk` is entered, any other id that integer value.
@@ -247,6 +248,8 @@ typedef struct {
     uint8_t *wneed;                // by value id: a path's stored values and what they are made of (jb_join_wraps)
     const JGuardClaim *gc; int32_t ngc;   // guarded return claims (untrusted input, owed as return claims are)
     struct JGSite *gs; int32_t ngs; bool gsdone;   // s21: their calls' PRE and POST versions (jg_gsites)
+    struct JGhosts **ghost;        // s31: by header block id, its ghost monomials (jg_ghosts), NULL not asked
+    struct JPoly **pform; int32_t pfH; uint8_t *pfst;   // s31: forms of values over header pfH's versions, and their state
     int32_t *sqkey; __int128 *sqpt; int32_t nsq; bool sqdone;   // s29: squares' candidate points (jg_sq_points)
     int8_t wraps;                  // s5: f has a wrapping ADD or SUB of two or three cases, or an AND whose hull is two
                                    // cases (s16), (2), none (1), not asked yet (0)
@@ -1267,7 +1270,7 @@ static int32_t jb_fresh(JB *B, const char *what, int32_t id, const JLT *t, int n
     JRecipe *r = JG_NEW(B->g, JRecipe, 1);
     if (!s || !r) { B->fail = true; return 0; }
     strcpy(s, nm);
-    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL; r->wbits = 0; r->wsgn = false; r->fdiv = false;
+    r->n = n; r->den = den; r->fval = -1; r->mm = 0; r->mmf = NULL; r->wbits = 0; r->wsgn = false; r->fdiv = false; r->prod = false;
     for (int i = 0; i < n; i++) { r->var[i] = t[i].var; r->coef[i] = t[i].c; }
     int32_t x = jb_newvar(B, s, 3, id, NULL);
     B->qt--;                                                   // nothing to state for it
@@ -1946,8 +1949,346 @@ static int32_t jb_mod(JB *B, int32_t x, int32_t k) {
     jb_divmod(B, x, q, r, k, false, true, jb_str(B, "def mod %lld", k, 0, 0));
     return r;
 }
+// ── PRODUCT GHOSTS (s31, PE.15's termination-nla: ps2-ps6, mannadiv, sqrt1) ─────────────────────
+// A FORM of a value inside the loop of header H: a polynomial over H's versions of integer cells,
+// sum of k * monomial + constant, built only from what is exact: a constant, a load of H's version
+// of a cell (the monomial of that cell) or of an exact store made in the loop (its value's form),
+// and checked +, -, unary -, * and exact integer casts of forms (each traps where its result would
+// leave its type, so the value IS the polynomial's). Anything else has none. A monomial is a cell
+// multiset of degree <= JPOLY_DEG; a form has at most JPOLY_T terms, coefficients within 2^100.
+enum { JPOLY_DEG = 6, JPOLY_T = 24, JGHOST_MAX = 12 };
+typedef struct { uint8_t d; int32_t c[JPOLY_DEG]; } JMono;                 // cells ascending; d 0: 1
+typedef struct JPoly { int n; JMono m[JPOLY_T]; __int128 k[JPOLY_T]; } JPoly;
+typedef struct JGhosts { int32_t n; JMono m[JGHOST_MAX]; } JGhosts;
+static bool jm_eq(const JMono *a, const JMono *b) {
+    if (a->d != b->d) return false;
+    for (int i = 0; i < a->d; i++) if (a->c[i] != b->c[i]) return false;
+    return true;
+}
+static bool jp_addt(JPoly *p, const JMono *m, __int128 k) {    // p += k*m
+    const __int128 lim = (__int128)1 << 100;
+    if (k == 0) return true;
+    if (k > lim || k < -lim) return false;
+    for (int i = 0; i < p->n; i++) {
+        if (!jm_eq(&p->m[i], m)) continue;
+        __int128 t = p->k[i] + k;
+        if (t > lim || t < -lim) return false;
+        if (t == 0) { p->n--; p->m[i] = p->m[p->n]; p->k[i] = p->k[p->n]; } else p->k[i] = t;
+        return true;
+    }
+    if (p->n == JPOLY_T) return false;
+    p->m[p->n] = *m; p->k[p->n] = k; p->n++;
+    return true;
+}
+static bool jp_add(JPoly *r, const JPoly *a, const JPoly *b, int sb) {   // a + sb*b, sb +-1
+    *r = *a;
+    for (int i = 0; i < b->n; i++) if (!jp_addt(r, &b->m[i], sb * b->k[i])) return false;
+    return true;
+}
+static bool jp_mul(JPoly *r, const JPoly *a, const JPoly *b) {
+    r->n = 0;
+    for (int i = 0; i < a->n; i++)
+        for (int j = 0; j < b->n; j++) {
+            JMono m; __int128 k;
+            if (a->m[i].d + b->m[j].d > JPOLY_DEG || !jg_mul_ok(a->k[i], b->k[j], &k)) return false;
+            int x = 0, y = 0; m.d = 0;
+            while (x < a->m[i].d || y < b->m[j].d)
+                m.c[m.d++] = y >= b->m[j].d || (x < a->m[i].d && a->m[i].c[x] <= b->m[j].c[y]) ? a->m[i].c[x++] : b->m[j].c[y++];
+            if (!jp_addt(r, &m, k)) return false;
+        }
+    return true;
+}
+static bool jg_lands_exact(const IrType *from, const IrType *to, bool waived);
+// v's form over header H's versions, or NULL (memoised per function for one header at a time)
+static const JPoly *jg_form(JG *g, int32_t H, IrValue *v, int depth) {
+    if (!v || v->id < 0 || v->id >= g->nv || depth > 32) return NULL;
+    if (g->pfH != H || !g->pform) {
+        if (!g->pform && (!(g->pform = JG_NEW(g, JPoly *, g->nv ? g->nv : 1)) || !(g->pfst = JG_NEW(g, uint8_t, g->nv ? g->nv : 1)))) { g->pform = NULL; return NULL; }
+        memset(g->pfst, 0, (size_t)(g->nv ? g->nv : 1)); g->pfH = H;
+    }
+    if (g->pfst[v->id] == 2) return g->pform[v->id];
+    if (g->pfst[v->id] == 1 || g->pfst[v->id] == 3) return NULL;   // a cycle, or none
+    g->pfst[v->id] = 1;
+    IrInstr *d = g->def[v->id];
+    JPoly r, *out = NULL; r.n = 0;
+    const uint8_t *L = g->inloop + (size_t)H * (size_t)g->nb;
+    bool ok = false;
+    if (d && d->op == IR_CONST && jg_is_int(v->type)) {
+        JMono one; one.d = 0; ok = jp_addt(&r, &one, jg_const(d)) || jg_const(d) == 0;
+    } else if (d && jg_is_int(v->type) && g->defblk[v->id] >= 0 && L[g->defblk[v->id]]) {
+        const JPoly *a = NULL, *b = NULL;
+        if (d->op == IR_LOAD && g->loadver[v->id] >= 0) {
+            int32_t ver = g->loadver[v->id], c = g->ver[ver].cell;
+            const JVer *vr = &g->ver[ver];
+            if (c >= 0 && g->cty[c] && g->cty[c]->kind == IRT_INT && ver == g->instate[(size_t)H * (size_t)g->ncells + (size_t)c]) {
+                JMono m; m.d = 1; m.c[0] = c; ok = jp_addt(&r, &m, 1);
+            } else if (vr->kind == JV_STORE && jg_store_exact(vr) && vr->stored && vr->blk >= 0 && L[vr->blk] && (a = jg_form(g, H, vr->stored, depth + 1))) {
+                r = *a; ok = true;
+            }
+        } else if (d->wrap == IR_WRAP_CHECK && !d->unchecked && d->n_operands >= 1) {
+            a = jg_form(g, H, d->operands[0], depth + 1);
+            if (d->n_operands >= 2 && (d->op == IR_ADD || d->op == IR_SUB || d->op == IR_MUL)) b = jg_form(g, H, d->operands[1], depth + 1);
+            if (d->op == IR_ADD && a && b) ok = jp_add(&r, a, b, 1);
+            else if (d->op == IR_SUB && a && b) ok = jp_add(&r, a, b, -1);
+            else if (d->op == IR_MUL && a && b) ok = jp_mul(&r, a, b);
+            else if (d->op == IR_NEG && a) { JPoly z; z.n = 0; ok = jp_add(&r, &z, a, -1); }
+            else if (d->op == IR_CAST && a && jg_lands_exact(d->operands[0]->type, v->type, d->unchecked)) { r = *a; ok = true; }
+        }
+    }
+    if (ok && (out = JG_NEW(g, JPoly, 1))) *out = r;
+    g->pform[v->id] = out; g->pfst[v->id] = out ? 2 : 3;
+    return out;
+}
+// Cell c's ALTERNATIVES at version ver of H's loop (at the end of a back edge): H's own version (the
+// monomial), an exact store made in the loop (its value's form), or a join made in the loop past H
+// (an if/else in the body: each predecessor's alternatives, the join's version one of them on
+// every run); at most JALT_MAX. False where one has none.
+enum { JALT_MAX = 4, JCOMBO_MAX = 8 };
+typedef struct { int n; JPoly f[JALT_MAX]; } JAlts;
+static bool jg_cell_alts(JG *g, int32_t H, int32_t c, int32_t ver, JAlts *out, int depth) {
+    const uint8_t *L = g->inloop + (size_t)H * (size_t)g->nb;
+    if (ver < 0 || depth > 8) return false;
+    if (ver == g->instate[(size_t)H * (size_t)g->ncells + (size_t)c]) {
+        if (out->n == JALT_MAX) return false;
+        JPoly *f = &out->f[out->n]; f->n = 0; JMono m; m.d = 1; m.c[0] = c;
+        if (!jp_addt(f, &m, 1)) return false;
+        out->n++; return true;
+    }
+    const JVer *vr = &g->ver[ver];
+    if (vr->blk < 0 || !L[vr->blk] || vr->blk == H) return false;
+    if (vr->kind == JV_STORE) {
+        const JPoly *f = jg_store_exact(vr) && vr->stored ? jg_form(g, H, vr->stored, 0) : NULL;
+        if (!f || out->n == JALT_MAX) return false;
+        out->f[out->n++] = *f; return true;
+    }
+    if (vr->kind != JV_JOIN) return false;
+    for (IrEdge *e = g->blk[vr->blk]->preds; e; e = e->next) {
+        int32_t Q = e->block->id;
+        if (g->rpoix[Q] < 0) continue;
+        if (!L[Q] || !jg_cell_alts(g, H, c, g->outstate[(size_t)Q * (size_t)g->ncells + (size_t)c], out, depth + 1)) return false;
+    }
+    return true;
+}
+// Monomial m's EXPANSIONS at the end of back edge P: per combination of its factors' alternatives
+// (one choice per cell), the product of the chosen forms, a form over H's versions; `pick[k][i]` the
+// choice for factor cell i of the combination k. At most JCOMBO_MAX; false where a factor has no
+// alternative or a cap is passed.
+typedef struct { int n; JPoly e[JCOMBO_MAX]; int8_t pick[JCOMBO_MAX][JPOLY_DEG]; JAlts alt[JPOLY_DEG]; int nf; int32_t fc[JPOLY_DEG]; } JExp;
+static bool jg_expand(JG *g, int32_t H, int32_t P, const JMono *m, JExp *x) {
+    x->nf = 0; x->n = 0;
+    for (int i = 0; i < m->d; i++) {                           // the distinct factor cells and their alternatives
+        if (x->nf && x->fc[x->nf - 1] == m->c[i]) continue;
+        x->fc[x->nf] = m->c[i]; x->alt[x->nf].n = 0;
+        if (!jg_cell_alts(g, H, m->c[i], g->outstate[(size_t)P * (size_t)g->ncells + (size_t)m->c[i]], &x->alt[x->nf], 0)) return false;
+        x->nf++;
+    }
+    int total = 1;
+    for (int i = 0; i < x->nf; i++) { total *= x->alt[i].n; if (total > JCOMBO_MAX) return false; }
+    for (int k = 0; k < total; k++) {
+        int r = k; JPoly *e = &x->e[k]; e->n = 0; JMono one; one.d = 0;
+        if (!jp_addt(e, &one, 1)) return false;
+        for (int i = 0; i < x->nf; i++) { x->pick[k][i] = (int8_t)(r % x->alt[i].n); r /= x->alt[i].n; }
+        for (int q = 0; q < m->d; q++) {
+            int i = 0; while (x->fc[i] != m->c[q]) i++;
+            JPoly t;
+            if (!jp_mul(&t, e, &x->alt[i].f[x->pick[k][i]])) return false;
+            *e = t;
+        }
+    }
+    x->n = total;
+    return true;
+}
+// Is every monomial of degree >= 2 of p in cand[0, nc), not bad? Adds the absent ones where there is room.
+static bool jg_ghost_need(const JPoly *p, JMono *cand, bool *bad, int *nc, bool *grew) {
+    for (int t = 0; t < p->n; t++) {
+        if (p->m[t].d < 2) continue;
+        int at = -1;
+        for (int r = 0; r < *nc && at < 0; r++) if (jm_eq(&cand[r], &p->m[t])) at = r;
+        if (at < 0 && *nc < 2 * JGHOST_MAX) { cand[*nc] = p->m[t]; bad[*nc] = false; (*nc)++; *grew = true; continue; }
+        if (at < 0 || bad[at]) return false;
+    }
+    return true;
+}
+// H's GHOSTS: the monomials of degree >= 2 in the forms of the checked products its loop computes,
+// closed under expansion: each one's expansion on every back edge has its monomials of degree >= 2
+// ghosts too (y*y*y after `y = y + 1` brings y*y), at most JGHOST_MAX, those that are not dropped
+// until none is left out (one whose factor has no form on a back edge goes, and every one whose
+// expansion names it). Their order is the list's, which a ranking's GHOST term indexes. Once each.
+static const JGhosts *jg_ghosts(JG *g, int32_t H) {
+    if (H < 0 || H >= g->nb || !jg_loop_header(g, H)) return NULL;
+    if (!g->ghost) {                                         // the region is not zeroed
+        if (!(g->ghost = JG_NEW(g, JGhosts *, g->nb))) return NULL;
+        for (int32_t h = 0; h < g->nb; h++) g->ghost[h] = NULL;
+    }
+    if (!g->ghost[H]) {
+        JGhosts *G = JG_NEW(g, JGhosts, 1);
+        if (!G) return NULL;
+        G->n = 0;
+        JMono cand[2 * JGHOST_MAX]; int nc = 0; bool bad[2 * JGHOST_MAX];
+        const uint8_t *L = g->inloop + (size_t)H * (size_t)g->nb;
+        for (int32_t b = 0; b < g->nb; b++) {
+            if (!L[b] || !g->blk[b]) continue;
+            for (IrInstr *i = g->blk[b]->instrs; i; i = i->next) {
+                if (i->op != IR_MUL || i->wrap != IR_WRAP_CHECK || i->unchecked || !i->result) continue;
+                const JPoly *f = jg_form(g, H, i->result, 0);
+                for (int t = 0; f && t < f->n; t++) {
+                    if (f->m[t].d < 2) continue;
+                    bool have = false;
+                    for (int q = 0; q < nc && !have; q++) have = jm_eq(&cand[q], &f->m[t]);
+                    if (!have && nc < 2 * JGHOST_MAX) cand[nc++] = f->m[t];
+                }
+            }
+        }
+        for (int q = 0; q < nc; q++) bad[q] = false;
+        for (bool grew = true; grew; ) {                     // the closure: add, then drop
+            grew = false;
+            for (int q = 0; q < nc; q++) {
+                if (bad[q]) continue;
+                for (IrEdge *pe = g->blk[H]->preds; pe && !bad[q]; pe = pe->next) {
+                    int32_t P = pe->block->id; JExp x;
+                    if (g->rpoix[P] < 0 || !jg_back_edge(g, P, H)) continue;
+                    bool ok = jg_expand(g, H, P, &cand[q], &x);
+                    for (int k = 0; ok && k < x.n; k++) ok = jg_ghost_need(&x.e[k], cand, bad, &nc, &grew);
+                    for (int i = 0; ok && x.n > 1 && i < x.nf; i++)   // a join factor's alternatives are stated too
+                        for (int a = 0; ok && x.alt[i].n > 1 && a < x.alt[i].n; a++) ok = jg_ghost_need(&x.alt[i].f[a], cand, bad, &nc, &grew);
+                    if (!ok) { bad[q] = true; grew = true; }
+                }
+            }
+        }
+        for (int q = 0; q < nc && G->n < JGHOST_MAX; q++) if (!bad[q]) G->m[G->n++] = cand[q];
+        g->ghost[H] = G;
+    }
+    return g->ghost ? g->ghost[H] : NULL;
+}
+static int jg_ghost_at(const JGhosts *G, const JMono *m) {
+    for (int i = 0; G && i < G->n; i++) if (jm_eq(&G->m[i], m)) return i;
+    return -1;
+}
+// The innermost loop header around block b (b itself where it is one), -1 where none.
+static int32_t jg_inner_head(JG *g, int32_t b) {
+    int32_t H = -1;
+    for (int32_t h = 0; h < g->nb; h++)
+        if (jg_loop_header(g, h) && g->inloop[(size_t)h * (size_t)g->nb + (size_t)b] && (H < 0 || g->rpoix[h] > g->rpoix[H])) H = h;
+    return H;
+}
+// The VARIABLE of monomial m, row `row` (H's instate, or a back edge's or the entry's outstate): a
+// cell's version for degree 1; for degree >= 2 a fresh `ghost.<cells>@<where>`, its recipe the
+// product of the one before it (its factors but the last) and the last factor's (prod). Once a VC.
+static int32_t jb_ghost_var(JB *B, int32_t H, const int32_t *row, const char *where, const JMono *m) {
+    JG *g = B->g;
+    if (m->d == 1) return row[m->c[0]] >= 0 ? jb_ver(B, row[m->c[0]]) : jb_fresh(B, "ghost.none", g->cellv[m->c[0]]->id, NULL, 0, 0);
+    char nm[256]; int o = snprintf(nm, sizeof nm, "ghost.");
+    for (int i = 0; i < m->d && o < (int)sizeof nm; i++) o += snprintf(nm + o, sizeof nm - (size_t)o, "%s%s", i ? "*" : "", g->cname[m->c[i]]);
+    if (o < (int)sizeof nm) snprintf(nm + o, sizeof nm - (size_t)o, "@%s", where);
+    for (int32_t v = 0; v < B->nvars; v++) if (B->kind[v] == 3 && !strcmp(B->names[v], nm)) return v;
+    JMono sub = *m; sub.d--;
+    int32_t a = jb_ghost_var(B, H, row, where, &sub), b = jb_ver(B, row[m->c[m->d - 1]]);
+    char *s = JG_NEW(g, char, strlen(nm) + 1); JRecipe *r = JG_NEW(g, JRecipe, 1);
+    if (!s || !r || B->fail) { B->fail = true; return 0; }
+    strcpy(s, nm); memset(r, 0, sizeof *r);
+    r->n = 2; r->var[0] = a; r->var[1] = b; r->prod = true; r->fval = -1; r->den = 1;
+    int32_t x = jb_newvar(B, s, 3, g->cellv[m->c[0]]->id, NULL); B->qt--;   // facts its row states
+    if (!B->fail) B->vrec[x] = r;
+    return x;
+}
+// A form as linear terms over H's header variables (degree 1: cell versions; >= 2: the ghosts, each
+// in H's list), into t (k the constant); false where a monomial is no ghost or t is full
+static bool jb_form_terms(JB *B, int32_t H, const JGhosts *G, const JPoly *f, JLT *t, int *n, int cap, __int128 *k) {
+    JG *g = B->g; char wh[32]; snprintf(wh, sizeof wh, "head.bb%d", (int)H);
+    const int32_t *row = g->instate + (size_t)H * (size_t)g->ncells;
+    *n = 0; *k = 0;
+    for (int i = 0; i < f->n; i++) {
+        if (f->m[i].d == 0) { *k += f->k[i]; continue; }
+        if ((f->m[i].d >= 2 && jg_ghost_at(G, &f->m[i]) < 0) || *n == cap) return false;
+        t[*n].var = jb_ghost_var(B, H, row, wh, &f->m[i]); t[*n].c = f->k[i]; (*n)++;
+    }
+    return !B->fail;
+}
+// Ghost i of H at the end of edge P, a fresh variable (recipe the product of P's versions): on a
+// back edge EQUAL to the monomial's expansion over H's header variables (`def ghost`), or where a
+// factor's version there is a join's in the loop, one expansion per choice of its alternatives,
+// each with the factor's version equal to its choice (a disjunction, VC-wide only); on an edge from
+// before the loop, the product where it is linear in the versions there: 0 where a factor's is an
+// exact store of 0, else c*v where every factor's but one, v, is an exact store of a constant
+// (mannadiv's y1*x2 entered as 0*x2); else nothing stated.
+static int32_t jb_ghost_post(JB *B, int32_t H, int32_t P, int i) {
+    JG *g = B->g;
+    const JGhosts *G = jg_ghosts(g, H);
+    if (!G || i < 0 || i >= G->n) { B->fail = true; return 0; }
+    const JMono *m = &G->m[i];
+    char wh[32]; snprintf(wh, sizeof wh, "bb%d", (int)P);
+    const int32_t *row = g->outstate + (size_t)P * (size_t)g->ncells;
+    int32_t x = jb_ghost_var(B, H, row, wh, m);
+    if (B->fail) return x;
+    JLT t[JPOLY_T + 1]; int n = 0; __int128 k = 0;
+    if (jg_back_edge(g, P, H)) {
+        JExp ex;
+        if (!jg_expand(g, H, P, m, &ex) || (ex.n > 1 && B->jS >= 0)) return x;   // a disjunct holds no disjunction
+        JConj *dis = ex.n > 1 ? JG_NEW(g, JConj, ex.n) : NULL;
+        if (ex.n > 1 && !dis) { B->fail = true; return x; }
+        for (int c = 0; c < ex.n; c++) {
+            // the join factors' choices: version at P's end - its alternative = 0 (s31: mannadiv's y1)
+            JCons cs[JPOLY_DEG + 1]; int nc = 0;
+            for (int f = 0; ex.n > 1 && f < ex.nf; f++) {
+                if (ex.alt[f].n < 2) continue;
+                if (!jb_form_terms(B, H, G, &ex.alt[f].f[ex.pick[c][f]], t + 1, &n, JPOLY_T, &k)) return x;
+                for (int q = 1; q <= n; q++) t[q].c = -t[q].c;
+                t[0].var = jb_ver(B, g->outstate[(size_t)P * (size_t)g->ncells + (size_t)ex.fc[f]]); t[0].c = 1;
+                if (!jb_cons(B, t, n + 1, J_EQ, k, &cs[nc++])) return x;
+            }
+            if (!jb_form_terms(B, H, G, &ex.e[c], t + 1, &n, JPOLY_T, &k)) return x;
+            for (int q = 1; q <= n; q++) t[q].c = -t[q].c;
+            t[0].var = x; t[0].c = 1;                          // x - expansion = const
+            if (ex.n == 1) { jb_atom(B, jb_str(B, "def ghost %lld bb%lld", i, P, 0), t, n + 1, J_EQ, k); return x; }
+            if (!jb_cons(B, t, n + 1, J_EQ, k, &cs[nc++])) return x;
+            if (!(dis[c].c = JG_NEW(g, JCons, nc))) { B->fail = true; return x; }
+            dis[c].nc = nc; memcpy(dis[c].c, cs, sizeof *cs * (size_t)nc);
+        }
+        JHyp *h = jb_hyp(B, jb_str(B, "def ghost %lld bb%lld", i, P, 0));
+        if (h) { h->disj = true; h->ndis = ex.n; h->dis = dis; }
+        return x;
+    }
+    __int128 prod = 1; int32_t v1 = -1; bool zero = false, lin = true, fit = true;
+    for (int q = 0; q < m->d; q++) {
+        int32_t ver = row[m->c[q]]; __int128 c;
+        const JVer *vr = ver >= 0 ? &g->ver[ver] : NULL;
+        if (vr && vr->kind == JV_STORE && jg_store_exact(vr) && vr->stored && jg_const_of(g, vr->stored, &c)) {
+            if (c == 0) zero = true;
+            else if (fit) fit = jg_mul_ok(prod, c, &prod);
+        } else if (ver >= 0 && v1 < 0) v1 = ver;                // the one factor that is not a constant
+        else lin = false;                                       // a second (x*x), or one with no version
+    }
+    if (!zero && (!lin || !fit)) return x;
+    t[0].var = x; t[0].c = 1; n = 1;
+    if (!zero && v1 >= 0) { t[1].var = jb_ver(B, v1); t[1].c = -prod; n = 2; }
+    jb_atom(B, jb_str(B, "def ghost %lld bb%lld entry", i, P, 0), t, n, J_EQ, zero || v1 >= 0 ? 0 : prod);
+    return x;
+}
+// A checked product's DEFINITION as its form, in the loop of its innermost header H, where the form
+// has a monomial of degree >= 2 and each such is one of H's ghosts: m - (its terms) = constant.
+static void jb_ghost_def(JB *B, int32_t x, IrInstr *d, int32_t id) {
+    JG *g = B->g;
+    if (g->defblk[id] < 0) return;
+    int32_t H = jg_inner_head(g, g->defblk[id]);
+    if (H < 0) return;
+    const JGhosts *G = jg_ghosts(g, H);
+    const JPoly *f = G && G->n ? jg_form(g, H, d->result, 0) : NULL;
+    bool deg2 = false;
+    for (int i = 0; f && i < f->n; i++) deg2 |= f->m[i].d >= 2;
+    if (!deg2) return;
+    JLT t[JPOLY_T + 1]; int n = 0; __int128 k = 0;
+    if (!jb_form_terms(B, H, G, f, t + 1, &n, JPOLY_T, &k)) return;
+    for (int q = 1; q <= n; q++) t[q].c = -t[q].c;
+    t[0].var = x; t[0].c = 1;
+    jb_atom(B, jb_str(B, "def %%v%lld ghost", id, 0, 0), t, n + 1, J_EQ, k);
+}
 static int32_t jb_cterm(JB *B, int32_t key, uint8_t tk, const int32_t *row, int32_t H, int32_t arg) {
     JG *g = B->g;
+    if (tk == JTERM_GHOST) {                                   // jg_ghost_ok has checked it
+        const int32_t *in = g->instate + (size_t)H * (size_t)g->ncells;
+        if (row == in) { char wh[32]; snprintf(wh, sizeof wh, "head.bb%d", (int)H); const JGhosts *G = jg_ghosts(g, H); return jb_ghost_var(B, H, in, wh, &G->m[arg]); }
+        return jb_ghost_post(B, H, (int32_t)((row - g->outstate) / g->ncells), arg);
+    }
     if (tk == JTERM_MOD) return jb_mod(B, jb_term(B, key, JTERM_VALUE, row), arg);   // jg_mod_ok has checked it
     if (tk == JTERM_HEAD)                                      // jg_claims_ok has checked b has one
         return jb_ver(B, g->instate[(size_t)jg_head_of(g, H) * (size_t)g->ncells + (size_t)g->cell[key]]);
@@ -1994,6 +2335,9 @@ static void jb_claims(JB *B, const JVer *v) {
             if (c->tk[k] == JTERM_EACH) {
                 ek = k; en = jg_each_cells(g, c->key[k], ec);
                 for (int32_t q = 0; q < en; q++) if (ec[q] >= 0 && ec[q] == v->cell) about = true;
+            } else if (c->tk[k] == JTERM_GHOST) {                 // a product: any of its factors (s31)
+                const JMono *m = &jg_ghosts(g, c->blk)->m[c->targ[k]];
+                for (int q = 0; q < m->d; q++) if (m->c[q] == v->cell) about = true;
             } else {
                 if (c->tk[k] == JTERM_UPTO) gk = k;
                 if (g->cell[c->key[k]] == v->cell) about = true;
@@ -2009,7 +2353,7 @@ static void jb_claims(JB *B, const JVer *v) {
             JLT t[JCLAIM_MAXT]; int n = 0;
             for (int k = 0; k < c->nt; k++) {
                 if (k == gk) continue;
-                t[n].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_cterm(B, c->key[k], c->tk[k], row, c->blk, 0);
+                t[n].var = k == ek ? jb_ver(B, row[ec[q]]) : jb_cterm(B, c->key[k], c->tk[k], row, c->blk, c->targ[k]);
                 t[n].c = c->coef[k]; n++;
             }
             if (gk < 0) { jb_atom(B, o, t, n, J_LE, c->rhs); continue; }
@@ -2836,6 +3180,7 @@ static void jb_state(JB *B, int32_t x) {
             if (!lin && jg_mul_hull(g, d, &h)) jb_range(B, x, &h, jb_str(B, "def %%v%lld mul.hull", id, 0, 0));
             if (!lin) jb_mul_mono(B, x, d, id);
             if (!lin) jb_mul_rel(B, x, d, id);                // a square's, or a quotient bound's (s29)
+            if (!lin) jb_ghost_def(B, x, d, id);              // a loop's product as its ghosts (s31)
             // two factors >= 0 by their static ranges (u64 * u64): the product is >= 0 (s29: the
             // hull says it where the corners fit, and nothing did where they leave the type)
             JRange r0, r1;
@@ -4439,7 +4784,7 @@ static bool jg_made_at(JG *g, int32_t blk, int32_t cell) {
     return jv >= 0 && (g->ver[jv].kind == JV_JOIN || g->ver[jv].kind == JV_HEAD) && g->ver[jv].blk == blk;
 }
 // A term's version: the block's (0), the loop's entry edge's (1), the trip's start's (2).
-static int jg_tk_class(uint8_t tk) { return tk == JTERM_ENTRY ? 1 : tk == JTERM_HEAD ? 2 : tk == JTERM_POST ? 3 : tk == JTERM_PRE ? 4 : tk == JTERM_MOD ? 5 : 0; }
+static int jg_tk_class(uint8_t tk) { return tk == JTERM_ENTRY ? 1 : tk == JTERM_HEAD ? 2 : tk == JTERM_POST ? 3 : tk == JTERM_PRE ? 4 : tk == JTERM_MOD ? 5 : tk == JTERM_GHOST ? 6 : 0; }
 // Claims are untrusted input: one the generator cannot state AND owe is refused, never skipped.
 // Its terms: one to `max`, no key twice (a sum names each term once), but a cell beside its ENTRY
 // value (`x - entry(x)`: two terms, its version at the block and the one its loop was entered with).
@@ -4449,6 +4794,7 @@ static bool jg_claim_shape(JG *g, const int32_t *key, const uint8_t *tk, const i
     if (nt < 1 || nt > max) return jg_fail(g, "a claim of no terms, or of more than it may have");
     for (int32_t i = 0; i < nt; i++)
         for (int32_t j = i + 1; j < nt; j++) {
+            if (tk[i] == JTERM_GHOST && tk[j] == JTERM_GHOST) continue;   // told apart by their index (jg_ghost_ok)
             bool part = fld && (key[i] == JKEY_RET || tk[i] == JTERM_POST || tk[i] == JTERM_PRE);
             if (key[i] == key[j] && jg_tk_class(tk[i]) == jg_tk_class(tk[j]) && (!part || fld[i] == fld[j]))
                 return jg_fail(g, "a claim naming one term twice");
@@ -4565,9 +4911,9 @@ static bool jg_guard_cut_ok(JG *g, const JGuardClaim *c) {
     r.blk = c->blk; r.nt = c->nt; r.rhs = c->rhs; r.fn = c->fn;
     for (int k = 0; k < JCLAIM_MAXT; k++) { r.key[k] = c->key[k]; r.tk[k] = c->tk[k]; r.coef[k] = c->coef[k]; }
     for (int k = 0; k < c->nt && k < JCLAIM_MAXT; k++)
-        if (c->tk[k] == JTERM_EACH || c->tk[k] == JTERM_UPTO) return jg_fail(g, "a guarded cut-point claim of an EACH or UPTO term");
+        if (c->tk[k] == JTERM_EACH || c->tk[k] == JTERM_UPTO || c->tk[k] == JTERM_GHOST) return jg_fail(g, "a guarded cut-point claim of an EACH, UPTO or GHOST term");
     for (int k = 0; k < c->when.nt && k < JCLAIM_MAXT; k++)
-        if (c->when.tk[k] == JTERM_EACH || c->when.tk[k] == JTERM_UPTO) return jg_fail(g, "a guarded claim's `when` of an EACH or UPTO term");
+        if (c->when.tk[k] == JTERM_EACH || c->when.tk[k] == JTERM_UPTO || c->when.tk[k] == JTERM_GHOST) return jg_fail(g, "a guarded claim's `when` of an EACH, UPTO or GHOST term");
     if (!jg_cut_claim_ok(g, &r, true)) return false;
     if (c->when.nt && (c->when.blk != c->blk || c->when.fn != c->fn)) return jg_fail(g, "a guarded cut-point claim's `when` not at its block");
     if (c->when.nt && !jg_cut_claim_ok(g, &c->when, false)) return false;
@@ -4610,6 +4956,15 @@ static bool jg_cut_claim_ok(JG *g, const JClaim *c, bool need_made) {
         int32_t key = c->key[k];
         if (c->coef[k] == 0 || c->coef[k] > big || c->coef[k] < -big) return jg_fail(g, "a claim's coefficient out of range");
         if (c->tk[k] == JTERM_MOD) return jg_fail(g, "a claim's MOD term (v1: a loop's ranking only)");
+        if (c->tk[k] == JTERM_GHOST) {                   // a product of the header's versions (s31)
+            const JGhosts *G = jg_ghosts(g, c->blk);     // none but at a loop's header
+            if (!G || c->targ[k] < 0 || c->targ[k] >= G->n || key != g->cellv[G->m[c->targ[k]].c[0]]->id)
+                return jg_fail(g, "a claim's GHOST term of no ghost of a loop header at its block");
+            for (int j = 0; j < k; j++) if (c->tk[j] == JTERM_GHOST && c->targ[j] == c->targ[k]) return jg_fail(g, "a claim naming one ghost twice");
+            const JMono *m = &G->m[c->targ[k]];
+            for (int q = 0; q < m->d; q++) if (jg_made_at(g, c->blk, m->c[q])) made = true;
+            continue;
+        }
         if (c->tk[k] == JTERM_EACH) {                    // one instance per element cell
             int32_t ec[JELEM_MAXN], en = jg_each_cells(g, key, ec);
             if (++each > 1) return jg_fail(g, "a claim of two EACH terms");
@@ -4792,7 +5147,7 @@ static bool jg_claim_obligations(JG *g, JObls *L, int32_t only) {
                 JLT t[JCLAIM_MAXT]; JCons goal; int nt = 0;
                 for (int k = 0; k < c->nt; k++) {
                     if (k == gk) continue;
-                    t[nt].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_cterm(&B, c->key[k], c->tk[k], row, c->blk, 0);
+                    t[nt].var = k == ek ? jb_ver(&B, row[ec[q]]) : jb_cterm(&B, c->key[k], c->tk[k], row, c->blk, c->targ[k]);
                     t[nt].c = c->coef[k]; nt++;
                 }
                 int32_t gv = -1;
@@ -5255,14 +5610,21 @@ static bool jg_rank_obligations(JG *g, JObls *L, const JRank *rk, int32_t nrk) {
         // a CONSTANT one (no terms), written or proposed, falls on no edge that is ever taken: it is
         // how a loop whose back edges are dead (`while false`, a fixed guard) is shown to end
         if (r->nt != 0 && !jg_claim_shape(g, r->key, r->tk, NULL, r->nt, JRANK_MAXT)) return false;
-        for (int32_t i = 0; i < r->nt; i++) {                  // a term's argument: a MOD's k alone (s27)
+        for (int32_t i = 0; i < r->nt; i++) {                  // a term's argument: a MOD's k alone (s27), a GHOST's index (s31)
+            if (r->tk[i] == JTERM_GHOST) {
+                const JGhosts *G = jg_ghosts(g, H->id);
+                if (!G || r->targ[i] < 0 || r->targ[i] >= G->n || r->key[i] != g->cellv[G->m[r->targ[i]].c[0]]->id)
+                    return jg_fail(g, "a ranking claim's GHOST term of no ghost of its header");
+                for (int32_t j = 0; j < i; j++) if (r->tk[j] == JTERM_GHOST && r->targ[j] == r->targ[i]) return jg_fail(g, "a ranking claim naming one ghost twice");
+                continue;
+            }
             if (r->tk[i] != JTERM_MOD ? r->targ[i] != 0 : r->targ[i] < 2 || r->targ[i] > JTERM_MODMAX)
                 return jg_fail(g, "a ranking claim's term argument out of range, or on a kind that takes none");
             if (r->tk[i] == JTERM_MOD && !jg_mod_ok(g, H->id, r->key[i]))
                 return jg_fail(g, "a ranking claim's MOD term of no integer cell with a version at its header and back edges");
         }
         for (int32_t i = 0; i < r->nt; i++)                    // a written measure's: a fixed quotient too
-            if (r->tk[i] != JTERM_MOD && !jg_term_ok(g, H->id, r->key[i], r->tk[i]) && !(r == &mr && r->tk[i] == JTERM_VALUE && jg_fixed_quot(g, H->id, r->key[i])) &&
+            if (r->tk[i] != JTERM_MOD && r->tk[i] != JTERM_GHOST && !jg_term_ok(g, H->id, r->key[i], r->tk[i]) && !(r == &mr && r->tk[i] == JTERM_VALUE && jg_fixed_quot(g, H->id, r->key[i])) &&
                 !(r->tk[i] == JTERM_ENTRY && jg_entry_ok(g, H->id, r->key[i])))   // ENTRY: fixed in the loop
                 return jg_fail(g, "a ranking claim's term is not a cell or a value fixed at its header");
         for (int32_t j = 0; j < r->ncomp; j++) {
@@ -5990,14 +6352,18 @@ static void jg_mod_pairs(JG *g, int32_t header, int32_t *keys, uint8_t *tks, int
     }
 }
 static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
-                     int32_t header, bool modp, JPaths *out, char *err, size_t errcap);
+                     int32_t header, bool modp, bool ghostp, JPaths *out, char *err, size_t errcap);
 static bool jgen_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc, int32_t header,
                        JPaths *out, char *err, size_t errcap) {
-    return jg_paths(m, f, mod, cl, ncl, gc, ngc, header, false, out, err, errcap);
+    return jg_paths(m, f, mod, cl, ncl, gc, ngc, header, false, false, out, err, errcap);
 }
 static bool jgen_paths_mod(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc, int32_t header,
                            JPaths *out, char *err, size_t errcap) {
-    return jg_paths(m, f, mod, cl, ncl, gc, ngc, header, true, out, err, errcap);
+    return jg_paths(m, f, mod, cl, ncl, gc, ngc, header, true, false, out, err, errcap);
+}
+static bool jgen_paths_ghost(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc, int32_t header,
+                             JPaths *out, char *err, size_t errcap) {
+    return jg_paths(m, f, mod, cl, ncl, gc, ngc, header, false, true, out, err, errcap);
 }
 // For whoever proposes ranking functions and loop relations (untrusted; PE.5, PE.7): every edge
 // into loop header `header` as the generator states it with the claims `cl` (on a back edge the
@@ -6008,7 +6374,7 @@ static bool jgen_paths_mod(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, in
 // (paths_mod, s27), the MOD pairs after those (jg_mod_pairs). The guarded claims `gc` are stated
 // at the paths' calls as a VC states them (jb_call_guarded, jb_ver_guarded).
 static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t ncl, const JGuardClaim *gc, int32_t ngc,
-                     int32_t header, bool modp, JPaths *out, char *err, size_t errcap) {
+                     int32_t header, bool modp, bool ghostp, JPaths *out, char *err, size_t errcap) {
     JG g; memset(&g, 0, sizeof g);
     g.m = m; g.f = f; g.mod = mod; g.err = err; g.errcap = errcap; err[0] = 0;
     g.cl = cl; g.ncl = cl ? ncl : 0;
@@ -6018,7 +6384,7 @@ static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t 
     if (!jg_structure(&g) || !jg_cells(&g) || !jg_claims_ok(&g)) return false;
     if (!jg_loop_header(&g, header)) { out->refused = "not a loop header"; return true; }
     IrBlock *H = g.blk[header];
-    int32_t nk = 0, cap = 2 * g.ncells + (modp ? JPATH_MAXMOD : 0), *keys = JG_NEW(&g, int32_t, cap ? cap : 1), *args = JG_NEW(&g, int32_t, cap ? cap : 1);
+    int32_t nk = 0, cap = 2 * g.ncells + (modp ? JPATH_MAXMOD : 0) + (ghostp ? JGHOST_MAX : 0), *keys = JG_NEW(&g, int32_t, cap ? cap : 1), *args = JG_NEW(&g, int32_t, cap ? cap : 1);
     uint8_t *tks = JG_NEW(&g, uint8_t, cap ? cap : 1);
     int32_t np = 0;
     for (IrEdge *e = H->preds; e; e = e->next) np++;
@@ -6054,6 +6420,8 @@ static bool jg_paths(JMem *m, IrFunc *f, IrFunc *mod, const JClaim *cl, int32_t 
     }
     for (int32_t q = 0; q < nk; q++) args[q] = 0;
     if (modp) jg_mod_pairs(&g, header, keys, tks, args, &nk, cap);
+    const JGhosts *G = ghostp ? jg_ghosts(&g, header) : NULL;   // with ghostp (paths_ghost, s31): H's ghosts
+    for (int32_t q = 0; G && q < G->n && nk < cap; q++) { keys[nk] = g.cellv[G->m[q].c[0]]->id; tks[nk] = JTERM_GHOST; args[nk] = q; nk++; }
     int32_t n = 0;
     for (IrEdge *e = H->preds; e; e = e->next) {
         IrBlock *Pb = e->block;
@@ -6200,6 +6568,11 @@ static bool jgo_paths_mod(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_paths_mod(&m, f, x->mod, cl, ncl, x->gc, x->ngc, header, out, err, errcap);
 }
+static bool jgo_paths_ghost(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, int32_t header, JPaths *out,
+                            char *err, uint32_t errcap) {
+    JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
+    return jgen_paths_ghost(&m, f, x->mod, cl, ncl, x->gc, x->ngc, header, out, err, errcap);
+}
 static bool jgo_call_paths(void *ctx, struct IrFunc *f, const JClaim *cl, int32_t ncl, JPaths *out, char *err, uint32_t errcap) {
     JGenOffer *x = ctx; JMem m = jmem_over(x->buf, x->cap);
     return jgen_call_paths(&m, f, x->mod, cl, ncl, x->gc, x->ngc, out, err, errcap);
@@ -6222,7 +6595,7 @@ static void jgo_guarded(void *ctx, const JGuardClaim *gc, int32_t ngc) {
 }
 static JudgeGen jgen_offer(JGenOffer *x) {
     JudgeGen g; g.ctx = x; g.claim_vcs = jgo_claim_vcs; g.slots = jgo_slots; g.terms = jgo_terms; g.term_kinds = jgo_term_kinds;
-    g.paths = jgo_paths; g.paths_mod = jgo_paths_mod; g.call_paths = jgo_call_paths; g.measure = jgo_measure;
+    g.paths = jgo_paths; g.paths_mod = jgo_paths_mod; g.paths_ghost = jgo_paths_ghost; g.call_paths = jgo_call_paths; g.measure = jgo_measure;
     g.guarded = jgo_guarded;
     return g;
 }
