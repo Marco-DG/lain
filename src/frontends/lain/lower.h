@@ -2095,7 +2095,8 @@ static IrValue *ir_lower_expr_raw(LowerCtx *c, Expr *e) {
                         IrInstr *nr = ir_instr(c->f, IR_CAST, rt2, 1); nr->operands[0] = sv;
                         nr->aux.cast_kind = sb > db ? IR_CAST_TRUNC : sb < db
                                           ? (S->is_signed ? IR_CAST_SEXT : IR_CAST_ZEXT) : IR_CAST_BITCAST;
-                        nr->unchecked = true;         // the two tests above ARE the proof
+                        // a checked cast: the two tests above prove it, and VRA and the judge
+                        // discharge it from them (unchecked, it was read as a wrap, I.69)
                         ir_emit(c->cur, nr);
                         ir_store(c->f, c->cur, cell2, nr->result);
                     } else {
