@@ -2429,7 +2429,8 @@ int main(void) {
     }
     printf("  a reference binding: a slot stored once with an address is that address where it dominates\n");
     // 48. a WAIVED narrowing wraps, as it_wrap makes it: x = v - k*2^w within the type's width, k a
-    // fresh integer. (0) an unchecked cast i16 -> i8 (k*256); (1) a `%` cast u64 -> u32 (k*2^32); (2)
+    // fresh integer. (0) a checked cast i16 -> i8 flagged unchecked: exact and owed, the flag waiving
+    // nothing (I.69: a wrap is a modular cast); (1) a `%` cast u64 -> u32 (k*2^32); (2)
     // a `|` cast clamps: nothing; (3) a checked cast: the plain `def ... cast`; (4) a store of an
     // i16 into an i8 slot flagged unchecked: no wrap, the value stored (I.69); (5) an unchecked SIGNED i8 + i8 in an i9
     // cannot leave it: exact; (6) an unchecked i32 + i32 in an i32 may: nothing
@@ -2460,9 +2461,13 @@ int main(void) {
             char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), want[128];
             const char *vz = t ? vc_of(t, " divzero 0") : "";
             switch (c) {
-                case 0: case 1:
-                    snprintf(want, sizeof want, "def %%v%d cast.wrap : 1*%%v%d + -1*%%v%d + %s*wrap.%%v%d = 0", r->id, r->id, a->id, c ? "4294967296" : "256", r->id);
-                    CHECK(strstr(vz, want) && strstr(vz, c ? "cast.wrap : 1*" : "cast.wrap : -1*"), "case %d: the cast wraps:\n%s", c, vz); break;
+                case 0:
+                    snprintf(want, sizeof want, "def %%v%d cast :", r->id);
+                    CHECK(strstr(vz, want) && !strstr(vz, "wrap") && t && strstr(t, " narrow.lo 0\n"),
+                          "case 0: a flagged checked cast is exact, its narrowing owed:\n%s", t ? t : ""); break;
+                case 1:
+                    snprintf(want, sizeof want, "def %%v%d cast.wrap : 1*%%v%d + -1*%%v%d + %s*wrap.%%v%d = 0", r->id, r->id, a->id, "4294967296", r->id);
+                    CHECK(strstr(vz, want) && strstr(vz, "cast.wrap : 1*"), "case 1: the cast wraps:\n%s", vz); break;
                 case 2: snprintf(want, sizeof want, "def %%v%d cast", r->id); CHECK(*vz && !strstr(vz, want), "case 2: a clamp states nothing:\n%s", vz); break;
                 case 3: snprintf(want, sizeof want, "def %%v%d cast :", r->id); CHECK(strstr(vz, want) && !strstr(vz, "wrap"), "case 3: a checked cast is exact:\n%s", vz); break;
                 case 4: CHECK(strstr(vz, "store %s") && !strstr(vz, "wrap"), "case 4: a flagged store keeps the value stored:\n%s", vz); break;
@@ -2473,7 +2478,7 @@ int main(void) {
         }
         gen_mod = NULL;
     }
-    printf("  a waived narrowing wraps: x = v - k*2^w within the width, k fresh\n");
+    printf("  a modular narrowing wraps: x = v - k*2^w within the width, k fresh; a checked one's flag waives nothing\n");
     // 49. a DIVISION or REMAINDER by a variable divisor, between bounds from the static ranges:
     // (0) 100 / b, b any i32 (an i33 quotient): |q| <= 100; (1) x in [0, 50] / y in [2, 5]: the
     // corners, [0, 25]; (2) x in [-10, 10] / y any i32 (y takes both signs): |q| <= 10 only; (3) x
@@ -2521,7 +2526,7 @@ int main(void) {
             if (c == 6) g_last_instr(b0)->unchecked = true;
             IrInstr *w = ir_instr(f, IR_CAST, i64t, 1); w->operands[0] = q; ir_emit(b0, w);
             IrValue *rv = ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 1000, i64t), w->result, i64t);   // q in a VC
-            IrInstr *back = ir_instr(f, IR_CAST, T, 1); back->operands[0] = rv; back->unchecked = true; ir_emit(b0, back);
+            IrInstr *back = ir_instr(f, IR_CAST, T, 1); back->operands[0] = rv; back->wrap = IR_WRAP_MODULAR; ir_emit(b0, back);
             ir_set_ret(b0, back->result);
             ir_finalize_cfg(f);
             gen_mod = f;
@@ -2628,7 +2633,7 @@ int main(void) {
         }
         IrInstr *w = ir_instr(f, IR_CAST, i64t, 1); w->operands[0] = p; ir_emit(b0, w);
         IrValue *q = ir_binop(f, b0, IR_SDIV, ir_const_int(f, b0, 1000, i64t), w->result, i64t);
-        IrInstr *bk = ir_instr(f, IR_CAST, T, 1); bk->operands[0] = q; bk->unchecked = true; ir_emit(b0, bk);
+        IrInstr *bk = ir_instr(f, IR_CAST, T, 1); bk->operands[0] = q; bk->wrap = IR_WRAP_MODULAR; ir_emit(b0, bk);
         ir_set_ret(b0, bk->result);
         ir_finalize_cfg(f);
         gen_mod = f;

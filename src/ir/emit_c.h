@@ -235,7 +235,7 @@ static void ir_emit_cast_policy(IrInstr *i, FILE *o) {
     IrType *st = i->operands[0]->type, *dt = i->result->type;
     int sb = st->bits > 0 ? st->bits : 32, db = dt->bits > 0 ? dt->bits : 32;
     int v = i->operands[0]->id, r = i->result->id;
-    if (i->wrap == IR_WRAP_MODULAR || (i->wrap == IR_WRAP_CHECK && i->unchecked)) {
+    if (i->wrap == IR_WRAP_MODULAR) {
         bool std_w = (db == 8 || db == 16 || db == 32 || db == 64);
         unsigned long long mask = db >= 64 ? ~0ULL : ((1ULL << db) - 1), sbit = 1ULL << (db - 1);
         fprintf(o, "  v%d = (", r); ir_ctype(dt, o); fputs(")", o);
@@ -783,7 +783,7 @@ static void ir_emit_instr_c(IrInstr *i, FILE *o) {
                             fputs(" : (", o); ir_ctype(dt, o); fprintf(o, ")v%d;\n", x);
                             break;
                         }
-                        if ((i->wrap != IR_WRAP_CHECK || (i->unchecked && ir_c_odd_int(i->result->type))) &&
+                        if (i->wrap != IR_WRAP_CHECK &&
                             i->n_operands == 1 && i->operands[0]->type &&
                             i->operands[0]->type->kind == IRT_INT && i->result->type &&
                             i->result->type->kind == IRT_INT) { ir_emit_cast_policy(i, o); break; }

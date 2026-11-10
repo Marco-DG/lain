@@ -320,13 +320,14 @@ static bool vra_zexact(const Vra *V, const IrInstr *d) {
 // over the integers, as though the waived obligation had been discharged: `unsafe { x = y as u8 }`
 // with y = 260 left x = 260 where the machine holds 4, `if x >= 200 { return 0 }` looked always
 // taken, and `a[x]` after it, in SAFE code, was dead to the analysis and accepted (ASan: a
-// stack-buffer-overflow). An arithmetic operation or a cast whose obligation is waived is read
-// exactly as its modular spelling is; a narrowing at a store, see vra_assign_landing.
+// stack-buffer-overflow). An arithmetic operation whose obligation is waived is read exactly as its
+// modular spelling is; inside `unsafe` an integer cast IS modular (I.69), and a checked one's flag
+// waives nothing.
 static bool vra_wraps(const IrInstr *ins) {
     if (!ins) return false;
     if (ins->wrap == IR_WRAP_MODULAR) return true;
     return ins->wrap == IR_WRAP_CHECK && ins->unchecked &&
-           (ins->op == IR_ADD || ins->op == IR_SUB || ins->op == IR_MUL || ins->op == IR_CAST);
+           (ins->op == IR_ADD || ins->op == IR_SUB || ins->op == IR_MUL);   // a cast: modular (I.69)
 }
 
 // What an N-bit integer slot holds after C's conversion of a value in [lo, hi] (`src` is the
@@ -2628,7 +2629,7 @@ static void vra_transfer_instr(Vra *V, Octagon *W, IrInstr *ins) {
             if (r>=0){ // treat as a copy (widenings preserve value; a narrowing that
                        // changes it would be a separate proven-safe obligation)
                 if (vra_is_int(ins->result) && ins->n_operands) {
-                    if ((ins->wrap != IR_WRAP_CHECK || ins->unchecked) && vra_cast_policy(V, W, ins, r)) break;
+                    if (ins->wrap != IR_WRAP_CHECK && vra_cast_policy(V, W, ins, r)) break;
                     vra_assign_copy(V, W, r, ins->operands[0]->id);
                 }
                 else oct_forget(W, r);
@@ -6256,14 +6257,11 @@ static Vra *vra_analyze(IrFunc *f) {
                         break;
                     }
                     // Any CHECK-mode cast that may lose a value owes the proof — the kind says
-                    // only how the bits move, and a same-width signedness change moves none. One
-                    // marked unchecked wraps (vra_wraps) and owes nothing, unless into a refined
-                    // type (I.60): the `as?` lowering's narrowing past its two range tests, and in
-                    // `unsafe` a vector lane's and a mixed-sign division's. The flag is the cast's
-                    // own; a landing's waives nothing (I.69).
+                    // only how the bits move, and a same-width signedness change moves none, flagged
+                    // unchecked or not: inside `unsafe` an integer cast is modular (I.69), and the
+                    // `as?` lowering's is checked, its two range tests the proof.
                     if (ins->n_operands >= 1 && ins->wrap == IR_WRAP_CHECK
-                        && ins->result && ins->result->type
-                        && (!ins->unchecked || ins->result->type->has_refine || ins->result->type->has_ne)) {
+                        && ins->result && ins->result->type) {
                         oct_close(&W);
                         vra_check_narrow(V,&W, ins->operands[0], ins->result->type,
                                          ins, ins->line, ins->col);

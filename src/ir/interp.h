@@ -821,10 +821,8 @@ static void ii_cast(IrInstr *ins, IVal *r) {
         __int128 x = iv_get(a, st, ins);
         if (ins->wrap == IR_WRAP_MODULAR) { iv_int(r, it_wrap(x, dt)); return; }
         if (ins->wrap == IR_WRAP_SATURATE) { iv_int(r, it_clamp(x, dt)); return; }
-        if (!it_fits(x, dt)) {
-            if (ins->unchecked) { iv_int(r, it_wrap(x, dt)); return; }   // at the TYPE's width (I.185)
+        if (!it_fits(x, dt))      // flagged unchecked or not: a wrap is a modular cast (I.69)
             II_PROOF(ins, "conversion of %lld to a type that cannot hold it (proven to fit)", (long long)x);
-        }
         iv_int(r, x); return;
     }
     if (dt->kind == IRT_PTR || dt->kind == IRT_FUNC) {

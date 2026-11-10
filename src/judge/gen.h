@@ -2575,8 +2575,8 @@ static void jb_table_load(JB *B, int32_t x, const IrInstr *ld, int32_t id) {
     for (int32_t q = 1; q < t->n; q++) { __int128 v = jg_table_val(t, q); if (v < r.lo) r.lo = v; if (v > r.hi) r.hi = v; }
     jb_range(B, x, &r, jb_str(B, "def %%v%lld table", id, 0, 0));
 }
-// A value WRAPPED into an integer type of w <= 64 bits, as interp.h's it_wrap makes it (a `%` cast,
-// and an unchecked cast or landing that does not fit, I.60, I.185): x = v - k*2^w with x within
+// A value WRAPPED into an integer type of w <= 64 bits, as interp.h's it_wrap makes it (a modular
+// cast: a `%` one, and inside `unsafe` every integer cast, I.69, I.185): x = v - k*2^w with x within
 // the type's width, k a fresh integer (its recipe (v - x) / 2^w for a run-time check). One case,
 // so it may stand inside a join's disjunct too; where v fits, k is 0.
 static void jb_wrapto(JB *B, int32_t x, int32_t xv, const IrType *t, const char *what, int32_t id, const char *origin) {
@@ -3223,7 +3223,7 @@ static void jb_state(JB *B, int32_t x) {
             }
             // into an integer only: a cast to bool is 1 for any nonzero value (§3's Q row)
             if (d->n_operands < 1 || !jg_is_int(d->operands[0]->type) || v->type->kind != IRT_INT) break;
-            if (d->wrap == IR_WRAP_MODULAR || (d->wrap == IR_WRAP_CHECK && d->unchecked)) {   // it wraps (ii_cast)
+            if (d->wrap == IR_WRAP_MODULAR) {                   // it wraps (ii_cast); a checked one's flag waives nothing (I.69)
                 jb_wrapto(B, x, jb_val(B, d->operands[0]), v->type, "wrap", id, jb_str(B, "def %%v%lld cast.wrap", id, 0, 0));
                 break;
             }
@@ -4610,12 +4610,14 @@ static bool jg_obligations(JG *g, JObls *L) {
                     break;
                 }
                 case IR_CAST: {
-                    if (i->wrap != IR_WRAP_CHECK || i->unchecked || i->n_operands < 1 || !i->result) break;
+                    if (i->wrap != IR_WRAP_CHECK || i->n_operands < 1 || !i->result) break;
                     // into an integer only: a cast to bool is `x != 0` and owes nothing (§3)
                     if (!i->result->type || i->result->type->kind != IRT_INT) break;
                     JRange rr;
                     if (!jg_is_int(i->operands[0]->type)) {               // a float: its integral part fits
-                        if (!i->operands[0]->type || i->operands[0]->type->kind != IRT_FLOAT || !jg_range(i->result->type, &rr)) break;
+                        // waived where flagged (`as?` from a float, its two tests the proof; `unsafe`);
+                        // an integer cast's flag waives nothing (I.69)
+                        if (i->unchecked || !i->operands[0]->type || i->operands[0]->type->kind != IRT_FLOAT || !jg_range(i->result->type, &rr)) break;
                         JNarrowArg flo = { rr.lo, false, i->operands[0] }, fhi = { rr.hi, true, i->operands[0] };
                         if (!jg_goal(g, L, i, b->id, k, -1, "narrow.lo", 0, jgk_f2i, &flo)) return false;
                         if (!jg_goal(g, L, i, b->id, k, -1, "narrow.hi", 0, jgk_f2i, &fhi)) return false;
