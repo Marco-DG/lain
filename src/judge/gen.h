@@ -204,7 +204,7 @@ enum { JV_ENTRY, JV_STORE, JV_JOIN, JV_HEAD, JV_HAVOC };
 // (its frame rule, s15) keeps the version it replaced, hprev, where a callee's frame summary
 // names it; one a STORE of a call's struct result makes is that result's field spart, spv the
 // result (a part no constructor names: stored stays NULL, so no reader takes it for the value).
-typedef struct { int kind; int32_t cell, blk, idx; IrValue *stored; IrType *slot; bool unchecked;
+typedef struct { int kind; int32_t cell, blk, idx; IrValue *stored; IrType *slot;
                  IrInstr *es; int32_t ek, eprev; int32_t hprev; IrValue *spv; int16_t spart; } JVer;
 typedef struct {
     JMem *m; IrFunc *f; char *err; size_t errcap;
@@ -230,7 +230,7 @@ typedef struct {
     uint8_t *iunsafe;              // by value id: that element address came through an unchecked index
     uint8_t *rclass;               // by value id, for a root: JR_LOCAL, JR_BORROWED or JR_LEAKED
     IrInstr **one; int32_t *oneblk, *oneidx;   // by ALLOCA value id: its one store (every other use a load)
-    int32_t *eff_cell; IrValue **eff_val; uint8_t *eff_unc; int32_t neff, eff_gen; int32_t *eff_stamp;  // jg_changes
+    int32_t *eff_cell; IrValue **eff_val; int32_t neff, eff_gen; int32_t *eff_stamp;  // jg_changes
     IrValue **eff_spv; int16_t *eff_spart;                       // a store's part of a call's struct result
     IrValue **partv; int16_t *partk; int32_t nparts, cparts;     // the struct parts VCs name (jb_part, s15)
     JVer *ver; int32_t nver, cver;
@@ -429,14 +429,14 @@ static int32_t jg_elem_store(JG *g, IrInstr *st, int32_t *cells) {
     }
     return (int32_t)t->array_len;
 }
-static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, IrValue *stored, bool unchecked) {
+static bool jg_pushver(JG *g, int kind, int32_t cell, int32_t blk, int32_t idx, IrValue *stored) {
     if (g->nver == g->cver) {
         JVer *nv = JG_NEW(g, JVer, g->cver * 2);
         if (!nv) return jg_fail(g, "out of memory");
         memcpy(nv, g->ver, sizeof *nv * (size_t)g->nver); g->ver = nv; g->cver *= 2;
     }
     JVer *v = &g->ver[g->nver++];
-    v->kind = kind; v->cell = cell; v->blk = blk; v->idx = idx; v->stored = stored; v->unchecked = unchecked;
+    v->kind = kind; v->cell = cell; v->blk = blk; v->idx = idx; v->stored = stored;
     v->slot = (IrType *)g->cty[cell];
     v->es = NULL; v->ek = v->eprev = -1;
     v->hprev = -1; v->spv = NULL; v->spart = -1;
@@ -517,23 +517,23 @@ static bool jg_inside(const char *p, const char *q) {
     size_t n = strlen(q);
     return !strncmp(p, q, n) && (p[n] == 0 || p[n] == '.' || p[n] == '[');
 }
-static void jg_eff(JG *g, int32_t c, IrValue *val, bool unc) {
+static void jg_eff(JG *g, int32_t c, IrValue *val) {
     if (g->eff_stamp[c] == g->eff_gen) return;                // one change per cell per instruction
     g->eff_stamp[c] = g->eff_gen;
-    g->eff_cell[g->neff] = c; g->eff_val[g->neff] = val; g->eff_unc[g->neff] = unc;
+    g->eff_cell[g->neff] = c; g->eff_val[g->neff] = val;
     g->eff_spv[g->neff] = NULL; g->eff_spart[g->neff] = -1; g->neff++;
 }
 static void jg_havoc_root(JG *g, int32_t r, const char *under) {
-    for (int32_t c = 0; c < g->ncells; c++) if (g->croot[c] == r && jg_inside(g->cpath[c], under)) jg_eff(g, c, NULL, false);
+    for (int32_t c = 0; c < g->ncells; c++) if (g->croot[c] == r && jg_inside(g->cpath[c], under)) jg_eff(g, c, NULL);
 }
 static void jg_havoc_class(JG *g, int cls) {
-    for (int32_t c = 0; c < g->ncells; c++) if (g->rclass[g->croot[c]] >= cls) jg_eff(g, c, NULL, false);
+    for (int32_t c = 0; c < g->ncells; c++) if (g->rclass[g->croot[c]] >= cls) jg_eff(g, c, NULL);
 }
 // What a raw pointer may name: a LEAKED root, and a parameter's pointee.
 static void jg_havoc_rawable(JG *g) {
     for (int32_t c = 0; c < g->ncells; c++) {
         int32_t r = g->croot[c];
-        if (g->rclass[r] >= JR_LEAKED || !g->def[r]) jg_eff(g, c, NULL, false);
+        if (g->rclass[r] >= JR_LEAKED || !g->def[r]) jg_eff(g, c, NULL);
     }
 }
 // May a value of this type carry a RAW pointer, itself or in what it holds or refers to? Too
@@ -550,16 +550,16 @@ static bool jg_carries_raw(const IrType *t, int depth) {
         default: return false;
     }
 }
-// The part of a stored value at a path below the store's own: a constructor's field, recursively.
-// A part lands in its field at its constructor, so `waived` becomes that constructor's (P2.3).
+// The part of a stored value at a path below the store's own: a constructor's field, recursively,
+// which lands in its field at its constructor (P2.3; exactly, inside `unsafe` too, I.69).
 // An ELEMENT of a stored value (a `[k]` step) is not stated: the part is unknown, a fresh version.
-static IrValue *jg_part(JG *g, IrValue *v, const char *rest, bool *waived) {
+static IrValue *jg_part(JG *g, IrValue *v, const char *rest) {
     while (*rest == '.') {
         IrInstr *d = v && v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
         if (!d || d->op != IR_STRUCT_NEW) return NULL;
         int k = atoi(rest + 1);
         if (k < 0 || k >= d->n_operands) return NULL;
-        v = d->operands[k]; *waived = d->unchecked;
+        v = d->operands[k];
         rest++;
         while (*rest >= '0' && *rest <= '9') rest++;           // past this step's field index
     }
@@ -586,10 +586,9 @@ static void jg_changes(JG *g, IrInstr *i) {
         if (g->aroot[a] >= 0) {
             for (int32_t c = 0; c < g->ncells; c++) {
                 if (g->croot[c] != g->aroot[a] || !jg_inside(g->cpath[c], g->apath[a])) continue;
-                bool waived = i->unchecked;
                 const char *rest = g->cpath[c] + strlen(g->apath[a]);
-                IrValue *part = jg_part(g, i->operands[1], rest, &waived);
-                jg_eff(g, c, part, waived);
+                IrValue *part = jg_part(g, i->operands[1], rest);
+                jg_eff(g, c, part);
                 int16_t k = part ? -1 : jg_call_part(g, i->operands[1], rest, g->cty[c]);
                 if (k >= 0 && g->eff_stamp[c] == g->eff_gen && g->neff > 0 && g->eff_cell[g->neff - 1] == c) {
                     g->eff_spv[g->neff - 1] = i->operands[1]; g->eff_spart[g->neff - 1] = k;
@@ -880,7 +879,7 @@ static bool jg_cells(JG *g) {
             }
         }
     if (!(g->eff_cell = JG_NEW(g, int32_t, g->ncells ? g->ncells : 1)) || !(g->eff_val = JG_NEW(g, IrValue *, g->ncells ? g->ncells : 1)) ||
-        !(g->eff_unc = JG_NEW(g, uint8_t, g->ncells ? g->ncells : 1)) || !(g->eff_stamp = JG_NEW(g, int32_t, g->ncells ? g->ncells : 1)) ||
+        !(g->eff_stamp = JG_NEW(g, int32_t, g->ncells ? g->ncells : 1)) ||
         !(g->eff_spv = JG_NEW(g, IrValue *, g->ncells ? g->ncells : 1)) || !(g->eff_spart = JG_NEW(g, int16_t, g->ncells ? g->ncells : 1)))
         return jg_fail(g, "out of memory");
     for (int32_t c = 0; c < g->ncells; c++) g->eff_stamp[c] = 0;
@@ -935,11 +934,11 @@ static bool jg_cells(JG *g) {
         bool header = L[b->id];
         for (int32_t c = 0; c < g->ncells; c++) {
             if (b == g->f->entry) {
-                if (!jg_pushver(g, JV_ENTRY, c, b->id, -1, NULL, false)) return false;
+                if (!jg_pushver(g, JV_ENTRY, c, b->id, -1, NULL)) return false;
                 in[c] = g->nver - 1; continue;
             }
             if (header && g->writes[(size_t)b->id * (size_t)g->ncells + (size_t)c]) {
-                if (!jg_pushver(g, JV_HEAD, c, b->id, -1, NULL, false)) return false;
+                if (!jg_pushver(g, JV_HEAD, c, b->id, -1, NULL)) return false;
                 in[c] = g->nver - 1; continue;
             }
             int32_t v = -2;                                  // -2: no predecessor seen yet
@@ -951,7 +950,7 @@ static bool jg_cells(JG *g) {
                 v = v == -2 ? pv : (v == pv ? v : -1);
             }
             if (v < 0) {
-                if (!jg_pushver(g, JV_JOIN, c, b->id, -1, NULL, false)) return false;
+                if (!jg_pushver(g, JV_JOIN, c, b->id, -1, NULL)) return false;
                 v = g->nver - 1;
             }
             in[c] = v;
@@ -978,7 +977,7 @@ static bool jg_cells(JG *g) {
             int32_t ecell[JELEM_MAXN], en = i->op == IR_STORE ? jg_elem_store(g, i, ecell) : 0;
             for (int32_t e = 0; e < g->neff; e++) {
                 int32_t c = g->eff_cell[e], prev = o[c];
-                if (!jg_pushver(g, g->eff_val[e] ? JV_STORE : JV_HAVOC, c, b->id, k, g->eff_val[e], g->eff_unc[e])) return false;
+                if (!jg_pushver(g, g->eff_val[e] ? JV_STORE : JV_HAVOC, c, b->id, k, g->eff_val[e])) return false;
                 o[c] = g->nver - 1;
                 if (!g->eff_val[e] && i->op == IR_CALL) g->ver[o[c]].hprev = prev;   // a frame summary's pre (s15)
                 if (!g->eff_val[e] && g->eff_spv[e]) { g->ver[o[c]].spv = g->eff_spv[e]; g->ver[o[c]].spart = g->eff_spart[e]; }

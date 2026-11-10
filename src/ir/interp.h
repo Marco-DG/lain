@@ -1521,7 +1521,6 @@ static void ii_call(IrFunc *f, IVal *args, int nargs, IVal *ret, IrInstr *at) {
             if (t->cond) {
                 iv_copy(ret, ii_val(t->cond, NULL), false);
                 IrInstr where; memset(&where, 0, sizeof where); where.line = t->line; where.col = t->col;
-                where.unchecked = t->unchecked;                     // a `return` inside `unsafe`: it wraps
                 ii_land(ret, t->cond->type, f->ret_type, &where);   // the result lands in the return type
             } else ret->k = IV_UNIT;
             break;
