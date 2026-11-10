@@ -1,0 +1,24 @@
+// EXPECT: [E086]
+// c reaches 187 from n = 100 (some thirty trips of +4 from 67), past i8: refused for the overflow,
+// with its code. The finder proposes claims in rounds, and a later round's Houdini may drop a
+// claim an earlier round verified, where a solve does not finish. Handing the judge the union of
+// both rounds' sets instead (f86's first draft) gave it claim VCs larger than any the finder had
+// solved, an inv.keep ran out of its 100000 pivots, and the module was refused as an internal
+// error (exit 70) rather than with E086. The earlier round's set is what the judge gets.
+// (fuzz_trips, seed 2388426, k 232.)
+func f(n u16 <= 100) i8 effects diverge {
+    var d u16 = n
+    var c i8 = 67
+    while d > 11 {
+        if d > 0 {
+            c = c + 2
+        }
+        d = d - 3
+        c = c + 2
+    }
+    return c
+}
+
+func main() i32 effects diverge {
+    return f(100) as i32
+}

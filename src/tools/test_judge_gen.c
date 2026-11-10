@@ -2960,10 +2960,14 @@ int main(void) {
     }
     gen_mod = NULL;
     printf("  an assert of an unsigned comparison: a signed operand >= 0 by its static range\n");
-    // 58. a load's static range is its store version's stored value's: slots a and b stored 10 and 3,
-    // p = load a * load b in i64. (0) p in [30, 30]; (1) a stored 10 or 20 in two arms (a join
-    // version): its type's range; (2) a an i8 slot stored 300 by a waived store (it wraps): its
-    // type's range; (3) a stored from another slot's load (c stored 10): [30, 30]
+    // 58. a LOAD of one exact store of a constant is a product's constant factor (g33), and a load's
+    // static range is its store version's stored value's. Slots a and b stored 10 and 3, p = load a
+    // * load b and r = load a % load b, in i64. (0) p = 10 * b's version, r in [0, 2]; (1) a
+    // stored 10 or 20 in two arms (a join version: no constant): p = 3 * a's version, r over a's
+    // type; (2) a an i8 slot stored 300 by a waived store: 300 is no i8, so a is not read as it
+    // (p = 3 * a's version, never 300 times b's), and r over a's type; (3) a stored from another
+    // slot's load (c stored 10; the stored operand is a load, no constant): p = 3 * a's version,
+    // r in [0, 2]
     for (int c = 0; c < 4; c++) {
         IrType *i8s = ir_type_int(&A, 8, true);
         IrFunc *f = ir_func_new(&A, nm("m58"), i64t, IR_FUNC_PURE);
@@ -2986,25 +2990,24 @@ int main(void) {
         } else ir_store(f, b0, sa, ir_const_int(f, b0, 10, i32t));
         ir_store(f, bl, sb, ir_const_int(f, bl, 3, i32t));
         IrValue *p = ir_binop(f, bl, IR_MUL, ir_load(f, bl, sa, at), ir_load(f, bl, sb, i32t), i64t);
-        ir_set_ret(bl, ir_binop(f, bl, IR_SDIV, ir_const_int(f, bl, 100, i64t), ir_binop(f, bl, IR_SUB, p, ir_const_int(f, bl, 29, i64t), i64t), i64t));
-        int at2 = nins(bl) - 1;
+        IrValue *r = ir_binop(f, bl, IR_SREM, ir_load(f, bl, sa, at), ir_load(f, bl, sb, i32t), i64t);
+        IrValue *q1 = ir_binop(f, bl, IR_SDIV, ir_const_int(f, bl, 100, i64t), ir_binop(f, bl, IR_SUB, p, ir_const_int(f, bl, 29, i64t), i64t), i64t);
+        IrValue *q2 = ir_binop(f, bl, IR_SDIV, q1, ir_binop(f, bl, IR_ADD, r, ir_const_int(f, bl, 7, i64t), i64t), i64t);
+        ir_set_ret(bl, q2);
         ir_finalize_cfg(f);
         gen_mod = f;
-        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), key[48], w1[64], w2[64];
-        snprintf(key, sizeof key, " bb%d.%d divzero 0", bl->id, at2);
-        const char *vz = t ? vc_of(t, key) : "";
-        snprintf(w1, sizeof w1, "mul.hull : -1*%%v%d <= -30", p->id);
-        snprintf(w2, sizeof w2, "mul.hull : 1*%%v%d <= 30", p->id);
-        bool has = c == 0 || c == 3;
-        CHECK(*vz && !!strstr(vz, w1) == has && !!strstr(vz, w2) == has, "case %d: %s%s, %s:\n%s", c, has ? "" : "not ", w1, w2, vz);
-        if (c == 2) {                                          // i8 times 3: [-384, 381], not 900
-            snprintf(w1, sizeof w1, "mul.hull : 1*%%v%d <= 381", p->id);
-            CHECK(strstr(vz, w1) != NULL, "case 2: %s:\n%s", w1, vz);
-        }
+        char *t = gen_with(f, NULL, 0, JGEN_ALL, NULL), pd[96], w1[96], w2[96];
+        snprintf(pd, sizeof pd, "def %%v%d mul : 1*%%v%d + -%d*", p->id, p->id, c == 0 ? 10 : 3);
+        CHECK(t && strstr(t, pd), "case %d: %s:\n%s", c, pd, t ? t : "");
+        snprintf(w1, sizeof w1, "def %%v%d mul : 1*%%v%d + -300*", p->id, p->id);
+        CHECK(t && !strstr(t, w1), "case %d: not %s:\n%s", c, w1, t ? t : "");
+        snprintf(w1, sizeof w1, "def %%v%d rem.hull : -1*%%v%d <= %d\n", r->id, r->id, c == 0 || c == 3 ? 0 : 2);
+        snprintf(w2, sizeof w2, "def %%v%d rem.hull : 1*%%v%d <= 2\n", r->id, r->id);
+        CHECK(t && strstr(t, w1) && strstr(t, w2), "case %d: r in [%d, 2]:\n%s", c, c == 0 || c == 3 ? 0 : -2, t ? t : "");
         free(t);
     }
     gen_mod = NULL;
-    printf("  a load's static range is its store version's stored value's\n");
+    printf("  a load of one constant store is a product's factor; a load's static range is its store's\n");
     // 59. a written measure with a QUOTIENT fixed at the header: `while i < n / 2 decreasing n / 2 - i`.
     // (0) n / 2 made in the header, (1) made again in the body: one term, its division stated, the
     // fall with it cancelling; outside where the quotient is (2) of the cell i, (3) by a variable
