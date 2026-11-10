@@ -22,7 +22,6 @@ typedef struct
     char*       emit_certificate;   // --emit-certificate F: each function's proof certificate (C.2)
     char*       certificate_roundtrip; // --certificate-roundtrip F: parse a certificate, print it back
     char*       check_certificate;  // --check-certificate F: check F's certificates instead of searching (C.3a)
-    bool        emit_llvm;          // --emit-llvm: lower to proof-carrying LLVM-IR (Phase 1 seam)
     bool        interpret;          // --interpret: run the accepted program on the IR's own semantics
                                     // (src/ir/interp.h) instead of emitting C; every discharged proof
                                     // is checked as it is used
@@ -82,7 +81,6 @@ static const LainFlag lain_flags[] = {
     { "--certificate-roundtrip", "<file>",   "parse a certificate and print it back" },
     { "--check-certificate",     "<file>",   "check each function's proof certificate from <file> instead of searching" },
     { "--no-line-directives",    NULL,       "omit #line directives from the emitted C" },
-    { "--emit-llvm",             NULL,       "refused: the C backend is the complete one" },
     { "--help",                  NULL,       "print this text and exit" },
     { "--no-w130",               NULL,       "accepted and ignored: the warning it suppressed was removed" },
     { "--engine=",               "...",      "accepted and ignored: there is one engine" },
@@ -190,8 +188,6 @@ static Args args_parse(int argc, char** argv)
             args.certificate_roundtrip = argv[++i];
         } else if (strcmp(argv[i], "--check-certificate") == 0 && i + 1 < argc) {
             args.check_certificate = argv[++i];
-        } else if (strcmp(argv[i], "--emit-llvm") == 0) {
-            args.emit_llvm = true;
         } else if (strcmp(argv[i], "--interpret") == 0) {
             args.interpret = true;
         } else if (strcmp(argv[i], "--check-invariants") == 0) {

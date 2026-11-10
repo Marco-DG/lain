@@ -17,8 +17,8 @@
 // elements, WITH it gcc emits one vectorized loop in 12 instructions; WITHOUT it, "loop
 // versioned for vectorization because of possible aliasing" — two loops plus a runtime overlap
 // test, 33 instructions. The attributes are kept because they are correct by construction and
-// become live the moment the emission is split across TUs, or under -flto, or on the LLVM seam
-// where they are `readnone`/`readonly`.
+// become live the moment the emission is split across TUs, or under -flto, or on an LLVM
+// backend, where they are `readnone`/`readonly`.
 //
 // ★ The one rule that is not a free win, recorded because getting it wrong already produced a
 // MISCOMPILE once in this project: `const`/`pure` license gcc to DELETE a call whose result is

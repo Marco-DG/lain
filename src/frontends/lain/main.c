@@ -15,7 +15,6 @@
 #include "args.h"
 #include "target.h"
 #include "sema.h"
-#include "emit_llvm.h"
 #include "frontends/lain/lower.h"
 #include "analysis/linearity.h"
 #include "analysis/borrow.h"
@@ -324,24 +323,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    // then code-gen: proof-carrying LLVM-IR (Phase 1 seam) or the portable C target.
-    if (args.emit_llvm) {
-        // Refuse rather than ship a plausible-looking wrong answer — the same rule the C
-        // backend follows (ir_emit_refuse_opaque). This path models a small integer subset;
-        // anything else used to become a comment, and the file still looked like LLVM IR.
-        int unmodelled = emit_llvm(program, args.output_file);
-        if (unmodelled > 0) {
-            fprintf(stderr, "[E100] Error: the LLVM path cannot model %d construct(s) in this "
-                            "program, so it has not been translated.\n", unmodelled);
-            fprintf(stderr, "       It covers integer functions with + - * and comparisons, "
-                            "`if`, and `return` — see the note in frontends/lain/emit_llvm.h.\n"
-                            "       The C backend is the complete one; drop --emit-llvm.\n");
-            sema_destroy();
-            return 1;
-        }
-        sema_destroy();
-        return 0;
-    }
     // ── THE BACKEND ──────────────────────────────────────────────────────────────────────
     // The C is emitted from the IR (src/ir/emit_c.h). `src/emit/`, the AST emitter, was
     // DELETED on 2026-09-23 after its answers were recorded: tests/BASELINE.txt holds, for

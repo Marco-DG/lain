@@ -126,7 +126,6 @@ alone — check stderr, which is empty on success.
 | `--judge=authority` | The default, written out: the judge decides every bounds, overflow, division, assert, object-size and termination obligation. An obligation it does not prove refuses the program with that obligation's code; when the obligation is beyond what the judge models (`outside`) or past its budget, a second line says so. A compiler bug the judge detects is an internal error (exit 70). |
 | `--judge=vra` | Let the range analysis decide every obligation on its own, without the judge, as the compiler did before the judge. It is kept to compare the two engines: it refuses programs the judge proves, such as an access guarded by a test over three quantities (`if i + j < a.len`), and still proves a few the judge refuses. Any mode other than `vra`, `shadow` and `authority` is refused. |
 | `--no-line-directives` | Omit `#line` directives from the emitted C. |
-| `--emit-llvm` | Lower to proof-carrying LLVM-IR. A demonstration seam, not a backend: outside the subset it models it **refuses** rather than emitting a placeholder. C is the backend that works. |
 
 ### Accepted and ignored
 

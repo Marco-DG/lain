@@ -106,12 +106,11 @@ fi
 # construction. Allowed, each for its reason: an anonymous union's layout refusal (E064,
 # ir/emit_c.h: no source construct to point at), a function beyond an analysis's capacity (E100 in
 # analysis/definite_init.h and analysis/borrow.h: an IrFunc has no line, so it names the
-# function), and the --emit-llvm summary (main.c). M13 (Handwriting) measures the dynamic side.
+# function). M13 (Handwriting) measures the dynamic side.
 noloc=$(grep -rnE 'fprintf\(stderr, *"\[E[0-9]+\] Error:' src --include=*.h --include=*.c \
         | grep -vE '^[^:]+:[0-9]+:\s*//' \
         | grep -vE '^src/ir/emit_c\.h:[0-9]+:.*\[E064\]' \
-        | grep -vE '^src/analysis/(definite_init|borrow)\.h:[0-9]+:.*\[E100\]' \
-        | grep -vE '^src/frontends/lain/main\.c:[0-9]+:.*\[E100\] Error: the LLVM path')
+        | grep -vE '^src/analysis/(definite_init|borrow)\.h:[0-9]+:.*\[E100\]')
 # Two shapes the literal rule above cannot see (Handwriting, from a count of every coded literal):
 # a code spelled otherwise ("[E101] Comptime purity error", "[E085] bounds error" skipped a rule
 # keyed on "Error"), and the position printed by a separate call, `"[E012] Error"` then
