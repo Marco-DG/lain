@@ -1331,6 +1331,35 @@ static bool jg_const_at(JG *g, IrValue *v, __int128 *c, int depth) {
     *c = jg_const(d); return true;
 }
 static bool jg_const_of(JG *g, IrValue *v, __int128 *c) { return jg_const_at(g, v, c, 0); }
+// A factor that READS a constant: a LOAD (through casts that hold its value, as jg_const_at's)
+// whose version is one exact store of a constant operand. termination-nla's hard2 keeps B = 1 in a
+// cell its loops never write, and `B *? p`, `q *? B` were products of two variables to the VCs: no
+// linear fact, and its second loop, ranked by p under q*B + r = A, was not. The load reads that
+// store's value and no other (its version, loadver), so the product is c times the other factor.
+// Products only (jg_const_of's other readers state facts about the value itself).
+static bool jg_load_const(JG *g, IrValue *v, __int128 *c, int depth) {
+    IrInstr *d = v && v->id >= 0 && v->id < g->nv ? g->def[v->id] : NULL;
+    if (!d || depth > 4) return false;
+    if (d->op == IR_CAST && d->n_operands >= 1 && d->result && d->result->type && d->result->type->kind == IRT_INT &&
+        d->result->type->bits >= 1 && d->result->type->bits <= 64) {
+        const IrType *t = d->result->type; __int128 x;
+        if (!jg_load_const(g, d->operands[0], &x, depth + 1)) return false;
+        __int128 lo = t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0;
+        __int128 hi = t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+        if (x < lo || x > hi) return false;
+        *c = x; return true;
+    }
+    if (d->op != IR_LOAD || !g->loadver || g->loadver[v->id] < 0 || !jg_is_int(v->type)) return false;
+    const JVer *vr = &g->ver[g->loadver[v->id]];
+    if (vr->kind != JV_STORE || !jg_store_exact(vr) || !vr->stored || !jg_const_of(g, vr->stored, c)) return false;
+    // ...and in the loaded type: the store's landing is owed (jg_land), and no execution reads past
+    // one that fails, but the fact stated here holds by itself
+    const IrType *t = v->type;
+    if (t->bits < 1 || t->bits > 64) return false;
+    __int128 lo = t->is_signed ? -((__int128)1 << (t->bits - 1)) : 0;
+    __int128 hi = t->is_signed ? ((__int128)1 << (t->bits - 1)) - 1 : ((__int128)1 << t->bits) - 1;
+    return *c >= lo && *c <= hi;
+}
 static bool jg_mul_ok(__int128 a, __int128 b, __int128 *out);
 static IrInstr *jg_cond_cmp(JG *g, IrValue *cv);
 static void jb_cmp_def(JB *B, int32_t x, IrInstr *ic, int32_t id);
@@ -3176,7 +3205,7 @@ static void jb_state(JB *B, int32_t x) {
             bool lin = false;
             for (int k = 0; k < 2 && !lin; k++) {
                 IrValue *o = d->operands[1 - k]; __int128 kc;
-                if (!jg_const_of(g, d->operands[k], &kc) || !jg_is_int(o->type)) continue;
+                if (!(jg_const_of(g, d->operands[k], &kc) || jg_load_const(g, d->operands[k], &kc, 0)) || !jg_is_int(o->type)) continue;
                 t[0].var = jb_val(B, o); t[0].c = kc;
                 jb_def(B, x, t, 1, jb_str(B, "def %%v%lld mul", id, 0, 0));
                 lin = true;

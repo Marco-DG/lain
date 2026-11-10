@@ -1,0 +1,21 @@
+// EXPECT: [E085]
+// SOUNDNESS: only a load whose version is ONE exact store of a constant reads a constant. Here B's
+// version at the load is the join of two stores, 1 and 2, and `B *? i` reaches 6 where c holds.
+// Rejected.
+func pick(i i32, c bool) i32 {
+    var B i32
+    B = 1
+    if c {
+        B = 2
+    }
+    a i32[4] = [10, 20, 30, 40]
+    if i < 0 or i > 3 {
+        return 0
+    }
+    k = B *? i else 0
+    return a[k]
+}
+
+func main() i32 {
+    return pick(2, false) - 30
+}

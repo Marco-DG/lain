@@ -1,0 +1,19 @@
+// A product whose factor reads a cell holding one exact store of a constant is that constant times
+// the other factor (g33). B is stored once, with 1, and never again: `B *? i` is i, so a[k] reads
+// an index in 0..3. Before, the judge stated the product as one of two variables, with no linear
+// fact, and the index was not provably within bounds (E085). termination-nla's hard2 keeps B = 1
+// in a cell the same way, and its second loop ranks only under q*B + r = A.
+func pick(i i32) i32 {
+    var B i32
+    B = 1
+    a i32[4] = [10, 20, 30, 40]
+    if i < 0 or i > 3 {
+        return 0
+    }
+    k = B *? i else 0
+    return a[k]
+}
+
+func main() i32 {
+    return pick(2) - 30
+}

@@ -1,0 +1,17 @@
+// EXPECT: [E085]
+// SOUNDNESS: a factor read from a cell holding one constant is that constant, not 1: B = 2 makes
+// `B *? i` reach 6 for i = 3, past a's last index. Rejected.
+func pick(i i32) i32 {
+    var B i32
+    B = 2
+    a i32[4] = [10, 20, 30, 40]
+    if i < 0 or i > 3 {
+        return 0
+    }
+    k = B *? i else 0
+    return a[k]
+}
+
+func main() i32 {
+    return pick(2) - 30
+}
