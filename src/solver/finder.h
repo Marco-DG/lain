@@ -4876,6 +4876,26 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
         fd_meter_to(NULL, false);                                  // Houdini, over every function's: the module's
         int32_t kept = houdini_module(F, cl, nc, nv, NULL);
         if (kept < 0) goto oom;
+        // ...and where it lost a claim an earlier round verified, that round's claims are the
+        // module's, this round's set aside, and no round follows. Houdini drops an earlier claim
+        // only where a solve does not finish (it was implied under the earlier set, and a VC only
+        // gains hypotheses): once the module's meter is out every VC answers budget, and
+        // termination-nla's dijkstra3 kept 31 of
+        // 173 in round 0 and none in round 1, so `while q <= n { q = 4 *? q }`, ranked under q >= 1,
+        // was ranked under nothing. Not the union of both rounds' sets: implied as it is, its VCs
+        // are larger than any the finder solved, the judge solves them under its own limits, and a
+        // claim VC that does not finish refuses the module as an internal error (fuzz_trips seed
+        // 2388426, k 232: an inv.keep at 100000 pivots, exit 70). The earlier set's VCs are the
+        // ones its round's Houdini solved.
+        if (nv > 0) {
+            bool lost = false;
+            for (int32_t k = 0; k < nv && !lost; k++) {
+                bool hit = false;
+                for (int32_t j = 0; j < kept && !hit; j++) hit = fd_claim_same(&cl[j], &as[k]);
+                lost = !hit;
+            }
+            if (lost) { memcpy(cl, as, sizeof *cl * (size_t)nv); kept = nv; }   // cl holds nc >= nv
+        }
         bool grew = kept > nv;
         free(as); as = malloc(sizeof *as * (size_t)(kept ? kept : 1));
         if (!as) goto oom;
@@ -4975,6 +4995,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
                         int32_t kept = mk && fk >= 0 ? (mk[fk] = 1, houdini_module(F, ext, next, nv, mk)) : -1;
                         free(mk);
                         FdLoop L3; bool b3 = kept > nv;
+                        for (int32_t k = 0; b3 && k < nv; k++) b3 = fd_claim_same(&ext[k], &as[k]);   // and every earlier claim, as above
                         if (b3 && fd_loop_build(F, f, b->id, ext, kept, &L3) && fd_rank(F, f, b->id, &L3, &r)) {
                             got = true; stage = "karr-ghost";
                             free(as); as = ext; ext = NULL; nv = kept;   // the claims it is ranked under
