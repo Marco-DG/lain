@@ -3714,12 +3714,24 @@ static bool fd_hyp_negates(const JCons *a, const JCons *b) {
     }
     return true;
 }
-// With `ghost`, over the paths with the loop's products followed as GHOSTS (paths_ghost, s31), a
-// ghost one more column: mannadiv keeps y1*x2 + y2 + y3 = x1 (where y2 + 1 = x2, y1 rises by 1 and
-// y2 falls to 0: the product rises by x2 as y2 + y3 falls by x2), with which y3 >= 0 holds and <y3>
+// Mode 1, over the paths with the loop's products followed as GHOSTS (paths_ghost, s31), a ghost
+// one more column: mannadiv keeps y1*x2 + y2 + y3 = x1 (where y2 + 1 = x2, y1 rises by 1 and y2
+// falls to 0: the product rises by x2 as y2 + y3 falls by x2), with which y3 >= 0 holds and <y3>
 // ranks its loop. Only where the header has a ghost.
+// Mode 2, LATE, at a header nothing ranked, over its plain paths: the header's equalities restrict
+// where a path runs, as mode 1's do, and a version's new value need not be an expression of the old
+// ones alone. termination-nla's hard2 halves d and p under d = p (`d = d / 2`, `p = p / 2`), and
+// `r = r - d`, `q = q + p` keep q + r = A, with which p >= 1 holds and p ranks the loop. Each
+// quotient is fixed only up to its remainder (d = 2d' + a, 0 <= a <= 1), so d' read a variable no
+// equality fixes, and every version that read d' or p' was left out: nothing was found. Here such
+// a read only has to cancel in c.post: one row on c per variable no equality fixes. And two such
+// variables the path's facts make equal are one, the row u - w = 0 added: the solver asked, at a
+// sixteenth of its budget, as a dead path is (hard2's remainders: 2(d' - p') = b - a, so a = b).
+// Mode 0: a round's, as before.
 static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *as, int32_t nv, JClaim **cl, int32_t *nc, int32_t *ccl,
-                               bool ghost) {
+                               int mode) {
+    bool ghost = mode == 1, late = mode != 0;
+    int32_t nc0 = *nc;
     FdLoop L;
     if (!ghost && !fd_loop_build(F, f, H, as, nv, &L)) { free(L.mem); return !F->oom; }
     if (ghost) {
@@ -3738,8 +3750,9 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
     for (int32_t q = 0; q < L.npk && K <= 16; q++) if (L.ptk[q] != JTERM_ENTRY) { if (K < 16) col[K] = q; K++; }
     bool ok = K >= 2 && K <= 16 && L.npaths >= 1 && L.nv <= 512;
     // the system on c: one row per (path, old variable) and per path its constant, plus c_q = 0 for
-    // a version some path leaves undetermined; at most 32 paths
-    int32_t cap = ok ? (L.npaths * (L.nv + 1) + K) : 0;
+    // a version some path leaves undetermined (mode 2: one per variable no equality fixes); at most
+    // 32 paths
+    int32_t cap = ok ? (L.npaths * (2 * L.nv + 1) + K) : 0;
     __int128 *C = ok ? calloc((size_t)cap * (size_t)(K + 1), sizeof *C) : NULL;
     int32_t ncr = 0;
     ok = ok && C;
@@ -3758,13 +3771,13 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
         if (!use) { ok = false; break; }
         int32_t ne = 0;
         for (int32_t h = 0; h < P->nhyps; h++) if (!P->hyps[h].disj && P->hyps[h].cons.op == J_EQ) { use[h] = 1; ne++; }
-        for (int32_t h = 0; ghost && h < P->nhyps; h++) {
+        for (int32_t h = 0; late && h < P->nhyps; h++) {
             const JCons *a = &P->hyps[h].cons;
             if (use[h] || P->hyps[h].disj || a->op != J_LE || a->nt < 1 || a->nt > 2) continue;
             for (int32_t h2 = h + 1; h2 < P->nhyps; h2++)
                 if (!use[h2] && !P->hyps[h2].disj && fd_hyp_negates(a, &P->hyps[h2].cons)) { use[h] = 1; use[h2] = 2; ne++; break; }
         }
-        __int128 *A = calloc((size_t)(ne ? ne : 1) * (size_t)W, sizeof *A);
+        __int128 *A = calloc((size_t)(ne + 8) * (size_t)W, sizeof *A);              // and 8 the solver shows
         int32_t *piv = malloc(sizeof *piv * (size_t)W), *ord = malloc(sizeof *ord * (size_t)W);
         uint8_t *base = calloc((size_t)W, 1);
         if (!A || !piv || !ord || !base) { free(A); free(piv); free(ord); free(base); free(use); ok = false; break; }
@@ -3786,8 +3799,50 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
         for (int32_t v = 0; v < L.nv; v++) if (!base[v]) ord[no++] = v;     // the path's own first
         for (int32_t v = 0; v < L.nv; v++) if (base[v]) ord[no++] = v;
         if (ok) ok = fd_rref(A, r, W, ord, no, piv);
-        // per version q: d*post = rhs - sum_b a_b * b, or undetermined
-        for (int32_t q = 0; ok && q < K; q++) {
+        // mode 2, per version: 0 an expression (its row's, or the post itself where no row fixes
+        // it), 1 a post that is its own pre (it says nothing), 2 a post that is another pair's pre
+        // (`x = y` leaves y: that pre, as it is)
+        uint8_t kind[16] = { 0 };
+        if (mode == 2 && ok) {
+            for (int32_t q = 0; q < K; q++) {
+                int32_t pv = L.post[col[q]];
+                kind[q] = pv == L.pre[col[q]] ? 1 : base[pv] ? 2 : 0;
+            }
+            // the variables no equality fixes that some version's expression reads, and of those
+            // the pairs the path's facts make equal: each the row u - w = 0
+            int32_t fv[8], nfv = 0, added = 0;
+            for (int32_t u = 0; u < L.nv && nfv < 8; u++) {
+                if (base[u] || piv[u] >= 0) continue;
+                bool rd = false;
+                for (int32_t q = 0; q < K && !rd; q++) {
+                    if (kind[q]) continue;
+                    int32_t pv = L.post[col[q]], pr = piv[pv];
+                    rd = pr >= 0 ? A[(size_t)pr * W + u] != 0 : pv == u;
+                }
+                if (rd) fv[nfv++] = u;
+            }
+            for (int32_t i = 0; i < nfv; i++)
+                for (int32_t j = i + 1; j < nfv && added < 8; j++) {
+                    bool eq = true;
+                    for (int32_t sd = 0; eq && sd < 2; sd++) {             // u - w <= 0, then w - u <= 0
+                        JTerm gt[2]; JVc qv = *P;
+                        gt[0].var = fv[i]; fd_jint(&gt[0].coef, sd ? -1 : 1);
+                        gt[1].var = fv[j]; fd_jint(&gt[1].coef, sd ? 1 : -1);
+                        memset(&qv.goal, 0, sizeof qv.goal);
+                        qv.goal.op = J_LE; qv.goal.t = gt; qv.goal.nt = 2; fd_jint(&qv.goal.rhs, 0);
+                        JWork plim = F->lim; plim.pivot /= 16; plim.node /= 16; plim.leaf /= 16;
+                        eq = lia_solve(&qv, plim, F->work, F->worksz).k == J_ANS_CERT;
+                    }
+                    if (!eq) continue;
+                    __int128 *row = A + (size_t)r * W;
+                    memset(row, 0, sizeof *row * (size_t)W);
+                    row[fv[i]] = 1; row[fv[j]] = -1;
+                    r++; added++;
+                }
+            if (added) ok = fd_rref(A, r, W, ord, no, piv);
+        }
+        // per version q: d*post = rhs - sum_b a_b * b, or undetermined (mode 2: read below)
+        for (int32_t q = 0; ok && q < K && mode != 2; q++) {
             int32_t pv = L.post[col[q]], pr = piv[pv];
             bool det = pr >= 0 && (!ghost || pv != L.pre[col[q]]);             // a value fixed at the header: out, as before
             for (int32_t v = 0; det && v < L.nv; v++) if (v != pv && A[(size_t)pr * W + v] != 0 && !base[v]) det = false;
@@ -3795,7 +3850,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
         }
         // a path no state takes (its equalities contradict: 0 = c) bounds nothing
         bool dead = false;
-        for (int32_t ri = 0; ghost && ok && ri < r && !dead; ri++) {
+        for (int32_t ri = 0; late && ok && ri < r && !dead; ri++) {
             bool zero = true;
             for (int32_t v = 0; v < L.nv && zero; v++) zero = A[(size_t)ri * W + v] == 0;
             dead = zero && A[(size_t)ri * W + L.nv] != 0;
@@ -3805,7 +3860,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
         __int128 D = 1;
         for (int32_t q = 0; ok && q < K; q++) {
             int32_t pr = piv[L.post[col[q]]];
-            if (pr < 0) continue;
+            if (pr < 0 || kind[q]) continue;
             __int128 d = A[(size_t)pr * W + L.post[col[q]]], g = fd_gcd128(D, d);
             if (d < 0) d = -d;
             D = D / g * d;
@@ -3822,6 +3877,13 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
             for (int32_t q = 0; q < K; q++) {
                 int32_t pv = L.post[col[q]], pr = piv[pv];
                 __int128 coef = 0;
+                if (kind[q] == 1) { row[q] = 0; continue; }
+                if (kind[q] == 2) {
+                    coef = (b == pv ? D : 0) - (b == L.pre[col[q]] ? D : 0);
+                    row[q] = coef;
+                    if (coef) moved[q] = 1;
+                    continue;
+                }
                 if (pr >= 0) {
                     __int128 d = A[(size_t)pr * W + pv], m = D / (d < 0 ? -d : d), sgn = d < 0 ? -1 : 1;
                     // post = (rhs - sum a_b b) / d: coefficient of b is -a_b/d, the constant rhs/d
@@ -3834,11 +3896,34 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
                 if (coef) moved[q] = 1;
             }
         }
+        // mode 2: per variable u no equality fixes, the versions' reads of it cancel in c.post,
+        // sum_q c_q * D * (u's coefficient in post q) = 0
+        for (int32_t u = 0; mode == 2 && ok && u < L.nv; u++) {
+            if (base[u] || piv[u] >= 0) continue;
+            __int128 cr[16]; bool nz = false;
+            for (int32_t q = 0; q < K && ok; q++) {
+                int32_t pv = L.post[col[q]], pr = piv[pv];
+                cr[q] = 0;
+                if (kind[q]) continue;
+                if (pr >= 0) {
+                    __int128 d = A[(size_t)pr * W + pv], m = D / (d < 0 ? -d : d), sgn = d < 0 ? -1 : 1;
+                    cr[q] = -A[(size_t)pr * W + u] * m * sgn;
+                } else if (pv == u) cr[q] = D;
+                if (cr[q] > FD_KARR_BIG || cr[q] < -FD_KARR_BIG) ok = false;
+                else if (cr[q]) { nz = true; moved[q] = 1; }
+            }
+            if (!ok || !nz) continue;
+            if (ncr >= cap) { ok = false; break; }
+            __int128 *row = C + (size_t)ncr * (K + 1);
+            for (int32_t q = 0; q < K; q++) row[q] = cr[q];
+            row[K] = 0;
+            if (!fd_row_norm(row, K + 1)) ok = false; else ncr++;
+        }
         // ...where the path runs: an equality of its old values alone (a row whose pivot is a base
         // variable: mannadiv's `y2 + 1 = x2` on the branch that raises y1) restricts the states that
         // take it, and c.(post - pre) need vanish only on those. Each such row's pivot p is put out of
         // the function by the row itself (fraction-free: d*F - F[p]*row), so what is left must be 0.
-        for (int32_t p0 = 0; ghost && ok && p0 < L.nv; p0++) {
+        for (int32_t p0 = 0; late && ok && p0 < L.nv; p0++) {
             if (!base[p0] || piv[p0] < 0) continue;
             const __int128 *R = A + (size_t)piv[p0] * W;
             __int128 d = R[p0], *Fp = Fm + (size_t)bx[p0] * K, fp[16];
@@ -3891,7 +3976,7 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
             if (bad || nzt < 1 || nzt > JCLAIM_MAXT) continue;
             bool mv = false, gh = false;                         // a sum of versions no path changes:
             for (int32_t q = 0; q < K; q++) { mv |= vec[q] != 0 && moved[q]; gh |= vec[q] != 0 && L.ptk[col[q]] == JTERM_GHOST; }   // not this question's
-            if (ghost && (!mv || !gh)) continue;
+            if (late && (!mv || (ghost && !gh))) continue;
             __int128 g = 0;
             for (int32_t q = 0; q < K; q++) g = fd_gcd128(g, vec[q]);
             JClaim c; memset(&c, 0, sizeof c);
@@ -3927,6 +4012,20 @@ static bool fd_karr_candidates(JFinder *F, IrFunc *f, int32_t H, const JClaim *a
             }
         }
         free(piv); free(ord);
+    }
+    // mode 2: an equality found, and beside it each moved version's bounds on entry, for Houdini to
+    // keep with it (hard2's p >= 1 holds only under q*B + r = A: the loop's test is then p != 1)
+    if (mode == 2 && ok && okall && *nc > nc0) {
+        for (int32_t q = 0; okall && q < K; q++) {
+            if (!moved[q] || L.ptk[col[q]] != JTERM_VALUE) continue;
+            JClaim c; memset(&c, 0, sizeof c);
+            c.blk = H; c.fn = f; c.nt = 1; c.key[0] = L.pkey[col[q]]; c.tk[0] = JTERM_VALUE; c.coef[0] = 1;
+            JClaim neg = c; neg.coef[0] = -1;
+            __int128 hi, lo;
+            if (fd_entry_max(F, f, as, nv, &c, &hi)) { c.rhs = hi; okall = fd_push_claim(F, &c, as, nv, cl, nc, ccl); }
+            if (okall && fd_entry_max(F, f, as, nv, &neg, &lo)) { neg.rhs = lo; okall = fd_push_claim(F, &neg, as, nv, cl, nc, ccl); }
+            if (F->oom) okall = false;
+        }
     }
     free(C); free(L.mem);
     return okall;
@@ -4849,7 +4948,7 @@ static bool fd_fn_candidates(JFinder *F, IrFunc *f, FdNest *N, const JClaim *as,
     if (!fd_sentinel_candidates(F, f, N, as, nv, cl, nc, ccl)) return false;
     if (!fd_sum_entry_candidates(F, f, as, nv, cl, nc, ccl)) return false;
     for (IrBlock *kb = f->blocks; kb; kb = kb->next)
-        if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, cl, nc, ccl, false)) return false;
+        if (kb->is_loop_header && !fd_karr_candidates(F, f, kb->id, as, nv, cl, nc, ccl, 0)) return false;
     fd_nest_free(N);
     return true;
 }
@@ -4984,11 +5083,13 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
             // state the header's ghosts in all of its VCs (g32), and cohencu5's loop, ranked without
             // them, lost its ranking to the meter (630e6 -> 784e6), cohencu2's to the search
             // (lia_rank STOP); mannadiv's y1*x2 + y2 + y3 = x1 is found here and ranks its loop.
-            if (!got && built && !F->oom && F->gen->paths_ghost) {
+            // Then the same over the plain paths, late (mode 2: hard2's q*B + r = A).
+            for (int km = 1; km <= 2 && !got && built && !F->oom; km++) {
+                if (km == 1 && !F->gen->paths_ghost) continue;
                 JClaim *ext = malloc(sizeof *ext * (size_t)(nv + 16)); int32_t next = nv, cext = nv + 16;
                 if (ext) {
                     if (nv) memcpy(ext, as, sizeof *ext * (size_t)nv);
-                    if (fd_karr_candidates(F, f, b->id, as, nv, &ext, &next, &cext, true) && next > nv) {
+                    if (fd_karr_candidates(F, f, b->id, as, nv, &ext, &next, &cext, km) && next > nv) {
                         int32_t nfn = 0, fk = -1;
                         for (IrFunc *h = mod; h; h = h->next) { if (h == f) fk = nfn; nfn++; }
                         uint8_t *mk = calloc((size_t)(nfn ? nfn : 1), 1);
@@ -4997,7 +5098,7 @@ static JClaim *finder_propose_run(JFinder *F, int32_t *ncl) {
                         FdLoop L3; bool b3 = kept > nv;
                         for (int32_t k = 0; b3 && k < nv; k++) b3 = fd_claim_same(&ext[k], &as[k]);   // and every earlier claim, as above
                         if (b3 && fd_loop_build(F, f, b->id, ext, kept, &L3) && fd_rank(F, f, b->id, &L3, &r)) {
-                            got = true; stage = "karr-ghost";
+                            got = true; stage = km == 1 ? "karr-ghost" : "karr-late";
                             free(as); as = ext; ext = NULL; nv = kept;   // the claims it is ranked under
                         }
                         if (b3) free(L3.mem);
