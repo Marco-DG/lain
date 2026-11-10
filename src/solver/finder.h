@@ -44,6 +44,7 @@ typedef struct {
     const char **rkstage;                // with fd_track_stages: the stage that ranked each (a label)
     struct FdMemo *memo;                 // during a call: the solver's answers by VC (fd_implied)
     bool keep_dead;                      // fd_loop_from keeps the paths the solver refutes (f64)
+    bool flat_conj;                      // fd_loop_from keeps each path's conjunctive facts alone (f85)
     // during B1's last round: the guarded return claims every claim VC states at its calls (gc)
     const JGuardClaim *hgc; int32_t nhgc;
 } JFinder;
@@ -602,8 +603,9 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             // two cases, and beside a stated `x > 5` only one lives. Undecided, each doubled the
             // flattened paths, and two of them past FD_MAXFLAT (32) dropped the widest facts and
             // the loop's ranking with them (TCW's flip check, fuzz_loops seed 20261021 k59, k282:
-            // terminating, ranked by VRA, E011 under the judge).
-            {
+            // terminating, ranked by VRA, E011 under the judge). None under flat_conj: every
+            // disjunction is dropped there, decided or not.
+            if (!F->flat_conj) {
                 JWork dlim = F->lim;
                 if (!o->upto) { dlim.pivot /= 16; dlim.node /= 16; dlim.leaf /= 16; }
                 int32_t ncj = 0, mx = 0;
@@ -742,8 +744,9 @@ static bool fd_loop_from(JFinder *F, IrFunc *f, int32_t H, const JPaths *Pp, FdL
             // a guarded EACH claim's cases (`g <= k` or the bound, per element k) only say which
             // elements are bounded yet: a ranking or relation over the loop's counters reads none of
             // them, and sixteen two-way choices a claim crowd every other choice out (a loop that
-            // keeps `each(a) upto(i)` at its own header lost its ranking to them)
-            skip[h] = !touch || o->upto;
+            // keeps `each(a) upto(i)` at its own header lost its ranking to them); and every one
+            // under flat_conj (fd_rank_ghost's first try)
+            skip[h] = !touch || o->upto || F->flat_conj;
         }
         int32_t left = FD_MAXFLAT - L->npaths, nchoice;
         for (;;) {
@@ -1737,16 +1740,26 @@ static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank 
 // updates, and a linear or lexicographic ranking may read it. ps2's guard `c + y*y - 2x + y < k`
 // rises by exactly 1 a trip, so <k - c - y*y + 2x - y> falls; without y*y no linear function of the
 // cells does. Only where the header has a ghost, after every other stage.
+// ...first on each path's CONJUNCTIVE facts alone (flat_conj), no case flattened: a ghost's paths
+// carry every checked product's sign cases (`mul.sign`, three a product), and deciding them, a
+// satisfiability question per case on a path of some 550 facts, spent ps5's termination account
+// (343e6 operations of the 500e6 left it: 27 paths) before lia_rank ran; its ranking, of degree 5
+// in y, reads none of them (one path, 397 pivots, 4.7e6 operations). A dropped fact only weakens
+// a path, so what ranks the weaker paths ranks the loop, owed by the judge as any other. Then,
+// where that finds nothing, every case, as before.
 static bool fd_rank_ghost(JFinder *F, IrFunc *f, int32_t H, const JClaim *cl, int32_t ncl, JRank *out) {
     if (!F->gen->paths_ghost || H == JRANK_ENTRY) return false;
     char err[200]; JPaths P; FdLoop M; bool got = false;
-    memset(&M, 0, sizeof M);
-    if (F->gen->paths_ghost(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) && !P.refused && fd_loop_region(F, f, H, &P, &M, JRANK_MAXE)) {
+    if (!F->gen->paths_ghost(F->gen->ctx, f, cl, ncl, H, &P, err, sizeof err) || P.refused) return false;
+    for (int pass = 0; pass < 2 && !got && !F->oom; pass++) {
+        F->flat_conj = pass == 0;
+        bool built = fd_loop_region(F, f, H, &P, &M, JRANK_MAXE);   // M zeroed, its region L->mem
+        F->flat_conj = false;
         bool ghost = false;
-        for (int32_t z = 0; z < M.npk && !ghost; z++) ghost = M.ptk[z] == JTERM_GHOST;
+        for (int32_t z = 0; built && z < M.npk && !ghost; z++) ghost = M.ptk[z] == JTERM_GHOST;
         if (ghost) got = fd_rank_on(F, f, H, &M, out);
+        free(M.mem);
     }
-    free(M.mem);
     return got;
 }
 static bool fd_rank_on(JFinder *F, IrFunc *f, int32_t H, const FdLoop *L, JRank *out) {
